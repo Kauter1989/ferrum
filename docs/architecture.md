@@ -1,7 +1,7 @@
 # Architecture
 
 This workspace re-implements the non-segmentation
-functionality of the EPAM MRI Viewer web application: DICOM/NIfTI loading, 2D slices, MPR,
+functionality of the author's earlier web viewer (React/WebGL, whose ray-casting shaders were ported to WGSL): DICOM/NIfTI loading, 2D slices, MPR,
 GPU volume rendering, transfer function editing, clipping, measurements
 and the volume eraser. See [ADR 0001](decisions/0001-rust-desktop-viewer.md)
 for the motivation.
@@ -100,7 +100,7 @@ is kept in sync by the GPU/CPU parity tests.
 
 ## Feature mapping from the web viewer
 
-| Web viewer (epam/mriviewer) | This workspace |
+| Earlier web viewer | This workspace |
 |---|---|
 | `LoaderDicom.js`, `LoaderDcmDaikon.js` | `mri-io::dicom` (dicom-rs, parallel) |
 | `LoaderNifti`, `SaverNifti.js` | `mri-io::nifti` |
