@@ -1,0 +1,40 @@
+[package]
+name = "mri-viewer"
+description = "Desktop MRI/CT viewer: 2D slices, MPR and GPU volume rendering of DICOM and NIfTI data."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+default-run = "mri-viewer"
+
+[[bin]]
+name = "mri-viewer"
+path = "src/main.rs"
+
+[lib]
+name = "mri_viewer"
+path = "src/lib.rs"
+
+[dependencies]
+mri-domain.workspace = true
+mri-processing.workspace = true
+mri-io.workspace = true
+mri-render = { workspace = true, features = ["gpu"] }
+mri-app.workspace = true
+glam.workspace = true
+log.workspace = true
+env_logger.workspace = true
+eframe.workspace = true
+egui.workspace = true
+egui-wgpu.workspace = true
+wgpu.workspace = true
+rfd.workspace = true
+image.workspace = true
+
+[dev-dependencies]
+egui_kittest.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

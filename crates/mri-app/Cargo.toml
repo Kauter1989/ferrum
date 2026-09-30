@@ -1,0 +1,24 @@
+[package]
+name = "mri-app"
+description = "Application layer of the MRI viewer: state, use cases, background jobs and 2D tools. UI-toolkit and GPU agnostic."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+mri-domain.workspace = true
+mri-processing.workspace = true
+mri-render.workspace = true
+glam.workspace = true
+log.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+mri-io.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,32 @@
+[package]
+name = "mri-io"
+description = "Data layer of the MRI viewer: DICOM (and NIfTI) scanning, series grouping and parallel volume assembly."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+mri-domain.workspace = true
+glam.workspace = true
+rayon.workspace = true
+thiserror.workspace = true
+log.workspace = true
+dicom-object.workspace = true
+dicom-pixeldata.workspace = true
+dicom-dictionary-std.workspace = true
+dicom-core.workspace = true
+flate2 = "1"
+
+[dev-dependencies]
+tempfile.workspace = true
+criterion.workspace = true
+proptest.workspace = true
+
+[[bench]]
+name = "dicom_loading"
+harness = false
+
+[lints]
+workspace = true
