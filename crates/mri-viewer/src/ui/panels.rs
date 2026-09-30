@@ -2,7 +2,9 @@
 
 use egui::{RichText, Slider};
 use mri_app::{FilterKind, ToolKind, ViewMode, Viewer};
-use mri_domain::{ClipBox, RenderMode, SliceAxis, TissueThresholds, TransferFunction, WindowLevel, WindowPreset};
+use mri_domain::{
+    ClipBox, CtPreset, RenderMode, SliceAxis, TissueThresholds, TransferFunction, ViewPreset, WindowLevel, WindowPreset,
+};
 
 use super::tf_editor::{self, TfEditorState};
 
@@ -184,6 +186,16 @@ fn volume_settings(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelStat
                     viewer.set_transfer_function(TransferFunction::bone(0.45));
                 }
             });
+            if let Some(range) = viewer.dataset().map(|d| d.volume.range()) {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("CT (HU):");
+                    for p in CtPreset::ALL {
+                        if ui.small_button(p.label().trim_start_matches("CT ")).on_hover_text(p.label()).clicked() {
+                            viewer.set_transfer_function(TransferFunction::ct_preset(p, range));
+                        }
+                    }
+                });
+            }
         });
     }
     section(ui, "Clipping", false, |ui| {
@@ -225,6 +237,14 @@ fn volume_settings(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelStat
         });
     });
     section(ui, "View & performance", false, |ui| {
+        ui.horizontal(|ui| {
+            ui.label("View from");
+            for p in ViewPreset::ALL {
+                if ui.small_button(p.label()).on_hover_text(p.name()).clicked() {
+                    viewer.volume.camera.look_from(p);
+                }
+            }
+        });
         if ui.button("Reset camera").clicked() {
             viewer.reset_view_3d();
         }

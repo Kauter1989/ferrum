@@ -30,7 +30,7 @@ pub mod volume;
 pub mod window;
 
 pub use annotation::{Annotation, AnnotationId, AnnotationSet, SliceKey};
-pub use camera::OrbitCamera;
+pub use camera::{OrbitCamera, ViewPreset};
 pub use clip::{ClipBox, ClipPlane, ClipSettings};
 pub use color::{Rgb, Rgba8};
 pub use geometry::{Aabb, Dims3, Ray};
@@ -41,6 +41,6 @@ pub use repository::{
     VolumeRepository,
 };
 pub use slice::{SliceAxis, SliceImage, SliceView};
-pub use transfer::{ControlPoint, TransferFunction, TransferFunctionError};
+pub use transfer::{ControlPoint, CtPreset, TransferFunction, TransferFunctionError};
 pub use volume::{IntensityRange, Volume, VolumeError};
 pub use window::{WindowLevel, WindowPreset};

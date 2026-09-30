@@ -17,7 +17,7 @@ dicom-object.workspace = true
 dicom-pixeldata.workspace = true
 dicom-dictionary-std.workspace = true
 dicom-core.workspace = true
-flate2 = "1"
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 
 [dev-dependencies]
 tempfile.workspace = true

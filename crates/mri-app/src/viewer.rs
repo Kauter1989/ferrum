@@ -464,6 +464,11 @@ impl Viewer {
         self.tool_ctl.cancel();
     }
 
+    /// Adds an annotation to a slice (e.g. imported or scripted).
+    pub fn add_annotation(&mut self, key: SliceKey, annotation: Annotation) -> AnnotationId {
+        self.annotations.add(key, annotation)
+    }
+
     /// Removes all annotations.
     pub fn clear_annotations(&mut self) {
         self.annotations.clear();

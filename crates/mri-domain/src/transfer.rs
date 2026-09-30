@@ -4,6 +4,7 @@
 use thiserror::Error;
 
 use crate::color::{unit_to_u8, Rgb, Rgba8};
+use crate::volume::IntensityRange;
 
 /// A control point of a [`TransferFunction`].
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -20,6 +21,67 @@ impl ControlPoint {
     /// Creates a control point.
     pub const fn new(position: f32, color: Rgb, opacity: f32) -> Self {
         Self { position, color, opacity }
+    }
+}
+
+/// CT presets defined in Hounsfield units, mapped onto the data range of
+/// the loaded volume by [`TransferFunction::ct_preset`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CtPreset {
+    /// Skin and muscle as translucent shells, bone opaque.
+    SoftTissueBone,
+    /// Lung parenchyma faint, pulmonary vessels and airway walls red, bone white.
+    LungVessels,
+    /// Only bone.
+    Bone,
+}
+
+impl CtPreset {
+    /// All presets.
+    pub const ALL: [CtPreset; 3] = [CtPreset::SoftTissueBone, CtPreset::LungVessels, CtPreset::Bone];
+
+    /// Label.
+    pub fn label(&self) -> &'static str {
+        match self {
+            CtPreset::SoftTissueBone => "CT soft tissue + bone",
+            CtPreset::LungVessels => "CT lung vessels",
+            CtPreset::Bone => "CT bone",
+        }
+    }
+
+    /// Control points `(HU, colour, opacity)`.
+    fn points(&self) -> Vec<(f32, Rgb, f32)> {
+        let c = Rgb::new;
+        match self {
+            CtPreset::SoftTissueBone => vec![
+                (-700.0, c(0.0, 0.0, 0.0), 0.0),
+                (-450.0, c(0.75, 0.45, 0.30), 0.0),
+                (-150.0, c(0.93, 0.66, 0.50), 0.020),
+                (20.0, c(0.80, 0.30, 0.22), 0.010),
+                (80.0, c(0.85, 0.28, 0.20), 0.060),
+                (180.0, c(0.95, 0.85, 0.70), 0.010),
+                (300.0, c(1.0, 0.95, 0.85), 0.55),
+                (1500.0, c(1.0, 1.0, 1.0), 0.85),
+            ],
+            CtPreset::LungVessels => vec![
+                (-950.0, c(0.0, 0.0, 0.0), 0.0),
+                (-850.0, c(0.55, 0.60, 0.75), 0.004),
+                (-500.0, c(0.85, 0.55, 0.55), 0.015),
+                (-300.0, c(0.95, 0.35, 0.30), 0.10),
+                (-120.0, c(0.95, 0.70, 0.55), 0.015),
+                (20.0, c(0.85, 0.15, 0.12), 0.12),
+                (100.0, c(0.85, 0.12, 0.10), 0.30),
+                (180.0, c(0.95, 0.85, 0.70), 0.05),
+                (300.0, c(1.0, 0.96, 0.88), 0.60),
+                (1500.0, c(1.0, 1.0, 1.0), 0.85),
+            ],
+            CtPreset::Bone => vec![
+                (150.0, c(0.0, 0.0, 0.0), 0.0),
+                (250.0, c(0.95, 0.80, 0.65), 0.15),
+                (450.0, c(1.0, 0.96, 0.88), 0.80),
+                (1500.0, c(1.0, 1.0, 1.0), 0.95),
+            ],
+        }
     }
 }
 
@@ -119,6 +181,28 @@ impl TransferFunction {
                 ControlPoint::new(1.0, Rgb::WHITE, 1.0),
             ],
         }
+    }
+
+    /// Builds a CT preset for a volume whose storage covers `range` (HU).
+    /// Control points outside the range are clipped away.
+    pub fn ct_preset(preset: CtPreset, range: IntensityRange) -> Self {
+        let pts = preset.points();
+        let first = pts.first().map(|p| (p.1, p.2)).unwrap_or((Rgb::BLACK, 0.0));
+        let last = pts.last().map(|p| (p.1, p.2)).unwrap_or((Rgb::WHITE, 1.0));
+        let mut points = vec![ControlPoint::new(0.0, first.0, first.1)];
+        let mut prev = 0.0f32;
+        for (hu, color, opacity) in pts {
+            let x = (hu - range.min) / range.span();
+            if x > prev && x < 1.0 {
+                points.push(ControlPoint::new(x, color, opacity));
+                prev = x;
+            }
+        }
+        // Colour/opacity at the upper end of the data range.
+        let tf = Self { points: points.clone() };
+        let end = if prev < 1.0 { last } else { tf.sample(1.0) };
+        points.push(ControlPoint::new(1.0, end.0, end.1));
+        Self { points }
     }
 
     /// Control points (sorted by position).
@@ -260,6 +344,25 @@ mod tests {
     fn presets_are_valid() {
         for tf in [TransferFunction::legacy_default(), TransferFunction::linear_ramp(), TransferFunction::bone(0.4)] {
             assert!(TransferFunction::new(tf.points().to_vec()).is_ok());
+        }
+    }
+
+    #[test]
+    fn ct_presets_are_valid_and_placed_in_hounsfield_units() {
+        let range = IntensityRange::new(-1024.0, 3071.0).unwrap();
+        for p in CtPreset::ALL {
+            let tf = TransferFunction::ct_preset(p, range);
+            assert!(TransferFunction::new(tf.points().to_vec()).is_ok(), "{p:?}");
+        }
+        let bone = TransferFunction::ct_preset(CtPreset::Bone, range);
+        // air and water are transparent, dense bone is opaque
+        assert_eq!(bone.sample(range.normalize(-1000.0)).1, 0.0);
+        assert_eq!(bone.sample(range.normalize(0.0)).1, 0.0);
+        assert!(bone.sample(range.normalize(1000.0)).1 > 0.8);
+        // a narrow range clips points but stays valid
+        let narrow = IntensityRange::new(-100.0, 200.0).unwrap();
+        for p in CtPreset::ALL {
+            assert!(TransferFunction::new(TransferFunction::ct_preset(p, narrow).points().to_vec()).is_ok());
         }
     }
 
