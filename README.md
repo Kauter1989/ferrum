@@ -14,7 +14,10 @@ clipping, measurements and a volume eraser.
 | ![Rib cage as a shaded isosurface with ambient occlusion](docs/images/volume_bone.png) | ![Maximum intensity projection of the chest](docs/images/volume_mip.png) |
 | Isosurface at 300 HU with ambient occlusion; scanner table clipped | Maximum intensity projection |
 
-![Axial slice in the lung window with distance, angle, area and text annotations](docs/images/slice_measurements.png)
+| | |
+|---|---|
+| ![Axial slice in the lung window with distance, angle, area and text annotations](docs/images/slice_measurements.png) | ![Start screen with a drop zone and the list of recently opened studies](docs/images/start_screen.png) |
+| Measurements in millimetres on an axial slice | Start screen with drag-and-drop and recent studies |
 
 <sub>Screenshots show the real application rendering a public chest CT — see [Sample data](#sample-data).</sub>
 
@@ -25,6 +28,7 @@ clipping, measurements and a volume eraser.
 - [Features](#features)
 - [Quick start](#quick-start)
 - [Using the viewer](#using-the-viewer)
+- [Supported data and limits](#supported-data-and-limits)
 - [Rendering](#rendering)
 - [Performance](#performance)
 - [Architecture](#architecture)
@@ -91,6 +95,13 @@ undo and full restore.
 
 **Processing** — Gaussian smoothing and Sobel edge filters.
 
+**Interface** — a full-bleed dark canvas with floating "glass" docks: modes
+and planes on the left, tools in the centre, file actions on the right, and
+a collapsible settings panel (**Tab**). Views carry HUD corner brackets,
+patient-orientation edge labels (R/L, A/P, S/I), an L/P/S orientation gizmo
+in 3D and a slice scrubber on the edge of every 2D view. The start screen
+keeps a list of recently opened studies.
+
 **Output** — PNG screenshots, NIfTI export, and a viewer for the series'
 DICOM attributes.
 
@@ -123,7 +134,8 @@ them onto the window, or use **Open folder** / **Open files**.
 | Double click | reset pan/zoom (pan tool) | reset camera |
 | Right click | MPR: move crosshair to this point | — |
 
-Keyboard: **F2 / F3 / F4** switch between 2D, 3D and MPR.
+Keyboard: **F2 / F3 / F4** switch between 2D, 3D and MPR. **Tab** shows or
+hides the settings panel.
 **↑ ↓ / PgUp PgDn** change the slice. **Ctrl+O** opens a folder.
 **Ctrl+Z** undoes the last erase.
 
@@ -171,21 +183,101 @@ A **CPU reference ray caster** implements exactly the same image-formation
 model. It is the test oracle for GPU output, the picker for interactive
 tools, and a software fallback.
 
+## Supported data and limits
+
+**Modalities.** The pipeline works on any scalar 3D grid, so it is not tied
+to one modality:
+
+| Modality | Notes |
+|---|---|
+| CT (incl. CT angiography) | Values in Hounsfield units; CT window and transfer-function presets |
+| MRI (T1, T2, FLAIR, PD, DWI/ADC, MRA…) | Any sequence; windowing is automatic because MR intensities are arbitrary |
+| PET, SPECT (NM) | MIP and transfer-function rendering suit uptake maps |
+| Cone-beam CT (dental, ENT, intra-operative) | Same as CT |
+| Micro-CT and other preclinical scanners | Usually via NIfTI |
+| 3D rotational angiography (XA 3D) | When exported as a volume |
+| 3D ultrasound | When exported as volumetric DICOM or NIfTI |
+
+Colour images are converted to luminance, and 4D NIfTI (fMRI, DTI, dynamic
+series) shows its first volume. Single 2D projection images (CR, DX, MG)
+open as one slice; 3D rendering is meaningless for them.
+
+**Grid size.**
+- *Loading* has no fixed limit and is bound by RAM. Decoding briefly uses
+  about 6 bytes per voxel: 4 for the `f32` decode buffer and 2 for the
+  16-bit stored volume. The eraser adds 1 byte per voxel. For example, a
+  512×512×2000 CT (0.5 G voxels) needs about 3 GB at peak.
+- *Visualisation* on the GPU needs every dimension to fit the device's
+  3D-texture limit (`max_texture_dimension_3d`). The limit is 2048 on most
+  desktop GPUs and on Metal/D3D12, and larger on some Vulkan drivers
+  (4096 on lavapipe). GPU memory costs 2 bytes per voxel, plus 1 byte for
+  the eraser mask. Larger volumes are box-downsampled automatically for 3D
+  and 2D display, and measurements stay in physical millimetres. In
+  practice, 1024³ (2 GB of VRAM) renders interactively on a mid-range
+  discrete GPU.
+- The earlier web viewer this project replaces capped 3D data at
+  512×512×256.
+
 ## Performance
 
-Measured on a 4-core machine using the *software* rasteriser llvmpipe
-(a real GPU is one to two orders of magnitude faster at rendering):
+All numbers come from the same 4-core cloud VM, with no hardware GPU.
+Rendering ran on **llvmpipe**, Mesa's software Vulkan rasteriser, so the
+frame rates are a floor. A discrete GPU is one to two orders of magnitude
+faster at rendering.
+
+**Chest CT, 512×512×252 DICOM series (`lung_053`), 3D view at 1200×672:**
+
+| Stage | Time |
+|---|---|
+| Scan + decode 252 DICOM files | 339 ms |
+| Histogram + brick grid | 55 ms |
+| Upload to the GPU (`R16Unorm`) | 116 ms |
+| Change a 2D slice | 4 ms |
+
+| Technique | Empty-space skipping off | on |
+|---|---|---|
+| Tissue | 119 ms (8.4 fps) | 98 ms (10.2 fps) |
+| Isosurface | 139 ms (7.2 fps) | 51 ms (19.8 fps) |
+| MIP | 117 ms (8.5 fps) | 160 ms (6.2 fps) |
+| Transfer function | 172 ms (5.8 fps) | 158 ms (6.3 fps) |
+
+Frame times include reading the image back to the CPU. MIP gains nothing
+from skipping, because every non-empty brick can hold the maximum. On a
+CPU rasteriser, the extra brick lookups make MIP slower.
+
+**Comparison with the original web viewer (React + three.js/WebGL2) on the
+same files.** The web viewer ran in headless Chromium, whose WebGL2 is
+backed by SwiftShader, another software rasteriser:
+
+| Scenario | Web viewer | dicom_renderer | Speed-up |
+|---|---|---|---|
+| Load the 252-slice chest CT | 4.3 s | 0.34 s (0.51 s ready to render in 3D) | ≈ 8–13× |
+| Load a 19-slice 320×320 DICOM series | ≈ 870 ms | ≈ 15 ms | ≈ 58× |
+| Switch to 3D after loading (chest CT) | 30.9 s, UI frozen | ready immediately | — |
+| 3D tissue rendering, 1200×672 | 6.8 fps | 10.2 fps | 1.5× |
+| Open `lung_053.nii.gz` | fails | 1.2 s | — |
+
+Notes:
+- The web viewer loses the last slice of the 19-slice series and reports
+  a data-length error.
+- Its 3D view does not work in the current state of that repository. The
+  shader loader was patched locally just to get these numbers.
+- Its fps comes from the browser render loop without read-back, while
+  dicom_renderer's numbers include read-back. The 3D comparison therefore
+  favours the web viewer.
+
+Micro-benchmarks (`cargo bench --workspace`), same machine:
 
 | Operation | Result |
 |---|---|
 | Load a 256×256×128 DICOM series | ≈ 50 ms |
-| Scan DICOM headers (128 files) | ≈ 17 ms |
 | Histogram of a 256³ volume | 1.5 Gvoxel/s |
 | Min/max brick grid, 256³ | 2 Gvoxel/s |
 | Ambient occlusion, 256³ | ≈ 48 ms |
-| Isosurface frame, 256², empty-space skipping off → on | 23.8 → 4.6 ms |
 
-Reproduce these numbers with `cargo bench --workspace`.
+Reproduce the end-to-end numbers with
+`make snapshot ARGS="<series> <out_dir> 1200 672"`. The tool prints load,
+upload and per-technique frame timings.
 
 ## Architecture
 
@@ -286,7 +378,8 @@ under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/):
 
 The screenshots in `docs/images/` are derivative works of that data and are
 distributed under the same CC BY-SA 4.0 licence. No image data is stored in
-this repository. To reproduce them, download `Task06_Lung.tar` from the
+this repository. The start screen is rendered by the UI test suite. To
+reproduce the others, download `Task06_Lung.tar` from the
 Decathlon, extract `imagesTr/lung_053.nii.gz`, and run:
 
 ```bash

@@ -44,7 +44,8 @@ cargo run --release -p mri-viewer -- <path>
   generate DICOM/NIfTI at run time (`crates/mri-io/tests/common`); a real
   series can be supplied with `MRI_SAMPLE_DICOM=<dir>`. The only images in
   the repository are README screenshots in `docs/images/`, rendered by
-  `examples/showcase.rs` from public, de-identified data with attribution.
+  `examples/showcase.rs` from public, de-identified data with attribution
+  (the start-screen image comes from the UI test suite and contains no data).
 - Volumes are always in the canonical LPS frame (`+x` left, `+y`
   posterior, `+z` superior); new readers must reorient into it.
 - Architecture changes update `docs/architecture.md`; decisions go to
