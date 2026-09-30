@@ -7,12 +7,12 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use dicom_renderer::ViewerApp;
 use egui_kittest::kittest::Queryable;
 use egui_kittest::Harness;
 use glam::Vec3;
 use mri_app::{ToolKind, ViewMode};
 use mri_domain::{Dims3, RenderMode, Volume};
-use mri_viewer::ViewerApp;
 
 /// Writes a sphere phantom as NIfTI and returns its path.
 fn phantom_file(dir: &Path) -> PathBuf {
@@ -172,7 +172,7 @@ fn start_screen_renders_with_recent_files() {
         return;
     };
     let dir = tempfile::tempdir().unwrap();
-    let mut recent = mri_viewer::ui::recent::RecentFiles::load(&dir.path().join("recent.txt"));
+    let mut recent = dicom_renderer::ui::recent::RecentFiles::load(&dir.path().join("recent.txt"));
     recent.record(&[PathBuf::from("/data/chest_ct/lung_053.nii.gz")]);
     recent.record(&[PathBuf::from("/data/knee_mri/series_3")]);
     let repo = Arc::new(mri_io::CompositeRepository::default());

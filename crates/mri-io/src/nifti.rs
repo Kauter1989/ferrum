@@ -314,7 +314,7 @@ pub fn write_nifti(volume: &Volume, path: &Path) -> Result<(), IoError> {
     put_f32(&mut hdr, 280, -s.x);
     put_f32(&mut hdr, 300, -s.y);
     put_f32(&mut hdr, 320, s.z);
-    let desc = b"mri-viewer export";
+    let desc = b"dicom_renderer export";
     hdr[148..148 + desc.len()].copy_from_slice(desc);
     hdr[344..348].copy_from_slice(b"n+1\0");
 

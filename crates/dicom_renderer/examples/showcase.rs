@@ -1,7 +1,7 @@
 //! Renders the README screenshots from a real dataset, headlessly.
 //!
 //! ```text
-//! cargo run --release -p mri-viewer --example showcase -- <volume> <out_dir>
+//! cargo run --release --example showcase -- <volume> <out_dir>
 //! ```
 //!
 //! Every scene is configured through the application layer and the whole
@@ -12,13 +12,13 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use dicom_renderer::ViewerApp;
 use egui_kittest::Harness;
 use glam::{Vec2, Vec3};
 use mri_app::{ViewMode, Viewer};
 use mri_domain::{
     Annotation, ClipBox, CtPreset, RenderMode, SliceAxis, SliceKey, TransferFunction, ViewPreset, WindowPreset,
 };
-use mri_viewer::ViewerApp;
 
 struct Scene {
     name: &'static str,

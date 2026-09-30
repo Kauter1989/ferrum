@@ -1,12 +1,13 @@
 [workspace]
 resolver = "2"
+default-members = ["crates/dicom_renderer"]
 members = [
     "crates/mri-domain",
     "crates/mri-processing",
     "crates/mri-io",
     "crates/mri-render",
     "crates/mri-app",
-    "crates/mri-viewer",
+    "crates/dicom_renderer",
 ]
 
 [workspace.package]

@@ -5,8 +5,8 @@ Rust desktop viewer for DICOM/NIfTI volumes (Cargo workspace).
 ## Layering — never violate
 
 ```
-mri-viewer (presentation) → mri-app (application) → mri-domain ← mri-io (data)
-                                   ↘ mri-processing, mri-render (infrastructure)
+dicom_renderer (presentation) → mri-app (application) → mri-domain ← mri-io (data)
+                                       ↘ mri-processing, mri-render (infrastructure)
 ```
 
 - `mri-domain` has no I/O, no GPU, no UI dependencies; it defines ports
@@ -14,7 +14,7 @@ mri-viewer (presentation) → mri-app (application) → mri-domain ← mri-io (d
 - `mri-app` must compile without wgpu and egui (`mri-render` is used with
   `default-features = false`); it talks to the GPU through `GpuSink`.
 - `mri-io` implements `VolumeRepository`; nothing else parses files.
-- No business logic in `mri-viewer` widgets — add a use case to `Viewer`.
+- No business logic in `dicom_renderer` widgets — add a use case to `Viewer`.
 - DICOM tags only through `dicom_dictionary_std::tags` constants — never raw
   tag literals.
 
@@ -33,7 +33,7 @@ MRI_REQUIRE_GPU=1 cargo test --workspace     # CI mode (lavapipe)
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo bench --workspace
-cargo run --release -p mri-viewer -- <path>
+cargo run --release -- <path>                 # the app is the default member
 ```
 
 ## Conventions

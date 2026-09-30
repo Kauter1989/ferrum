@@ -10,7 +10,7 @@ for the motivation.
 
 ```mermaid
 flowchart LR
-    V["mri-viewer<br/>Presentation · egui/eframe"]
+    V["dicom_renderer<br/>Presentation · egui/eframe"]
     A["mri-app<br/>Application · state · use cases · jobs · tools"]
     D["mri-domain<br/>Entities · rules · ports"]
     P["mri-processing<br/>Parallel algorithms"]
@@ -36,13 +36,13 @@ flowchart LR
 | `mri-io` | DICOM scan → series grouping → slice ordering → parallel decode; NIfTI read/write with reorientation to LPS | know about rendering or UI |
 | `mri-render` | `FrameParams` (pure), WGSL shaders, `VolumeRenderer` (feature `gpu`), `CpuRaycaster` | own application state |
 | `mri-app` | `Viewer` facade, background `JobQueue`, `ToolController`, `GpuSink` port | depend on wgpu or egui |
-| `mri-viewer` | panels, widgets, paint callbacks, dialogs; composition root | contain business logic |
+| `dicom_renderer` | panels, widgets, paint callbacks, dialogs; composition root | contain business logic |
 
 ## Data flow
 
 ```mermaid
 sequenceDiagram
-    participant UI as mri-viewer
+    participant UI as dicom_renderer
     participant App as mri-app::Viewer
     participant Jobs as JobQueue (threads)
     participant Repo as mri-io
@@ -105,7 +105,7 @@ is kept in sync by the GPU/CPU parity tests.
 |---|---|
 | `LoaderDicom.js`, `LoaderDcmDaikon.js` | `mri-io::dicom` (dicom-rs, parallel) |
 | `LoaderNifti`, `SaverNifti.js` | `mri-io::nifti` |
-| `Graphics2d.jsx` + `tools2d/*` | `mri-app::tools`, `mri-viewer::ui::slice_view`, `shaders/slice.wgsl` |
+| `Graphics2d.jsx` + `tools2d/*` | `mri-app::tools`, `dicom_renderer::ui::slice_view`, `shaders/slice.wgsl` |
 | `VolumeRenderer3d.js` + `gfx/*` + `shaders/*` | `mri-render` (`volume.wgsl`, `VolumeRenderer`) |
 | `TransFunc.js`, `transferTexture.js`, `UiHistogram.jsx` | `mri-domain::transfer`, `mri-processing::histogram`, `ui::tf_editor` |
 | `ambientTexture.js` | `mri-processing::ambient_occlusion` |
