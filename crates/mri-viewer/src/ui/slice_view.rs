@@ -4,6 +4,7 @@ use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Stroke};
 use mri_app::{InputKind, ViewMode, Viewer};
 use mri_domain::{Annotation, SliceAxis, SliceKey};
 
+use super::{theme, widgets};
 use crate::gpu_bridge::{view_ids, SliceCallback};
 
 /// Per-view interaction state.
@@ -28,8 +29,11 @@ fn e2g(p: Pos2) -> glam::Vec2 {
 /// Draws the slice of `axis` into the remaining space of `ui`.
 pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, axis: SliceAxis, state: &mut SliceViewState) {
     let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
+    let scrub_rect =
+        Rect::from_min_max(Pos2::new(rect.max.x - 30.0, rect.min.y + 40.0), Pos2::new(rect.max.x, rect.max.y - 40.0));
+    let scrub = ui.interact(scrub_rect, ui.id().with(("scrub", axis.id())), Sense::click_and_drag());
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 0.0, Color32::from_rgb(13, 13, 15));
+    painter.rect_filled(rect, 0.0, theme::CANVAS);
     let Some(dataset) = viewer.dataset() else {
         painter.text(rect.center(), Align2::CENTER_CENTER, "No data", FontId::proportional(14.0), Color32::GRAY);
         return;
@@ -59,7 +63,7 @@ pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, axis: SliceAxis, state: &mut
             ),
         )
     });
-    if response.hovered() {
+    if response.hovered() && !scrub.hovered() && !scrub.dragged() {
         if let Some(p) = pointer {
             if pressed {
                 state.pressed = true;
@@ -127,41 +131,78 @@ pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, axis: SliceAxis, state: &mut
     if let Some(a) = viewer.annotation_preview() {
         draw_annotation(&painter, &a, &to_screen, PREVIEW_COLOR);
     }
+    let (lo, hi) = view.image_rect(viewport, image_mm);
+    let img = Rect::from_min_max(g2e(e2g(rect.min) + lo), g2e(e2g(rect.min) + hi));
     if viewer.view_mode == ViewMode::Mpr {
-        let (lo, hi) = view.image_rect(viewport, image_mm);
-        let img = Rect::from_min_max(g2e(e2g(rect.min) + lo), g2e(e2g(rect.min) + hi));
         for other in SliceAxis::ALL.into_iter().filter(|a| *a != axis) {
             let mut t = glam::Vec3::splat(0.5);
             t[other.normal_axis()] = other.slice_position(&volume, viewer.slices.index(other));
             let uv = axis.uv_of_tex(t);
-            let color = axis_color(other);
+            let stroke = Stroke::new(1.0, axis_color(other).gamma_multiply(0.85));
             if axis.screen_axis(0) == other.normal_axis() {
                 let x = img.min.x + uv.x * img.width();
-                painter.line_segment([Pos2::new(x, img.min.y), Pos2::new(x, img.max.y)], Stroke::new(1.0, color));
+                painter.line_segment([Pos2::new(x, img.min.y), Pos2::new(x, img.max.y)], stroke);
             } else {
                 let y = img.min.y + uv.y * img.height();
-                painter.line_segment([Pos2::new(img.min.x, y), Pos2::new(img.max.x, y)], Stroke::new(1.0, color));
+                painter.line_segment([Pos2::new(img.min.x, y), Pos2::new(img.max.x, y)], stroke);
             }
         }
-        painter.rect_stroke(rect.shrink(1.0), 0.0, Stroke::new(2.0, axis_color(axis)), egui::StrokeKind::Inside);
     }
+    // HUD frame in the orientation's colour
+    widgets::hud_corners(&painter, rect, axis_color(axis).gamma_multiply(0.9));
+
+    // anatomical orientation markers at the image edges
+    let [l, r, t, b] = axis.edge_labels();
+    let inner = rect.shrink(18.0);
+    let mid = img.center();
+    let clampx = |x: f32| x.clamp(inner.min.x, inner.max.x);
+    let clampy = |y: f32| y.clamp(inner.min.y, inner.max.y);
+    let font = theme::hud_font(15.0);
+    let lc = theme::HUD;
+    painter.text(Pos2::new(clampx(img.min.x + 10.0), clampy(mid.y)), Align2::LEFT_CENTER, l, font.clone(), lc);
+    painter.text(Pos2::new(clampx(img.max.x - 10.0), clampy(mid.y)), Align2::RIGHT_CENTER, r, font.clone(), lc);
+    painter.text(Pos2::new(clampx(mid.x), clampy(img.min.y + 10.0)), Align2::CENTER_TOP, t, font.clone(), lc);
+    painter.text(Pos2::new(clampx(mid.x), clampy(img.max.y - 10.0)), Align2::CENTER_BOTTOM, b, font, lc);
+
+    // read-outs
+    let n = axis.slice_count(&volume);
     let w = viewer.slices.window;
-    let info = format!(
-        "{} {}/{}\nW {:.0}  L {:.0}\nZoom {:.0}%",
-        axis.label(),
-        index + 1,
-        axis.slice_count(&volume),
-        w.width,
-        w.center,
-        view.zoom * 100.0
-    );
-    painter.text(
-        rect.min + egui::vec2(8.0, 6.0),
+    widgets::hud_label(
+        &painter,
+        rect.left_top() + egui::vec2(14.0, 14.0),
         Align2::LEFT_TOP,
-        info,
-        FontId::monospace(12.0),
-        Color32::from_gray(210),
+        &format!("{}  {:>3}/{}", axis.label().to_uppercase(), index + 1, n),
+        axis_color(axis),
+        12.0,
     );
+    widgets::hud_label(
+        &painter,
+        rect.left_bottom() + egui::vec2(14.0, -14.0),
+        Align2::LEFT_BOTTOM,
+        &format!("W {:.0}  L {:.0}  ·  {:.0}%", w.width, w.center, view.zoom * 100.0),
+        theme::TEXT_DIM,
+        11.5,
+    );
+
+    // slice scrubber along the right edge
+    if n > 1 {
+        let track = Rect::from_min_max(
+            Pos2::new(rect.max.x - 20.0, rect.min.y + 48.0),
+            Pos2::new(rect.max.x - 12.0, rect.max.y - 48.0),
+        );
+        if track.height() > 40.0 {
+            let frac = index as f32 / (n - 1) as f32;
+            painter.rect_filled(track, 4.0, Color32::from_white_alpha(14));
+            let y = track.max.y - frac * track.height();
+            let filled = Rect::from_min_max(Pos2::new(track.min.x, y), track.max);
+            painter.rect_filled(filled, 4.0, axis_color(axis).gamma_multiply(0.35));
+            painter.circle_filled(Pos2::new(track.center().x, y), 6.0, axis_color(axis));
+            if let Some(p) = scrub.interact_pointer_pos() {
+                let f = ((track.max.y - p.y) / track.height()).clamp(0.0, 1.0);
+                viewer.set_slice_index(axis, (f * (n - 1) as f32).round() as u32);
+            }
+        }
+    }
 }
 
 /// Colour coding of orientations (sagittal red, coronal green, axial blue).

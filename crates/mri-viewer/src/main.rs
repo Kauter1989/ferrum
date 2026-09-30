@@ -21,7 +21,7 @@ fn main() -> eframe::Result {
     }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("MRI Viewer")
+            .with_title("dicom_renderer")
             .with_inner_size([1400.0, 900.0])
             .with_min_inner_size([800.0, 500.0])
             .with_drag_and_drop(true),
@@ -34,7 +34,10 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             let repo = Arc::new(mri_io::CompositeRepository::default());
-            Ok(Box::new(ViewerApp::new(cc.wgpu_render_state.as_ref(), repo, paths)))
+            Ok(Box::new(
+                ViewerApp::new(cc.wgpu_render_state.as_ref(), repo, paths)
+                    .with_recent(mri_viewer::ui::recent::RecentFiles::load_default()),
+            ))
         }),
     )
 }

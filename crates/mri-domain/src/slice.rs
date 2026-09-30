@@ -102,6 +102,21 @@ impl SliceAxis {
         Vec2::new(t[h], if self.vertical_flipped() { 1.0 - t[v] } else { t[v] })
     }
 
+    /// Anatomical labels at the `[left, right, top, bottom]` edges of the
+    /// displayed image, for volumes in the canonical LPS frame
+    /// (radiological convention: patient's right on screen left).
+    pub fn edge_labels(&self) -> [&'static str; 4] {
+        const NEG_POS: [(&str, &str); 3] = [("R", "L"), ("A", "P"), ("I", "S")];
+        let (h, v) = self.plane_axes();
+        let (hn, hp) = NEG_POS[h];
+        let (vn, vp) = NEG_POS[v];
+        if self.vertical_flipped() {
+            [hn, hp, vp, vn]
+        } else {
+            [hn, hp, vn, vp]
+        }
+    }
+
     /// Volume axis shown horizontally (`0`) or vertically (`1`) on screen.
     pub fn screen_axis(&self, which: usize) -> usize {
         let (h, v) = self.plane_axes();
@@ -303,6 +318,13 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn edge_labels_follow_radiological_convention() {
+        assert_eq!(SliceAxis::Axial.edge_labels(), ["R", "L", "A", "P"]);
+        assert_eq!(SliceAxis::Coronal.edge_labels(), ["R", "L", "S", "I"]);
+        assert_eq!(SliceAxis::Sagittal.edge_labels(), ["A", "P", "S", "I"]);
     }
 
     #[test]
