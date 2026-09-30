@@ -1,6 +1,6 @@
 # Build shortcuts.
 
-.PHONY: run build test test-gpu lint bench snapshot
+.PHONY: run build test test-gpu lint bench snapshot showcase
 
 run:        ## run the desktop viewer (pass ARGS=path/to/dicom)
 	cargo run --release -p mri-viewer -- $(ARGS)
@@ -23,3 +23,6 @@ bench:      ## criterion benchmarks
 
 snapshot:   ## headless PNG renders of every mode (ARGS="<input> <out_dir>")
 	cargo run --release -p mri-render --features gpu --example snapshot -- $(ARGS)
+
+showcase:   ## README screenshots from a real dataset (ARGS="<volume> <out_dir>")
+	cargo run --release -p mri-viewer --example showcase -- $(ARGS)

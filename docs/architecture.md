@@ -33,7 +33,7 @@ flowchart LR
 |---|---|---|
 | `mri-domain` | `Volume`, `WindowLevel`, `TransferFunction`, `RenderSettings`, `ClipSettings`, `OrbitCamera`, slice geometry, annotations, `VoxelMask`; the `VolumeRepository` port | do I/O, know GPUs or UI |
 | `mri-processing` | histogram, min/max bricks, ambient occlusion, filters, resampling (rayon) | own application state |
-| `mri-io` | DICOM scan → series grouping → slice ordering → parallel decode; NIfTI read/write | know about rendering or UI |
+| `mri-io` | DICOM scan → series grouping → slice ordering → parallel decode; NIfTI read/write with reorientation to LPS | know about rendering or UI |
 | `mri-render` | `FrameParams` (pure), WGSL shaders, `VolumeRenderer` (feature `gpu`), `CpuRaycaster` | own application state |
 | `mri-app` | `Viewer` facade, background `JobQueue`, `ToolController`, `GpuSink` port | depend on wgpu or egui |
 | `mri-viewer` | panels, widgets, paint callbacks, dialogs; composition root | contain business logic |
@@ -92,6 +92,7 @@ is kept in sync by the GPU/CPU parity tests.
 
 | Space | Definition |
 |---|---|
+| Patient frame | LPS for every loaded volume: `+i` patient left, `+j` posterior, `+k` superior (DICOM native; NIfTI reoriented from `sform`/`qform`) |
 | Voxel `(i, j, k)` | column, row, slice; linear index `i + j·nx + k·nx·ny` |
 | Texture `t ∈ [0,1]³` | voxel centres at `(i + 0.5)/n` |
 | Model `p` | box centred at 0, longest physical side = 1: `p = (t − ½)·extent` |

@@ -5,7 +5,18 @@ NIfTI — written in Rust. It shows 2D slices, multiplanar reconstruction
 (MPR) and GPU volume rendering, with interactive transfer functions,
 clipping, measurements and a volume eraser.
 
-![MPR layout: axial, coronal and sagittal slices with a 3D isosurface](docs/images/mpr.png)
+![MPR layout of a chest CT: axial, coronal and sagittal slices in the lung window with a 3D transfer-function rendering](docs/images/mpr.png)
+
+| | |
+|---|---|
+| ![Chest CT, transfer-function rendering of soft tissue and bone](docs/images/volume_soft_tissue.png) | ![Lungs and pulmonary vessels with the anterior chest wall clipped away](docs/images/volume_lung_vessels.png) |
+| Transfer-function DVR, *CT soft tissue + bone* preset | *CT lung vessels* preset, anterior chest wall removed with the clip box |
+| ![Rib cage as a shaded isosurface with ambient occlusion](docs/images/volume_bone.png) | ![Maximum intensity projection of the chest](docs/images/volume_mip.png) |
+| Isosurface at 300 HU with ambient occlusion; scanner table clipped | Maximum intensity projection |
+
+![Axial slice in the lung window with distance, angle, area and text annotations](docs/images/slice_measurements.png)
+
+<sub>Screenshots show the real application rendering a public chest CT — see [Sample data](#sample-data).</sub>
 
 ---
 
@@ -20,6 +31,7 @@ clipping, measurements and a volume eraser.
 - [Development](#development)
 - [Testing](#testing)
 - [Project layout](#project-layout)
+- [Sample data](#sample-data)
 - [License](#license)
 
 ## Features
@@ -31,7 +43,9 @@ clipping, measurements and a volume eraser.
 - Scans folders recursively and groups slices into series. Slices are
   sorted by their position along the plane normal, with fallbacks to
   Instance Number and Slice Location.
-- NIfTI-1 (`.nii`, `.nii.gz`) reading and export.
+- NIfTI-1 (`.nii`, `.nii.gz`) reading and export; `sform`/`qform` orientation is
+  honoured and every volume is brought into the DICOM patient frame (LPS),
+  so NIfTI and DICOM data display identically.
 - Parallel loading with progress reporting and cancellation. You pick the
   series when a folder contains more than one.
 
@@ -57,11 +71,14 @@ delete and clear them.
   - *Transfer-function* direct volume rendering.
 - Opacity, brightness and quality (sampling rate) controls.
 - Optional ambient occlusion.
-- Trackball rotation, pan, zoom and reset.
+- Trackball rotation, pan, zoom, reset, and one-click anatomical views
+  (anterior, posterior, left, right, superior, inferior).
 
 **Transfer function editor** — control points drawn over a log-scaled
 intensity histogram. Drag points, double-click to add, right-click to
-remove, and pick a colour per point. Presets are included.
+remove, and pick a colour per point. Generic presets plus CT presets
+defined in Hounsfield units (*soft tissue + bone*, *lung vessels*, *bone*)
+that adapt to the data range of the loaded scan.
 
 **Clipping**
 - View-aligned cut ("virtual knife").
@@ -209,6 +226,7 @@ make test-gpu    # same, but a missing GPU adapter fails the run (CI mode)
 make lint        # rustfmt --check + clippy -D warnings
 make bench       # criterion benchmarks
 make snapshot ARGS="<input> <out_dir>"   # headless PNG renders of every mode
+make showcase ARGS="<input> <out_dir>"   # regenerate the README screenshots
 ```
 
 Conventions:
@@ -256,6 +274,26 @@ More in [docs/testing.md](docs/testing.md).
 └── Makefile
 ```
 
+## Sample data
+
+The screenshots are rendered from case `lung_053` of the **Medical
+Segmentation Decathlon** lung task (*Task06_Lung*), a public, de-identified
+chest CT collection originating from The Cancer Imaging Archive, licensed
+under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/):
+
+> M. Antonelli, A. Reinke, S. Bakas et al. *The Medical Segmentation
+> Decathlon.* Nature Communications 13, 4128 (2022).
+
+The screenshots in `docs/images/` are derivative works of that data and are
+distributed under the same CC BY-SA 4.0 licence. No image data is stored in
+this repository. To reproduce them, download `Task06_Lung.tar` from the
+Decathlon, extract `imagesTr/lung_053.nii.gz`, and run:
+
+```bash
+make showcase ARGS="path/to/lung_053.nii.gz docs/images"
+```
+
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Source code: MIT — see [LICENSE](LICENSE).
+Screenshots in `docs/images/`: CC BY-SA 4.0 (see [Sample data](#sample-data)).

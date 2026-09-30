@@ -40,9 +40,13 @@ cargo run --release -p mri-viewer -- <path>
 
 - Every public item has a doc comment (`missing_docs` is a workspace lint).
 - No `unwrap()`/`expect()` outside tests (clippy lints).
-- Never commit patient data or image data (not even synthetic): tests
+- Never commit patient data or volume data (not even synthetic): tests
   generate DICOM/NIfTI at run time (`crates/mri-io/tests/common`); a real
-  series can be supplied with `MRI_SAMPLE_DICOM=<dir>`.
+  series can be supplied with `MRI_SAMPLE_DICOM=<dir>`. The only images in
+  the repository are README screenshots in `docs/images/`, rendered by
+  `examples/showcase.rs` from public, de-identified data with attribution.
+- Volumes are always in the canonical LPS frame (`+x` left, `+y`
+  posterior, `+z` superior); new readers must reorient into it.
 - Architecture changes update `docs/architecture.md`; decisions go to
   `docs/decisions/` as new ADRs (existing ADRs are append-only).
 - Branches: `develop` is the integration branch; use `feat/`, `fix/`,
