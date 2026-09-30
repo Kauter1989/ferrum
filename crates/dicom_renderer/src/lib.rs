@@ -1,4 +1,4 @@
-//! # mri-viewer
+//! # dicom_renderer
 //!
 //! Presentation layer: an eframe/egui desktop application on top of
 //! `mri-app`. GPU work goes through egui-wgpu paint callbacks that drive

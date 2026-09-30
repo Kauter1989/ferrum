@@ -33,4 +33,4 @@ jobs:
       - name: Benchmarks compile
         run: cargo bench --workspace --no-run
       - name: Release build
-        run: cargo build --release -p mri-viewer
+        run: cargo build --release

@@ -64,7 +64,7 @@ pub fn device_descriptor(adapter: &wgpu::Adapter) -> wgpu::DeviceDescriptor<'sta
         ..base
     };
     wgpu::DeviceDescriptor {
-        label: Some("mri-viewer device"),
+        label: Some("dicom_renderer device"),
         required_features: features,
         required_limits: limits,
         ..Default::default()

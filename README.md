@@ -107,18 +107,41 @@ DICOM attributes.
 
 ## Quick start
 
-Requirements:
-- A recent stable Rust toolchain (pinned by `rust-toolchain.toml`).
-- A GPU with Vulkan, Metal, DirectX 12 or OpenGL support.
-- On Linux: `libxkbcommon-x11` and a Vulkan/GL driver.
+**Prebuilt binary (no Rust needed).** Download the archive for your system
+(Linux x86_64, macOS Apple Silicon, Windows x86_64) from
+[Releases](https://github.com/Kauter1989/dicom_renderer/releases), unpack
+it and run `dicom_renderer`. You can also pass paths on the command line:
+
+```bash
+./dicom_renderer /path/to/dicom-folder
+```
+
+**Install with Cargo** (puts `dicom_renderer` on your `PATH`):
+
+```bash
+cargo install --git https://github.com/Kauter1989/dicom_renderer dicom_renderer
+dicom_renderer /path/to/dicom-folder
+```
+
+**From source:**
 
 ```bash
 git clone https://github.com/Kauter1989/dicom_renderer
 cd dicom_renderer
-cargo run --release -p mri-viewer -- /path/to/dicom-folder
-# or
-make run ARGS=/path/to/dicom-folder
+cargo run --release -- /path/to/dicom-folder
 ```
+
+Requirements:
+- A GPU with Vulkan, Metal, DirectX 12 or OpenGL support.
+- On Linux: `libxkbcommon-x11` and a Vulkan or GL driver. These are present
+  on most desktop installations.
+- To build from source: a stable Rust toolchain. `rust-toolchain.toml`
+  pins it, and `rustup` installs it automatically.
+
+A GPU desktop application gains nothing from Docker. The container would
+need the host's display server and GPU passed through, and on macOS and
+Windows Docker cannot reach the GPU at all. Use the prebuilt binary
+instead.
 
 You can pass folders, DICOM files or NIfTI files on the command line, drop
 them onto the window, or use **Open folder** / **Open files**.
@@ -287,7 +310,7 @@ layer compiles without any GPU or UI library.
 
 ```mermaid
 flowchart LR
-    V["mri-viewer<br/>egui UI"] --> A["mri-app<br/>state · use cases · tools · jobs"]
+    V["dicom_renderer<br/>egui UI"] --> A["mri-app<br/>state · use cases · tools · jobs"]
     V --> R["mri-render<br/>WGSL / wgpu · CPU reference"]
     V --> IO["mri-io<br/>DICOM · NIfTI"]
     A --> D["mri-domain<br/>entities · rules · ports"]
@@ -305,7 +328,7 @@ flowchart LR
 | `mri-io` | DICOM and NIfTI repositories (dicom-rs): scanning, series grouping, slice ordering, parallel decoding |
 | `mri-render` | Frame model shared by GPU and CPU, WGSL shaders, the wgpu renderer (feature `gpu`) and the CPU ray caster |
 | `mri-app` | The `Viewer` facade: loading jobs, slice and 3D state, 2D tool state machines, eraser with undo, and GPU synchronisation through the `GpuSink` port |
-| `mri-viewer` | eframe/egui application: panels, widgets, paint callbacks, dialogs |
+| `dicom_renderer` | eframe/egui application: panels, widgets, paint callbacks, dialogs |
 
 Details: [docs/architecture.md](docs/architecture.md) ·
 decisions: [docs/decisions/](docs/decisions/).
@@ -316,6 +339,7 @@ decisions: [docs/decisions/](docs/decisions/).
 make test        # all tests; GPU tests are skipped without an adapter
 make test-gpu    # same, but a missing GPU adapter fails the run (CI mode)
 make lint        # rustfmt --check + clippy -D warnings
+make install     # install the dicom_renderer binary into ~/.cargo/bin
 make bench       # criterion benchmarks
 make snapshot ARGS="<input> <out_dir>"   # headless PNG renders of every mode
 make showcase ARGS="<input> <out_dir>"   # regenerate the README screenshots
@@ -360,9 +384,9 @@ More in [docs/testing.md](docs/testing.md).
 │   ├── mri-io/           # DICOM / NIfTI repositories
 │   ├── mri-render/       # shaders, GPU renderer, CPU reference
 │   ├── mri-app/          # application layer
-│   └── mri-viewer/       # desktop application (binary: mri-viewer)
+│   └── dicom_renderer/   # desktop application (binary: dicom_renderer)
 ├── docs/                 # architecture, testing, ADRs
-├── .github/workflows/    # CI: fmt, clippy, tests on lavapipe, release build
+├── .github/workflows/    # CI (fmt, clippy, tests on lavapipe) and release archives
 └── Makefile
 ```
 

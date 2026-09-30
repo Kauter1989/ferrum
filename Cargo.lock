@@ -925,6 +925,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "dicom_renderer"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "egui",
+ "egui-phosphor",
+ "egui-wgpu",
+ "egui_kittest",
+ "env_logger",
+ "glam",
+ "image",
+ "log",
+ "mri-app",
+ "mri-domain",
+ "mri-io",
+ "mri-processing",
+ "mri-render",
+ "rfd",
+ "tempfile",
+ "wgpu",
+]
+
+[[package]]
 name = "dispatch"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2385,29 +2408,6 @@ dependencies = [
  "proptest",
  "rayon",
  "thiserror 2.0.21",
- "wgpu",
-]
-
-[[package]]
-name = "mri-viewer"
-version = "0.1.0"
-dependencies = [
- "eframe",
- "egui",
- "egui-phosphor",
- "egui-wgpu",
- "egui_kittest",
- "env_logger",
- "glam",
- "image",
- "log",
- "mri-app",
- "mri-domain",
- "mri-io",
- "mri-processing",
- "mri-render",
- "rfd",
- "tempfile",
  "wgpu",
 ]
 
