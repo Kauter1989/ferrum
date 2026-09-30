@@ -28,6 +28,7 @@ env_logger.workspace = true
 eframe.workspace = true
 egui.workspace = true
 egui-wgpu.workspace = true
+egui-phosphor = { version = "0.14", default-features = false, features = ["light"] }
 wgpu.workspace = true
 rfd.workspace = true
 image.workspace = true

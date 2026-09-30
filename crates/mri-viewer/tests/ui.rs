@@ -55,8 +55,9 @@ fn welcome_screen_without_data() {
         .with_size(egui::vec2(1000.0, 700.0))
         .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
     h.run();
-    h.get_by_label("📂 Open folder");
-    assert!(h.query_by_label("Rendering").is_none(), "settings hidden without data");
+    h.get_by_label("Open folder");
+    h.get_by_label("Open files");
+    assert!(h.query_by_label("Settings panel").is_none(), "docks hidden without data");
 }
 
 #[test]
@@ -84,7 +85,13 @@ fn switching_modes_and_tools_through_the_ui() {
     h.run();
     assert_eq!(h.state().viewer.view_mode, ViewMode::Mpr);
 
-    h.get_by_label("ℹ Info").click();
+    h.get_by_label("Settings panel").click();
+    h.run();
+    assert!(h.query_by_label("Isosurface").is_none(), "panel hidden");
+    h.get_by_label("Settings panel").click();
+    h.run();
+
+    h.get_by_label("Info").click();
     h.run();
     h.get_by_label("Series information");
 }
@@ -157,4 +164,32 @@ fn every_view_mode_renders_the_volume() {
         eprintln!("{name}: {:.1}% lit", lit * 100.0);
         assert!(lit > 0.03, "{name}: view looks empty ({:.2}% lit)", lit * 100.0);
     }
+}
+
+#[test]
+fn start_screen_renders_with_recent_files() {
+    let Some(rs) = gpu_render_state() else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let mut recent = mri_viewer::ui::recent::RecentFiles::load(&dir.path().join("recent.txt"));
+    recent.record(&[PathBuf::from("/data/chest_ct/lung_053.nii.gz")]);
+    recent.record(&[PathBuf::from("/data/knee_mri/series_3")]);
+    let repo = Arc::new(mri_io::CompositeRepository::default());
+    let app = ViewerApp::new(Some(&rs), repo, vec![]).with_recent(recent);
+    let renderer = egui_kittest::wgpu::WgpuTestRenderer::from_render_state(rs.clone());
+    let rs2 = rs.clone();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1600.0, 960.0))
+        .renderer(renderer)
+        .build_ui_state(move |ui, app: &mut ViewerApp| app.show(ui, Some(&rs2)), app);
+    h.run();
+    h.get_by_label("Open folder");
+    let img = h.render().expect("render");
+    if let Some(d) = std::env::var_os("MRI_SNAPSHOT_DIR").map(PathBuf::from) {
+        std::fs::create_dir_all(&d).unwrap();
+        img.save(d.join("start_screen.png")).unwrap();
+    }
+    let whole = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1600.0, 960.0));
+    assert!(lit_fraction(&img, whole) > 0.005, "start screen is empty");
 }

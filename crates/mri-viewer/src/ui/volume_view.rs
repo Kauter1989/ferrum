@@ -5,6 +5,7 @@ use egui::{Align2, Color32, FontId, Pos2, Sense, Stroke};
 use glam::{UVec2, Vec2};
 use mri_app::Viewer;
 
+use super::{theme, widgets};
 use crate::gpu_bridge::{view_ids, VolumeCallback};
 
 /// Per-view interaction state.
@@ -25,7 +26,7 @@ fn ndc(rect: egui::Rect, p: Pos2) -> Vec2 {
 pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut VolumeViewState) {
     let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 0.0, Color32::BLACK);
+    painter.rect_filled(rect, 0.0, theme::CANVAS);
     if viewer.dataset().is_none() {
         painter.text(rect.center(), Align2::CENTER_CENTER, "No data", FontId::proportional(14.0), Color32::GRAY);
         return;
@@ -87,20 +88,56 @@ pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut VolumeViewState)
     if viewer.is_computing() {
         info.push_str(" · computing…");
     }
-    painter.text(
-        rect.min + egui::vec2(8.0, 6.0),
+    widgets::hud_corners(&painter, rect, theme::HUD.gamma_multiply(0.55));
+    widgets::hud_label(
+        &painter,
+        rect.left_top() + egui::vec2(14.0, 14.0),
         Align2::LEFT_TOP,
-        info,
-        FontId::monospace(12.0),
-        Color32::from_gray(210),
+        &info.to_uppercase(),
+        theme::HUD,
+        12.0,
     );
+    orientation_gizmo(&painter, rect.left_bottom() + egui::vec2(58.0, -58.0), 38.0, &viewer.volume.camera);
     if erasing {
         if let Some(p) = response.hover_pos() {
             // approximate on-screen brush radius
             let d = viewer.dataset().map(|d| d.volume.physical_size().max_element()).unwrap_or(1.0);
             let h = 2.0 * viewer.volume.camera.distance * (viewer.volume.camera.fov_y * 0.5).tan();
             let r = viewer.volume.brush.radius_mm / d / h * rect.height();
-            painter.circle_stroke(p, r.max(2.0), Stroke::new(1.5, Color32::from_rgb(255, 90, 90)));
+            painter.circle_stroke(p, r.max(2.0), Stroke::new(1.5, theme::ACCENT));
+        }
+    }
+}
+
+/// Axis triad showing the patient orientation (LPS) as seen by the camera.
+fn orientation_gizmo(p: &egui::Painter, center: Pos2, radius: f32, camera: &mri_domain::OrbitCamera) {
+    p.circle_filled(center, radius + 12.0, Color32::from_black_alpha(120));
+    p.circle_stroke(center, radius + 12.0, Stroke::new(1.0, theme::HUD.gamma_multiply(0.25)));
+    let (right, up, view) = (camera.right(), camera.up(), camera.view_dir());
+    let axes = [
+        (glam::Vec3::X, "L", "R", Color32::from_rgb(235, 90, 90)),
+        (glam::Vec3::Y, "P", "A", Color32::from_rgb(100, 210, 110)),
+        (glam::Vec3::Z, "S", "I", Color32::from_rgb(95, 155, 255)),
+    ];
+    // draw far axes first so nearer ones overlap them
+    let mut items: Vec<(f32, egui::Vec2, &str, Color32, bool)> = Vec::new();
+    for (a, pos, neg, c) in axes {
+        for (dir, label, positive) in [(a, pos, true), (-a, neg, false)] {
+            let screen = egui::vec2(dir.dot(right), -dir.dot(up)) * radius;
+            items.push((dir.dot(view), screen, label, c, positive));
+        }
+    }
+    items.sort_by(|x, y| y.0.total_cmp(&x.0));
+    for (depth, v, label, c, positive) in items {
+        let fade = if depth > 0.2 { 0.45 } else { 1.0 };
+        let tip = center + v;
+        if positive {
+            p.line_segment([center, tip], Stroke::new(2.0, c.gamma_multiply(fade)));
+            p.circle_filled(tip, 8.0, c.gamma_multiply(fade));
+            p.text(tip, Align2::CENTER_CENTER, label, theme::hud_font(10.5), Color32::BLACK);
+        } else {
+            p.circle_stroke(tip, 6.0, Stroke::new(1.0, c.gamma_multiply(0.6 * fade)));
+            p.text(tip, Align2::CENTER_CENTER, label, theme::hud_font(9.0), c.gamma_multiply(0.8 * fade));
         }
     }
 }
