@@ -1,6 +1,6 @@
 # Development plan
 
-This is the working plan for dicom_renderer. Each stage groups features
+This is the working plan for FERRUM. Each stage groups features
 as user stories with acceptance criteria. Status legend:
 ✅ done · 🚧 in progress · 📋 planned.
 
@@ -22,9 +22,9 @@ Personas:
 
 | # | User story | Acceptance criteria |
 |---|---|---|
-| 1.1 | As a **developer**, I want a layered workspace (domain, processing, io, render, app, viewer) so that I can change the UI, file formats or GPU backend independently. | `mri-domain` has no I/O/GPU/UI dependencies. `mri-app` compiles without wgpu and egui. Dependencies point inward (see `docs/architecture.md`). |
+| 1.1 | As a **developer**, I want a layered workspace (domain, processing, io, render, app, viewer) so that I can change the UI, file formats or GPU backend independently. | `ferrum-domain` has no I/O/GPU/UI dependencies. `ferrum-app` compiles without wgpu and egui. Dependencies point inward (see `docs/architecture.md`). |
 | 1.2 | As a **developer**, I want storage and GPU access behind ports (`VolumeRepository`, `GpuSink`) so that use cases can be tested without files or a graphics card. | Application tests run against an in-memory repository and a recording GPU sink. |
-| 1.3 | As a **developer**, I want CI that checks formatting, lints, tests on a software GPU and a release build so that regressions are caught before merge. | `.github/workflows/ci.yml` runs fmt, clippy `-D warnings`, `MRI_REQUIRE_GPU=1` tests on lavapipe, and a release build. |
+| 1.3 | As a **developer**, I want CI that checks formatting, lints, tests on a software GPU and a release build so that regressions are caught before merge. | `.github/workflows/ci.yml` runs fmt, clippy `-D warnings`, `FERRUM_REQUIRE_GPU=1` tests on lavapipe, and a release build. |
 | 1.4 | As a **developer**, I want recorded architecture decisions so that the reasons behind the design survive. | ADRs in `docs/decisions/` (Rust + wgpu + egui; canonical LPS frame). |
 
 ## Stage 2 — Loading data ✅

@@ -8,14 +8,14 @@ run:        ## run the desktop viewer (pass ARGS=path/to/dicom)
 build:      ## release build of the viewer
 	cargo build --release
 
-install:    ## install the dicom_renderer binary into ~/.cargo/bin
-	cargo install --path crates/dicom_renderer --locked
+install:    ## install the ferrum binary into ~/.cargo/bin
+	cargo install --path crates/ferrum --locked
 
 test:       ## full test suite (GPU tests skip without an adapter)
 	cargo test --workspace
 
 test-gpu:   ## full test suite, failing if no GPU/lavapipe adapter exists
-	MRI_REQUIRE_GPU=1 cargo test --workspace
+	FERRUM_REQUIRE_GPU=1 cargo test --workspace
 
 lint:       ## rustfmt + clippy with warnings as errors
 	cargo fmt --all -- --check
@@ -25,7 +25,7 @@ bench:      ## criterion benchmarks
 	cargo bench --workspace
 
 snapshot:   ## headless PNG renders of every mode (ARGS="<input> <out_dir>")
-	cargo run --release -p mri-render --features gpu --example snapshot -- $(ARGS)
+	cargo run --release -p ferrum-render --features gpu --example snapshot -- $(ARGS)
 
 showcase:   ## README screenshots from a real dataset (ARGS="<volume> <out_dir>")
 	cargo run --release --example showcase -- $(ARGS)

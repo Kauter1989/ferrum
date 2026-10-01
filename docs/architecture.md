@@ -10,12 +10,12 @@ for the motivation.
 
 ```mermaid
 flowchart LR
-    V["dicom_renderer<br/>Presentation · egui/eframe"]
-    A["mri-app<br/>Application · state · use cases · jobs · tools"]
-    D["mri-domain<br/>Entities · rules · ports"]
-    P["mri-processing<br/>Parallel algorithms"]
-    R["mri-render<br/>WGSL/wgpu + CPU reference"]
-    IO["mri-io<br/>DICOM · NIfTI repositories"]
+    V["ferrum<br/>Presentation · egui/eframe"]
+    A["ferrum-app<br/>Application · state · use cases · jobs · tools"]
+    D["ferrum-domain<br/>Entities · rules · ports"]
+    P["ferrum-processing<br/>Parallel algorithms"]
+    R["ferrum-render<br/>WGSL/wgpu + CPU reference"]
+    IO["ferrum-io<br/>DICOM · NIfTI repositories"]
 
     V --> A
     V --> R
@@ -31,21 +31,21 @@ flowchart LR
 
 | Crate | Responsibility | Must not |
 |---|---|---|
-| `mri-domain` | `Volume`, `WindowLevel`, `TransferFunction`, `RenderSettings`, `ClipSettings`, `OrbitCamera`, slice geometry, annotations, `VoxelMask`; the `VolumeRepository` port | do I/O, know GPUs or UI |
-| `mri-processing` | histogram, min/max bricks, ambient occlusion, filters, resampling (rayon) | own application state |
-| `mri-io` | DICOM scan → series grouping → slice ordering → parallel decode; NIfTI read/write with reorientation to LPS | know about rendering or UI |
-| `mri-render` | `FrameParams` (pure), WGSL shaders, `VolumeRenderer` (feature `gpu`), `CpuRaycaster` | own application state |
-| `mri-app` | `Viewer` facade, background `JobQueue`, `ToolController`, `GpuSink` port | depend on wgpu or egui |
-| `dicom_renderer` | panels, widgets, paint callbacks, dialogs; composition root | contain business logic |
+| `ferrum-domain` | `Volume`, `WindowLevel`, `TransferFunction`, `RenderSettings`, `ClipSettings`, `OrbitCamera`, slice geometry, annotations, `VoxelMask`; the `VolumeRepository` port | do I/O, know GPUs or UI |
+| `ferrum-processing` | histogram, min/max bricks, ambient occlusion, filters, resampling (rayon) | own application state |
+| `ferrum-io` | DICOM scan → series grouping → slice ordering → parallel decode; NIfTI read/write with reorientation to LPS | know about rendering or UI |
+| `ferrum-render` | `FrameParams` (pure), WGSL shaders, `VolumeRenderer` (feature `gpu`), `CpuRaycaster` | own application state |
+| `ferrum-app` | `Viewer` facade, background `JobQueue`, `ToolController`, `GpuSink` port | depend on wgpu or egui |
+| `ferrum` | panels, widgets, paint callbacks, dialogs; composition root | contain business logic |
 
 ## Data flow
 
 ```mermaid
 sequenceDiagram
-    participant UI as dicom_renderer
-    participant App as mri-app::Viewer
+    participant UI as ferrum
+    participant App as ferrum-app::Viewer
     participant Jobs as JobQueue (threads)
-    participant Repo as mri-io
+    participant Repo as ferrum-io
     participant GPU as VolumeRenderer
 
     UI->>App: open_paths(paths)
@@ -85,7 +85,7 @@ sequenceDiagram
    dynamic resolution (reduced while rotating) and blitted into egui.
    2D slices sample the same 3D texture directly in the egui pass.
 
-The CPU renderer (`mri-render/src/cpu/raycast.rs`) mirrors every step and
+The CPU renderer (`ferrum-render/src/cpu/raycast.rs`) mirrors every step and
 is kept in sync by the GPU/CPU parity tests.
 
 ## Coordinate systems
@@ -103,12 +103,12 @@ is kept in sync by the GPU/CPU parity tests.
 
 | Earlier web viewer | This workspace |
 |---|---|
-| `LoaderDicom.js`, `LoaderDcmDaikon.js` | `mri-io::dicom` (dicom-rs, parallel) |
-| `LoaderNifti`, `SaverNifti.js` | `mri-io::nifti` |
-| `Graphics2d.jsx` + `tools2d/*` | `mri-app::tools`, `dicom_renderer::ui::slice_view`, `shaders/slice.wgsl` |
-| `VolumeRenderer3d.js` + `gfx/*` + `shaders/*` | `mri-render` (`volume.wgsl`, `VolumeRenderer`) |
-| `TransFunc.js`, `transferTexture.js`, `UiHistogram.jsx` | `mri-domain::transfer`, `mri-processing::histogram`, `ui::tf_editor` |
-| `ambientTexture.js` | `mri-processing::ambient_occlusion` |
-| `Eraser.js` | `mri-domain::mask`, `Viewer::erase_at` |
-| `imgproc/Gauss.js`, `Sobel.js` | `mri-processing::filters` |
+| `LoaderDicom.js`, `LoaderDcmDaikon.js` | `ferrum-io::dicom` (dicom-rs, parallel) |
+| `LoaderNifti`, `SaverNifti.js` | `ferrum-io::nifti` |
+| `Graphics2d.jsx` + `tools2d/*` | `ferrum-app::tools`, `ferrum::ui::slice_view`, `shaders/slice.wgsl` |
+| `VolumeRenderer3d.js` + `gfx/*` + `shaders/*` | `ferrum-render` (`volume.wgsl`, `VolumeRenderer`) |
+| `TransFunc.js`, `transferTexture.js`, `UiHistogram.jsx` | `ferrum-domain::transfer`, `ferrum-processing::histogram`, `ui::tf_editor` |
+| `ambientTexture.js` | `ferrum-processing::ambient_occlusion` |
+| `Eraser.js` | `ferrum-domain::mask`, `Viewer::erase_at` |
+| `imgproc/Gauss.js`, `Sobel.js` | `ferrum-processing::filters` |
 | TF.js segmentation, ROI palettes | out of scope |
