@@ -384,7 +384,8 @@ flowchart LR
 | `ferrum` | eframe/egui application: panels, widgets, paint callbacks, dialogs |
 
 Extension points and the out-of-process engine protocol:
-[docs/engine-protocol.md](docs/engine-protocol.md).
+[docs/engine-protocol.md](docs/engine-protocol.md). FERRUM as a skill for
+AI agents in medical harnesses (design): [docs/agent-skill.md](docs/agent-skill.md).
 Details: [docs/architecture.md](docs/architecture.md) ·
 decisions: [docs/decisions/](docs/decisions/).
 
