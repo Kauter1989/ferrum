@@ -43,7 +43,7 @@ fn bench(c: &mut Criterion) {
         let mut s = RenderSettings::default();
         s.mode = mode;
         let p = FrameParams::new(&v, &cam, &s, &ClipSettings::default(), Vec2::splat(128.0), 0, None);
-        let scene = CpuScene { volume: &v, mask: None, ao: None, lut: &lut, occupancy: None };
+        let scene = CpuScene { volume: &v, mask: None, ao: None, lut: &lut, occupancy: None, segments: None };
         g.bench_function(format!("cpu_128px_{mode:?}"), |b| b.iter(|| CpuRaycaster::new(scene, &p).render(128, 128)));
     }
     if let Ok(ctx) = GpuContext::headless() {

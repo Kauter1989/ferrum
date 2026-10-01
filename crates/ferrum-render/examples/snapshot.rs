@@ -82,6 +82,7 @@ fn main() {
         axis: axis.id(),
         nearest: false,
         background: [0.0, 0.0, 0.0, 1.0],
+        segments: false,
     };
     r.render_slice_image(&ctx.device, &ctx.queue, &sp, size).unwrap();
     let t = Instant::now();

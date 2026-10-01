@@ -8,12 +8,14 @@
 
 use ferrum_domain::clip::ClipSettings;
 use ferrum_domain::color::unit_to_u8;
-use ferrum_domain::{Dims3, Ray, RenderMode, Rgba8, Volume, VoxelMask};
+use ferrum_domain::{Dims3, LabelMap, Ray, RenderMode, Rgba8, Volume, VoxelMask};
 use ferrum_processing::AmbientOcclusion;
 use glam::{Vec2, Vec3, Vec4};
 use rayon::prelude::*;
 
-use crate::frame::{pixel_jitter, FrameParams, EARLY_EXIT_ALPHA, MAX_STEPS, REFINE_STEPS, TISSUE_DENSITY_SCALE};
+use crate::frame::{
+    pixel_jitter, FrameParams, EARLY_EXIT_ALPHA, MAX_STEPS, REFINE_STEPS, SEGMENT_AMBIENT, TISSUE_DENSITY_SCALE,
+};
 
 /// Data sampled by the CPU renderer (mirrors the GPU bindings).
 #[derive(Clone, Copy)]
@@ -28,6 +30,36 @@ pub struct CpuScene<'a> {
     pub lut: &'a [Rgba8],
     /// Optional brick occupancy (for empty-space skipping parity tests).
     pub occupancy: Option<&'a [u8]>,
+    /// Optional segment overlay (drawn when `FrameParams::segments` is set).
+    pub segments: Option<SegmentLayer<'a>>,
+}
+
+/// Label map and its colour table (mirrors the GPU label and LUT textures).
+#[derive(Clone, Copy)]
+pub struct SegmentLayer<'a> {
+    /// Labels on the volume grid.
+    pub labels: &'a LabelMap,
+    /// RGBA per label value; alpha is the opacity, `0` hides the label.
+    pub lut: &'a [Rgba8; 256],
+}
+
+/// Front-to-back compositing state of the segment overlay along one ray.
+#[derive(Default)]
+struct Overlay {
+    acc: Vec3,
+    alpha: f32,
+    prev: u8,
+}
+
+impl Overlay {
+    /// Composites a segment hit; returns `true` when the ray is saturated.
+    fn add(&mut self, hit: Option<Vec4>) -> bool {
+        if let Some(c) = hit {
+            self.acc += (1.0 - self.alpha) * c.w * c.truncate();
+            self.alpha += (1.0 - self.alpha) * c.w;
+        }
+        hit.is_some() && self.alpha > EARLY_EXIT_ALPHA
+    }
 }
 
 /// Trilinear sampling of a grid with clamp-to-edge, identical to GPU linear
@@ -99,6 +131,63 @@ impl<'a> CpuRaycaster<'a> {
         } else {
             -g / len
         }
+    }
+
+    fn label_at(&self, layer: &SegmentLayer<'_>, p: Vec3) -> u8 {
+        let d = layer.labels.dims();
+        let v = (self.to_tex(p) * d.as_vec3()).floor();
+        let i = (v.x as i64).clamp(0, i64::from(d.x) - 1) as u32;
+        let j = (v.y as i64).clamp(0, i64::from(d.y) - 1) as u32;
+        let k = (v.z as i64).clamp(0, i64::from(d.z) - 1) as u32;
+        layer.labels.data()[d.index(i, j, k)]
+    }
+
+    fn mask_visible(&self, p: Vec3) -> bool {
+        self.scene.mask.is_none_or(|m| {
+            let d = m.dims();
+            trilinear(d, self.to_tex(p), |i, j, k| f32::from(m.data()[d.index(i, j, k)]) / 255.0) >= 0.5
+        })
+    }
+
+    fn seg_normal(&self, layer: &SegmentLayer<'_>, p: Vec3, lbl: u8, dir: Vec3) -> Vec3 {
+        let d = self.p.extent / layer.labels.dims().as_vec3();
+        let ind = |q: Vec3| if self.label_at(layer, q) == lbl { 1.0 } else { 0.0 };
+        let g = Vec3::new(
+            (ind(p + Vec3::new(d.x, 0.0, 0.0)) - ind(p - Vec3::new(d.x, 0.0, 0.0))) / d.x,
+            (ind(p + Vec3::new(0.0, d.y, 0.0)) - ind(p - Vec3::new(0.0, d.y, 0.0))) / d.y,
+            (ind(p + Vec3::new(0.0, 0.0, d.z)) - ind(p - Vec3::new(0.0, 0.0, d.z))) / d.z,
+        );
+        let len = g.length();
+        if len < 1e-6 {
+            -dir
+        } else {
+            -g / len
+        }
+    }
+
+    /// Shaded segment colour and opacity to composite at `p` (mirrors
+    /// `seg_hit` in the shader); `prev` is the previous sample's label.
+    fn seg_hit(&self, p: Vec3, dir: Vec3, prev: &mut u8) -> Option<Vec4> {
+        let layer = self.scene.segments.filter(|_| self.p.segments)?;
+        let mut lbl = self.label_at(&layer, p);
+        if lbl != 0 && !self.mask_visible(p) {
+            lbl = 0;
+        }
+        if lbl == *prev {
+            return None;
+        }
+        *prev = lbl;
+        if lbl == 0 {
+            return None;
+        }
+        let c = Vec4::from_array(layer.lut[usize::from(lbl)].map(|b| f32::from(b) / 255.0));
+        if c.w <= 0.0 {
+            return None;
+        }
+        let n = self.seg_normal(&layer, p, lbl, dir);
+        let diff = n.dot(-self.p.light_dir).max(0.0);
+        let shade = SEGMENT_AMBIENT + (1.0 - SEGMENT_AMBIENT) * diff;
+        Some((c.truncate() * shade).extend(c.w))
     }
 
     fn ambient_occlusion(&self, p: Vec3) -> f32 {
@@ -175,7 +264,8 @@ impl<'a> CpuRaycaster<'a> {
         let step = self.p.step;
         let (low, high, surf) = (s.tissue.low, s.tissue.high, s.tissue.surface);
         let l = -self.p.light_dir;
-        let (mut acc, mut alpha, mut surface) = (Vec3::ZERO, 0.0f32, Vec3::ZERO);
+        let (mut acc, mut surface) = (Vec3::ZERO, Vec3::ZERO);
+        let mut o = Overlay::default();
         let mut t = base;
         for _ in 0..MAX_STEPS {
             if t > seg.t1 {
@@ -187,6 +277,10 @@ impl<'a> CpuRaycaster<'a> {
                 continue;
             }
             let p = eye + dir * t;
+            let hit = self.seg_hit(p, dir, &mut o.prev);
+            if o.add(hit) {
+                break;
+            }
             let v = self.density(p);
             if v > surf {
                 let th = self.refine(eye, dir, (t - step).max(seg.t0), t, surf);
@@ -202,19 +296,22 @@ impl<'a> CpuRaycaster<'a> {
                 let c = Vec3::from(s.tissue_color_low.to_array())
                     .lerp(Vec3::from(s.tissue_color_high.to_array()), ((v - low) / w.max(1e-6)).clamp(0.0, 1.0))
                     * lit;
-                acc += (1.0 - alpha) * a * c;
-                alpha += (1.0 - alpha) * a;
-                if alpha > EARLY_EXIT_ALPHA {
+                acc += (1.0 - o.alpha) * a * c;
+                o.alpha += (1.0 - o.alpha) * a;
+                if o.alpha > EARLY_EXIT_ALPHA {
                     break;
                 }
             }
             t += step;
         }
-        acc * (2.0 * s.brightness) + (1.0 - alpha) * surface
+        acc * (2.0 * s.brightness) + o.acc + (1.0 - o.alpha) * surface
     }
 
-    fn first_iso_hit(&self, eye: Vec3, dir: Vec3, seg: &Segment, base: f32, thr: f32) -> Option<f32> {
+    /// Isosurface march: the refined hit (if any) and the segment overlay
+    /// composited in front of it.
+    fn march_iso(&self, eye: Vec3, dir: Vec3, seg: &Segment, base: f32, thr: f32) -> (Option<f32>, Overlay) {
         let step = self.p.step;
+        let mut o = Overlay::default();
         let mut t = base;
         for _ in 0..MAX_STEPS {
             if t > seg.t1 {
@@ -225,17 +322,23 @@ impl<'a> CpuRaycaster<'a> {
                 t = nt;
                 continue;
             }
-            if self.density(eye + dir * t) > thr {
-                return Some(self.refine(eye, dir, (t - step).max(seg.t0), t, thr));
+            let p = eye + dir * t;
+            let hit = self.seg_hit(p, dir, &mut o.prev);
+            if o.add(hit) {
+                break;
+            }
+            if self.density(p) > thr {
+                return (Some(self.refine(eye, dir, (t - step).max(seg.t0), t, thr)), o);
             }
             t += step;
         }
-        None
+        (None, o)
     }
 
-    fn march_mip(&self, eye: Vec3, dir: Vec3, seg: &Segment, base: f32) -> (f32, f32) {
+    fn march_mip(&self, eye: Vec3, dir: Vec3, seg: &Segment, base: f32) -> (f32, f32, Overlay) {
         let step = self.p.step;
         let (mut mx, mut t_max) = (0.0f32, seg.t0);
+        let mut o = Overlay::default();
         let mut t = base;
         for _ in 0..MAX_STEPS {
             if t > seg.t1 {
@@ -246,14 +349,19 @@ impl<'a> CpuRaycaster<'a> {
                 t = nt;
                 continue;
             }
-            let v = self.density(eye + dir * t);
+            let p = eye + dir * t;
+            let hit = self.seg_hit(p, dir, &mut o.prev);
+            if o.add(hit) {
+                break;
+            }
+            let v = self.density(p);
             if v > mx {
                 mx = v;
                 t_max = t;
             }
             t += step;
         }
-        (mx, t_max)
+        (mx, t_max, o)
     }
 
     /// Linear lookup in the baked transfer function (matches GPU sampling).
@@ -277,7 +385,8 @@ impl<'a> CpuRaycaster<'a> {
         let step = self.p.step;
         let l = -self.p.light_dir;
         let exponent = step / ferrum_domain::RenderSettings::REFERENCE_STEP;
-        let (mut acc, mut alpha, mut first) = (Vec3::ZERO, 0.0f32, None);
+        let (mut acc, mut first) = (Vec3::ZERO, None);
+        let mut o = Overlay::default();
         let mut t = base;
         for _ in 0..MAX_STEPS {
             if t > seg.t1 {
@@ -289,24 +398,28 @@ impl<'a> CpuRaycaster<'a> {
                 continue;
             }
             let p = eye + dir * t;
+            let hit = self.seg_hit(p, dir, &mut o.prev);
+            if o.add(hit) {
+                break;
+            }
             let c = self.tf_lookup(self.density(p));
             let a0 = (c.w * s.opacity * 2.0).min(0.999);
             if a0 > 0.0 {
                 let a = 1.0 - (1.0 - a0).powf(exponent);
                 let n = self.normal_at(p, dir);
                 let lit = 0.5 * n.dot(l).max(0.0) + 0.5;
-                acc += (1.0 - alpha) * a * c.truncate() * lit;
-                alpha += (1.0 - alpha) * a;
-                if first.is_none() && alpha > 0.05 {
+                acc += (1.0 - o.alpha) * a * c.truncate() * lit;
+                o.alpha += (1.0 - o.alpha) * a;
+                if first.is_none() && o.alpha > 0.05 {
                     first = Some(t);
                 }
-                if alpha > EARLY_EXIT_ALPHA {
+                if o.alpha > EARLY_EXIT_ALPHA {
                     break;
                 }
             }
             t += step;
         }
-        (acc * (2.0 * s.brightness), first)
+        (acc * (2.0 * s.brightness) + o.acc, first)
     }
 
     fn primary_ray(&self, ndc: Vec2) -> (Vec3, Vec3) {
@@ -326,13 +439,13 @@ impl<'a> CpuRaycaster<'a> {
         let s = &self.p.settings;
         let mut rgb = match s.mode {
             RenderMode::Tissue => self.march_tissue(eye, dir, &seg, base),
-            RenderMode::Isosurface => self
-                .first_iso_hit(eye, dir, &seg, base, s.iso_threshold)
-                .map(|t| self.shade_surface(eye + dir * t, dir))
-                .unwrap_or(Vec3::ZERO),
+            RenderMode::Isosurface => {
+                let (hit, o) = self.march_iso(eye, dir, &seg, base, s.iso_threshold);
+                o.acc + (1.0 - o.alpha) * hit.map_or(Vec3::ZERO, |t| self.shade_surface(eye + dir * t, dir))
+            }
             RenderMode::Mip => {
-                let (mx, _) = self.march_mip(eye, dir, &seg, base);
-                mx * Vec3::from(s.surface_color_lit.to_array()) * (2.0 * s.brightness)
+                let (mx, _, o) = self.march_mip(eye, dir, &seg, base);
+                o.acc + (1.0 - o.alpha) * mx * Vec3::from(s.surface_color_lit.to_array()) * (2.0 * s.brightness)
             }
             RenderMode::TransferFunction => self.march_tf(eye, dir, &seg, base).0,
         };
@@ -362,8 +475,8 @@ impl<'a> CpuRaycaster<'a> {
         let base = seg.t0;
         let s = &self.p.settings;
         let t = match s.mode {
-            RenderMode::Isosurface => self.first_iso_hit(eye, dir, &seg, base, s.iso_threshold),
-            RenderMode::Tissue => self.first_iso_hit(eye, dir, &seg, base, s.tissue.low.max(1e-3)),
+            RenderMode::Isosurface => self.march_iso(eye, dir, &seg, base, s.iso_threshold).0,
+            RenderMode::Tissue => self.march_iso(eye, dir, &seg, base, s.tissue.low.max(1e-3)).0,
             RenderMode::Mip => Some(self.march_mip(eye, dir, &seg, base)).filter(|m| m.0 > 0.0).map(|m| m.1),
             RenderMode::TransferFunction => self.march_tf(eye, dir, &seg, base).1,
         }?;
@@ -420,7 +533,10 @@ mod tests {
         let v = sphere(24);
         let lut = TransferFunction::legacy_default().bake(256);
         let p = params(&v, RenderMode::Isosurface);
-        let r = CpuRaycaster::new(CpuScene { volume: &v, mask: None, ao: None, lut: &lut, occupancy: None }, &p);
+        let r = CpuRaycaster::new(
+            CpuScene { volume: &v, mask: None, ao: None, lut: &lut, occupancy: None, segments: None },
+            &p,
+        );
         let img = r.render(32, 32);
         assert!(img[16 * 32 + 16][0] > 60, "{:?}", img[16 * 32 + 16]);
         assert_eq!(img[0], [0, 0, 0, 255]);
@@ -431,7 +547,10 @@ mod tests {
         let v = sphere(24);
         let lut = TransferFunction::legacy_default().bake(256);
         let p = params(&v, RenderMode::Isosurface);
-        let r = CpuRaycaster::new(CpuScene { volume: &v, mask: None, ao: None, lut: &lut, occupancy: None }, &p);
+        let r = CpuRaycaster::new(
+            CpuScene { volume: &v, mask: None, ao: None, lut: &lut, occupancy: None, segments: None },
+            &p,
+        );
         let hit = r.pick(Vec2::ZERO).expect("hit");
         // default camera looks along +z, so the front of the sphere is at low z
         assert!((hit.x - 0.5).abs() < 0.05 && (hit.y - 0.5).abs() < 0.05);
@@ -445,7 +564,7 @@ mod tests {
         let lut = TransferFunction::legacy_default().bake(256);
         let p = params(&v, RenderMode::Mip);
         let mut mask = VoxelMask::new(v.dims());
-        let scene = CpuScene { volume: &v, mask: None, ao: None, lut: &lut, occupancy: None };
+        let scene = CpuScene { volume: &v, mask: None, ao: None, lut: &lut, occupancy: None, segments: None };
         let before = CpuRaycaster::new(scene, &p).shade_pixel(16, 16, 32, 32);
         mask.erase(
             Vec3::new(0.5, 0.5, 0.0),
@@ -463,7 +582,10 @@ mod tests {
         let v = sphere(4);
         let lut = TransferFunction::linear_ramp().bake(256);
         let p = params(&v, RenderMode::TransferFunction);
-        let r = CpuRaycaster::new(CpuScene { volume: &v, mask: None, ao: None, lut: &lut, occupancy: None }, &p);
+        let r = CpuRaycaster::new(
+            CpuScene { volume: &v, mask: None, ao: None, lut: &lut, occupancy: None, segments: None },
+            &p,
+        );
         assert!(r.tf_lookup(0.0).w < 1e-6);
         assert!((r.tf_lookup(1.0).w - 1.0).abs() < 1e-6);
         assert!((r.tf_lookup(0.5).w - 0.5).abs() < 0.01);

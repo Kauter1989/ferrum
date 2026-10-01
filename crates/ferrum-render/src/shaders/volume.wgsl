@@ -23,6 +23,7 @@ struct Uniforms {
     bricks_jitter: vec4<f32>,   // xyz brick grid dims, w: jitter enabled
     ao_scale: vec4<f32>,        // xyz AO texcoord scale, w: reference step
     viewport: vec4<f32>,        // x, y, width, height in pixels
+    segments: vec4<f32>,        // x: segment overlay enabled, y: segment ambient term
     planes: array<vec4<f32>, 8>,
 };
 
@@ -33,6 +34,8 @@ struct Uniforms {
 @group(0) @binding(4) var ao_tex: texture_3d<f32>;
 @group(0) @binding(5) var occ_tex: texture_3d<f32>;
 @group(0) @binding(6) var tf_tex: texture_2d<f32>;
+@group(0) @binding(7) var label_tex: texture_3d<u32>;
+@group(0) @binding(8) var seg_lut: texture_2d<f32>;
 
 override MODE: u32 = 0u;
 const MODE_TISSUE: u32 = 0u;
@@ -163,6 +166,71 @@ fn skip_empty(eye: vec3<f32>, dir: vec3<f32>, t: f32, base: f32, step: f32) -> f
     return max(base + k * step, t + step);
 }
 
+// ---- segment overlay ------------------------------------------------------
+// Segments are drawn as shaded surfaces: when a ray enters a voxel of a
+// visible label (different from the previous sample's label) the segment
+// colour is composited once with the segment's opacity.
+
+fn label_at(p: vec3<f32>) -> u32 {
+    let dims = vec3<i32>(textureDimensions(label_tex));
+    let v = clamp(vec3<i32>(floor(to_tex(p) * vec3<f32>(dims))), vec3<i32>(0), dims - vec3<i32>(1));
+    return textureLoad(label_tex, v, 0).r;
+}
+
+// Label at p, or 0 if it is background or erased by the eraser mask.
+fn visible_label(p: vec3<f32>) -> u32 {
+    let lbl = label_at(p);
+    if (lbl == 0u) {
+        return 0u;
+    }
+    if (textureSampleLevel(mask_tex, lin, to_tex(p), 0.0).r < 0.5) {
+        return 0u;
+    }
+    return lbl;
+}
+
+fn seg_indicator(p: vec3<f32>, lbl: u32) -> f32 {
+    return select(0.0, 1.0, label_at(p) == lbl);
+}
+
+// Outward normal of the segment `lbl` at p (towards leaving the segment).
+fn seg_normal(p: vec3<f32>, lbl: u32, dir: vec3<f32>) -> vec3<f32> {
+    let d = U.extent_opacity.xyz / vec3<f32>(textureDimensions(label_tex));
+    let gx = seg_indicator(p + vec3<f32>(d.x, 0.0, 0.0), lbl) - seg_indicator(p - vec3<f32>(d.x, 0.0, 0.0), lbl);
+    let gy = seg_indicator(p + vec3<f32>(0.0, d.y, 0.0), lbl) - seg_indicator(p - vec3<f32>(0.0, d.y, 0.0), lbl);
+    let gz = seg_indicator(p + vec3<f32>(0.0, 0.0, d.z), lbl) - seg_indicator(p - vec3<f32>(0.0, 0.0, d.z), lbl);
+    let g = vec3<f32>(gx / d.x, gy / d.y, gz / d.z);
+    let len = length(g);
+    if (len < 1e-6) {
+        return -dir;
+    }
+    return -g / len;
+}
+
+// Shaded segment colour (rgb) and opacity (a) to composite at p, or zero.
+// `prev` tracks the label of the previous sample along the ray.
+fn seg_hit(p: vec3<f32>, dir: vec3<f32>, prev: ptr<function, u32>) -> vec4<f32> {
+    if (U.segments.x < 0.5) {
+        return vec4<f32>(0.0);
+    }
+    let lbl = visible_label(p);
+    if (lbl == *prev) {
+        return vec4<f32>(0.0);
+    }
+    *prev = lbl;
+    if (lbl == 0u) {
+        return vec4<f32>(0.0);
+    }
+    let c = textureLoad(seg_lut, vec2<i32>(i32(lbl), 0), 0);
+    if (c.a <= 0.0) {
+        return vec4<f32>(0.0);
+    }
+    let n = seg_normal(p, lbl, dir);
+    let diff = max(dot(n, -U.light_iso.xyz), 0.0);
+    let amb = U.segments.y;
+    return vec4<f32>(c.rgb * (amb + (1.0 - amb) * diff), c.a);
+}
+
 fn tf_lookup(v: f32) -> vec4<f32> {
     let u = (v * 255.0 + 0.5) / 256.0;
     return textureSampleLevel(tf_tex, lin, vec2<f32>(u, 0.5), 0.0);
@@ -222,6 +290,8 @@ fn march_tissue(eye: vec3<f32>, dir: vec3<f32>, seg: Segment, base: f32) -> vec3
     var acc = vec3<f32>(0.0);
     var alpha = 0.0;
     var surface = vec3<f32>(0.0);
+    var sacc = vec3<f32>(0.0);
+    var prev = 0u;
     var t = base;
     for (var i = 0u; i < MAX_STEPS; i = i + 1u) {
         if (t > seg.t1) {
@@ -233,6 +303,14 @@ fn march_tissue(eye: vec3<f32>, dir: vec3<f32>, seg: Segment, base: f32) -> vec3
             continue;
         }
         let p = eye + dir * t;
+        let sh = seg_hit(p, dir, &prev);
+        if (sh.a > 0.0) {
+            sacc = sacc + (1.0 - alpha) * sh.a * sh.rgb;
+            alpha = alpha + (1.0 - alpha) * sh.a;
+            if (alpha > EARLY_EXIT) {
+                break;
+            }
+        }
         let v = density(p);
         if (v > surf) {
             let th = refine(eye, dir, max(t - step, seg.t0), t, surf);
@@ -257,56 +335,15 @@ fn march_tissue(eye: vec3<f32>, dir: vec3<f32>, seg: Segment, base: f32) -> vec3
         }
         t = t + step;
     }
-    return acc * (2.0 * U.dims_brightness.w) + (1.0 - alpha) * surface;
+    return acc * (2.0 * U.dims_brightness.w) + sacc + (1.0 - alpha) * surface;
 }
 
 fn march_iso(eye: vec3<f32>, dir: vec3<f32>, seg: Segment, base: f32) -> vec3<f32> {
     let step = U.eye_step.w;
     let thr = U.light_iso.w;
-    var t = base;
-    for (var i = 0u; i < MAX_STEPS; i = i + 1u) {
-        if (t > seg.t1) {
-            break;
-        }
-        let nt = skip_empty(eye, dir, t, base, step);
-        if (nt != t) {
-            t = nt;
-            continue;
-        }
-        if (density(eye + dir * t) > thr) {
-            let th = refine(eye, dir, max(t - step, seg.t0), t, thr);
-            return shade_surface(eye + dir * th, dir);
-        }
-        t = t + step;
-    }
-    return vec3<f32>(0.0);
-}
-
-fn march_mip(eye: vec3<f32>, dir: vec3<f32>, seg: Segment, base: f32) -> vec3<f32> {
-    let step = U.eye_step.w;
-    var mx = 0.0;
-    var t = base;
-    for (var i = 0u; i < MAX_STEPS; i = i + 1u) {
-        if (t > seg.t1) {
-            break;
-        }
-        let nt = skip_empty(eye, dir, t, base, step);
-        if (nt != t) {
-            t = nt;
-            continue;
-        }
-        mx = max(mx, density(eye + dir * t));
-        t = t + step;
-    }
-    return mx * U.surf_lit.rgb * (2.0 * U.dims_brightness.w);
-}
-
-fn march_tf(eye: vec3<f32>, dir: vec3<f32>, seg: Segment, base: f32) -> vec3<f32> {
-    let step = U.eye_step.w;
-    let l = -U.light_iso.xyz;
-    let exponent = step / U.ao_scale.w;
-    var acc = vec3<f32>(0.0);
     var alpha = 0.0;
+    var sacc = vec3<f32>(0.0);
+    var prev = 0u;
     var t = base;
     for (var i = 0u; i < MAX_STEPS; i = i + 1u) {
         if (t > seg.t1) {
@@ -318,6 +355,81 @@ fn march_tf(eye: vec3<f32>, dir: vec3<f32>, seg: Segment, base: f32) -> vec3<f32
             continue;
         }
         let p = eye + dir * t;
+        let sh = seg_hit(p, dir, &prev);
+        if (sh.a > 0.0) {
+            sacc = sacc + (1.0 - alpha) * sh.a * sh.rgb;
+            alpha = alpha + (1.0 - alpha) * sh.a;
+            if (alpha > EARLY_EXIT) {
+                break;
+            }
+        }
+        if (density(p) > thr) {
+            let th = refine(eye, dir, max(t - step, seg.t0), t, thr);
+            return sacc + (1.0 - alpha) * shade_surface(eye + dir * th, dir);
+        }
+        t = t + step;
+    }
+    return sacc;
+}
+
+fn march_mip(eye: vec3<f32>, dir: vec3<f32>, seg: Segment, base: f32) -> vec3<f32> {
+    let step = U.eye_step.w;
+    var mx = 0.0;
+    var alpha = 0.0;
+    var sacc = vec3<f32>(0.0);
+    var prev = 0u;
+    var t = base;
+    for (var i = 0u; i < MAX_STEPS; i = i + 1u) {
+        if (t > seg.t1) {
+            break;
+        }
+        let nt = skip_empty(eye, dir, t, base, step);
+        if (nt != t) {
+            t = nt;
+            continue;
+        }
+        let p = eye + dir * t;
+        let sh = seg_hit(p, dir, &prev);
+        if (sh.a > 0.0) {
+            sacc = sacc + (1.0 - alpha) * sh.a * sh.rgb;
+            alpha = alpha + (1.0 - alpha) * sh.a;
+            if (alpha > EARLY_EXIT) {
+                break;
+            }
+        }
+        mx = max(mx, density(p));
+        t = t + step;
+    }
+    return sacc + (1.0 - alpha) * mx * U.surf_lit.rgb * (2.0 * U.dims_brightness.w);
+}
+
+fn march_tf(eye: vec3<f32>, dir: vec3<f32>, seg: Segment, base: f32) -> vec3<f32> {
+    let step = U.eye_step.w;
+    let l = -U.light_iso.xyz;
+    let exponent = step / U.ao_scale.w;
+    var acc = vec3<f32>(0.0);
+    var alpha = 0.0;
+    var sacc = vec3<f32>(0.0);
+    var prev = 0u;
+    var t = base;
+    for (var i = 0u; i < MAX_STEPS; i = i + 1u) {
+        if (t > seg.t1) {
+            break;
+        }
+        let nt = skip_empty(eye, dir, t, base, step);
+        if (nt != t) {
+            t = nt;
+            continue;
+        }
+        let p = eye + dir * t;
+        let sh = seg_hit(p, dir, &prev);
+        if (sh.a > 0.0) {
+            sacc = sacc + (1.0 - alpha) * sh.a * sh.rgb;
+            alpha = alpha + (1.0 - alpha) * sh.a;
+            if (alpha > EARLY_EXIT) {
+                break;
+            }
+        }
         let c = tf_lookup(density(p));
         let a0 = min(c.a * U.extent_opacity.w * 2.0, 0.999);
         if (a0 > 0.0) {
@@ -332,7 +444,7 @@ fn march_tf(eye: vec3<f32>, dir: vec3<f32>, seg: Segment, base: f32) -> vec3<f32
         }
         t = t + step;
     }
-    return acc * (2.0 * U.dims_brightness.w);
+    return acc * (2.0 * U.dims_brightness.w) + sacc;
 }
 
 @fragment
