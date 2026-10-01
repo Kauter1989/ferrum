@@ -1,6 +1,7 @@
 """Command line: ``ferrum-bridge <engine> [options]``.
 
-Engines: ``nninteractive`` (interactive), ``totalsegmentator`` (automatic)
+Engines: ``nninteractive`` (interactive), ``totalsegmentator`` (automatic),
+``monailabel`` (a running MONAI Label server: interactive and automatic)
 and ``fake`` (model-free, for checking a set-up and for tests).
 """
 
@@ -42,6 +43,19 @@ def _parser() -> argparse.ArgumentParser:
     ts.add_argument("--license-number", default=os.environ.get("TOTALSEG_LICENSE"),
                     help="licence number for tasks that need one")
 
+    ml = sub.add_parser("monailabel", help="MONAI Label: serve a running MONAI Label server's models")
+    ml.add_argument("--server", default=os.environ.get("MONAI_LABEL_URL", "http://127.0.0.1:8000"),
+                    help="MONAI Label server URL (default http://127.0.0.1:8000)")
+    ml.add_argument("--model", default=os.environ.get("MONAI_LABEL_MODEL"),
+                    help="interactive model (deepedit/deepgrow/annotation type; default: the first one; '' = none)")
+    ml.add_argument("--auto-model", default=os.environ.get("MONAI_LABEL_AUTO_MODEL"),
+                    help="segmentation model for automatic jobs (default: the first one; '' = none)")
+    ml.add_argument("--label", help="DeepEdit label the clicks segment (default: the model's first label)")
+    ml.add_argument("--monai-token", default=os.environ.get("MONAI_LABEL_TOKEN"),
+                    help="bearer token for a MONAI Label server with authentication")
+    ml.add_argument("--clinical-weights", action="store_true",
+                    help="do not mark the engine 'Research use only' (only if the models' licences allow it)")
+
     sub.add_parser("fake", help="model-free region growing and intensity bands (tests, set-up checks)")
     return p
 
@@ -56,6 +70,11 @@ def build_backend(args):
         from .totalsegmentator import TotalSegmentatorBackend
 
         return TotalSegmentatorBackend(args.task, args.device, args.fast, args.license_number)
+    if args.engine == "monailabel":
+        from .monailabel import MonaiLabelBackend
+
+        return MonaiLabelBackend(args.server, args.model, args.auto_model, args.label,
+                                 args.monai_token, research_only=not args.clinical_weights)
     from .backends import FakeBackend
 
     return FakeBackend()

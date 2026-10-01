@@ -130,6 +130,42 @@ In FERRUM, connect to `http://127.0.0.1:8766`, then:
 3. Follow the progress, or **Cancel**. Each structure found becomes a
    named segment with its volume in ml.
 
+### MONAI Label: your own models
+
+[MONAI Label](https://github.com/Project-MONAI/MONAILabel) serves models of
+an *app* (e.g. `radiology` with DeepEdit, DeepGrow, SAM2 and segmentation
+models, or your own trained ones). The bridge does not run a model: it is a
+client of a running MONAI Label server and needs no GPU itself.
+
+```bash
+# the MONAI Label server, e.g. the radiology app (see MONAI Label's docs)
+monailabel start_server --app apps/radiology --studies datastore --conf models deepedit,segmentation
+# the bridge
+cd ferrum/bridges && pip install ".[monailabel]"
+ferrum-bridge --port 8767 monailabel --server http://127.0.0.1:8000
+```
+
+| Setting | Flag / environment |
+|---|---|
+| MONAI Label URL | `--server` / `MONAI_LABEL_URL` (default `http://127.0.0.1:8000`) |
+| Interactive model | `--model` / `MONAI_LABEL_MODEL`: a `deepedit`, `deepgrow` or `annotation` (SAM2) model; default the first one, `""` for none |
+| Automatic model | `--auto-model` / `MONAI_LABEL_AUTO_MODEL`: a `segmentation` model; default the first one, `""` for none |
+| DeepEdit label | `--label` (default: the model's first label) |
+| MONAI Label authentication | `--monai-token` / `MONAI_LABEL_TOKEN` |
+| No *Research use only* badge | `--clinical-weights`, only if the licences of the models allow it |
+
+Notes:
+- **Prompts:** include/exclude clicks for every interactive model; SAM2
+  also takes an include box. Each prompt re-runs the model with all clicks
+  of the object, and **Undo prompt** re-runs it without the last one.
+- **Automatic:** the segmentation model's labels appear in FERRUM's
+  structure list; a subset is filtered from the full result.
+- **Placement:** the volume is uploaded once per session as a NIfTI image
+  with its patient geometry; MONAI Label returns the result on that grid.
+- **Licences:** MONAI Label is Apache-2.0; the weights of each model have
+  their own licence, so the engine is marked *Research use only* by
+  default.
+
 ## 3. Reach a remote GPU
 
 The bridge listens on localhost only. To use a GPU server, forward the
@@ -212,5 +248,5 @@ works the same way.
   `nnInteractiveInferenceSession`. It handles points, 2D/3D boxes, and
   scribble and lasso masks cropped to their box, plus single-level undo.
 
-The same protocol will connect MONAI Label and TotalSegmentator through
-their own bridges (Stage 14.6).
+TotalSegmentator and MONAI Label connect through the same protocol with
+their own backends in the same package.
