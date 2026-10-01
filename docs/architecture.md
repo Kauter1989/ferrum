@@ -1,10 +1,18 @@
 # Architecture
 
-FERRUM provides DICOM/NIfTI loading, 2D slices, MPR, GPU volume
-rendering, transfer function editing, clipping, measurements and the
-volume eraser. This document describes how the workspace is layered and
-which conventions every crate follows; the rendering techniques and their
-references are listed in the README.
+FERRUM is a reusable visualisation core ([vision](vision.md)).
+
+- It provides DICOM/NIfTI loading, 2D slices, MPR, GPU volume rendering,
+  transfer function editing, clipping, measurements, annotations,
+  segments and the volume eraser.
+- It reaches everything else through ports: data sources, segmentation
+  engines and (later) exporters.
+- The same use cases serve the desktop UI, embedding applications and
+  the planned agent skill.
+
+This document describes how the workspace is layered and which
+conventions every crate follows. The README lists the rendering
+techniques and their references.
 
 ## Layers and crates
 

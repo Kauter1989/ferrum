@@ -1,8 +1,12 @@
 # Development plan
 
-This is the working plan for FERRUM. Each stage groups features
-as user stories with acceptance criteria. Status legend:
-✅ done · 🚧 in progress · 📋 planned.
+This is the working plan for FERRUM, a reusable visualisation core for
+medical imaging ([vision](docs/vision.md)). Stages 1–13 built the viewer.
+Stage 14 opens it to AI segmentation engines, and Stage 15 makes it an
+agent skill.
+
+Each stage groups features as user stories with acceptance criteria.
+Status legend: ✅ done · 🚧 in progress · 📋 planned.
 
 New stages are appended at the end. A finished stage is kept as a record
 of what was delivered and how it is verified.
@@ -15,6 +19,10 @@ Personas:
 - **Researcher**: works with NIfTI and public datasets and needs exports
   and reproducible renders.
 - **Developer**: maintains and extends the code base.
+- **Integrator**: builds FERRUM into a commercial or research product,
+  or connects a segmentation engine.
+- **Agent / harness developer**: lets AI agents use FERRUM as a skill in
+  a medical harness.
 
 ---
 
