@@ -68,6 +68,7 @@ impl SegmentationEngine for Counting {
     fn info(&self) -> Result<EngineInfo, EngineError> {
         let mut i = MockEngine::describe();
         i.capabilities.interactive = self.interactive;
+        i.capabilities.automatic = self.interactive;
         i.research_only = true;
         Ok(i)
     }
@@ -200,5 +201,123 @@ fn engine_failures_are_reported() {
     let mut v = viewer();
     v.connect_engine(Arc::new(Counting { sessions: AtomicUsize::new(0), interactive: false }), "auto");
     v.wait_ai_idle();
-    assert!(matches!(v.ai().status(), AiStatus::Failed(m) if m.contains("no interactive")));
+    assert!(matches!(v.ai().status(), AiStatus::Failed(m) if m.contains("neither interactive nor automatic")));
+}
+
+#[test]
+fn automatic_segmentation_creates_named_segments() {
+    let mut v = viewer();
+    v.connect_engine(Arc::new(MockEngine::default()), "mock");
+    v.wait_ai_idle();
+    assert!(v.ai().supports_automatic());
+    assert!(v.ai_run_automatic(None));
+    assert!(!v.ai_run_automatic(None), "one job at a time");
+    v.wait_ai_idle();
+    assert!(v.ai().job().is_none());
+    let rows = v.segment_summaries();
+    assert_eq!(rows.len(), 1, "only structures that were found become segments");
+    assert_eq!(rows[0].segment.name, "bright");
+    assert!(rows[0].voxels > 500);
+    assert!(v.status.message.contains("1 structure"), "{}", v.status.message);
+    assert_eq!(*v.ai().status(), AiStatus::Ready);
+
+    // a run for a label that is absent adds nothing; a rerun keeps existing voxels
+    assert!(v.ai_run_automatic(Some(vec!["intermediate".into()])));
+    v.wait_ai_idle();
+    assert_eq!(v.segment_summaries().len(), 1);
+    assert!(v.ai_run_automatic(None));
+    v.wait_ai_idle();
+    let rows = v.segment_summaries();
+    assert_eq!(rows.len(), 2, "a second 'bright' segment");
+    assert_eq!(rows[1].voxels, 0, "voxels already segmented are kept");
+    assert!(v.can_undo_segmentation());
+
+    assert!(
+        !v.ai_run_automatic(Some(vec!["liver".into()])) || {
+            v.wait_ai_idle();
+            v.status.errors.iter().any(|e| e.contains("unknown label"))
+        }
+    );
+}
+
+/// Automatic-only engine whose jobs run until cancelled, or fail.
+struct SlowEngine {
+    fail: bool,
+}
+
+struct SlowSession {
+    fail: bool,
+    cancelled: bool,
+}
+
+impl InteractiveSession for SlowSession {
+    fn prompt(&mut self, _: &Prompt) -> Result<ferrum_domain::PromptResult, EngineError> {
+        Err(EngineError::Unsupported("prompts".into()))
+    }
+    fn mask(&mut self, _: ferrum_domain::VoxelBox) -> Result<Vec<u8>, EngineError> {
+        Err(EngineError::Unsupported("masks".into()))
+    }
+    fn undo(&mut self) -> Result<ferrum_domain::PromptResult, EngineError> {
+        Err(EngineError::Unsupported("undo".into()))
+    }
+    fn reset(&mut self) -> Result<(), EngineError> {
+        Ok(())
+    }
+    fn start_job(&mut self, _: Option<&[String]>) -> Result<String, EngineError> {
+        Ok("j1".into())
+    }
+    fn job_status(&mut self, _: &str) -> Result<ferrum_domain::JobStatus, EngineError> {
+        use ferrum_domain::{JobState, JobStatus};
+        let state = match (self.fail, self.cancelled) {
+            (true, _) => JobState::Failed,
+            (_, true) => JobState::Cancelled,
+            _ => JobState::Running,
+        };
+        Ok(JobStatus { state, progress: 0.5, message: if self.fail { "out of memory".into() } else { "liver".into() } })
+    }
+    fn cancel_job(&mut self, _: &str) -> Result<(), EngineError> {
+        self.cancelled = true;
+        Ok(())
+    }
+}
+
+impl SegmentationEngine for SlowEngine {
+    fn info(&self) -> Result<EngineInfo, EngineError> {
+        let mut i = MockEngine::describe();
+        i.capabilities.interactive = false;
+        i.capabilities.prompts.clear();
+        Ok(i)
+    }
+    fn open_session(&self, _: &Volume, _: &str) -> Result<Box<dyn InteractiveSession>, EngineError> {
+        Ok(Box::new(SlowSession { fail: self.fail, cancelled: false }))
+    }
+}
+
+#[test]
+fn automatic_jobs_report_progress_and_can_be_cancelled() {
+    let mut v = viewer();
+    v.connect_engine(Arc::new(SlowEngine { fail: false }), "slow");
+    v.wait_ai_idle();
+    assert!(v.ai().status().is_connected(), "automatic-only engines are accepted");
+    assert!(!v.ai().supports(PromptKind::Point));
+    assert!(v.ai_run_automatic(None));
+    let start = std::time::Instant::now();
+    while v.ai().job().is_none_or(|j| j.progress < 0.5) {
+        assert!(start.elapsed().as_secs() < 10, "no progress reported");
+        v.poll();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert_eq!(v.ai().job().unwrap().message, "liver");
+    v.ai_cancel_job();
+    v.wait_ai_idle();
+    assert!(v.ai().job().is_none());
+    assert!(v.status.message.contains("cancelled"), "{}", v.status.message);
+
+    let mut v = viewer();
+    v.connect_engine(Arc::new(SlowEngine { fail: true }), "failing");
+    v.wait_ai_idle();
+    assert!(v.ai_run_automatic(None));
+    v.wait_ai_idle();
+    assert!(matches!(v.ai().status(), AiStatus::Failed(m) if m.contains("out of memory")));
+    v.ai_cancel_job(); // no job: nothing happens
 }

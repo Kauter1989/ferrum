@@ -5,14 +5,18 @@
 //! so uploads and inference never block the UI. Prompts refine the current
 //! *object*: the engine's target mask, mirrored into a target segment.
 //! *Accept* keeps the segment and starts the next object, *Discard*
-//! removes it.
+//! removes it. Automatic engines run jobs whose label map becomes one
+//! segment per structure, named after the engine's labels.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::thread::JoinHandle;
+use std::time::Duration;
 
 use ferrum_domain::{
-    EngineError, EngineInfo, InteractiveSession, Prompt, PromptKind, PromptResult, SegmentationEngine, Volume,
+    EngineError, EngineInfo, InteractiveSession, JobState, JobStatus, Prompt, PromptKind, PromptResult,
+    SegmentationEngine, Volume,
 };
 
 use super::Viewer;
@@ -49,13 +53,53 @@ enum Command {
     Prompt { prompt: Prompt, target: u8 },
     Undo { target: u8 },
     Reset,
+    Automatic { labels: Option<Vec<String>> },
 }
 
 enum Event {
     Info(Result<EngineInfo, EngineError>),
-    Opened { revision: u64, result: Result<(), EngineError> },
-    Mask { target: u8, result: Result<(PromptResult, Option<Vec<u8>>), EngineError> },
+    Opened {
+        revision: u64,
+        result: Result<(), EngineError>,
+    },
+    Mask {
+        target: u8,
+        result: Result<(PromptResult, Option<Vec<u8>>), EngineError>,
+    },
     Reset(Result<(), EngineError>),
+    /// Intermediate job progress (does not complete a request).
+    Progress(JobStatus),
+    /// Finished job: the label map, or `None` if cancelled.
+    LabelMap(Result<Option<Vec<u16>>, EngineError>),
+}
+
+/// Interval between job status requests.
+const JOB_POLL: Duration = Duration::from_millis(300);
+
+/// Runs an automatic job to completion, reporting progress.
+fn run_job(
+    s: &mut dyn InteractiveSession,
+    labels: Option<&[String]>,
+    cancel: &AtomicBool,
+    tx: &Sender<Event>,
+) -> Result<Option<Vec<u16>>, EngineError> {
+    let job = s.start_job(labels)?;
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            s.cancel_job(&job)?;
+            return Ok(None);
+        }
+        let status = s.job_status(&job)?;
+        let state = status.state;
+        let message = status.message.clone();
+        let _ = tx.send(Event::Progress(status));
+        match state {
+            JobState::Done => return s.label_map().map(Some),
+            JobState::Failed => return Err(EngineError::Internal(message)),
+            JobState::Cancelled => return Ok(None),
+            JobState::Queued | JobState::Running => std::thread::sleep(JOB_POLL),
+        }
+    }
 }
 
 /// Background thread owning the engine session.
@@ -66,12 +110,12 @@ struct Worker {
 }
 
 impl Worker {
-    fn spawn(engine: Arc<dyn SegmentationEngine>) -> Self {
+    fn spawn(engine: Arc<dyn SegmentationEngine>, cancel: Arc<AtomicBool>) -> Self {
         let (cmd_tx, cmd_rx) = channel::<Command>();
         let (ev_tx, ev_rx) = channel::<Event>();
         let thread = std::thread::Builder::new()
             .name("ferrum-ai-engine".into())
-            .spawn(move || run_worker(engine.as_ref(), &cmd_rx, &ev_tx))
+            .spawn(move || run_worker(engine.as_ref(), &cancel, &cmd_rx, &ev_tx))
             .ok();
         Self { tx: Some(cmd_tx), rx: ev_rx, thread }
     }
@@ -102,7 +146,7 @@ fn mask_after(
     }
 }
 
-fn run_worker(engine: &dyn SegmentationEngine, rx: &Receiver<Command>, tx: &Sender<Event>) {
+fn run_worker(engine: &dyn SegmentationEngine, cancel: &AtomicBool, rx: &Receiver<Command>, tx: &Sender<Event>) {
     let mut session: Option<Box<dyn InteractiveSession>> = None;
     let _ = tx.send(Event::Info(engine.info()));
     let no_session = || EngineError::Protocol("no session".into());
@@ -128,6 +172,10 @@ fn run_worker(engine: &dyn SegmentationEngine, rx: &Receiver<Command>, tx: &Send
                 Event::Mask { target, result }
             }
             Command::Reset => Event::Reset(session.as_deref_mut().map_or(Ok(()), |s| s.reset())),
+            Command::Automatic { labels } => Event::LabelMap(match session.as_deref_mut() {
+                Some(s) => run_job(s, labels.as_deref(), cancel, tx),
+                None => Err(no_session()),
+            }),
         };
         if tx.send(event).is_err() {
             break;
@@ -146,6 +194,8 @@ pub struct AiState {
     pending: usize,
     target: Option<u8>,
     objects: u32,
+    job: Option<JobStatus>,
+    cancel: Arc<AtomicBool>,
     /// Prompts mark the object (`true`, *Include*) or background (*Exclude*).
     pub positive: bool,
 }
@@ -202,6 +252,16 @@ impl AiState {
         self.status.is_connected() && self.target.is_some() && self.info.as_ref().is_some_and(|i| i.capabilities.undo)
     }
 
+    /// `true` if the connected engine runs automatic segmentation.
+    pub fn supports_automatic(&self) -> bool {
+        self.status.is_connected() && self.info.as_ref().is_some_and(|i| i.capabilities.automatic)
+    }
+
+    /// Progress of the running automatic job.
+    pub fn job(&self) -> Option<&JobStatus> {
+        self.job.as_ref()
+    }
+
     /// `true` if the engine marks its results for research use only.
     pub fn research_only(&self) -> bool {
         self.info.as_ref().is_some_and(|i| i.research_only)
@@ -226,7 +286,8 @@ impl Viewer {
         self.ai.engine_label = label.to_owned();
         self.ai.status = AiStatus::Connecting;
         self.ai.pending = 1;
-        self.ai.worker = Some(Worker::spawn(engine));
+        self.ai.cancel = Arc::new(AtomicBool::new(false));
+        self.ai.worker = Some(Worker::spawn(engine, self.ai.cancel.clone()));
     }
 
     /// Disconnects the engine (closing its session). The segments stay.
@@ -237,6 +298,7 @@ impl Viewer {
         self.ai.session_revision = None;
         self.ai.pending = 0;
         self.ai.target = None;
+        self.ai.job = None;
         if self.tool.prompt_kind().is_some() {
             self.select_tool(crate::ToolKind::Pan);
         }
@@ -263,13 +325,8 @@ impl Viewer {
         if !self.ai.supports(prompt.kind()) || prompt.validate(d.volume.dims()).is_err() {
             return false;
         }
-        let (volume, modality, revision) = (d.volume.clone(), d.metadata.modality.clone(), d.revision);
-        if self.ai.session_revision != Some(revision) {
-            if !self.ai_send(Command::Open { volume, modality, revision }) {
-                return false;
-            }
-            self.ai.session_revision = Some(revision);
-            self.ai.status = AiStatus::Uploading;
+        if !self.ensure_ai_session() {
+            return false;
         }
         let target = match self.ai.target.filter(|t| self.segmentation().set().is_some_and(|s| s.segment(*t).is_some()))
         {
@@ -290,6 +347,45 @@ impl Viewer {
             self.ai.status = AiStatus::Working;
         }
         self.ai_send(Command::Prompt { prompt, target })
+    }
+
+    /// Opens an engine session for the current volume unless one is open.
+    fn ensure_ai_session(&mut self) -> bool {
+        let Some(d) = self.dataset.as_ref() else {
+            return false;
+        };
+        let (volume, modality, revision) = (d.volume.clone(), d.metadata.modality.clone(), d.revision);
+        if self.ai.session_revision == Some(revision) {
+            return true;
+        }
+        if !self.ai_send(Command::Open { volume, modality, revision }) {
+            return false;
+        }
+        self.ai.session_revision = Some(revision);
+        self.ai.status = AiStatus::Uploading;
+        true
+    }
+
+    /// Runs automatic segmentation of `labels` (engine label names; `None`
+    /// for all). Each structure found becomes a segment. Returns `false` if
+    /// the engine cannot run it or a job is already running.
+    pub fn ai_run_automatic(&mut self, labels: Option<Vec<String>>) -> bool {
+        if !self.ai.supports_automatic() || self.ai.job.is_some() || !self.ensure_ai_session() {
+            return false;
+        }
+        self.ai.cancel.store(false, Ordering::Relaxed);
+        self.ai.job = Some(JobStatus { state: JobState::Queued, progress: 0.0, message: String::new() });
+        if self.ai.status == AiStatus::Ready || self.ai.status == AiStatus::Connected {
+            self.ai.status = AiStatus::Working;
+        }
+        self.ai_send(Command::Automatic { labels })
+    }
+
+    /// Asks the engine to cancel the running automatic job.
+    pub fn ai_cancel_job(&mut self) {
+        if self.ai.job.is_some() {
+            self.ai.cancel.store(true, Ordering::Relaxed);
+        }
     }
 
     /// Undoes the last prompt of the current object (engines with undo).
@@ -344,15 +440,20 @@ impl Viewer {
     }
 
     fn handle_ai_event(&mut self, event: Event) {
-        self.ai.pending = self.ai.pending.saturating_sub(1);
+        if !matches!(event, Event::Progress(_)) {
+            self.ai.pending = self.ai.pending.saturating_sub(1);
+        }
         match event {
-            Event::Info(Ok(info)) if info.capabilities.interactive => {
+            Event::Info(Ok(info)) if info.capabilities.interactive || info.capabilities.automatic => {
                 self.status.message = format!("Connected to {} {}", info.name, info.version);
                 self.ai.info = Some(info);
                 self.ai.status = AiStatus::Connected;
             }
             Event::Info(Ok(info)) => {
-                let e = EngineError::Unsupported(format!("{} has no interactive segmentation", info.name));
+                let e = EngineError::Unsupported(format!(
+                    "{} offers neither interactive nor automatic segmentation",
+                    info.name
+                ));
                 self.ai_failed("AI engine", &e);
                 self.ai.worker = None;
             }
@@ -374,9 +475,56 @@ impl Viewer {
             },
             Event::Reset(Err(e)) => self.ai_failed("AI reset", &e),
             Event::Reset(Ok(())) => {}
+            Event::Progress(status) => self.ai.job = Some(status),
+            Event::LabelMap(result) => {
+                self.ai.job = None;
+                match result {
+                    Ok(Some(values)) => self.apply_engine_label_map(&values),
+                    Ok(None) => self.status.message = "Automatic segmentation cancelled".into(),
+                    Err(e) => self.ai_failed("Automatic segmentation", &e),
+                }
+            }
         }
         if self.ai.pending == 0 && matches!(self.ai.status, AiStatus::Working | AiStatus::Uploading) {
             self.ai.status = AiStatus::Ready;
+        }
+    }
+
+    /// Creates one segment per engine label present in `values` (named and
+    /// coloured after the engine's label list) and fills them; voxels that
+    /// already belong to a segment are kept.
+    fn apply_engine_label_map(&mut self, values: &[u16]) {
+        let labels = self.ai.info.as_ref().map(|i| i.labels.clone()).unwrap_or_default();
+        let mut present = vec![false; usize::from(u16::MAX) + 1];
+        for &v in values {
+            present[usize::from(v)] = true;
+        }
+        let mut mapping = Vec::new();
+        for (value, _) in present.iter().enumerate().skip(1).filter(|(_, p)| **p) {
+            let value = value as u16;
+            let known = labels.iter().find(|l| l.value == value);
+            let name = known.map_or_else(|| format!("Label {value}"), |l| l.name.clone());
+            match self.add_segment(&name) {
+                Ok(label) => {
+                    if let Some(c) = known.and_then(|l| l.color) {
+                        let _ = self.set_segment_color(label, c);
+                    }
+                    mapping.push((value, label));
+                }
+                Err(e) => {
+                    self.status.errors.push(format!("{name}: {e}"));
+                    break;
+                }
+            }
+        }
+        let count = mapping.len();
+        let result = match self.segments.set.as_mut() {
+            Some(set) => set.apply_label_values(values, &mapping, false).map(|_| ()),
+            None => Ok(()),
+        };
+        match result {
+            Ok(()) => self.status.message = format!("Automatic segmentation: {count} structure(s)"),
+            Err(e) => self.status.errors.push(e.to_string()),
         }
     }
 
@@ -395,6 +543,7 @@ impl Viewer {
         self.ai.session_revision = None;
         self.ai.target = None;
         self.ai.objects = 0;
+        self.ai.job = None;
         if self.ai.status.is_connected() {
             self.ai.status = AiStatus::Connected;
         }

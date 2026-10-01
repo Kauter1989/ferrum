@@ -440,6 +440,38 @@ impl SegmentationSet {
         Ok(edit)
     }
 
+    /// Writes an engine label map into segments in one undoable edit.
+    /// `values` holds one engine label per voxel (`i` fastest); `mapping`
+    /// pairs engine values with segment labels. Mapped voxels take the
+    /// segment label if they are background (or always with `overwrite`);
+    /// unmapped values are ignored.
+    pub fn apply_label_values(
+        &mut self,
+        values: &[u16],
+        mapping: &[(u16, u8)],
+        overwrite: bool,
+    ) -> Result<LabelEdit, SegmentationError> {
+        let dims = self.labels.dims();
+        if values.len() != dims.voxel_count() {
+            return Err(SegmentationError::DataLengthMismatch { expected: dims.voxel_count(), actual: values.len() });
+        }
+        let mut lut = vec![0u8; mapping.iter().map(|(v, _)| usize::from(*v) + 1).max().unwrap_or(0)];
+        for &(value, label) in mapping {
+            self.segment(label).ok_or(SegmentationError::UnknownSegment(label))?;
+            lut[usize::from(value)] = label;
+        }
+        let mut edit = LabelEdit::default();
+        for (idx, &v) in values.iter().enumerate() {
+            let new = lut.get(usize::from(v)).copied().unwrap_or(0);
+            let old = self.labels.data[idx];
+            if new != 0 && new != old && (old == 0 || overwrite) {
+                self.set_voxel(idx, new, &mut edit, index_to_voxel(dims, idx));
+            }
+        }
+        self.record(edit.clone());
+        Ok(edit)
+    }
+
     fn set_voxel(&mut self, idx: usize, value: u8, edit: &mut LabelEdit, p: UVec3) {
         let old = self.labels.data[idx];
         edit.indices.push(idx as u32);
@@ -613,6 +645,33 @@ mod tests {
         assert_eq!(s.voxel_count(a), 0);
         assert_eq!(s.voxel_count(0), 24);
         assert!(!s.undo());
+    }
+
+    #[test]
+    fn engine_label_maps_fill_several_segments_at_once() {
+        let mut s = SegmentationSet::new(dims());
+        let liver = s.add_segment("liver").unwrap();
+        let spleen = s.add_segment("spleen").unwrap();
+        let full = VoxelBox::full(dims());
+        let mut pre = vec![0u8; 24];
+        pre[1] = 1;
+        s.apply_mask(spleen, full, &pre, false).unwrap(); // voxel 1 already spleen
+        let mut values = vec![0u16; 24];
+        values[0] = 5; // liver
+        values[1] = 5; // liver, but spleen is there: kept without overwrite
+        values[2] = 9; // spleen
+        values[3] = 7; // unmapped
+        let e = s.apply_label_values(&values, &[(5, liver), (9, spleen)], false).unwrap();
+        assert_eq!(e.len(), 2);
+        assert_eq!((s.voxel_count(liver), s.voxel_count(spleen)), (1, 2));
+        let e = s.apply_label_values(&values, &[(5, liver)], true).unwrap();
+        assert_eq!(e.len(), 1, "overwrite takes voxel 1 from the spleen");
+        assert!(s.undo());
+        assert!(s.undo());
+        assert_eq!((s.voxel_count(liver), s.voxel_count(spleen)), (0, 1));
+        assert!(matches!(s.apply_label_values(&[0; 3], &[], false), Err(SegmentationError::DataLengthMismatch { .. })));
+        assert_eq!(s.apply_label_values(&values, &[(5, 77)], false), Err(SegmentationError::UnknownSegment(77)));
+        assert!(s.apply_label_values(&values, &[], false).unwrap().is_empty());
     }
 
     #[test]

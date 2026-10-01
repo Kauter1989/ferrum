@@ -3,8 +3,8 @@
 
 use base64::Engine as _;
 use ferrum_domain::{
-    Dims3, EngineCapabilities, EngineError, EngineInfo, EngineLabel, Geometry, Prompt, PromptKind, PromptResult,
-    Volume, VoxelBox, ENGINE_PROTOCOL,
+    Dims3, EngineCapabilities, EngineError, EngineInfo, EngineLabel, Geometry, JobState, JobStatus, Prompt, PromptKind,
+    PromptResult, Volume, VoxelBox, ENGINE_PROTOCOL,
 };
 use glam::{Mat3, UVec3, Vec3};
 use serde_json::{json, Value};
@@ -260,6 +260,53 @@ pub fn result_from_json(v: &Value) -> Result<PromptResult, EngineError> {
     Ok(PromptResult { revision, changed, empty: v.get("empty").and_then(Value::as_bool).unwrap_or(false) })
 }
 
+/// Encodes a job status (`GET /v1/jobs/{id}`).
+pub fn job_to_json(j: &JobStatus) -> Value {
+    json!({ "state": j.state.as_str(), "progress": j.progress, "message": j.message })
+}
+
+/// Decodes a job status.
+pub fn job_from_json(v: &Value) -> Result<JobStatus, EngineError> {
+    let state = v
+        .get("state")
+        .and_then(Value::as_str)
+        .and_then(JobState::parse)
+        .ok_or_else(|| protocol("job without a valid state"))?;
+    let progress = v.get("progress").and_then(Value::as_f64).unwrap_or(0.0).clamp(0.0, 1.0) as f32;
+    Ok(JobStatus { state, progress, message: str_of(v, "message") })
+}
+
+/// Encodes a segmentation request (`POST …/segment`).
+pub fn labels_to_json(labels: Option<&[String]>) -> Value {
+    json!({ "labels": labels })
+}
+
+/// Decodes a segmentation request; `None` means all labels.
+pub fn labels_from_json(v: &Value) -> Result<Option<Vec<String>>, EngineError> {
+    match v.get("labels") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Array(a)) => a
+            .iter()
+            .map(|x| x.as_str().map(str::to_owned).ok_or_else(|| bad("labels must be strings")))
+            .collect::<Result<Vec<_>, _>>()
+            .map(Some),
+        Some(_) => Err(bad("labels must be an array or null")),
+    }
+}
+
+/// Encodes a label map as little-endian `uint16`.
+pub fn encode_label_map(values: &[u16]) -> Vec<u8> {
+    values.iter().flat_map(|v| v.to_le_bytes()).collect()
+}
+
+/// Decodes a little-endian `uint16` label map of `n` voxels.
+pub fn decode_label_map(bytes: &[u8], n: usize) -> Result<Vec<u16>, EngineError> {
+    if bytes.len() != n * 2 {
+        return Err(protocol(format!("label map has {} bytes, expected {}", bytes.len(), n * 2)));
+    }
+    Ok(bytes.as_chunks::<2>().0.iter().map(|b| u16::from_le_bytes(*b)).collect())
+}
+
 /// Encodes a session declaration.
 pub fn header_to_json(h: &VolumeHeader) -> Value {
     json!({
@@ -474,6 +521,23 @@ mod tests {
         assert!(decode_volume(&h, &[1, 0, 2, 0, 3, 0, 4, 0]).is_ok());
         assert!(header_from_json(&json!({"dims": [0, 2, 1], "dtype": "uint16", "spacing": [1, 1, 1]})).is_err());
         assert!(header_from_json(&json!({"dims": [2, 2, 1], "dtype": "int8", "spacing": [1, 1, 1]})).is_err());
+    }
+
+    #[test]
+    fn jobs_labels_and_label_maps_roundtrip() {
+        let j = JobStatus { state: JobState::Running, progress: 0.25, message: "liver".into() };
+        assert_eq!(job_from_json(&job_to_json(&j)).unwrap(), j);
+        assert!(job_from_json(&json!({"state": "paused"})).is_err());
+        assert_eq!(job_from_json(&json!({"state": "done", "progress": 7})).unwrap().progress, 1.0);
+        let names = vec!["liver".to_string(), "spleen".to_string()];
+        assert_eq!(labels_from_json(&labels_to_json(Some(&names))).unwrap(), Some(names));
+        assert_eq!(labels_from_json(&labels_to_json(None)).unwrap(), None);
+        assert_eq!(labels_from_json(&json!({})).unwrap(), None);
+        assert!(labels_from_json(&json!({"labels": [1]})).is_err());
+        assert!(labels_from_json(&json!({"labels": "liver"})).is_err());
+        let values = vec![0u16, 1, 117, 65535];
+        assert_eq!(decode_label_map(&encode_label_map(&values), 4).unwrap(), values);
+        assert!(decode_label_map(&[1, 2, 3], 2).is_err());
     }
 
     #[test]

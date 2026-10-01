@@ -1,6 +1,7 @@
 //! "AI segmentation" section of the settings panel. It is always visible;
 //! its tools stay disabled until a `ferrum-engine/1` engine is connected.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use egui::{Color32, RichText};
@@ -19,11 +20,19 @@ pub const DEFAULT_ENGINE_URL: &str = "http://127.0.0.1:8765";
 pub struct AiPanelState {
     /// Engine base URL being edited.
     pub url: String,
+    /// Structures chosen for automatic segmentation (empty = all).
+    pub selected: BTreeSet<String>,
+    /// Filter of the structure list.
+    pub filter: String,
 }
 
 impl Default for AiPanelState {
     fn default() -> Self {
-        Self { url: std::env::var("FERRUM_ENGINE_URL").unwrap_or_else(|_| DEFAULT_ENGINE_URL.to_owned()) }
+        Self {
+            url: std::env::var("FERRUM_ENGINE_URL").unwrap_or_else(|_| DEFAULT_ENGINE_URL.to_owned()),
+            selected: BTreeSet::new(),
+            filter: String::new(),
+        }
     }
 }
 
@@ -117,11 +126,62 @@ fn tools(ui: &mut egui::Ui, viewer: &mut Viewer) {
     }
 }
 
+/// Automatic segmentation: structure choice, Run, progress and Cancel.
+fn automatic(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut AiPanelState) {
+    let names: Vec<String> =
+        viewer.ai().info().map(|i| i.labels.iter().map(|l| l.name.clone()).collect()).unwrap_or_default();
+    ui.label(RichText::new(format!("{} Automatic", icon::MAGIC_WAND)).strong().color(TEXT));
+    if let Some(job) = viewer.ai().job() {
+        let text = if job.message.is_empty() { job.state.as_str().to_owned() } else { job.message.clone() };
+        ui.add(egui::ProgressBar::new(job.progress).text(text).desired_width(ui.available_width() - 90.0));
+        if ui.button(format!("{} Cancel", icon::X_CIRCLE)).clicked() {
+            viewer.ai_cancel_job();
+        }
+        return;
+    }
+    if names.len() > 1 {
+        let filter = ui.add(egui::TextEdit::singleline(&mut state.filter).hint_text("Filter structures"));
+        filter.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Filter structures"));
+        let needle = state.filter.to_lowercase();
+        egui::ScrollArea::vertical().id_salt("ai-labels").max_height(140.0).show(ui, |ui| {
+            for name in names.iter().filter(|n| n.to_lowercase().contains(&needle)) {
+                let mut on = state.selected.contains(name);
+                if ui.checkbox(&mut on, name).changed() {
+                    if on {
+                        state.selected.insert(name.clone());
+                    } else {
+                        state.selected.remove(name);
+                    }
+                }
+            }
+        });
+    }
+    // forget choices the engine does not offer (e.g. after reconnecting)
+    state.selected.retain(|n| names.contains(n));
+    let label = if state.selected.is_empty() {
+        "Segment all structures".to_owned()
+    } else {
+        format!("Segment {} structure(s)", state.selected.len())
+    };
+    let enabled = viewer.dataset().is_some() && !viewer.ai().is_busy();
+    if ui.add_enabled(enabled, egui::Button::new(format!("{} {label}", icon::PLAY))).clicked() {
+        let labels = (!state.selected.is_empty()).then(|| state.selected.iter().cloned().collect());
+        viewer.ai_run_automatic(labels);
+    }
+}
+
 /// Draws the section body.
 pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut AiPanelState) {
     connection(ui, viewer, state);
     ui.add_space(4.0);
-    tools(ui, viewer);
+    let interactive = viewer.ai().info().is_none_or(|i| i.capabilities.interactive);
+    if interactive {
+        tools(ui, viewer);
+    }
+    if viewer.ai().supports_automatic() {
+        ui.add_space(4.0);
+        automatic(ui, viewer, state);
+    }
     if !viewer.ai().status().is_connected() {
         ui.label(
             RichText::new(
@@ -131,7 +191,7 @@ pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut AiPanelState) {
             .size(12.0)
             .color(TEXT_DIM),
         );
-    } else {
+    } else if interactive {
         ui.label(RichText::new("Prompts are drawn in the 2D views.").size(12.0).color(TEXT_DIM));
     }
 }

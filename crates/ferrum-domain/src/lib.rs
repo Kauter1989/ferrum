@@ -37,8 +37,8 @@ pub use camera::{OrbitCamera, ViewPreset};
 pub use clip::{ClipBox, ClipPlane, ClipSettings};
 pub use color::{Rgb, Rgba8};
 pub use engine::{
-    EngineCapabilities, EngineError, EngineInfo, EngineLabel, InteractiveSession, Prompt, PromptKind, PromptResult,
-    SegmentationEngine, ENGINE_PROTOCOL,
+    EngineCapabilities, EngineError, EngineInfo, EngineLabel, InteractiveSession, JobState, JobStatus, Prompt,
+    PromptKind, PromptResult, SegmentationEngine, ENGINE_PROTOCOL,
 };
 pub use geometry::{Aabb, Dims3, Ray};
 pub use mask::{EraseStroke, EraserBrush, MaskHistory, VoxelMask};

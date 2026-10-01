@@ -59,6 +59,8 @@ pub struct Router {
     engine: Arc<dyn SegmentationEngine>,
     token: Option<String>,
     sessions: HashMap<String, Entry>,
+    /// Job id → session id.
+    jobs: HashMap<String, String>,
     next_id: u64,
 }
 
@@ -78,7 +80,7 @@ pub struct Request<'a> {
 impl Router {
     /// Router serving `engine`; requests must carry `token` if given.
     pub fn new(engine: Arc<dyn SegmentationEngine>, token: Option<String>) -> Self {
-        Self { engine, token, sessions: HashMap::new(), next_id: 1 }
+        Self { engine, token, sessions: HashMap::new(), jobs: HashMap::new(), next_id: 1 }
     }
 
     /// Number of open sessions.
@@ -115,9 +117,30 @@ impl Router {
                 Ok(Reply::empty())
             }),
             ("DELETE", ["v1", "sessions", id]) => match self.sessions.remove(*id) {
-                Some(_) => Reply::empty(),
+                Some(_) => {
+                    self.jobs.retain(|_, s| s != id);
+                    Reply::empty()
+                }
                 None => Reply::error(&EngineError::NotFound),
             },
+            ("POST", ["v1", "sessions", id, "segment"]) => self.segment(id, req.body),
+            ("GET", ["v1", "sessions", id, "labelmap"]) => self.automatic(id, |s, _| {
+                let values = s.label_map()?;
+                Ok(Reply {
+                    status: 200,
+                    content_type: "application/octet-stream",
+                    body: wire::encode_label_map(&values),
+                    headers: Vec::new(),
+                })
+            }),
+            ("GET", ["v1", "jobs", job]) => {
+                let job = (*job).to_owned();
+                self.job(&job, |s| s.job_status(&job).map(|j| Reply::json(200, &wire::job_to_json(&j))))
+            }
+            ("DELETE", ["v1", "jobs", job]) => {
+                let job = (*job).to_owned();
+                self.job(&job, |s| s.cancel_job(&job).map(|()| Reply::empty()))
+            }
             _ => Reply::code(404, "not_found", &format!("no route for {} {path}", req.method)),
         }
     }
@@ -169,6 +192,50 @@ impl Router {
             None => Reply::error(&EngineError::NotFound),
             Some(Entry { session: None, .. }) => Reply::code(409, "no_volume", "upload the volume first"),
             Some(Entry { session: Some(s), revision, .. }) => f(s, revision).unwrap_or_else(|e| Reply::error(&e)),
+        }
+    }
+
+    /// Like [`Router::with_session`], for the automatic endpoints, which
+    /// interactive-only engines answer with 404.
+    fn automatic(
+        &mut self,
+        id: &str,
+        f: impl FnOnce(&mut Box<dyn InteractiveSession>, &mut u64) -> Result<Reply, EngineError>,
+    ) -> Reply {
+        if !self.engine.info().is_ok_and(|i| i.capabilities.automatic) {
+            return Reply::code(404, "not_found", "this engine has no automatic segmentation");
+        }
+        self.with_session(id, f)
+    }
+
+    fn segment(&mut self, id: &str, body: &[u8]) -> Reply {
+        let labels = if body.is_empty() {
+            Ok(None)
+        } else {
+            serde_json::from_slice::<Value>(body)
+                .map_err(|e| EngineError::BadRequest(e.to_string()))
+                .and_then(|v| wire::labels_from_json(&v))
+        };
+        let mut started = None;
+        let reply = self.automatic(id, |s, _| {
+            let job = s.start_job(labels?.as_deref())?;
+            started = Some(job.clone());
+            Ok(Reply::json(202, &json!({ "job_id": job })))
+        });
+        if let Some(job) = started {
+            self.jobs.insert(job, id.to_owned());
+        }
+        reply
+    }
+
+    fn job(
+        &mut self,
+        job: &str,
+        f: impl FnOnce(&mut Box<dyn InteractiveSession>) -> Result<Reply, EngineError>,
+    ) -> Reply {
+        match self.jobs.get(job).cloned() {
+            Some(id) => self.automatic(&id, |s, _| f(s)),
+            None => Reply::error(&EngineError::NotFound),
         }
     }
 

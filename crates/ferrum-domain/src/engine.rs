@@ -246,6 +246,57 @@ pub enum EngineError {
     Internal(String),
 }
 
+/// State of an automatic segmentation job.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JobState {
+    /// Waiting to start.
+    Queued,
+    /// In progress.
+    Running,
+    /// Finished; the label map is available.
+    Done,
+    /// Failed (see [`JobStatus::message`]).
+    Failed,
+    /// Cancelled by the client.
+    Cancelled,
+}
+
+impl JobState {
+    /// Wire name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            JobState::Queued => "queued",
+            JobState::Running => "running",
+            JobState::Done => "done",
+            JobState::Failed => "failed",
+            JobState::Cancelled => "cancelled",
+        }
+    }
+
+    /// Parses a wire name.
+    pub fn parse(s: &str) -> Option<JobState> {
+        [JobState::Queued, JobState::Running, JobState::Done, JobState::Failed, JobState::Cancelled]
+            .into_iter()
+            .find(|j| j.as_str() == s)
+    }
+
+    /// `true` once the job will not change any more.
+    pub fn is_final(self) -> bool {
+        matches!(self, JobState::Done | JobState::Failed | JobState::Cancelled)
+    }
+}
+
+/// Progress of an automatic segmentation job.
+#[derive(Debug, Clone, PartialEq)]
+pub struct JobStatus {
+    /// State.
+    pub state: JobState,
+    /// Completion in `[0, 1]` (best effort).
+    pub progress: f32,
+    /// Human-readable detail (error message for failed jobs).
+    pub message: String,
+}
+
 /// A segmentation engine.
 pub trait SegmentationEngine: Send + Sync {
     /// Describes the engine.
@@ -256,8 +307,9 @@ pub trait SegmentationEngine: Send + Sync {
     fn open_session(&self, volume: &Volume, modality: &str) -> Result<Box<dyn InteractiveSession>, EngineError>;
 }
 
-/// An interactive session: one volume and one target mask refined by
-/// prompts. Dropping the session frees it on the engine.
+/// A session on one uploaded volume. Interactive engines refine one target
+/// mask by prompts; automatic engines run jobs that produce a label map
+/// (`capabilities.automatic`). Dropping the session frees it on the engine.
 pub trait InteractiveSession: Send {
     /// Adds a prompt to the current object.
     fn prompt(&mut self, prompt: &Prompt) -> Result<PromptResult, EngineError>;
@@ -271,6 +323,31 @@ pub trait InteractiveSession: Send {
 
     /// Clears prompts and the target mask, keeping the volume.
     fn reset(&mut self) -> Result<(), EngineError>;
+
+    /// Starts automatic segmentation of `labels` (names from
+    /// [`EngineInfo::labels`]; `None` = all) and returns the job id.
+    fn start_job(&mut self, labels: Option<&[String]>) -> Result<String, EngineError> {
+        let _ = labels;
+        Err(EngineError::Unsupported("automatic segmentation".into()))
+    }
+
+    /// Status of job `job`.
+    fn job_status(&mut self, job: &str) -> Result<JobStatus, EngineError> {
+        let _ = job;
+        Err(EngineError::Unsupported("automatic segmentation".into()))
+    }
+
+    /// Cancels job `job`.
+    fn cancel_job(&mut self, job: &str) -> Result<(), EngineError> {
+        let _ = job;
+        Err(EngineError::Unsupported("automatic segmentation".into()))
+    }
+
+    /// Label map of the last finished job: one value per voxel of the
+    /// uploaded grid (`i` fastest), referring to [`EngineInfo::labels`].
+    fn label_map(&mut self) -> Result<Vec<u16>, EngineError> {
+        Err(EngineError::Unsupported("automatic segmentation".into()))
+    }
 }
 
 #[cfg(test)]
@@ -311,6 +388,45 @@ mod tests {
         for p in &bad {
             assert!(matches!(p.validate(d), Err(EngineError::BadRequest(_))), "{p:?}");
         }
+    }
+
+    #[test]
+    fn job_states_roundtrip() {
+        for s in ["queued", "running", "done", "failed", "cancelled"] {
+            assert_eq!(JobState::parse(s).unwrap().as_str(), s);
+        }
+        assert_eq!(JobState::parse("paused"), None);
+        assert!(JobState::Done.is_final() && JobState::Failed.is_final() && JobState::Cancelled.is_final());
+        assert!(!JobState::Running.is_final() && !JobState::Queued.is_final());
+    }
+
+    struct Bare;
+
+    impl InteractiveSession for Bare {
+        fn prompt(&mut self, _: &Prompt) -> Result<PromptResult, EngineError> {
+            Err(EngineError::NotFound)
+        }
+        fn mask(&mut self, _: VoxelBox) -> Result<Vec<u8>, EngineError> {
+            Err(EngineError::NotFound)
+        }
+        fn undo(&mut self) -> Result<PromptResult, EngineError> {
+            Err(EngineError::NotFound)
+        }
+        fn reset(&mut self) -> Result<(), EngineError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn sessions_without_jobs_report_unsupported() {
+        let mut b = Bare;
+        let unsupported = |r: Result<(), EngineError>| matches!(r, Err(EngineError::Unsupported(_)));
+        assert!(unsupported(b.start_job(None).map(|_| ())));
+        assert!(unsupported(b.job_status("j").map(|_| ())));
+        assert!(unsupported(b.cancel_job("j")));
+        assert!(unsupported(b.label_map().map(|_| ())));
+        assert!(b.prompt(&Prompt::Point { positive: true, voxel: UVec3::ZERO }).is_err());
+        assert!(b.mask(VoxelBox::new(UVec3::ZERO, UVec3::ONE)).is_err() && b.undo().is_err() && b.reset().is_ok());
     }
 
     #[test]

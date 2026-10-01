@@ -237,7 +237,17 @@ expiry.
 
 Engines with `capabilities.automatic: true` (for example TotalSegmentator)
 also implement the following endpoints. Interactive-only engines return
-`404` for them.
+`404` for them. An engine may be automatic only (`interactive: false`); it
+still creates sessions and receives the volume the same way.
+
+FERRUM's automatic flow:
+1. It starts a job for the structures the user picked.
+2. It polls the job status a few times per second, showing the progress
+   and message, and sends `DELETE` when the user cancels.
+3. It fetches the label map once the job is `done`.
+
+Every label value present in the map becomes a segment, named after
+`info.labels` and coloured with its colour if one is given.
 
 - `POST /v1/sessions/{id}/segment` with `{ "labels": ["liver", "spleen"] }`
   (`null` means all labels) starts a job and returns `202 Accepted` with
