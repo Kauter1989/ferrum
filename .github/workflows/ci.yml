@@ -34,3 +34,32 @@ jobs:
         run: cargo bench --workspace --no-run
       - name: Release build
         run: cargo build --release
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install software Vulkan (lavapipe)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers libvulkan1
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: Swatinem/rust-cache@v2
+      - name: Coverage (fails below the floor set in the Makefile)
+        run: make coverage-ci | tee coverage.txt
+        shell: bash -o pipefail {0}
+      - name: Coverage summary
+        if: always()
+        run: |
+          echo '### Test coverage' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          grep -E '^(Filename|TOTAL)' coverage.txt >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: |
+            lcov.info
+            target/llvm-cov/html

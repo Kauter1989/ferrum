@@ -349,7 +349,8 @@ decisions: [docs/decisions/](docs/decisions/).
 ```bash
 make test        # all tests; GPU tests are skipped without an adapter
 make test-gpu    # same, but a missing GPU adapter fails the run (CI mode)
-make lint        # rustfmt --check + clippy -D warnings
+make lint        # rustfmt --check + clippy -D warnings (incl. complexity budget)
+make coverage    # test coverage report (cargo-llvm-cov)
 make install     # install the ferrum binary into ~/.cargo/bin
 make bench       # criterion benchmarks
 make snapshot ARGS="<input> <out_dir>"   # headless PNG renders of every mode
@@ -383,7 +384,9 @@ About 180 tests run headlessly with `cargo test --workspace`:
 
 To also test on a real DICOM series:
 `FERRUM_SAMPLE_DICOM=/path/to/series cargo test -p ferrum-io`.
-More in [docs/testing.md](docs/testing.md).
+Line coverage is about 88 %, and CI fails if it drops below 87 %. Clippy
+also enforces a complexity budget for every function. More in
+[docs/testing.md](docs/testing.md) and [docs/quality.md](docs/quality.md).
 
 ## Project layout
 

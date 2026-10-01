@@ -95,18 +95,22 @@ impl Reorientation {
         out.par_chunks_mut(out_dims.slice_len()).enumerate().for_each(|(ok, slab)| {
             for oj in 0..dst[1] as usize {
                 for oi in 0..dst[0] as usize {
-                    let o = [oi, oj, ok];
-                    let mut s = [0usize; 3];
-                    for a in 0..3 {
-                        let v = o[self.target[a]];
-                        s[a] = if self.flip[a] { src[a] as usize - 1 - v } else { v };
-                    }
-                    let idx = s[0] + src[0] as usize * (s[1] + src[1] as usize * s[2]);
-                    slab[oi + oj * dst[0] as usize] = values[idx];
+                    slab[oi + oj * dst[0] as usize] = values[self.source_index([oi, oj, ok], src)];
                 }
             }
         });
         (out, out_dims, Vec3::from(sp))
+    }
+
+    /// Linear index, in the source grid of size `src`, of the voxel that
+    /// lands at canonical position `o`.
+    fn source_index(&self, o: [usize; 3], src: [u32; 3]) -> usize {
+        let mut s = [0usize; 3];
+        for a in 0..3 {
+            let v = o[self.target[a]];
+            s[a] = if self.flip[a] { src[a] as usize - 1 - v } else { v };
+        }
+        s[0] + src[0] as usize * (s[1] + src[1] as usize * s[2])
     }
 }
 
