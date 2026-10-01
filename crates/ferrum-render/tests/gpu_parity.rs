@@ -9,11 +9,11 @@
 use std::sync::{Mutex, OnceLock};
 
 use ferrum_domain::{
-    ClipBox, ClipSettings, Dims3, EraserBrush, OrbitCamera, RenderMode, RenderSettings, SliceAxis, SliceImage,
-    TransferFunction, Volume, VoxelMask, WindowLevel,
+    ClipBox, ClipSettings, Dims3, EraserBrush, LabelMap, OrbitCamera, RenderMode, RenderSettings, Rgba8, SliceAxis,
+    SliceImage, TransferFunction, Volume, VoxelMask, WindowLevel,
 };
 use ferrum_processing::{ambient_occlusion::AoParams, AmbientOcclusion, BrickGrid};
-use ferrum_render::cpu::{CpuRaycaster, CpuScene};
+use ferrum_render::cpu::{CpuRaycaster, CpuScene, SegmentLayer};
 use ferrum_render::frame::brick_classifier;
 use ferrum_render::gpu::{GpuContext, VolumeRenderer};
 use ferrum_render::{FrameParams, SliceParams};
@@ -90,12 +90,44 @@ struct Scene {
     mask: Option<VoxelMask>,
     ao: Option<AmbientOcclusion>,
     ess: bool,
+    labels: Option<(LabelMap, [Rgba8; 256])>,
 }
 
 impl Scene {
     fn new() -> Self {
-        Self { volume: phantom(), tf: TransferFunction::bone(0.3), mask: None, ao: None, ess: false }
+        Self { volume: phantom(), tf: TransferFunction::bone(0.3), mask: None, ao: None, ess: false, labels: None }
     }
+
+    /// Phantom with two segments: a translucent red block on one side and
+    /// an opaque green ball off-centre inside the core.
+    fn segmented() -> Self {
+        let mut scene = Self::new();
+        scene.labels = Some(segment_fixture(scene.volume.dims()));
+        scene
+    }
+}
+
+fn segment_fixture(dims: Dims3) -> (LabelMap, [Rgba8; 256]) {
+    let mut data = vec![0u8; dims.voxel_count()];
+    for k in 0..dims.z {
+        for j in 0..dims.y {
+            for i in 0..dims.x {
+                let ball = Vec3::new(i as f32 - 24.0, j as f32 - 16.0, k as f32 - 12.0).length() < 5.0;
+                let block = (4..16).contains(&i) && (8..28).contains(&j) && (4..20).contains(&k);
+                data[dims.index(i, j, k)] = if ball {
+                    2
+                } else if block {
+                    1
+                } else {
+                    0
+                };
+            }
+        }
+    }
+    let mut lut = [[0u8; 4]; 256];
+    lut[1] = [230, 60, 50, 150];
+    lut[2] = [60, 220, 90, 255];
+    (LabelMap::from_data(dims, data).unwrap(), lut)
 }
 
 /// Mean absolute difference and fraction of pixels differing by > 24/255.
@@ -127,6 +159,10 @@ fn render_both(scene: &Scene, s: &RenderSettings, clip: &ClipSettings) -> Option
         renderer.update_mask(device, queue, m, None);
     }
     renderer.set_ambient_occlusion(device, queue, scene.ao.as_ref());
+    renderer.update_labels(device, queue, scene.labels.as_ref().map(|l| &l.0), None);
+    if let Some((_, seg_lut)) = &scene.labels {
+        renderer.set_segment_colors(queue, seg_lut);
+    }
     let bricks = BrickGrid::compute(&scene.volume, 8);
     let occupancy = bricks.occupancy(brick_classifier(s, &scene.tf));
     if scene.ess {
@@ -142,7 +178,8 @@ fn render_both(scene: &Scene, s: &RenderSettings, clip: &ClipSettings) -> Option
         Vec2::splat(SIZE as f32),
         8,
         scene.ao.as_ref().map(|a| a.tex_scale),
-    );
+    )
+    .with_segments(scene.labels.is_some());
     p.jitter = false;
     let gpu_img = renderer.render_volume_image(device, queue, &p, UVec2::splat(SIZE)).unwrap();
     let cpu_scene = CpuScene {
@@ -151,6 +188,7 @@ fn render_both(scene: &Scene, s: &RenderSettings, clip: &ClipSettings) -> Option
         ao: scene.ao.as_ref(),
         lut: &lut,
         occupancy: scene.ess.then_some(occupancy.as_slice()),
+        segments: scene.labels.as_ref().map(|(labels, lut)| SegmentLayer { labels, lut }),
     };
     let cpu_img = CpuRaycaster::new(cpu_scene, &p).render(SIZE, SIZE);
     Some((gpu_img, cpu_img))
@@ -250,6 +288,77 @@ fn empty_space_skipping_does_not_change_the_image() {
 }
 
 #[test]
+fn segment_overlay_matches_cpu_in_every_mode() {
+    for mode in RenderMode::ALL {
+        let name = format!("segments {mode:?}");
+        assert_parity(&name, &Scene::segmented(), &settings(mode), &ClipSettings::default());
+    }
+}
+
+#[test]
+fn segments_change_the_image_and_respect_the_eraser() {
+    let s = settings(RenderMode::Isosurface);
+    let Some((plain, _)) = render_both(&Scene::new(), &s, &ClipSettings::default()) else {
+        return;
+    };
+    let (seg, _) = render_both(&Scene::segmented(), &s, &ClipSettings::default()).unwrap();
+    let (mean, _) = compare(&plain, &seg);
+    assert!(mean > 2.0, "segments are invisible (mean diff {mean})");
+    let mut erased = Scene::segmented();
+    let mut mask = VoxelMask::new(erased.volume.dims());
+    let brush = EraserBrush { radius_mm: 12.0, depth_mm: 60.0 };
+    mask.erase(Vec3::new(0.5, 0.5, 0.0), Vec3::Z, brush, erased.volume.spacing());
+    erased.mask = Some(mask);
+    let (g, c) = render_both(&erased, &s, &ClipSettings::default()).unwrap();
+    let (mean, bad) = compare(&g, &c);
+    assert!(mean < 2.5 && bad < 0.02, "eraser + segments parity: {mean} {bad}");
+    assert!(compare(&seg, &g).0 > 1.0, "the eraser must hide segments too");
+}
+
+#[test]
+fn slice_overlay_fills_and_outlines_segments() {
+    let Some(gpu) = gpu() else {
+        return;
+    };
+    let mut g = gpu.lock().unwrap();
+    let Gpu { ctx, renderer } = &mut *g;
+    let volume = phantom();
+    renderer.set_volume(&ctx.device, &ctx.queue, &volume);
+    let (labels, lut) = segment_fixture(volume.dims());
+    renderer.update_labels(&ctx.device, &ctx.queue, Some(&labels), None);
+    renderer.set_segment_colors(&ctx.queue, &lut);
+    let (w, h) = (volume.dims().x * 4, volume.dims().y * 4);
+    let params = SliceParams {
+        rect: (Vec2::ZERO, Vec2::new(w as f32, h as f32)),
+        window: (0.0, 1.0),
+        position: (10.0 + 0.5) / volume.dims().z as f32,
+        axis: SliceAxis::Axial.id(),
+        nearest: true,
+        background: [0.0, 0.0, 0.0, 1.0],
+        segments: true,
+    };
+    let on = renderer.render_slice_image(&ctx.device, &ctx.queue, &params, UVec2::new(w, h)).unwrap();
+    let off = renderer
+        .render_slice_image(&ctx.device, &ctx.queue, &SliceParams { segments: false, ..params }, UVec2::new(w, h))
+        .unwrap();
+    let px = |img: &[[u8; 4]], i: u32, j: u32| img[(j * w + i) as usize];
+    // voxel (10, 18) is inside the block: fill = grey blended with red at alpha 150/255
+    let (fi, fj) = (10 * 4 + 2, 18 * 4 + 2);
+    let grey = f32::from(px(&off, fi, fj)[0]);
+    let a = 150.0 / 255.0;
+    let expect = |c: u8| (grey + (f32::from(c) - grey) * a).round();
+    let got = px(&on, fi, fj);
+    for (ch, c) in [(0usize, 230u8), (1, 60), (2, 50)] {
+        assert!((f32::from(got[ch]) - expect(c)).abs() <= 2.0, "fill {got:?}");
+    }
+    // first pixel column of the block (voxel i = 4) is the outline: full colour
+    assert_eq!(px(&on, 4 * 4, fj)[..3], [230, 60, 50]);
+    // outside every segment nothing changes
+    assert_eq!(px(&on, 1, 1), px(&off, 1, 1));
+    renderer.update_labels(&ctx.device, &ctx.queue, None, None);
+}
+
+#[test]
 fn slice_rendering_matches_domain_extraction() {
     let Some(gpu) = gpu() else {
         return;
@@ -271,6 +380,7 @@ fn slice_rendering_matches_domain_extraction() {
             axis: axis.id(),
             nearest: true,
             background: [0.0, 0.0, 0.0, 1.0],
+            segments: false,
         };
         let out = renderer.render_slice_image(&ctx.device, &ctx.queue, &params, UVec2::new(w, h)).unwrap();
         let mut worst = 0i32;

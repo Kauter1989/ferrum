@@ -4,18 +4,22 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use ferrum_domain::{
-    Annotation, AnnotationId, AnnotationReport, AnnotationSet, ClipSettings, Dims3, EraserBrush, LoadedSeries,
-    MaskHistory, OrbitCamera, RenderMode, RenderSettings, Rgba8, SeriesDescriptor, SliceAxis, SliceKey, SliceView,
-    TransferFunction, Volume, VolumeRepository, VoxelMask, WindowLevel, WindowPreset,
+    Annotation, AnnotationId, AnnotationReport, AnnotationSet, ClipSettings, Dims3, EraserBrush, LabelMap,
+    LoadedSeries, MaskHistory, OrbitCamera, RenderMode, RenderSettings, Rgba8, SeriesDescriptor, SliceAxis, SliceKey,
+    SliceView, TransferFunction, Volume, VolumeRepository, VoxelBox, VoxelMask, WindowLevel, WindowPreset,
 };
 use ferrum_processing::AmbientOcclusion;
-use ferrum_render::cpu::{CpuRaycaster, CpuScene};
+use ferrum_render::cpu::{CpuRaycaster, CpuScene, SegmentLayer};
 use ferrum_render::{FrameParams, SliceParams};
 use glam::{UVec3, Vec2, Vec3};
 
 use crate::dataset::{Dataset, BRICK_SIZE};
 use crate::jobs::{FilterKind, JobEvent, JobQueue};
 use crate::tools::{InputKind, ProbeReading, SliceContext, ToolController, ToolInput, ToolKind, ToolOutcome};
+
+mod segments;
+
+pub use segments::{SegmentSummary, SegmentationState};
 
 /// Layout of the main area.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -181,6 +185,10 @@ pub trait GpuSink {
     fn clear_mask(&mut self);
     /// Sets or clears the ambient occlusion volume.
     fn upload_ambient_occlusion(&mut self, ao: Option<&AmbientOcclusion>);
+    /// Uploads (part of) the segment label map; `None` removes it.
+    fn upload_labels(&mut self, labels: Option<&LabelMap>, dirty: Option<VoxelBox>);
+    /// Replaces the segment colour table (alpha = opacity, 0 = hidden).
+    fn upload_segment_colors(&mut self, lut: &[Rgba8; 256]);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -200,6 +208,8 @@ pub struct GpuSyncState {
     occupancy: Option<OccupancyKey>,
     mask: Option<(u64, Option<u64>)>,
     ao: Option<Option<(u64, u32)>>,
+    labels: Option<(u64, Option<u64>)>,
+    segment_colors: Option<(u64, Option<u64>)>,
 }
 
 /// The viewer application service.
@@ -218,6 +228,7 @@ pub struct Viewer {
     pub tool: ToolKind,
     tool_ctl: ToolController,
     annotations: AnnotationSet,
+    segments: SegmentationState,
     /// Latest probe reading.
     pub probe: Option<ProbeReading>,
     /// Status bar.
@@ -243,6 +254,7 @@ impl Viewer {
             tool: ToolKind::default(),
             tool_ctl: ToolController::default(),
             annotations: AnnotationSet::default(),
+            segments: SegmentationState::default(),
             probe: None,
             status: Status { message: "Open a DICOM folder or NIfTI file to start".into(), ..Status::default() },
             series_choice: None,
@@ -308,6 +320,7 @@ impl Viewer {
             VolumeViewState { settings, tf_revision: self.volume.tf_revision + 1, ..VolumeViewState::default() };
         self.volume.mask_generation = self.bump_revision();
         self.annotations.clear();
+        self.clear_segmentation();
         self.tool_ctl.cancel();
         self.probe = None;
         self.status.message = format!(
@@ -584,6 +597,7 @@ impl Viewer {
             axis: axis.id(),
             nearest: self.slices.nearest,
             background: [0.05, 0.05, 0.06, 1.0],
+            segments: self.segments.overlay_active(),
         })
     }
 
@@ -615,15 +629,18 @@ impl Viewer {
     pub fn frame_params(&self, size: Vec2) -> Option<FrameParams> {
         let d = self.dataset.as_ref()?;
         let ao = self.volume.ao.as_ref().filter(|(r, _, _)| *r == d.revision).map(|(_, _, a)| a.tex_scale);
-        Some(FrameParams::new(
-            &d.volume,
-            &self.volume.camera,
-            &self.volume.settings,
-            &self.volume.clip,
-            size,
-            BRICK_SIZE,
-            ao,
-        ))
+        Some(
+            FrameParams::new(
+                &d.volume,
+                &self.volume.camera,
+                &self.volume.settings,
+                &self.volume.clip,
+                size,
+                BRICK_SIZE,
+                ao,
+            )
+            .with_segments(self.segments.overlay_active()),
+        )
     }
 
     /// Eraser mask, if the eraser has been used.
@@ -642,12 +659,16 @@ impl Viewer {
         let d = self.dataset.as_ref()?;
         let mut params = self.frame_params(Vec2::new(aspect * 100.0, 100.0))?;
         params.jitter = false;
+        let seg_lut = self.segments.set().map(|s| s.lut());
+        let segments =
+            self.segments.set().zip(seg_lut.as_ref()).map(|(s, lut)| SegmentLayer { labels: s.labels(), lut });
         let scene = CpuScene {
             volume: &d.volume,
             mask: self.volume.mask.as_ref(),
             ao: None,
             lut: &self.volume.tf_lut,
             occupancy: None,
+            segments,
         };
         CpuRaycaster::new(scene, &params).pick(ndc)
     }
@@ -697,6 +718,7 @@ impl Viewer {
             sync.occupancy = None;
             sync.mask = None;
             sync.ao = None;
+            sync.labels = None;
         }
         if sync.tf != Some(self.volume.tf_revision) {
             sink.upload_transfer_function(&self.volume.tf_lut);
@@ -743,6 +765,36 @@ impl Viewer {
         if sync.ao != Some(ao_key) {
             sink.upload_ambient_occlusion(ao.map(|(_, _, a)| a.as_ref()));
             sync.ao = Some(ao_key);
+        }
+        self.sync_segments(sync, sink);
+    }
+
+    fn sync_segments(&mut self, sync: &mut GpuSyncState, sink: &mut dyn GpuSink) {
+        let generation = self.segments.generation;
+        let Some(set) = self.segments.set.as_mut() else {
+            if matches!(sync.labels, Some((_, Some(_))) | None) {
+                sink.upload_labels(None, None);
+            }
+            sync.labels = Some((generation, None));
+            sync.segment_colors = Some((generation, None));
+            return;
+        };
+        let revision = Some(set.revision());
+        let dirty = set.take_dirty();
+        match sync.labels {
+            Some((g, Some(r))) if g == generation => {
+                if Some(r) != revision {
+                    if let Some(bx) = dirty {
+                        sink.upload_labels(Some(set.labels()), Some(bx));
+                    }
+                }
+            }
+            _ => sink.upload_labels(Some(set.labels()), None),
+        }
+        sync.labels = Some((generation, revision));
+        if sync.segment_colors != Some((generation, revision)) {
+            sink.upload_segment_colors(&set.lut());
+            sync.segment_colors = Some((generation, revision));
         }
     }
 }

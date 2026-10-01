@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use ferrum_domain::{Dims3, Rgba8, Volume, VoxelMask};
+use ferrum_domain::{Dims3, LabelMap, Rgba8, Volume, VoxelBox, VoxelMask};
 use ferrum_processing::AmbientOcclusion;
 use glam::{UVec2, UVec3, Vec4};
 
@@ -65,6 +65,9 @@ pub struct VolumeRenderer {
     occupancy: Texture3d,
     tf: wgpu::Texture,
     tf_view: wgpu::TextureView,
+    labels: Texture3d,
+    seg_lut: wgpu::Texture,
+    seg_lut_view: wgpu::TextureView,
     generation: u64,
     views: HashMap<ViewId, ViewResources>,
 }
@@ -118,6 +121,13 @@ fn upload_u8_full(queue: &wgpu::Queue, tex: &Texture3d, data: &[u8]) {
     }
 }
 
+/// A 1×1×1 background-only label texture (no segmentation).
+fn empty_labels(device: &wgpu::Device, queue: &wgpu::Queue) -> Texture3d {
+    let t = texture_3d(device, "labels (none)", Dims3::new(1, 1, 1), wgpu::TextureFormat::R8Uint);
+    upload_u8_full(queue, &t, &[0]);
+    t
+}
+
 fn fullscreen_pipeline(
     device: &wgpu::Device,
     label: &str,
@@ -164,6 +174,48 @@ fn tex_entry(binding: u32, dim: wgpu::TextureViewDimension) -> wgpu::BindGroupLa
     )
 }
 
+fn uint_tex_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    layout_entry(
+        binding,
+        wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Uint,
+            view_dimension: wgpu::TextureViewDimension::D3,
+            multisampled: false,
+        },
+    )
+}
+
+fn lut_texture(device: &wgpu::Device, label: &str) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d { width: 256, height: 1, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    })
+}
+
+fn write_lut(queue: &wgpu::Queue, texture: &wgpu::Texture, lut: &[Rgba8]) {
+    let mut data = [[0u8; 4]; 256];
+    for (d, s) in data.iter_mut().zip(lut) {
+        *d = *s;
+    }
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        bytemuck::cast_slice(&data),
+        wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(256 * 4), rows_per_image: Some(1) },
+        wgpu::Extent3d { width: 256, height: 1, depth_or_array_layers: 1 },
+    );
+}
+
 fn uniform_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
     layout_entry(
         binding,
@@ -207,11 +259,20 @@ impl VolumeRenderer {
                 tex_entry(4, d3),
                 tex_entry(5, d3),
                 tex_entry(6, wgpu::TextureViewDimension::D2),
+                uint_tex_entry(7),
+                tex_entry(8, wgpu::TextureViewDimension::D2),
             ],
         });
         let slice_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("slice layout"),
-            entries: &[uniform_entry(0), tex_entry(1, d3), sampler_entry(2), sampler_entry(3)],
+            entries: &[
+                uniform_entry(0),
+                tex_entry(1, d3),
+                sampler_entry(2),
+                sampler_entry(3),
+                uint_tex_entry(4),
+                tex_entry(5, wgpu::TextureViewDimension::D2),
+            ],
         });
         let blit_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("blit layout"),
@@ -244,17 +305,12 @@ impl VolumeRenderer {
         for t in [&mask, &ao, &occupancy] {
             upload_u8_full(queue, t, &[255]);
         }
-        let tf = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("transfer function"),
-            size: wgpu::Extent3d { width: 256, height: 1, depth_or_array_layers: 1 },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
+        let tf = lut_texture(device, "transfer function");
         let tf_view = tf.create_view(&wgpu::TextureViewDescriptor::default());
+        let labels = empty_labels(device, queue);
+        let seg_lut = lut_texture(device, "segment colours");
+        let seg_lut_view = seg_lut.create_view(&wgpu::TextureViewDescriptor::default());
+        write_lut(queue, &seg_lut, &[]);
         let mut me = Self {
             caps,
             present_format,
@@ -274,6 +330,9 @@ impl VolumeRenderer {
             occupancy,
             tf,
             tf_view,
+            labels,
+            seg_lut,
+            seg_lut_view,
             generation: 0,
             views: HashMap::new(),
         };
@@ -378,7 +437,42 @@ impl VolumeRenderer {
         let one = Dims3::new(1, 1, 1);
         self.occupancy = texture_3d(device, "occupancy (none)", one, wgpu::TextureFormat::R8Unorm);
         upload_u8_full(queue, &self.occupancy, &[255]);
+        self.labels = empty_labels(device, queue);
         self.generation += 1;
+    }
+
+    /// Synchronises the segment label map (`None` removes it). Uploads only
+    /// the `dirty` box when a texture of the right size already exists.
+    pub fn update_labels(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        labels: Option<&LabelMap>,
+        dirty: Option<VoxelBox>,
+    ) {
+        let Some(labels) = labels else {
+            if self.labels.dims != Dims3::new(1, 1, 1) {
+                self.labels = empty_labels(device, queue);
+                self.generation += 1;
+            }
+            return;
+        };
+        if labels.dims().as_uvec3().max_element() > self.caps.max_texture_3d {
+            log::warn!("label map {:?} exceeds the GPU 3D texture limit; not displayed", labels.dims());
+            return;
+        }
+        if self.labels.dims != labels.dims() {
+            self.labels = texture_3d(device, "labels", labels.dims(), wgpu::TextureFormat::R8Uint);
+            upload_u8_full(queue, &self.labels, labels.data());
+            self.generation += 1;
+        } else if let Some(bx) = dirty.filter(|b| b.fits(labels.dims())) {
+            upload_u8_region(queue, &self.labels, labels.data(), bx.min, bx.max - UVec3::ONE);
+        }
+    }
+
+    /// Uploads the 256-entry segment colour table (alpha = opacity).
+    pub fn set_segment_colors(&mut self, queue: &wgpu::Queue, lut: &[Rgba8]) {
+        write_lut(queue, &self.seg_lut, lut);
     }
 
     /// Synchronises the eraser mask. Uploads only the `dirty` region when
@@ -442,21 +536,7 @@ impl VolumeRenderer {
 
     /// Uploads a 256-entry transfer function lookup table.
     pub fn set_transfer_function(&mut self, queue: &wgpu::Queue, lut: &[Rgba8]) {
-        let mut data = [[0u8; 4]; 256];
-        for (d, s) in data.iter_mut().zip(lut) {
-            *d = *s;
-        }
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.tf,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            bytemuck::cast_slice(&data),
-            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(256 * 4), rows_per_image: Some(1) },
-            wgpu::Extent3d { width: 256, height: 1, depth_or_array_layers: 1 },
-        );
+        write_lut(queue, &self.tf, lut);
     }
 
     fn view_mut(&mut self, device: &wgpu::Device, id: ViewId) -> &mut ViewResources {
@@ -484,6 +564,7 @@ impl VolumeRenderer {
         let (volume_layout, slice_layout) = (&self.volume_layout, &self.slice_layout);
         let (vol, mask, ao, occ, tf) =
             (&self.volume.view, &self.mask.view, &self.ao.view, &self.occupancy.view, &self.tf_view);
+        let (labels, seg_lut) = (&self.labels.view, &self.seg_lut_view);
         let (linear, nearest) = (&self.linear, &self.nearest);
         let Some(view) = self.views.get_mut(&id) else {
             return;
@@ -500,6 +581,8 @@ impl VolumeRenderer {
                     wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(ao) },
                     wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(occ) },
                     wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::TextureView(tf) },
+                    wgpu::BindGroupEntry { binding: 7, resource: wgpu::BindingResource::TextureView(labels) },
+                    wgpu::BindGroupEntry { binding: 8, resource: wgpu::BindingResource::TextureView(seg_lut) },
                 ],
             });
             view.volume_group = Some((generation, group));
@@ -513,6 +596,8 @@ impl VolumeRenderer {
                     wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(vol) },
                     wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(linear) },
                     wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(nearest) },
+                    wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(labels) },
+                    wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(seg_lut) },
                 ],
             });
             view.slice_group = Some((generation, group));

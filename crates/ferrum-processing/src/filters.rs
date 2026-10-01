@@ -33,7 +33,7 @@ fn to_f32(volume: &Volume) -> Vec<f32> {
 
 fn from_f32(volume: &Volume, values: Vec<f32>) -> Result<Volume, VolumeError> {
     let data = values.into_par_iter().map(|v| v.round().clamp(0.0, 65535.0) as u16).collect();
-    Volume::new(volume.dims(), volume.spacing(), volume.range(), data)
+    Ok(Volume::new(volume.dims(), volume.spacing(), volume.range(), data)?.with_geometry(volume.geometry()))
 }
 
 /// Normalised Gaussian kernel with standard deviation `sigma` voxels.

@@ -25,6 +25,7 @@ pub mod mask;
 pub mod render_settings;
 pub mod report;
 pub mod repository;
+pub mod segmentation;
 pub mod slice;
 pub mod transfer;
 pub mod volume;
@@ -42,7 +43,8 @@ pub use repository::{
     CancelFlag, LoadedSeries, NoProgress, ProgressSink, RepositoryError, SeriesDescriptor, SeriesMetadata, StudyInfo,
     VolumeRepository,
 };
+pub use segmentation::{LabelEdit, LabelMap, Segment, SegmentationError, SegmentationSet, VoxelBox};
 pub use slice::{SliceAxis, SliceImage, SliceView};
 pub use transfer::{ControlPoint, CtPreset, TransferFunction, TransferFunctionError};
-pub use volume::{IntensityRange, Volume, VolumeError};
+pub use volume::{Geometry, IntensityRange, Volume, VolumeError};
 pub use window::{WindowLevel, WindowPreset};

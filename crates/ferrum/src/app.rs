@@ -175,6 +175,12 @@ impl ViewerApp {
                 if std::mem::take(&mut self.panel.export_annotations) {
                     self.export_annotations();
                 }
+                if std::mem::take(&mut self.panel.segments.import_labels) {
+                    self.import_labels();
+                }
+                if std::mem::take(&mut self.panel.segments.export_labels) {
+                    self.export_labels();
+                }
             }
         }
         egui::CentralPanel::default()
@@ -730,6 +736,36 @@ impl ViewerApp {
                     self.viewer.status.message =
                         format!("Exported {} annotations to {}", report.annotations.len(), path.display())
                 }
+                Err(e) => self.viewer.status.errors.push(e.to_string()),
+            }
+        }
+    }
+
+    fn import_labels(&mut self) {
+        let Some(volume) = self.viewer.dataset().map(|d| d.volume.clone()) else {
+            return;
+        };
+        let Some(path) = rfd::FileDialog::new().add_filter("NIfTI label map", &["nii", "gz"]).pick_file() else {
+            return;
+        };
+        let result = ferrum_io::read_label_nifti(&path, &volume)
+            .map_err(|e| e.to_string())
+            .and_then(|labels| self.viewer.import_label_map(labels).map_err(|e| e.to_string()));
+        if let Err(e) = result {
+            self.viewer.status.errors.push(format!("Label map import failed: {e}"));
+        }
+    }
+
+    fn export_labels(&mut self) {
+        let Some(volume) = self.viewer.dataset().map(|d| d.volume.clone()) else {
+            return;
+        };
+        let Some(set) = self.viewer.segmentation().set() else {
+            return;
+        };
+        if let Some(path) = rfd::FileDialog::new().set_file_name("segments.nii.gz").save_file() {
+            match ferrum_io::write_label_nifti(set.labels(), &volume, &path) {
+                Ok(()) => self.viewer.status.message = format!("Exported segments to {}", path.display()),
                 Err(e) => self.viewer.status.errors.push(e.to_string()),
             }
         }

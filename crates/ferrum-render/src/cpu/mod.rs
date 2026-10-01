@@ -2,4 +2,4 @@
 
 pub mod raycast;
 
-pub use raycast::{trilinear, CpuRaycaster, CpuScene};
+pub use raycast::{trilinear, CpuRaycaster, CpuScene, SegmentLayer};

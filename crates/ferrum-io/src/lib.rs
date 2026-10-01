@@ -22,7 +22,7 @@ use ferrum_domain::{LoadedSeries, ProgressSink, RepositoryError, SeriesDescripto
 pub use annotations::{annotation_report_json, write_annotation_report};
 pub use dicom::DicomRepository;
 pub use error::IoError;
-pub use nifti::{read_nifti, write_nifti, NiftiRepository};
+pub use nifti::{read_label_nifti, read_nifti, write_label_nifti, write_nifti, NiftiRepository};
 
 /// Repository that dispatches to every supported format.
 pub struct CompositeRepository {

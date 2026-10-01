@@ -38,6 +38,10 @@ fn loads_explicit_little_endian_series_in_spatial_order() {
     assert!((l.volume.spacing() - Vec3::new(0.6, 0.8, 2.0)).length() < 1e-5);
     assert_eq!(l.metadata.modality, "CT");
     assert!(l.metadata.attributes.iter().any(|(k, v)| k == "Ordering" && v == "Position"));
+    let g = l.volume.geometry();
+    assert_eq!(g.origin, Vec3::new(0.0, 0.0, 100.0));
+    assert_eq!(g.direction, glam::Mat3::IDENTITY);
+    assert_eq!(l.volume.voxel_to_patient(Vec3::new(1.0, 1.0, 4.0)), Vec3::new(0.6, 0.8, 108.0));
     // study identification and source folder for annotation export
     let s = &l.metadata.study;
     assert_eq!(s.study_date, "20240428");

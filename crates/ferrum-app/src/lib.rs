@@ -14,4 +14,6 @@ pub mod viewer;
 pub use dataset::Dataset;
 pub use jobs::FilterKind;
 pub use tools::{InputKind, ProbeReading, ToolKind, ToolOutcome};
-pub use viewer::{GpuSink, GpuSyncState, SliceState, Status, ViewMode, Viewer, VolumeViewState};
+pub use viewer::{
+    GpuSink, GpuSyncState, SegmentSummary, SegmentationState, SliceState, Status, ViewMode, Viewer, VolumeViewState,
+};

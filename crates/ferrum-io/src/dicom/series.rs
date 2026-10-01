@@ -160,7 +160,7 @@ pub fn order(headers: &[SliceHeader]) -> OrderedSeries {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::dicom::header::Photometric;
     use std::path::PathBuf;
