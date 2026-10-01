@@ -1,6 +1,25 @@
 # CLAUDE.md — FERRUM
 
-Rust desktop viewer for DICOM/NIfTI volumes (Cargo workspace).
+Reusable visualisation core for volumetric medical images (DICOM/NIfTI)
+in Rust (Cargo workspace): a desktop viewer, ports for data sources and
+segmentation engines, and an agent skill (planned). Read
+[docs/vision.md](docs/vision.md) before changing anything architectural.
+
+## Principles — keep them
+
+- FERRUM owns visualisation and measurement. Everything else goes through a
+  port (`VolumeRepository`, `SegmentationEngine`, later `Exporter`), with
+  implementations composed at compile time.
+- Every use case lives in `ferrum-app`. The desktop UI, embedding
+  applications and the agent tool (`ferrum-agent` / `ferrum-cli`) are thin
+  adapters over it.
+- AI engines run out of process behind `ferrum-engine/1`. There is no
+  inference in Rust, and no engine or weights are bundled.
+- AI tools stay visible but disabled without an engine. Engine licences
+  (`research_only`) are shown.
+- Agents and engines propose; only people confirm. Values come from voxels.
+- No patient identifiers leave FERRUM by default. Never commit patient
+  data.
 
 ## Layering — never violate
 
