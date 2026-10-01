@@ -49,9 +49,9 @@ skipping, isosurface refinement, local ambient occlusion; see
 
 | Metrics | |
 |---|---|
-| Code size | ≈ 12 000 lines of Rust in `src/` (including in-module unit tests), ≈ 1 900 lines of integration tests and benchmarks, ≈ 500 lines of WGSL |
-| Tests | 253: unit, property-based, data layer, shader validation, GPU-vs-CPU parity, engine-protocol conformance, application (incl. AI with a mock engine) and UI |
-| Test coverage | 91.0 % of lines, 90.0 % of functions (`cargo-llvm-cov`); CI fails below 87 % |
+| Code size | ≈ 16 600 lines of Rust in `src/` (including in-module unit tests), ≈ 2 900 lines of integration tests, benchmarks and examples, ≈ 600 lines of WGSL; engine bridges: ≈ 1 400 lines of Python plus ≈ 600 lines of tests |
+| Tests | 253 Rust tests: unit, property-based, data layer, shader validation, GPU-vs-CPU parity, engine-protocol conformance, application (incl. AI with a mock engine) and UI; 17 bridge tests (pytest), and the conformance suite against the running bridge in CI |
+| Test coverage | 91.0 % of lines, 89.9 % of functions (`cargo-llvm-cov`); CI fails below 87 % |
 | Complexity budget | per function: cognitive complexity ≤ 25, ≤ 120 lines, nesting ≤ 6 (enforced by clippy) |
 | Lints | rustfmt and clippy with warnings as errors; no `unsafe`, no `unwrap` outside tests |
 | Load speed | 512×512×252 CT DICOM series decoded in 0.34 s on 4 CPU cores |
@@ -112,10 +112,10 @@ FERRUM is a core, not a monolith. The principles, in short (full text:
 |---|---|
 | Viewer, annotations with JSON export, segments with 2D/3D overlay and NIfTI label maps | ✅ |
 | Engine port, `ferrum-engine/1` client, mock engine, reference server, conformance suite | ✅ |
-| AI segmentation panel (point, box, scribble, lasso; include/exclude; accept, discard, undo) | 🚧 in review |
-| nnInteractive bridge (FastAPI, Docker) and [demo guide](docs/ai-demo.md) | 🚧 in review |
-| Automatic segmentation; TotalSegmentator bridge | 🚧 in review |
-| MONAI Label bridge (DeepEdit / DeepGrow / SAM2 clicks, segmentation models) | 🚧 in review |
+| AI segmentation panel (point, box, scribble, lasso; include/exclude; accept, discard, undo) | ✅ |
+| nnInteractive bridge (FastAPI, Docker) and [demo guide](docs/ai-demo.md) | ✅ |
+| Automatic segmentation (jobs, progress, cancel, structure selection); TotalSegmentator bridge | ✅ |
+| MONAI Label bridge (DeepEdit / DeepGrow / SAM2 clicks, segmentation models) | ✅ |
 | Agent skill: provenance, workspaces, `ferrum-cli` (CLI + MCP), review queue, DICOM SEG/SR | 📋 [Stage 15](dev_plan.md) |
 
 > FERRUM is research and engineering software, not a certified medical
@@ -528,7 +528,7 @@ driver (`mesa-vulkan-drivers` on Debian/Ubuntu).
 
 ## Testing
 
-About 230 tests run headlessly with `cargo test --workspace`:
+About 250 tests run headlessly with `cargo test --workspace`:
 
 | Level | What is checked |
 |---|---|
@@ -538,6 +538,7 @@ About 230 tests run headlessly with `cargo test --workspace`:
 | Shaders | WGSL validated with naga, and uniform layouts matched to the Rust structs |
 | GPU parity | every render mode and feature (including the segment overlay), GPU image compared to the CPU reference |
 | Engine protocol | conformance suite against the reference server, or any engine with `FERRUM_ENGINE_URL` |
+| Bridges | pytest for the Python bridges (protocol, jobs, nnInteractive, TotalSegmentator and MONAI Label adapters with stubbed models), then the conformance suite against a running bridge |
 | Application | use cases with an in-memory repository and a recording GPU sink |
 | UI | the real app driven with egui_kittest, plus full-window renders of 2D, 3D and MPR |
 
