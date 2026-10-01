@@ -227,6 +227,35 @@ fn ai_tools_are_visible_but_disabled_until_an_engine_connects() {
     assert_eq!(h.state().viewer.tool, ToolKind::Pan);
 }
 
+#[test]
+fn automatic_segmentation_runs_from_the_panel() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = loaded_app(dir.path(), None);
+    let server =
+        ferrum_engines::EngineServer::start(Arc::new(ferrum_engines::MockEngine::default()), "127.0.0.1:0", None)
+            .unwrap();
+    app.panel.ai.url = server.url();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1200.0, 1400.0))
+        .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
+    h.run();
+    h.get_by_label_contains("Connect").click();
+    h.step();
+    h.state_mut().viewer.wait_ai_idle();
+    h.run();
+    h.get_by_label("Filter structures");
+    h.get_by_label("bright").click();
+    h.run();
+    h.get_by_label_contains("Segment 1 structure(s)").click();
+    h.step();
+    h.state_mut().viewer.wait_ai_idle();
+    h.run();
+    let rows = h.state().viewer.segment_summaries();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].segment.name, "bright");
+    assert!(rows[0].voxels > 1000, "{}", rows[0].voxels);
+}
+
 fn gpu_render_state() -> Option<egui_wgpu::RenderState> {
     if let Err(e) = ferrum_render::gpu::GpuContext::headless() {
         assert!(std::env::var("FERRUM_REQUIRE_GPU").is_err(), "GPU required: {e}");

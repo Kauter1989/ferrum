@@ -11,13 +11,15 @@
 //!   negative boxes clear the mask inside;
 //! * scribble / lasso — the given mask is added (or removed).
 //!
-//! Undo is supported.
+//! Undo is supported. Automatic jobs classify voxels into two intensity
+//! bands of the volume's range ("intermediate", "bright"); they complete
+//! immediately.
 
 use std::collections::VecDeque;
 
 use ferrum_domain::{
-    Dims3, EngineCapabilities, EngineError, EngineInfo, InteractiveSession, Prompt, PromptKind, PromptResult,
-    SegmentationEngine, Volume, VoxelBox, ENGINE_PROTOCOL,
+    Dims3, EngineCapabilities, EngineError, EngineInfo, EngineLabel, InteractiveSession, JobState, JobStatus, Prompt,
+    PromptKind, PromptResult, SegmentationEngine, Volume, VoxelBox, ENGINE_PROTOCOL,
 };
 use glam::UVec3;
 
@@ -54,13 +56,16 @@ impl MockEngine {
             device: "cpu".into(),
             capabilities: EngineCapabilities {
                 interactive: true,
-                automatic: false,
+                automatic: true,
                 prompts: PromptKind::ALL.to_vec(),
                 planar_boxes_only: false,
                 undo: true,
             },
             modalities: Vec::new(),
-            labels: Vec::new(),
+            labels: vec![
+                EngineLabel { value: 1, name: "intermediate".into(), color: Some([80, 175, 95]) },
+                EngineLabel { value: 2, name: "bright".into(), color: None },
+            ],
             research_only: false,
             license: "MIT — region growing, no model (tests and demos)".into(),
             max_voxels: 0,
@@ -95,13 +100,24 @@ pub struct MockSession {
     count: usize,
     history: Vec<Change>,
     revision: u64,
+    jobs: Vec<String>,
+    label_map: Option<Vec<u16>>,
 }
 
 impl MockSession {
     /// Creates a session on `volume`.
     pub fn new(volume: Volume, params: MockParams) -> Self {
         let n = volume.dims().voxel_count();
-        Self { volume, params, mask: vec![0; n], count: 0, history: Vec::new(), revision: 0 }
+        Self {
+            volume,
+            params,
+            mask: vec![0; n],
+            count: 0,
+            history: Vec::new(),
+            revision: 0,
+            jobs: Vec::new(),
+            label_map: None,
+        }
     }
 
     fn dims(&self) -> Dims3 {
@@ -268,6 +284,63 @@ impl InteractiveSession for MockSession {
         self.revision += 1;
         Ok(())
     }
+
+    fn start_job(&mut self, labels: Option<&[String]>) -> Result<String, EngineError> {
+        let known = MockEngine::describe().labels;
+        let wanted: Vec<u16> = match labels {
+            None => known.iter().map(|l| l.value).collect(),
+            Some(names) => names
+                .iter()
+                .map(|n| {
+                    known
+                        .iter()
+                        .find(|l| &l.name == n)
+                        .map(|l| l.value)
+                        .ok_or_else(|| EngineError::BadRequest(format!("unknown label {n}")))
+                })
+                .collect::<Result<_, _>>()?,
+        };
+        let third = f32::from(u16::MAX) / 3.0;
+        let values = self
+            .volume
+            .data()
+            .iter()
+            .map(|&v| {
+                let band = if f32::from(v) > 2.0 * third {
+                    2
+                } else if f32::from(v) > third {
+                    1
+                } else {
+                    0
+                };
+                if wanted.contains(&band) {
+                    band
+                } else {
+                    0
+                }
+            })
+            .collect();
+        self.label_map = Some(values);
+        let id = format!("job{}", self.jobs.len() + 1);
+        self.jobs.push(id.clone());
+        Ok(id)
+    }
+
+    fn job_status(&mut self, job: &str) -> Result<JobStatus, EngineError> {
+        if self.jobs.iter().any(|j| j == job) {
+            Ok(JobStatus { state: JobState::Done, progress: 1.0, message: String::new() })
+        } else {
+            Err(EngineError::NotFound)
+        }
+    }
+
+    fn cancel_job(&mut self, job: &str) -> Result<(), EngineError> {
+        self.job_status(job).map(|_| ())
+    }
+
+    fn label_map(&mut self) -> Result<Vec<u16>, EngineError> {
+        self.label_map.clone().ok_or_else(|| EngineError::BadRequest("no finished job".into()))
+    }
 }
 
 #[cfg(test)]
@@ -347,6 +420,23 @@ mod tests {
         s.prompt(&Prompt::Point { positive: true, voxel: UVec3::new(4, 5, 3) }).unwrap();
         s.reset().unwrap();
         assert!(s.mask(VoxelBox::full(Dims3::new(20, 12, 8))).unwrap().iter().all(|&v| v == 0));
+    }
+
+    #[test]
+    fn automatic_jobs_classify_intensity_bands() {
+        let mut s = session();
+        assert!(s.label_map().is_err(), "no job yet");
+        let job = s.start_job(None).unwrap();
+        assert_eq!(s.job_status(&job).unwrap().state, JobState::Done);
+        assert!(s.cancel_job(&job).is_ok());
+        assert_eq!(s.job_status("nope"), Err(EngineError::NotFound));
+        let all = s.label_map().unwrap();
+        // the cubes are bright (2), the background is 0
+        assert_eq!(all.iter().filter(|&&v| v == 2).count(), 2 * 6 * 8 * 4);
+        assert!(all.iter().all(|&v| v == 0 || v == 2));
+        s.start_job(Some(&["intermediate".to_string()])).unwrap();
+        assert!(s.label_map().unwrap().iter().all(|&v| v == 0));
+        assert!(matches!(s.start_job(Some(&["liver".to_string()])), Err(EngineError::BadRequest(_))));
     }
 
     #[test]

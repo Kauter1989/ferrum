@@ -5,7 +5,8 @@ use std::io::{Read, Write};
 use std::time::Duration;
 
 use ferrum_domain::{
-    Dims3, EngineError, EngineInfo, InteractiveSession, Prompt, PromptResult, SegmentationEngine, Volume, VoxelBox,
+    Dims3, EngineError, EngineInfo, InteractiveSession, JobStatus, Prompt, PromptResult, SegmentationEngine, Volume,
+    VoxelBox,
 };
 use flate2::write::GzEncoder;
 use serde_json::Value;
@@ -222,6 +223,28 @@ impl InteractiveSession for HttpSession {
 
     fn reset(&mut self) -> Result<(), EngineError> {
         self.client.post_empty(&self.path("/reset")).map(|_| ())
+    }
+
+    fn start_job(&mut self, labels: Option<&[String]>) -> Result<String, EngineError> {
+        let v = self.client.post_json(&self.path("/segment"), &wire::labels_to_json(labels))?;
+        v.get("job_id")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+            .map(str::to_owned)
+            .ok_or_else(|| EngineError::Protocol("invalid job_id".into()))
+    }
+
+    fn job_status(&mut self, job: &str) -> Result<JobStatus, EngineError> {
+        wire::job_from_json(&self.client.get_json(&format!("/jobs/{job}"))?)
+    }
+
+    fn cancel_job(&mut self, job: &str) -> Result<(), EngineError> {
+        self.client.delete(&format!("/jobs/{job}"))
+    }
+
+    fn label_map(&mut self) -> Result<Vec<u16>, EngineError> {
+        let bytes = self.client.get_bytes(&self.path("/labelmap"))?;
+        wire::decode_label_map(&bytes, self.dims.voxel_count())
     }
 }
 
