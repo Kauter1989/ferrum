@@ -44,6 +44,11 @@ impl SliceAxis {
         self.normal_axis() as u32
     }
 
+    /// Inverse of [`SliceAxis::id`].
+    pub fn from_id(id: u32) -> Option<SliceAxis> {
+        SliceAxis::ALL.into_iter().find(|a| a.id() == id)
+    }
+
     /// Number of slices along the normal.
     pub fn slice_count(&self, volume: &Volume) -> u32 {
         volume.dims().as_uvec3()[self.normal_axis()]

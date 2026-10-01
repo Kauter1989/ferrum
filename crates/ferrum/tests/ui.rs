@@ -11,7 +11,7 @@ use egui_kittest::kittest::Queryable;
 use egui_kittest::Harness;
 use ferrum::ViewerApp;
 use ferrum_app::{ToolKind, ViewMode};
-use ferrum_domain::{Dims3, RenderMode, Volume};
+use ferrum_domain::{Annotation, Dims3, RenderMode, SliceAxis, SliceKey, Volume};
 use glam::Vec3;
 
 /// Writes a sphere phantom as NIfTI and returns its path.
@@ -94,6 +94,41 @@ fn switching_modes_and_tools_through_the_ui() {
     h.get_by_label("Info").click();
     h.run();
     h.get_by_label("Series information");
+}
+
+#[test]
+fn annotation_list_navigates_to_the_slice_and_is_2d_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = loaded_app(dir.path(), None);
+    let id = app.viewer.add_annotation(
+        SliceKey::new(SliceAxis::Coronal, 7),
+        Annotation::Distance { a: glam::Vec2::ZERO, b: glam::Vec2::new(5.0, 0.0) },
+    );
+    app.viewer.rename_annotation(id, "Lesion");
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1200.0, 800.0))
+        .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
+    h.run();
+    assert_eq!(h.state().viewer.view_mode, ViewMode::Slice2d);
+    assert!(h.query_by_label("Smooth").is_none(), "filters are hidden");
+    h.get_by_label_contains("Export JSON");
+
+    h.get_by_label("Go to Lesion").click();
+    h.run();
+    assert_eq!(h.state().viewer.slices.axis, SliceAxis::Coronal);
+    assert_eq!(h.state().viewer.slices.index(SliceAxis::Coronal), 7);
+
+    h.get_by_label("MPR").click();
+    h.run();
+    h.get_by_label("Image").click();
+    h.run();
+    assert!(h.query_by_label("Go to Lesion").is_none(), "annotation list is shown in the 2D view only");
+
+    h.get_by_label("2D").click();
+    h.run();
+    h.get_by_label("Delete Lesion").click();
+    h.run();
+    assert!(h.state().viewer.annotations().is_empty());
 }
 
 fn gpu_render_state() -> Option<egui_wgpu::RenderState> {

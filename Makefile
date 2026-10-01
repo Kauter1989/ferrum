@@ -31,6 +31,7 @@ coverage:   ## test coverage, HTML report in target/llvm-cov/html (needs cargo-l
 	cargo llvm-cov report --ignore-filename-regex '$(COVERAGE_IGNORE)' --summary-only
 
 coverage-ci: ## coverage for CI: lcov + HTML + summary, fails below COVERAGE_FLOOR
+	cargo llvm-cov clean --workspace
 	cargo llvm-cov --workspace --no-report
 	cargo llvm-cov report --ignore-filename-regex '$(COVERAGE_IGNORE)' --lcov --output-path lcov.info
 	cargo llvm-cov report --ignore-filename-regex '$(COVERAGE_IGNORE)' --html

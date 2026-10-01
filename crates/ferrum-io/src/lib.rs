@@ -9,6 +9,7 @@
 //! position along the plane normal, then pixel data of all slices is decoded
 //! concurrently and normalised into the volume's `u16` storage.
 
+pub mod annotations;
 pub mod dicom;
 pub mod error;
 pub mod files;
@@ -18,6 +19,7 @@ use std::path::PathBuf;
 
 use ferrum_domain::{LoadedSeries, ProgressSink, RepositoryError, SeriesDescriptor, VolumeRepository};
 
+pub use annotations::{annotation_report_json, write_annotation_report};
 pub use dicom::DicomRepository;
 pub use error::IoError;
 pub use nifti::{read_nifti, write_nifti, NiftiRepository};

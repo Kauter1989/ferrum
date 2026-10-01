@@ -396,6 +396,8 @@ impl VolumeRepository for NiftiRepository {
                 description: path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or(h.description),
                 default_window: None,
                 attributes,
+                study: ferrum_domain::StudyInfo::default(),
+                source: path.clone(),
             },
         })
     }

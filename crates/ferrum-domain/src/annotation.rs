@@ -24,6 +24,11 @@ impl SliceKey {
     pub fn new(axis: SliceAxis, index: u32) -> Self {
         Self { axis: axis.id(), index }
     }
+
+    /// Slice orientation of the key.
+    pub fn slice_axis(&self) -> Option<SliceAxis> {
+        SliceAxis::from_id(self.axis)
+    }
 }
 
 /// Unique id of an annotation within an [`AnnotationSet`].
@@ -106,6 +111,28 @@ pub fn angle_degrees(a: Vec2, vertex: Vec2, b: Vec2) -> f32 {
 }
 
 impl Annotation {
+    /// Name of the annotation type (`"Distance"`, `"Angle"`, …).
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Annotation::Distance { .. } => "Distance",
+            Annotation::Angle { .. } => "Angle",
+            Annotation::Polygon { .. } => "Area",
+            Annotation::Rect { .. } => "Rectangle",
+            Annotation::Text { .. } => "Text",
+        }
+    }
+
+    /// Unit of [`Annotation::value`]: `"mm"`, `"deg"` or `"mm2"`; empty for
+    /// text.
+    pub fn unit(&self) -> &'static str {
+        match self {
+            Annotation::Distance { .. } => "mm",
+            Annotation::Angle { .. } => "deg",
+            Annotation::Polygon { .. } | Annotation::Rect { .. } => "mm2",
+            Annotation::Text { .. } => "",
+        }
+    }
+
     /// Primary numeric value: mm, degrees or mm². `None` for text.
     pub fn value(&self) -> Option<f32> {
         match self {
@@ -194,40 +221,80 @@ impl Annotation {
     }
 }
 
-/// Collection of annotations indexed by slice.
+/// One stored annotation: where it lives, what it is and what the user
+/// called it.
+#[derive(Debug, Clone, PartialEq)]
+struct Entry {
+    key: SliceKey,
+    annotation: Annotation,
+    name: String,
+}
+
+/// Collection of named annotations indexed by slice.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AnnotationSet {
     next_id: AnnotationId,
-    items: BTreeMap<AnnotationId, (SliceKey, Annotation)>,
+    items: BTreeMap<AnnotationId, Entry>,
 }
 
 impl AnnotationSet {
-    /// Adds an annotation and returns its id.
+    /// Adds an annotation with a default name (`"Distance 3"`, …) and
+    /// returns its id.
     pub fn add(&mut self, key: SliceKey, annotation: Annotation) -> AnnotationId {
         let id = self.next_id;
         self.next_id += 1;
-        self.items.insert(id, (key, annotation));
+        let name = format!("{} {}", annotation.kind(), id + 1);
+        self.items.insert(id, Entry { key, annotation, name });
         id
     }
 
     /// Removes an annotation; returns it if it existed.
     pub fn remove(&mut self, id: AnnotationId) -> Option<Annotation> {
-        self.items.remove(&id).map(|(_, a)| a)
+        self.items.remove(&id).map(|e| e.annotation)
     }
 
     /// Mutable access to an annotation.
     pub fn get_mut(&mut self, id: AnnotationId) -> Option<&mut Annotation> {
-        self.items.get_mut(&id).map(|(_, a)| a)
+        self.items.get_mut(&id).map(|e| &mut e.annotation)
     }
 
     /// Immutable access to an annotation.
     pub fn get(&self, id: AnnotationId) -> Option<&Annotation> {
-        self.items.get(&id).map(|(_, a)| a)
+        self.items.get(&id).map(|e| &e.annotation)
+    }
+
+    /// Name of an annotation.
+    pub fn name(&self, id: AnnotationId) -> Option<&str> {
+        self.items.get(&id).map(|e| e.name.as_str())
+    }
+
+    /// Renames an annotation. Surrounding whitespace is trimmed; an empty
+    /// name is rejected. Returns `true` if the annotation exists and was
+    /// renamed.
+    pub fn rename(&mut self, id: AnnotationId, name: &str) -> bool {
+        let name = name.trim();
+        match self.items.get_mut(&id) {
+            Some(e) if !name.is_empty() => {
+                e.name = name.to_string();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Slice an annotation is drawn on.
+    pub fn slice_of(&self, id: AnnotationId) -> Option<SliceKey> {
+        self.items.get(&id).map(|e| e.key)
+    }
+
+    /// All annotations in creation order: id, slice, annotation and name.
+    pub fn iter(&self) -> impl Iterator<Item = (AnnotationId, SliceKey, &Annotation, &str)> {
+        self.items.iter().map(|(id, e)| (*id, e.key, &e.annotation, e.name.as_str()))
     }
 
     /// Annotations on the given slice.
     pub fn on_slice(&self, key: SliceKey) -> impl Iterator<Item = (AnnotationId, &Annotation)> {
-        self.items.iter().filter(move |(_, (k, _))| *k == key).map(|(id, (_, a))| (*id, a))
+        self.items.iter().filter(move |(_, e)| e.key == key).map(|(id, e)| (*id, &e.annotation))
     }
 
     /// Nearest annotation on `key` within `tolerance` mm of `p`.
@@ -324,5 +391,32 @@ mod tests {
         set.remove(a);
         let b = set.add(k, Annotation::Text { pos: Vec2::ZERO, text: String::new() });
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn names_default_rename_and_iterate() {
+        let mut set = AnnotationSet::default();
+        let k = SliceKey::new(SliceAxis::Axial, 7);
+        let d = set.add(k, Annotation::Distance { a: Vec2::ZERO, b: Vec2::X });
+        let t = set.add(SliceKey::new(SliceAxis::Coronal, 2), Annotation::Text { pos: Vec2::ZERO, text: "x".into() });
+        assert_eq!(set.name(d), Some("Distance 1"));
+        assert_eq!(set.name(t), Some("Text 2"));
+        assert!(set.rename(d, "  Tumour diameter "));
+        assert_eq!(set.name(d), Some("Tumour diameter"));
+        assert!(!set.rename(d, "   "), "empty names are rejected");
+        assert!(!set.rename(99, "x"));
+        assert_eq!(set.slice_of(t), Some(SliceKey::new(SliceAxis::Coronal, 2)));
+        let all: Vec<_> = set.iter().map(|(id, key, a, name)| (id, key.index, a.kind(), name.to_string())).collect();
+        assert_eq!(all, vec![(d, 7, "Distance", "Tumour diameter".to_string()), (t, 2, "Text", "Text 2".to_string())]);
+        set.remove(d);
+        assert_eq!(set.name(d), None);
+    }
+
+    #[test]
+    fn kinds_and_units() {
+        let r = Annotation::Rect { a: Vec2::ZERO, b: Vec2::ONE };
+        assert_eq!((r.kind(), r.unit()), ("Rectangle", "mm2"));
+        let a = Annotation::Angle { a: Vec2::X, vertex: Vec2::ZERO, b: Vec2::Y };
+        assert_eq!((a.kind(), a.unit()), ("Angle", "deg"));
     }
 }

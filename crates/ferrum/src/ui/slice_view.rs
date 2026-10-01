@@ -155,11 +155,12 @@ fn draw_overlay(
     let view = viewer.slices.views[axis.normal_axis()];
     let to_screen = |mm: glam::Vec2| g2e(e2g(rect.min) + view.mm_to_screen(mm, viewport, image_mm));
     let key = SliceKey::new(axis, index);
-    for (_, a) in viewer.annotations().on_slice(key) {
-        draw_annotation(painter, a, &to_screen, ANNOTATION_COLOR);
+    for (id, a) in viewer.annotations().on_slice(key) {
+        let name = viewer.annotations().name(id).unwrap_or_default();
+        draw_annotation(painter, a, name, &to_screen, ANNOTATION_COLOR);
     }
     if let Some(a) = viewer.annotation_preview() {
-        draw_annotation(painter, &a, &to_screen, PREVIEW_COLOR);
+        draw_annotation(painter, &a, "", &to_screen, PREVIEW_COLOR);
     }
     let (lo, hi) = view.image_rect(viewport, image_mm);
     let img = Rect::from_min_max(g2e(e2g(rect.min) + lo), g2e(e2g(rect.min) + hi));
@@ -285,7 +286,15 @@ pub fn axis_color(axis: SliceAxis) -> Color32 {
     }
 }
 
-fn draw_annotation(painter: &egui::Painter, a: &Annotation, to_screen: &dyn Fn(glam::Vec2) -> Pos2, color: Color32) {
+/// Draws one annotation; measurements are labelled `name: value`, text
+/// notes show their text.
+fn draw_annotation(
+    painter: &egui::Painter,
+    a: &Annotation,
+    name: &str,
+    to_screen: &dyn Fn(glam::Vec2) -> Pos2,
+    color: Color32,
+) {
     let stroke = Stroke::new(1.5, color);
     let pts: Vec<Pos2> = a.points().into_iter().map(to_screen).collect();
     match a {
@@ -307,7 +316,11 @@ fn draw_annotation(painter: &egui::Painter, a: &Annotation, to_screen: &dyn Fn(g
             painter.circle_filled(*p, 2.5, color);
         }
     }
-    let label = a.label();
+    let label = match a {
+        Annotation::Text { .. } => a.label(),
+        _ if !name.is_empty() => format!("{name}: {}", a.label()),
+        _ => a.label(),
+    };
     if !label.is_empty() {
         let pos = to_screen(a.label_anchor()) + egui::vec2(6.0, -6.0);
         let galley = painter.layout_no_wrap(label, FontId::proportional(12.5), theme::OVERLAY);

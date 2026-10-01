@@ -100,12 +100,11 @@ impl VolumeRepository for DicomRepository {
         let ordered = series::order(&headers);
         let volume = assemble::assemble(&headers, &ordered, &ScaledProgress::new(progress, 0.1, 1.0))?;
         let first = &headers[0];
-        let attributes = OpenFileOptions::new()
+        let (mut attributes, study) = OpenFileOptions::new()
             .read_until(tags::PIXEL_DATA)
             .open_file(&first.path)
-            .map(|obj| header::describe(&obj))
+            .map(|obj| (header::describe(&obj), header::study_info(&obj)))
             .unwrap_or_default();
-        let mut attributes = attributes;
         attributes.push(("Slices".into(), ordered.planes.len().to_string()));
         attributes.push(("Slice spacing".into(), format!("{:.3} mm", ordered.slice_spacing)));
         attributes.push(("Ordering".into(), format!("{:?}", ordered.method)));
@@ -116,9 +115,25 @@ impl VolumeRepository for DicomRepository {
                 description: first.series_description.clone(),
                 default_window: first.window,
                 attributes,
+                study,
+                source: series_folder(&series.sources),
             },
         })
     }
+}
+
+/// The folder holding a series: the deepest directory shared by all its
+/// files (the file itself for a single-file series).
+fn series_folder(sources: &[PathBuf]) -> PathBuf {
+    let Some(first) = sources.first() else {
+        return PathBuf::new();
+    };
+    if sources.len() == 1 {
+        return first.clone();
+    }
+    let mut common = first.parent().map(PathBuf::from).unwrap_or_default();
+    while !sources.iter().all(|p| p.starts_with(&common)) && common.pop() {}
+    common
 }
 
 /// Maps progress of a sub-task into `[from, to]` of the parent.

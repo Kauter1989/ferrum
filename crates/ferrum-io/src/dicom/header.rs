@@ -139,6 +139,22 @@ impl SliceHeader {
     }
 }
 
+/// Study and series identification of a DICOM object.
+pub fn study_info(obj: &InMemDicomObject) -> ferrum_domain::StudyInfo {
+    let s = |tag| str_of(obj, tag).unwrap_or_default();
+    ferrum_domain::StudyInfo {
+        study_instance_uid: s(tags::STUDY_INSTANCE_UID),
+        series_instance_uid: s(tags::SERIES_INSTANCE_UID),
+        study_date: s(tags::STUDY_DATE),
+        study_time: s(tags::STUDY_TIME),
+        study_description: s(tags::STUDY_DESCRIPTION),
+        series_description: s(tags::SERIES_DESCRIPTION),
+        series_number: s(tags::SERIES_NUMBER),
+        accession_number: s(tags::ACCESSION_NUMBER),
+        modality: s(tags::MODALITY),
+    }
+}
+
 /// Selected, human-readable attributes shown in the info dialog.
 pub fn describe(obj: &InMemDicomObject) -> Vec<(String, String)> {
     const SHOWN: [(Tag, &str); 20] = [
