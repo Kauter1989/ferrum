@@ -1,5 +1,6 @@
 //! Widgets, panels and the visual theme.
 
+pub mod ai_panel;
 pub mod panels;
 pub mod recent;
 pub mod segments_panel;

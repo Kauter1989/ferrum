@@ -27,7 +27,8 @@ pub struct ViewerApp {
     /// Application layer.
     pub viewer: Viewer,
     sync: GpuSyncState,
-    panel: PanelState,
+    /// Settings panel state (tabs, editors, AI connection).
+    pub panel: PanelState,
     slice_states: [SliceViewState; 3],
     volume_state: VolumeViewState,
     show_panel: bool,
@@ -43,7 +44,8 @@ pub struct ViewerApp {
 }
 
 /// Icon of a 2D tool.
-fn tool_icon(t: ToolKind) -> &'static str {
+/// Icon of a 2D tool.
+pub(crate) fn tool_icon(t: ToolKind) -> &'static str {
     match t {
         ToolKind::Pan => icon::HAND,
         ToolKind::WindowLevel => icon::CIRCLE_HALF,
@@ -55,6 +57,10 @@ fn tool_icon(t: ToolKind) -> &'static str {
         ToolKind::Text => icon::TEXT_T,
         ToolKind::Move => icon::ARROWS_OUT_CARDINAL,
         ToolKind::Delete => icon::X,
+        ToolKind::AiPoint => icon::CURSOR_CLICK,
+        ToolKind::AiBox => icon::BOUNDING_BOX,
+        ToolKind::AiScribble => icon::SCRIBBLE,
+        ToolKind::AiLasso => icon::LASSO,
     }
 }
 
@@ -193,7 +199,11 @@ impl ViewerApp {
         self.drop_overlay(&ctx);
         self.dialogs(&ctx);
 
-        if self.viewer.is_loading() || self.viewer.is_computing() || self.viewer.volume.interacting {
+        if self.viewer.is_loading()
+            || self.viewer.is_computing()
+            || self.viewer.ai().is_busy()
+            || self.viewer.volume.interacting
+        {
             ctx.request_repaint();
         }
     }

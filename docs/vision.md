@@ -146,8 +146,9 @@ review by qualified people.
 | Viewer: DICOM/NIfTI, 2D, MPR, 3D, transfer functions, clipping, eraser | ✅ v0.1.0 |
 | Named annotations with JSON export (study identification, 1-based slices) | ✅ |
 | Patient geometry, segments, 2D/3D overlay, NIfTI label maps | ✅ |
-| Engine port, `ferrum-engine/1` client, mock engine, reference server, conformance suite | 🚧 in review |
-| AI segmentation panel; nnInteractive bridge and demo | 📋 Stage 14 |
+| Engine port, `ferrum-engine/1` client, mock engine, reference server, conformance suite | ✅ |
+| AI segmentation panel | 🚧 in review |
+| nnInteractive bridge and demo | 📋 Stage 14 |
 | MONAI Label and TotalSegmentator bridges | 📋 Stage 14 |
 | Agent skill: provenance, workspaces, `ferrum-cli` (CLI + MCP), skill package, review queue | 📋 Stage 15 |
 | DICOM SEG and SR export | 📋 Stage 15 |

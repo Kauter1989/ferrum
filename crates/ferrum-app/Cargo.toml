@@ -18,6 +18,7 @@ thiserror.workspace = true
 [dev-dependencies]
 proptest.workspace = true
 ferrum-io.workspace = true
+ferrum-engines.workspace = true
 tempfile.workspace = true
 
 [lints]

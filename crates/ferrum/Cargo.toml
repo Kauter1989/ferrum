@@ -22,6 +22,7 @@ ferrum-processing.workspace = true
 ferrum-io.workspace = true
 ferrum-render = { workspace = true, features = ["gpu"] }
 ferrum-app.workspace = true
+ferrum-engines.workspace = true
 glam.workspace = true
 log.workspace = true
 env_logger.workspace = true

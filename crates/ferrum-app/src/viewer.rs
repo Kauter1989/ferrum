@@ -17,8 +17,10 @@ use crate::dataset::{Dataset, BRICK_SIZE};
 use crate::jobs::{FilterKind, JobEvent, JobQueue};
 use crate::tools::{InputKind, ProbeReading, SliceContext, ToolController, ToolInput, ToolKind, ToolOutcome};
 
+mod ai;
 mod segments;
 
+pub use ai::{AiState, AiStatus};
 pub use segments::{SegmentSummary, SegmentationState};
 
 /// Layout of the main area.
@@ -229,6 +231,7 @@ pub struct Viewer {
     tool_ctl: ToolController,
     annotations: AnnotationSet,
     segments: SegmentationState,
+    ai: AiState,
     /// Latest probe reading.
     pub probe: Option<ProbeReading>,
     /// Status bar.
@@ -255,6 +258,7 @@ impl Viewer {
             tool_ctl: ToolController::default(),
             annotations: AnnotationSet::default(),
             segments: SegmentationState::default(),
+            ai: AiState::new(),
             probe: None,
             status: Status { message: "Open a DICOM folder or NIfTI file to start".into(), ..Status::default() },
             series_choice: None,
@@ -321,6 +325,7 @@ impl Viewer {
         self.volume.mask_generation = self.bump_revision();
         self.annotations.clear();
         self.clear_segmentation();
+        self.reset_ai_session();
         self.tool_ctl.cancel();
         self.probe = None;
         self.status.message = format!(
@@ -354,6 +359,7 @@ impl Viewer {
         for event in self.jobs.poll() {
             self.handle_event(event);
         }
+        self.poll_ai();
         self.request_ambient_occlusion();
     }
 
@@ -543,11 +549,15 @@ impl Viewer {
             window: &mut self.slices.window,
             annotations: &mut self.annotations,
             tolerance_mm,
+            ai_positive: self.ai.positive,
         };
         let outcome = self.tool_ctl.handle(self.tool, ToolInput { kind, mm, screen }, &mut ctx);
         match &outcome {
             ToolOutcome::Probe(p) => self.probe = *p,
             ToolOutcome::RequestText(pos) => self.pending_text = Some((key, *pos)),
+            ToolOutcome::Prompt(p) => {
+                self.ai_prompt(p.clone());
+            }
             _ => {}
         }
         outcome

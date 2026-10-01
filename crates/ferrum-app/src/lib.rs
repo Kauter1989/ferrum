@@ -8,6 +8,7 @@
 
 pub mod dataset;
 pub mod jobs;
+pub mod prompts;
 pub mod tools;
 pub mod viewer;
 
@@ -15,5 +16,6 @@ pub use dataset::Dataset;
 pub use jobs::FilterKind;
 pub use tools::{InputKind, ProbeReading, ToolKind, ToolOutcome};
 pub use viewer::{
-    GpuSink, GpuSyncState, SegmentSummary, SegmentationState, SliceState, Status, ViewMode, Viewer, VolumeViewState,
+    AiState, AiStatus, GpuSink, GpuSyncState, SegmentSummary, SegmentationState, SliceState, Status, ViewMode, Viewer,
+    VolumeViewState,
 };

@@ -58,13 +58,23 @@ FERRUM is a visualisation core meant to be extended
 | Extension | Port (in `ferrum-domain`) | Status |
 |---|---|---|
 | Data sources | `VolumeRepository` | implemented: DICOM, NIfTI |
-| Segmentation engines | `SegmentationEngine`, `InteractiveSession` | implemented: `ferrum-engines` with `HttpEngine`, `MockEngine` and a reference server; the AI panel follows |
+| Segmentation engines | `SegmentationEngine`, `InteractiveSession` | implemented: `ferrum-engines` with `HttpEngine`, `MockEngine` and a reference server; driven by the *AI segmentation* panel |
 | Exporters | `Exporter` | planned; annotation JSON export exists |
 
 Out-of-process engines (nnInteractive, MONAI Label, TotalSegmentator or
 any other) speak the [FERRUM Engine Protocol](engine-protocol.md) through
 thin bridges in `bridges/`. Implementations are composed at compile time;
 native plugins are not loaded dynamically.
+
+The AI panel runs the engine on a worker thread owned by `ferrum-app`
+(`viewer/ai.rs`):
+- The volume is uploaded once per dataset revision. Prompts are queued in
+  order.
+- Each result's changed box is read back and written into the target
+  segment, so the UI never blocks on the network.
+- The presentation layer only creates the `HttpEngine` from the URL the
+  user enters. 2D prompt tools convert drawing on a slice into planar
+  prompts in `ferrum-app::prompts`.
 
 FERRUM is also planned as an **agent skill**
 ([ADR 0008](decisions/0008-agent-skill.md), [specification](agent-skill.md)).

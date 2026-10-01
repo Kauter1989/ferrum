@@ -7,12 +7,15 @@
 //! reports what happened as a [`ToolOutcome`].
 
 use ferrum_domain::{
-    Annotation, AnnotationId, AnnotationSet, IntensityRange, SliceAxis, SliceKey, SliceView, Volume, WindowLevel,
+    Annotation, AnnotationId, AnnotationSet, IntensityRange, Prompt, PromptKind, SliceAxis, SliceKey, SliceView,
+    Volume, WindowLevel,
 };
 use glam::{UVec3, Vec2};
 
-/// Available 2D tools (the toolbar of the original viewer, minus
-/// segmentation).
+use crate::prompts::PromptPlane;
+
+/// Available 2D tools: the toolbar tools and the AI prompt tools of the
+/// *AI segmentation* panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum ToolKind {
     /// Drag to pan, wheel to zoom.
@@ -36,6 +39,14 @@ pub enum ToolKind {
     Move,
     /// Delete annotations.
     Delete,
+    /// AI: click a point inside (or outside) the object.
+    AiPoint,
+    /// AI: drag a box around the object.
+    AiBox,
+    /// AI: paint strokes over the object.
+    AiScribble,
+    /// AI: draw a closed outline around the object.
+    AiLasso,
 }
 
 impl ToolKind {
@@ -53,6 +64,20 @@ impl ToolKind {
         ToolKind::Delete,
     ];
 
+    /// AI prompt tools.
+    pub const AI: [ToolKind; 4] = [ToolKind::AiPoint, ToolKind::AiBox, ToolKind::AiScribble, ToolKind::AiLasso];
+
+    /// Prompt kind of an AI tool.
+    pub fn prompt_kind(&self) -> Option<PromptKind> {
+        match self {
+            ToolKind::AiPoint => Some(PromptKind::Point),
+            ToolKind::AiBox => Some(PromptKind::Box),
+            ToolKind::AiScribble => Some(PromptKind::Scribble),
+            ToolKind::AiLasso => Some(PromptKind::Lasso),
+            _ => None,
+        }
+    }
+
     /// Short label.
     pub fn label(&self) -> &'static str {
         match self {
@@ -66,6 +91,10 @@ impl ToolKind {
             ToolKind::Text => "Text",
             ToolKind::Move => "Move",
             ToolKind::Delete => "Delete",
+            ToolKind::AiPoint => "AI point",
+            ToolKind::AiBox => "AI box",
+            ToolKind::AiScribble => "AI scribble",
+            ToolKind::AiLasso => "AI lasso",
         }
     }
 
@@ -82,6 +111,10 @@ impl ToolKind {
             ToolKind::Text => "Click to place a note",
             ToolKind::Move => "Drag an annotation to move it",
             ToolKind::Delete => "Click an annotation to delete it",
+            ToolKind::AiPoint => "Click inside the object (Include) or on what to remove (Exclude)",
+            ToolKind::AiBox => "Drag a box around the object on this slice",
+            ToolKind::AiScribble => "Paint over the object",
+            ToolKind::AiLasso => "Draw a closed outline around the object",
         }
     }
 }
@@ -149,6 +182,8 @@ pub struct SliceContext<'a> {
     pub annotations: &'a mut AnnotationSet,
     /// Hit-test tolerance in millimetres.
     pub tolerance_mm: f32,
+    /// AI prompts mark the object (`true`) or background.
+    pub ai_positive: bool,
 }
 
 impl SliceContext<'_> {
@@ -158,6 +193,10 @@ impl SliceContext<'_> {
 
     fn range(&self) -> IntensityRange {
         self.volume.range()
+    }
+
+    fn plane(&self) -> PromptPlane<'_> {
+        PromptPlane { volume: self.volume, axis: self.axis, index: self.index }
     }
 
     /// Voxel under in-plane position `mm`, if inside the image.
@@ -189,6 +228,8 @@ pub enum ToolOutcome {
     RequestText(Vec2),
     /// New probe reading (or `None` when outside the image).
     Probe(Option<ProbeReading>),
+    /// An AI prompt was drawn; the viewer sends it to the engine.
+    Prompt(Prompt),
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -248,6 +289,9 @@ impl ToolController {
                     _ => None,
                 }
             }
+            (Draft::Points(p), ToolKind::AiScribble | ToolKind::AiLasso) => {
+                (p.len() >= 2).then(|| Annotation::Polygon { points: p.clone() })
+            }
             (Draft::Points(p), ToolKind::Area) => {
                 let mut pts = p.clone();
                 pts.extend(self.hover);
@@ -299,6 +343,14 @@ impl ToolController {
                 _ => ToolOutcome::None,
             },
             ToolKind::Move => self.handle_move(input, ctx),
+            ToolKind::AiPoint => match input.kind {
+                InputKind::Press => {
+                    ctx.plane().point(input.mm, ctx.ai_positive).map_or(ToolOutcome::None, ToolOutcome::Prompt)
+                }
+                _ => ToolOutcome::None,
+            },
+            ToolKind::AiBox => self.handle_ai_box(input, ctx),
+            ToolKind::AiScribble | ToolKind::AiLasso => self.handle_ai_stroke(tool, input, ctx),
             ToolKind::Delete => match input.kind {
                 InputKind::Press => match ctx.annotations.hit_test(ctx.key, input.mm, ctx.tolerance_mm) {
                     Some(id) => {
@@ -337,6 +389,56 @@ impl ToolController {
                 let ann =
                     if tool == ToolKind::Rect { Annotation::Rect { a, b } } else { Annotation::Distance { a, b } };
                 ToolOutcome::Committed(ctx.annotations.add(ctx.key, ann))
+            }
+            _ => ToolOutcome::None,
+        }
+    }
+
+    fn handle_ai_box(&mut self, input: ToolInput, ctx: &mut SliceContext<'_>) -> ToolOutcome {
+        match (input.kind, &self.draft) {
+            (InputKind::Press, _) => {
+                self.draft = Draft::Rect(input.mm, input.mm);
+                ToolOutcome::Changed
+            }
+            (InputKind::Drag { .. }, Draft::Rect(a, _)) => {
+                self.draft = Draft::Rect(*a, input.mm);
+                ToolOutcome::Changed
+            }
+            (InputKind::Release, Draft::Rect(a, _)) => {
+                let a = *a;
+                self.draft = Draft::Idle;
+                if (input.mm - a).abs().min_element() < MIN_SIZE_MM {
+                    return ToolOutcome::Changed;
+                }
+                ctx.plane().rect(a, input.mm, ctx.ai_positive).map_or(ToolOutcome::Changed, ToolOutcome::Prompt)
+            }
+            _ => ToolOutcome::None,
+        }
+    }
+
+    fn handle_ai_stroke(&mut self, tool: ToolKind, input: ToolInput, ctx: &mut SliceContext<'_>) -> ToolOutcome {
+        match (input.kind, &mut self.draft) {
+            (InputKind::Press, _) => {
+                self.draft = Draft::Points(vec![input.mm]);
+                ToolOutcome::Changed
+            }
+            (InputKind::Drag { .. }, Draft::Points(p)) => {
+                if p.last().is_none_or(|l| l.distance(input.mm) > 1e-3) {
+                    p.push(input.mm);
+                }
+                ToolOutcome::Changed
+            }
+            (InputKind::Release, Draft::Points(_)) => {
+                let Draft::Points(pts) = std::mem::take(&mut self.draft) else {
+                    return ToolOutcome::Changed;
+                };
+                let plane = ctx.plane();
+                let prompt = if tool == ToolKind::AiLasso {
+                    plane.lasso(&pts, ctx.ai_positive)
+                } else {
+                    plane.scribble(&pts, ctx.ai_positive)
+                };
+                prompt.map_or(ToolOutcome::Changed, ToolOutcome::Prompt)
             }
             _ => ToolOutcome::None,
         }
@@ -456,6 +558,7 @@ mod tests {
                 window: &mut self.window,
                 annotations: &mut self.annotations,
                 tolerance_mm: 1.0,
+                ai_positive: true,
             }
         }
     }
@@ -475,6 +578,53 @@ mod tests {
         assert!(matches!(out, ToolOutcome::Committed(_)));
         assert!(!t.is_busy());
         assert_eq!(f.annotations.len(), 1);
+    }
+
+    #[test]
+    fn ai_tools_produce_prompts() {
+        use ferrum_domain::VoxelBox;
+        let mut f = Fixture::new();
+        let mut t = ToolController::default();
+        assert_eq!(ToolKind::AI.map(|k| k.prompt_kind().is_some()), [true; 4]);
+        assert_eq!(ToolKind::Pan.prompt_kind(), None);
+        // 2 mm × 1 mm pixels: (5, 3) mm is pixel (2, 3)
+        let out = t.handle(ToolKind::AiPoint, input(InputKind::Press, 5.0, 3.0), &mut f.ctx());
+        assert_eq!(out, ToolOutcome::Prompt(Prompt::Point { positive: true, voxel: UVec3::new(2, 3, 1) }));
+        assert_eq!(t.handle(ToolKind::AiPoint, input(InputKind::Press, -5.0, 3.0), &mut f.ctx()), ToolOutcome::None);
+        assert_eq!(t.handle(ToolKind::AiPoint, input(InputKind::Hover, 5.0, 3.0), &mut f.ctx()), ToolOutcome::None);
+
+        t.handle(ToolKind::AiBox, input(InputKind::Press, 2.0, 1.0), &mut f.ctx());
+        t.handle(ToolKind::AiBox, input(InputKind::Drag { delta: Vec2::ONE }, 10.0, 5.0), &mut f.ctx());
+        assert!(matches!(t.preview(ToolKind::AiBox), Some(Annotation::Rect { .. })));
+        let mut negative = f.ctx();
+        negative.ai_positive = false;
+        let out = t.handle(ToolKind::AiBox, input(InputKind::Release, 10.0, 5.0), &mut negative);
+        let bx = VoxelBox::new(UVec3::new(1, 1, 1), UVec3::new(6, 6, 2));
+        assert_eq!(out, ToolOutcome::Prompt(Prompt::Box { positive: false, bx }));
+        t.handle(ToolKind::AiBox, input(InputKind::Press, 2.0, 1.0), &mut f.ctx());
+        assert_eq!(t.handle(ToolKind::AiBox, input(InputKind::Release, 2.1, 1.0), &mut f.ctx()), ToolOutcome::Changed);
+
+        for tool in [ToolKind::AiScribble, ToolKind::AiLasso] {
+            t.handle(tool, input(InputKind::Press, 2.0, 1.0), &mut f.ctx());
+            t.handle(tool, input(InputKind::Drag { delta: Vec2::ONE }, 12.0, 1.0), &mut f.ctx());
+            t.handle(tool, input(InputKind::Drag { delta: Vec2::ONE }, 12.0, 1.0), &mut f.ctx());
+            t.handle(tool, input(InputKind::Drag { delta: Vec2::ONE }, 12.0, 6.0), &mut f.ctx());
+            assert!(matches!(t.preview(tool), Some(Annotation::Polygon { ref points }) if points.len() == 3));
+            let out = t.handle(tool, input(InputKind::Release, 12.0, 6.0), &mut f.ctx());
+            match (tool, out) {
+                (ToolKind::AiScribble, ToolOutcome::Prompt(Prompt::Scribble { positive: true, .. }))
+                | (ToolKind::AiLasso, ToolOutcome::Prompt(Prompt::Lasso { positive: true, .. })) => {}
+                other => panic!("{other:?}"),
+            }
+            assert!(!t.is_busy());
+        }
+        // a lasso needs three points
+        t.handle(ToolKind::AiLasso, input(InputKind::Press, 2.0, 1.0), &mut f.ctx());
+        assert_eq!(
+            t.handle(ToolKind::AiLasso, input(InputKind::Release, 2.0, 1.0), &mut f.ctx()),
+            ToolOutcome::Changed
+        );
+        assert_eq!(t.handle(ToolKind::AiLasso, input(InputKind::Release, 2.0, 1.0), &mut f.ctx()), ToolOutcome::None);
     }
 
     #[test]
