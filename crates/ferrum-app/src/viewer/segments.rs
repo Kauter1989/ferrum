@@ -1,7 +1,9 @@
 //! Segmentation use cases of the [`Viewer`]: the segment list, label-map
 //! import, mask edits (used by segmentation engines) and undo.
 
-use ferrum_domain::{LabelMap, Segment, SegmentationError, SegmentationSet, VoxelBox};
+use ferrum_domain::{
+    LabelMap, Provenance, ReviewStatus, Segment, SegmentationError, SegmentationSet, Timestamp, VoxelBox,
+};
 
 use super::Viewer;
 
@@ -107,6 +109,21 @@ impl Viewer {
     /// Sets the overlay opacity of one segment.
     pub fn set_segment_opacity(&mut self, label: u8, opacity: f32) -> Result<(), SegmentationError> {
         self.with_set(|s| s.set_opacity(label, opacity))
+    }
+
+    /// Replaces the provenance of one segment.
+    pub fn set_segment_provenance(&mut self, label: u8, provenance: Provenance) -> Result<(), SegmentationError> {
+        self.with_set(|s| s.set_provenance(label, provenance))
+    }
+
+    /// Confirms, rejects or reopens one segment; `by` names the reviewer.
+    pub fn review_segment(
+        &mut self,
+        label: u8,
+        status: ReviewStatus,
+        by: Option<&str>,
+    ) -> Result<(), SegmentationError> {
+        self.with_set(|s| s.review(label, status, by, Timestamp::now()))
     }
 
     /// Sets the colour of one segment.

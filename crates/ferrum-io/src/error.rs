@@ -54,6 +54,15 @@ pub enum IoError {
     /// Series slices are inconsistent.
     #[error("inconsistent series: {0}")]
     Inconsistent(String),
+    /// A source file of a workspace is missing or differs from the hash
+    /// recorded when the workspace was created.
+    #[error("{path}: source changed: {reason}")]
+    SourceChanged {
+        /// Offending source file.
+        path: PathBuf,
+        /// What differs.
+        reason: String,
+    },
     /// The operation was cancelled.
     #[error("cancelled")]
     Cancelled,

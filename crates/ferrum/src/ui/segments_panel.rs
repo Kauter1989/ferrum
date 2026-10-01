@@ -6,8 +6,9 @@ use std::collections::HashMap;
 use egui::{RichText, Slider};
 use egui_phosphor::light as icon;
 use ferrum_app::{SegmentSummary, Viewer};
+use ferrum_domain::{Author, Provenance, ReviewStatus};
 
-use super::theme::{SURFACE, TEXT_DIM};
+use super::theme::{DANGER, SURFACE, TEXT_DIM, WARN};
 use super::widgets::tool_button;
 
 /// UI-only state of the section.
@@ -29,6 +30,7 @@ enum RowAction {
     Color([u8; 3]),
     Visible(bool),
     Opacity(f32),
+    Review(ReviewStatus),
     Delete,
 }
 
@@ -80,6 +82,7 @@ pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut SegmentsPanelSta
             RowAction::Color(c) => viewer.set_segment_color(label, c),
             RowAction::Visible(v) => viewer.set_segment_visible(label, v),
             RowAction::Opacity(o) => viewer.set_segment_opacity(label, o),
+            RowAction::Review(status) => viewer.review_segment(label, status, None),
             RowAction::Delete => {
                 state.name_edits.remove(&label);
                 viewer.remove_segment(label)
@@ -139,6 +142,53 @@ fn segment_row(ui: &mut egui::Ui, row: &SegmentSummary, state: &mut SegmentsPane
                 }
             });
         });
+        if let Some(review) = provenance_line(ui, &s.provenance, &s.name) {
+            action = RowAction::Review(review);
+        }
     });
     action
+}
+
+/// Who proposed an item and its review state, with Confirm / Reject for
+/// proposals. Nothing is shown for items drawn and confirmed by a person.
+/// Returns the decision the user took.
+pub fn provenance_line(ui: &mut egui::Ui, p: &Provenance, name: &str) -> Option<ReviewStatus> {
+    if p.author == Author::Human && p.status == ReviewStatus::Confirmed {
+        return None;
+    }
+    let mut decision = None;
+    ui.horizontal_wrapped(|ui| {
+        let (text, color) = match p.status {
+            ReviewStatus::Proposed => (format!("{} Proposed by {}", icon::HOURGLASS_MEDIUM, p.author.describe()), WARN),
+            ReviewStatus::Confirmed => {
+                (format!("{} Confirmed · {}", icon::CHECK_CIRCLE, p.author.describe()), TEXT_DIM)
+            }
+            ReviewStatus::Rejected => (format!("{} Rejected · {}", icon::X_CIRCLE, p.author.describe()), DANGER),
+        };
+        let mut hover = String::new();
+        if let Some(t) = p.created {
+            hover.push_str(&format!("Created {t}"));
+        }
+        if let (Some(t), by) = (p.reviewed, &p.reviewed_by) {
+            hover.push_str(&format!("\nReviewed {t}{}", by.as_deref().map(|b| format!(" by {b}")).unwrap_or_default()));
+        }
+        if matches!(p.author, Author::Engine { research_only: true, .. }) {
+            hover.push_str("\nResearch use only");
+        }
+        let label = ui.label(RichText::new(text).size(12.0).color(color));
+        if !hover.is_empty() {
+            label.on_hover_text(hover.trim_start());
+        }
+        if p.status == ReviewStatus::Proposed {
+            if ui.small_button("Confirm").on_hover_text(format!("Confirm {name}")).clicked() {
+                decision = Some(ReviewStatus::Confirmed);
+            }
+            if ui.small_button("Reject").on_hover_text(format!("Reject {name}")).clicked() {
+                decision = Some(ReviewStatus::Rejected);
+            }
+        } else if ui.small_button("Reopen").on_hover_text(format!("Mark {name} as proposed again")).clicked() {
+            decision = Some(ReviewStatus::Proposed);
+        }
+    });
+    decision
 }

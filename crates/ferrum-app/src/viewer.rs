@@ -5,8 +5,9 @@ use std::sync::Arc;
 
 use ferrum_domain::{
     Annotation, AnnotationId, AnnotationReport, AnnotationSet, ClipSettings, Dims3, EraserBrush, LabelMap,
-    LoadedSeries, MaskHistory, OrbitCamera, RenderMode, RenderSettings, Rgba8, SeriesDescriptor, SliceAxis, SliceKey,
-    SliceView, TransferFunction, Volume, VolumeRepository, VoxelBox, VoxelMask, WindowLevel, WindowPreset,
+    LoadedSeries, MaskHistory, OrbitCamera, Provenance, RenderMode, RenderSettings, ReviewStatus, Rgba8,
+    SeriesDescriptor, SliceAxis, SliceKey, SliceView, Timestamp, TransferFunction, Volume, VolumeRepository, VoxelBox,
+    VoxelMask, WindowLevel, WindowPreset,
 };
 use ferrum_processing::AmbientOcclusion;
 use ferrum_render::cpu::{CpuRaycaster, CpuScene, SegmentLayer};
@@ -483,9 +484,35 @@ impl Viewer {
         self.tool_ctl.cancel();
     }
 
-    /// Adds an annotation to a slice (e.g. imported or scripted).
+    /// Adds an annotation to a slice (e.g. imported or scripted), as drawn
+    /// by the user now.
     pub fn add_annotation(&mut self, key: SliceKey, annotation: Annotation) -> AnnotationId {
-        self.annotations.add(key, annotation)
+        self.annotations.add_with(key, annotation, Provenance::human(Timestamp::now()))
+    }
+
+    /// Adds an annotation with the given provenance (e.g. an agent's
+    /// proposal).
+    pub fn add_annotation_with(
+        &mut self,
+        key: SliceKey,
+        annotation: Annotation,
+        provenance: Provenance,
+    ) -> AnnotationId {
+        self.annotations.add_with(key, annotation, provenance)
+    }
+
+    /// Confirms, rejects or reopens an annotation (see
+    /// [`AnnotationSet::review`]); `by` names the reviewer. Returns `false`
+    /// if the annotation does not exist.
+    pub fn review_annotation(&mut self, id: AnnotationId, status: ReviewStatus, by: Option<&str>) -> bool {
+        self.annotations.review(id, status, by, Timestamp::now())
+    }
+
+    /// Replaces all annotations (e.g. loaded from a workspace), cancelling
+    /// any drawing in progress.
+    pub fn set_annotations(&mut self, annotations: AnnotationSet) {
+        self.annotations = annotations;
+        self.tool_ctl.cancel();
     }
 
     /// Renames an annotation (see [`AnnotationSet::rename`]).

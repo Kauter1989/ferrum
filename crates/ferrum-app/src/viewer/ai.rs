@@ -15,8 +15,8 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use ferrum_domain::{
-    EngineError, EngineInfo, InteractiveSession, JobState, JobStatus, Prompt, PromptKind, PromptResult,
-    SegmentationEngine, Volume,
+    EngineError, EngineInfo, InteractiveSession, JobState, JobStatus, Prompt, PromptKind, PromptResult, Provenance,
+    ReviewStatus, SegmentationEngine, Timestamp, Volume,
 };
 
 use super::Viewer;
@@ -266,6 +266,14 @@ impl AiState {
     pub fn research_only(&self) -> bool {
         self.info.as_ref().is_some_and(|i| i.research_only)
     }
+
+    /// Provenance of a result of the connected engine, created now: a
+    /// proposal waiting for review.
+    pub fn proposal(&self) -> Provenance {
+        let (name, version) =
+            self.info.as_ref().map_or(("unknown engine", ""), |i| (i.name.as_str(), i.version.as_str()));
+        Provenance::engine(name, version, self.research_only(), Timestamp::now())
+    }
 }
 
 impl Viewer {
@@ -334,7 +342,10 @@ impl Viewer {
             None => {
                 self.ai.objects += 1;
                 match self.add_segment(&format!("AI segment {}", self.ai.objects)) {
-                    Ok(t) => t,
+                    Ok(t) => {
+                        let _ = self.set_segment_provenance(t, self.ai.proposal());
+                        t
+                    }
                     Err(e) => {
                         self.status.errors.push(e.to_string());
                         return false;
@@ -398,7 +409,9 @@ impl Viewer {
 
     /// Keeps the current object's segment and starts a new object.
     pub fn ai_accept(&mut self) {
-        if self.ai.target.take().is_some() {
+        if let Some(target) = self.ai.target.take() {
+            // the user accepts the engine's proposal; the author stays the engine
+            let _ = self.review_segment(target, ReviewStatus::Confirmed, None);
             self.ai_send(Command::Reset);
             self.status.message = "AI segment accepted".into();
         }
@@ -506,6 +519,7 @@ impl Viewer {
             let name = known.map_or_else(|| format!("Label {value}"), |l| l.name.clone());
             match self.add_segment(&name) {
                 Ok(label) => {
+                    let _ = self.set_segment_provenance(label, self.ai.proposal());
                     if let Some(c) = known.and_then(|l| l.color) {
                         let _ = self.set_segment_color(label, c);
                     }

@@ -23,6 +23,7 @@ pub mod color;
 pub mod engine;
 pub mod geometry;
 pub mod mask;
+pub mod provenance;
 pub mod render_settings;
 pub mod report;
 pub mod repository;
@@ -42,6 +43,7 @@ pub use engine::{
 };
 pub use geometry::{Aabb, Dims3, Ray};
 pub use mask::{EraseStroke, EraserBrush, MaskHistory, VoxelMask};
+pub use provenance::{Author, Provenance, ReviewStatus, Timestamp};
 pub use render_settings::{RenderMode, RenderSettings, TissueThresholds};
 pub use report::{AnnotationRecord, AnnotationReport};
 pub use repository::{

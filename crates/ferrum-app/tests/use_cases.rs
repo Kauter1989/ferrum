@@ -7,9 +7,9 @@ use std::sync::Arc;
 
 use ferrum_app::{FilterKind, GpuSink, GpuSyncState, InputKind, ToolKind, ToolOutcome, ViewMode, Viewer};
 use ferrum_domain::{
-    Annotation, Dims3, LabelMap, LoadedSeries, ProgressSink, RenderMode, RepositoryError, Rgba8, SeriesDescriptor,
-    SeriesMetadata, SliceAxis, SliceKey, StudyInfo, TransferFunction, Volume, VolumeRepository, VoxelBox, VoxelMask,
-    WindowLevel, WindowPreset,
+    Annotation, AnnotationSet, Dims3, LabelMap, LoadedSeries, ProgressSink, Provenance, RenderMode, RepositoryError,
+    ReviewStatus, Rgba8, SeriesDescriptor, SeriesMetadata, SliceAxis, SliceKey, StudyInfo, Timestamp, TransferFunction,
+    Volume, VolumeRepository, VoxelBox, VoxelMask, WindowLevel, WindowPreset,
 };
 use ferrum_processing::AmbientOcclusion;
 use glam::{UVec3, Vec2, Vec3};
@@ -303,9 +303,37 @@ fn text_annotation_flow() {
     let vp = Vec2::new(240.0, 240.0);
     v.slice_input(SliceAxis::Axial, InputKind::Press, Vec2::new(50.0, 50.0), vp);
     assert!(v.pending_text.is_some());
-    assert!(v.commit_text("note").is_some());
+    let id = v.commit_text("note").unwrap();
     assert!(v.pending_text.is_none());
     assert_eq!(v.annotations().len(), 1);
+    let p = v.annotations().provenance(id).unwrap();
+    assert_eq!((p.author.kind(), p.status), ("human", ReviewStatus::Confirmed));
+    assert!(p.created.is_some_and(|t| t.0 > 1_700_000_000), "drawn annotations carry their time");
+}
+
+#[test]
+fn proposed_annotations_are_reviewed_and_replaced() {
+    let mut v = loaded_viewer();
+    let key = SliceKey::new(SliceAxis::Axial, 2);
+    let drawn = v.add_annotation(key, Annotation::Distance { a: Vec2::ZERO, b: Vec2::X });
+    assert!(v.annotations().provenance(drawn).unwrap().created.is_some());
+    let proposed = v.add_annotation_with(
+        key,
+        Annotation::Distance { a: Vec2::ZERO, b: Vec2::Y },
+        Provenance::agent(Some("run-3".into()), Timestamp(1)),
+    );
+    assert_eq!(v.annotations().pending(), 1);
+    assert!(v.review_annotation(proposed, ReviewStatus::Confirmed, Some("dr.k")));
+    assert!(!v.review_annotation(999, ReviewStatus::Confirmed, None));
+    let p = v.annotations().provenance(proposed).unwrap();
+    assert_eq!((p.status, p.reviewed_by.as_deref(), p.author.kind()), (ReviewStatus::Confirmed, Some("dr.k"), "agent"));
+    let report = v.annotation_report().unwrap();
+    assert_eq!(report.annotations[1].provenance.status, ReviewStatus::Confirmed);
+
+    let mut loaded = AnnotationSet::default();
+    loaded.add(SliceKey::new(SliceAxis::Coronal, 1), Annotation::Text { pos: Vec2::ZERO, text: "x".into() });
+    v.set_annotations(loaded.clone());
+    assert_eq!(v.annotations(), &loaded);
 }
 
 #[test]

@@ -7,8 +7,8 @@
 //! reports what happened as a [`ToolOutcome`].
 
 use ferrum_domain::{
-    Annotation, AnnotationId, AnnotationSet, IntensityRange, Prompt, PromptKind, SliceAxis, SliceKey, SliceView,
-    Volume, WindowLevel,
+    Annotation, AnnotationId, AnnotationSet, IntensityRange, Prompt, PromptKind, Provenance, SliceAxis, SliceKey,
+    SliceView, Timestamp, Volume, WindowLevel,
 };
 use glam::{UVec3, Vec2};
 
@@ -252,6 +252,11 @@ pub struct ToolController {
 /// Minimum length (mm) for a distance/rectangle to be committed.
 const MIN_SIZE_MM: f32 = 0.5;
 
+/// Adds an annotation drawn by the user now.
+fn drawn(set: &mut AnnotationSet, key: SliceKey, annotation: Annotation) -> AnnotationId {
+    set.add_with(key, annotation, Provenance::human(Timestamp::now()))
+}
+
 impl ToolController {
     /// Aborts the current drawing.
     pub fn cancel(&mut self) {
@@ -272,7 +277,7 @@ impl ToolController {
         text: &str,
     ) -> Option<AnnotationId> {
         let text = text.trim();
-        (!text.is_empty()).then(|| set.add(key, Annotation::Text { pos, text: text.to_string() }))
+        (!text.is_empty()).then(|| drawn(set, key, Annotation::Text { pos, text: text.to_string() }))
     }
 
     /// Annotation being drawn, for preview rendering.
@@ -388,7 +393,7 @@ impl ToolController {
                 }
                 let ann =
                     if tool == ToolKind::Rect { Annotation::Rect { a, b } } else { Annotation::Distance { a, b } };
-                ToolOutcome::Committed(ctx.annotations.add(ctx.key, ann))
+                ToolOutcome::Committed(drawn(ctx.annotations, ctx.key, ann))
             }
             _ => ToolOutcome::None,
         }
@@ -454,7 +459,7 @@ impl ToolController {
         };
         pts.push(input.mm);
         if pts.len() == 3 {
-            let id = ctx.annotations.add(ctx.key, Annotation::Angle { a: pts[0], vertex: pts[1], b: pts[2] });
+            let id = drawn(ctx.annotations, ctx.key, Annotation::Angle { a: pts[0], vertex: pts[1], b: pts[2] });
             return ToolOutcome::Committed(id);
         }
         self.draft = Draft::Points(pts);
@@ -468,7 +473,7 @@ impl ToolController {
         };
         let close = |pts: Vec<Vec2>, ctx: &mut SliceContext<'_>| {
             if pts.len() >= 3 {
-                ToolOutcome::Committed(ctx.annotations.add(ctx.key, Annotation::Polygon { points: pts }))
+                ToolOutcome::Committed(drawn(ctx.annotations, ctx.key, Annotation::Polygon { points: pts }))
             } else {
                 ToolOutcome::Changed
             }

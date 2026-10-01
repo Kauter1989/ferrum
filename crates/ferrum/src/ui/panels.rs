@@ -196,6 +196,7 @@ fn annotation_list(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelStat
             key,
             name: name.to_string(),
             summary: format!("{} · {}", a.kind(), a.label()),
+            provenance: viewer.annotations().provenance(id).cloned().unwrap_or_default(),
         })
         .collect();
     for row in rows {
@@ -211,6 +212,9 @@ fn annotation_list(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelStat
                 viewer.remove_annotation(row.id);
                 state.name_edits.remove(&row.id);
             }
+            RowAction::Review(status) => {
+                viewer.review_annotation(row.id, status, None);
+            }
         }
     }
 }
@@ -222,6 +226,7 @@ struct AnnotationRow {
     key: SliceKey,
     name: String,
     summary: String,
+    provenance: ferrum_domain::Provenance,
 }
 
 /// What the user did on one row.
@@ -230,6 +235,7 @@ enum RowAction {
     GoTo,
     Rename(String),
     Delete,
+    Review(ferrum_domain::ReviewStatus),
 }
 
 fn annotation_row(ui: &mut egui::Ui, row: &AnnotationRow, on_current_slice: bool, state: &mut PanelState) -> RowAction {
@@ -270,6 +276,9 @@ fn annotation_row(ui: &mut egui::Ui, row: &AnnotationRow, on_current_slice: bool
         );
         if info.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
             action = RowAction::GoTo;
+        }
+        if let Some(review) = super::segments_panel::provenance_line(ui, &row.provenance, &row.name) {
+            action = RowAction::Review(review);
         }
     });
     action

@@ -151,7 +151,8 @@ review by qualified people.
 | nnInteractive bridge and [demo guide](ai-demo.md) | ✅ |
 | Automatic segmentation; TotalSegmentator bridge | ✅ |
 | MONAI Label bridge | ✅ |
-| Agent skill: provenance, workspaces, `ferrum-cli` (CLI + MCP), skill package, review queue | 📋 Stage 15 |
+| Provenance on annotations and segments; workspace and result formats ([spec](workspace-format.md)) | ✅ |
+| Agent skill: `ferrum-cli` (CLI + MCP), skill package, review queue | 📋 Stage 15 |
 | DICOM SEG and SR export | 📋 Stage 15 |
 
 The detailed plan with user stories is in [dev_plan.md](../dev_plan.md).
