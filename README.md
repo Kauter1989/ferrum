@@ -374,6 +374,8 @@ flowchart LR
 | `ferrum-app` | The `Viewer` facade: loading jobs, slice and 3D state, 2D tool state machines, eraser with undo, and GPU synchronisation through the `GpuSink` port |
 | `ferrum` | eframe/egui application: panels, widgets, paint callbacks, dialogs |
 
+Extension points and the out-of-process engine protocol:
+[docs/engine-protocol.md](docs/engine-protocol.md).
 Details: [docs/architecture.md](docs/architecture.md) ·
 decisions: [docs/decisions/](docs/decisions/).
 

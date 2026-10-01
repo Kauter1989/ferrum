@@ -38,6 +38,23 @@ flowchart LR
 | `ferrum-app` | `Viewer` facade, background `JobQueue`, `ToolController`, `GpuSink` port | depend on wgpu or egui |
 | `ferrum` | panels, widgets, paint callbacks, dialogs; composition root | contain business logic |
 
+
+## Extension points
+
+FERRUM is a visualisation core meant to be extended
+([ADR 0007](decisions/0007-extensibility-and-engine-protocol.md)):
+
+| Extension | Port (in `ferrum-domain`) | Status |
+|---|---|---|
+| Data sources | `VolumeRepository` | implemented: DICOM, NIfTI |
+| Segmentation engines | `SegmentationEngine`, `InteractiveSession` | planned: `ferrum-engines` with `HttpEngine` and `MockEngine` |
+| Exporters | `Exporter` | planned; annotation JSON export exists |
+
+Out-of-process engines (nnInteractive, MONAI Label, TotalSegmentator or
+any other) speak the [FERRUM Engine Protocol](engine-protocol.md) through
+thin bridges in `bridges/`. Implementations are composed at compile time;
+native plugins are not loaded dynamically.
+
 ## Data flow
 
 ```mermaid
