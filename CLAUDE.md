@@ -33,11 +33,15 @@ FERRUM_REQUIRE_GPU=1 cargo test --workspace     # CI mode (lavapipe)
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo bench --workspace
+make coverage                                # coverage report; CI floor in Makefile
 cargo run --release -- <path>                 # the app is the default member
 ```
 
 ## Conventions
 
+- Keep functions within the complexity budget in `clippy.toml` (cognitive
+  complexity 25, 120 lines, nesting 6); split them instead of `allow`.
+  Coverage must not drop below `COVERAGE_FLOOR` (docs/quality.md).
 - Every public item has a doc comment (`missing_docs` is a workspace lint).
 - No `unwrap()`/`expect()` outside tests (clippy lints).
 - Never commit patient data or volume data (not even synthetic): tests

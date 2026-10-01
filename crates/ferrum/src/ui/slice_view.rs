@@ -46,7 +46,25 @@ pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, axis: SliceAxis, state: &mut
         painter.add(egui_wgpu::Callback::new_paint_callback(rect, cb));
     }
 
-    // ---------------------------------------------------------------- input
+    let input_enabled = response.hovered() && !scrub.hovered() && !scrub.dragged();
+    handle_input(ui, viewer, axis, state, rect, &response, input_enabled);
+    let img = draw_overlay(&painter, viewer, axis, rect, &volume, response.hovered());
+    draw_edge_labels(&painter, axis, rect, img);
+    draw_readouts(&painter, viewer, axis, rect, &volume);
+    draw_scrubber(&painter, viewer, axis, rect, &volume, &scrub);
+}
+
+/// Pointer, wheel and keyboard input of a slice view, forwarded to the
+/// application layer in view-local coordinates.
+fn handle_input(
+    ui: &egui::Ui,
+    viewer: &mut Viewer,
+    axis: SliceAxis,
+    state: &mut SliceViewState,
+    rect: Rect,
+    response: &egui::Response,
+    enabled: bool,
+) {
     let viewport = e2g(rect.size().to_pos2());
     let local = |p: Pos2| e2g(p) - e2g(rect.min);
     let (pressed, released, down, pointer, scroll, ctrl, keys) = ui.input(|i| {
@@ -63,7 +81,7 @@ pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, axis: SliceAxis, state: &mut
             ),
         )
     });
-    if response.hovered() && !scrub.hovered() && !scrub.dragged() {
+    if enabled {
         if let Some(p) = pointer {
             if pressed {
                 state.pressed = true;
@@ -71,17 +89,10 @@ pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, axis: SliceAxis, state: &mut
             } else if !down {
                 viewer.slice_input(axis, InputKind::Hover, local(p), viewport);
             }
-            if scroll != 0.0 {
-                if ctrl {
-                    viewer.slice_input(axis, InputKind::Scroll { amount: scroll / 50.0 }, local(p), viewport);
-                } else {
-                    state.scroll_acc += scroll;
-                    while state.scroll_acc.abs() >= 20.0 {
-                        let step = state.scroll_acc.signum();
-                        viewer.step_slice(axis, step as i32);
-                        state.scroll_acc -= step * 20.0;
-                    }
-                }
+            if scroll != 0.0 && ctrl {
+                viewer.slice_input(axis, InputKind::Scroll { amount: scroll / 50.0 }, local(p), viewport);
+            } else if scroll != 0.0 {
+                scroll_slices(viewer, axis, state, scroll);
             }
         }
         if keys.0 {
@@ -92,12 +103,11 @@ pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, axis: SliceAxis, state: &mut
         }
     }
     if state.pressed {
-        if let Some(p) = pointer {
-            if let Some(last) = state.last_pointer {
-                let delta = e2g(p) - e2g(last);
-                if down && delta != glam::Vec2::ZERO {
-                    viewer.slice_input(axis, InputKind::Drag { delta }, local(p), viewport);
-                }
+        let last = state.last_pointer;
+        if let (Some(p), Some(last)) = (pointer, last) {
+            let delta = e2g(p) - e2g(last);
+            if down && delta != glam::Vec2::ZERO {
+                viewer.slice_input(axis, InputKind::Drag { delta }, local(p), viewport);
             }
         }
         if released {
@@ -108,35 +118,55 @@ pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, axis: SliceAxis, state: &mut
         }
     }
     state.last_pointer = pointer;
+    let Some(p) = pointer else {
+        return;
+    };
     if response.double_clicked() {
-        if let Some(p) = pointer {
-            viewer.slice_input(axis, InputKind::DoubleClick, local(p), viewport);
-        }
+        viewer.slice_input(axis, InputKind::DoubleClick, local(p), viewport);
     }
     if response.secondary_clicked() && viewer.view_mode == ViewMode::Mpr {
-        if let Some(p) = pointer {
-            viewer.navigate_to(axis, local(p), viewport);
-        }
+        viewer.navigate_to(axis, local(p), viewport);
     }
+}
 
-    // -------------------------------------------------------------- overlay
+/// Turns accumulated wheel movement into whole slice steps.
+fn scroll_slices(viewer: &mut Viewer, axis: SliceAxis, state: &mut SliceViewState, scroll: f32) {
+    state.scroll_acc += scroll;
+    while state.scroll_acc.abs() >= 20.0 {
+        let step = state.scroll_acc.signum();
+        viewer.step_slice(axis, step as i32);
+        state.scroll_acc -= step * 20.0;
+    }
+}
+
+/// Annotations, MPR crosshairs and the view frame. Returns the on-screen
+/// rectangle of the image.
+fn draw_overlay(
+    painter: &egui::Painter,
+    viewer: &Viewer,
+    axis: SliceAxis,
+    rect: Rect,
+    volume: &ferrum_domain::Volume,
+    hovered: bool,
+) -> Rect {
+    let viewport = e2g(rect.size().to_pos2());
     let index = viewer.slices.index(axis);
-    let image_mm = axis.plane_size_mm(&volume);
+    let image_mm = axis.plane_size_mm(volume);
     let view = viewer.slices.views[axis.normal_axis()];
     let to_screen = |mm: glam::Vec2| g2e(e2g(rect.min) + view.mm_to_screen(mm, viewport, image_mm));
     let key = SliceKey::new(axis, index);
     for (_, a) in viewer.annotations().on_slice(key) {
-        draw_annotation(&painter, a, &to_screen, ANNOTATION_COLOR);
+        draw_annotation(painter, a, &to_screen, ANNOTATION_COLOR);
     }
     if let Some(a) = viewer.annotation_preview() {
-        draw_annotation(&painter, &a, &to_screen, PREVIEW_COLOR);
+        draw_annotation(painter, &a, &to_screen, PREVIEW_COLOR);
     }
     let (lo, hi) = view.image_rect(viewport, image_mm);
     let img = Rect::from_min_max(g2e(e2g(rect.min) + lo), g2e(e2g(rect.min) + hi));
     if viewer.view_mode == ViewMode::Mpr {
         for other in SliceAxis::ALL.into_iter().filter(|a| *a != axis) {
             let mut t = glam::Vec3::splat(0.5);
-            t[other.normal_axis()] = other.slice_position(&volume, viewer.slices.index(other));
+            t[other.normal_axis()] = other.slice_position(volume, viewer.slices.index(other));
             let uv = axis.uv_of_tex(t);
             let stroke = Stroke::new(1.0, axis_color(other).gamma_multiply(0.85));
             if axis.screen_axis(0) == other.normal_axis() {
@@ -148,26 +178,38 @@ pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, axis: SliceAxis, state: &mut
             }
         }
     }
-    widgets::view_frame(&painter, rect, response.hovered());
+    widgets::view_frame(painter, rect, hovered);
+    img
+}
 
-    // anatomical orientation markers at the image edges
+/// Anatomical orientation markers at the image edges, kept inside the
+/// view and clear of the slice scrubber.
+fn draw_edge_labels(painter: &egui::Painter, axis: SliceAxis, rect: Rect, img: Rect) {
     let [l, r, t, b] = axis.edge_labels();
-    // keep clear of the slice scrubber on the right edge
     let inner = Rect::from_min_max(rect.min + egui::vec2(18.0, 18.0), rect.max - egui::vec2(40.0, 18.0));
     let mid = img.center();
     let clampx = |x: f32| x.clamp(inner.min.x, inner.max.x);
     let clampy = |y: f32| y.clamp(inner.min.y, inner.max.y);
-    let lc = theme::OVERLAY;
     let edge = |pos: Pos2, align: Align2, text: &str| {
-        widgets::overlay_text(&painter, pos, align, text, lc, 14.0);
+        widgets::overlay_text(painter, pos, align, text, theme::OVERLAY, 14.0);
     };
     edge(Pos2::new(clampx(img.min.x + 10.0), clampy(mid.y)), Align2::LEFT_CENTER, l);
     edge(Pos2::new(clampx(img.max.x - 10.0), clampy(mid.y)), Align2::RIGHT_CENTER, r);
     edge(Pos2::new(clampx(mid.x), clampy(img.min.y + 10.0)), Align2::CENTER_TOP, t);
     edge(Pos2::new(clampx(mid.x), clampy(img.max.y - 10.0)), Align2::CENTER_BOTTOM, b);
+}
 
-    // read-outs in the corners
-    let n = axis.slice_count(&volume);
+/// Plane, matrix, window/level, slice and zoom read-outs in the corners.
+fn draw_readouts(
+    painter: &egui::Painter,
+    viewer: &Viewer,
+    axis: SliceAxis,
+    rect: Rect,
+    volume: &ferrum_domain::Volume,
+) {
+    let index = viewer.slices.index(axis);
+    let view = viewer.slices.views[axis.normal_axis()];
+    let n = axis.slice_count(volume);
     let w = viewer.slices.window;
     let (cols, rows) = match axis {
         SliceAxis::Axial => (volume.dims().x, volume.dims().y),
@@ -181,16 +223,16 @@ pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, axis: SliceAxis, state: &mut
     }
     top.push((axis.label().to_string(), axis_color(axis)));
     top.push((format!("{cols} × {rows}"), theme::TEXT_DIM));
-    widgets::overlay_lines(&painter, rect.left_top() + egui::vec2(12.0, 10.0), Align2::LEFT_TOP, &top, 12.5);
+    widgets::overlay_lines(painter, rect.left_top() + egui::vec2(12.0, 10.0), Align2::LEFT_TOP, &top, 12.5);
     widgets::overlay_lines(
-        &painter,
+        painter,
         rect.left_bottom() + egui::vec2(12.0, -10.0),
         Align2::LEFT_BOTTOM,
         &[(format!("W: {:.0}   L: {:.0}", w.width, w.center), theme::OVERLAY)],
         12.5,
     );
     widgets::overlay_lines(
-        &painter,
+        painter,
         rect.right_bottom() + egui::vec2(-36.0, -10.0),
         Align2::RIGHT_BOTTOM,
         &[
@@ -199,28 +241,37 @@ pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, axis: SliceAxis, state: &mut
         ],
         12.5,
     );
+}
 
-    // slice scrubber along the right edge
-    if n > 1 {
-        let track = Rect::from_min_max(
-            Pos2::new(rect.max.x - 20.0, rect.min.y + 48.0),
-            Pos2::new(rect.max.x - 12.0, rect.max.y - 48.0),
-        );
-        if track.height() > 40.0 {
-            let frac = index as f32 / (n - 1) as f32;
-            let track = Rect::from_center_size(track.center(), egui::vec2(4.0, track.height()));
-            painter.rect_filled(track, 2.0, Color32::from_white_alpha(22));
-            let y = track.max.y - frac * track.height();
-            let filled = Rect::from_min_max(Pos2::new(track.min.x, y), track.max);
-            painter.rect_filled(filled, 2.0, theme::ACCENT.gamma_multiply(0.8));
-            let knob = Pos2::new(track.center().x, y);
-            painter.circle_filled(knob, 7.0, theme::ACCENT);
-            painter.circle_filled(knob, 3.0, Color32::WHITE);
-            if let Some(p) = scrub.interact_pointer_pos() {
-                let f = ((track.max.y - p.y) / track.height()).clamp(0.0, 1.0);
-                viewer.set_slice_index(axis, (f * (n - 1) as f32).round() as u32);
-            }
-        }
+/// Slice scrubber along the right edge; dragging it selects the slice.
+fn draw_scrubber(
+    painter: &egui::Painter,
+    viewer: &mut Viewer,
+    axis: SliceAxis,
+    rect: Rect,
+    volume: &ferrum_domain::Volume,
+    scrub: &egui::Response,
+) {
+    let n = axis.slice_count(volume);
+    let track = Rect::from_min_max(
+        Pos2::new(rect.max.x - 20.0, rect.min.y + 48.0),
+        Pos2::new(rect.max.x - 12.0, rect.max.y - 48.0),
+    );
+    if n <= 1 || track.height() <= 40.0 {
+        return;
+    }
+    let frac = viewer.slices.index(axis) as f32 / (n - 1) as f32;
+    let track = Rect::from_center_size(track.center(), egui::vec2(4.0, track.height()));
+    painter.rect_filled(track, 2.0, Color32::from_white_alpha(22));
+    let y = track.max.y - frac * track.height();
+    let filled = Rect::from_min_max(Pos2::new(track.min.x, y), track.max);
+    painter.rect_filled(filled, 2.0, theme::ACCENT.gamma_multiply(0.8));
+    let knob = Pos2::new(track.center().x, y);
+    painter.circle_filled(knob, 7.0, theme::ACCENT);
+    painter.circle_filled(knob, 3.0, Color32::WHITE);
+    if let Some(p) = scrub.interact_pointer_pos() {
+        let f = ((track.max.y - p.y) / track.height()).clamp(0.0, 1.0);
+        viewer.set_slice_index(axis, (f * (n - 1) as f32).round() as u32);
     }
 }
 
