@@ -1,0 +1,21 @@
+[package]
+name = "ferrum-engines"
+description = "Segmentation engines for FERRUM: the ferrum-engine/1 HTTP client, an in-process mock engine and a reference server."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+ferrum-domain.workspace = true
+glam.workspace = true
+log.workspace = true
+serde_json.workspace = true
+ureq.workspace = true
+base64.workspace = true
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
+tiny_http.workspace = true
+
+[lints]
+workspace = true

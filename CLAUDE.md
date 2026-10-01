@@ -14,6 +14,9 @@ ferrum (presentation) → ferrum-app (application) → ferrum-domain ← ferrum-
 - `ferrum-app` must compile without wgpu and egui (`ferrum-render` is used with
   `default-features = false`); it talks to the GPU through `GpuSink`.
 - `ferrum-io` implements `VolumeRepository`; nothing else parses files.
+- `ferrum-engines` implements `SegmentationEngine` (`ferrum-engine/1`
+  client, mock, reference server); nothing else talks to engines. Protocol
+  changes update `docs/engine-protocol.md` and the conformance suite.
 - No business logic in `ferrum` widgets — add a use case to `Viewer`.
 - DICOM tags only through `dicom_dictionary_std::tags` constants — never raw
   tag literals.

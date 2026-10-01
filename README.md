@@ -31,7 +31,7 @@ and a volume eraser.
 | Medical I/O | [dicom-rs](https://github.com/Enet4/dicom-rs) 0.10 (JPEG, JPEG 2000, RLE), own NIfTI-1 reader/writer |
 | Parallelism, maths | rayon, glam |
 | Testing | cargo test, proptest, naga (shader validation), egui_kittest (UI), criterion (benchmarks) |
-| Architecture | clean architecture: 6 crates, domain ← data, presentation → application |
+| Architecture | clean architecture: 7 crates, domain ← data, presentation → application |
 | Platforms | Linux x86_64, macOS Apple Silicon, Windows x86_64 ([prebuilt releases](https://github.com/Kauter1989/ferrum/releases)) |
 
 | Metrics | |
@@ -380,6 +380,7 @@ flowchart LR
 | `ferrum-processing` | Histogram, brick grid, ambient occlusion, filters and resampling, parallelised with rayon |
 | `ferrum-io` | DICOM and NIfTI repositories (dicom-rs): scanning, series grouping, slice ordering, parallel decoding; NIfTI label maps; annotation JSON |
 | `ferrum-render` | Frame model shared by GPU and CPU, WGSL shaders, the wgpu renderer (feature `gpu`) and the CPU ray caster |
+| `ferrum-engines` | Segmentation engines: the `ferrum-engine/1` HTTP client, a mock engine without a model, a reference server and a conformance suite |
 | `ferrum-app` | The `Viewer` facade: loading jobs, slice and 3D state, 2D tool state machines, eraser with undo, segments, and GPU synchronisation through the `GpuSink` port |
 | `ferrum` | eframe/egui application: panels, widgets, paint callbacks, dialogs |
 
