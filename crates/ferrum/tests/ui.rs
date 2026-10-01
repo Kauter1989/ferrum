@@ -254,6 +254,18 @@ fn automatic_segmentation_runs_from_the_panel() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].segment.name, "bright");
     assert!(rows[0].voxels > 1000, "{}", rows[0].voxels);
+    assert!(rows[0].segment.provenance.is_pending());
+
+    // the segment list shows the proposal; the user confirms it
+    h.get_by_label_contains("Proposed by engine");
+    h.get_by_label("Confirm").click();
+    h.run();
+    let p = &h.state().viewer.segment_summaries()[0].segment.provenance;
+    assert_eq!(p.status, ferrum_domain::ReviewStatus::Confirmed);
+    h.get_by_label_contains("Confirmed · engine");
+    h.get_by_label("Reopen").click();
+    h.run();
+    assert!(h.state().viewer.segment_summaries()[0].segment.provenance.is_pending());
 }
 
 fn gpu_render_state() -> Option<egui_wgpu::RenderState> {

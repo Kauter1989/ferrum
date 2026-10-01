@@ -134,6 +134,8 @@ ws/ct1/
 ```
 
 - Source data is referenced, never copied or modified.
+- The formats are specified in [workspace-format.md](workspace-format.md)
+  (implemented in Stage 15.2).
 - If a source file changes (its hash differs), commands fail with
   `source_changed`.
 - The desktop app opens a workspace (*File → Open workspace*) and shows
@@ -266,7 +268,7 @@ Every render writes a PNG and a sidecar JSON:
     or `engine` (name, version, `research_only`);
   - `status`: `proposed`, `confirmed` or `rejected`;
   - `created`;
-  - `confirmed_by`, when confirmed.
+  - `reviewed_by` and `reviewed` (time), once confirmed or rejected.
 - Everything created through `ferrum-cli` is `proposed`.
 - The desktop app shows proposed items in a **review queue** with their
   author. The clinician accepts, edits or rejects each item, and the

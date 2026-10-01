@@ -11,6 +11,7 @@ use thiserror::Error;
 
 use crate::color::Rgba8;
 use crate::geometry::Dims3;
+use crate::provenance::{Provenance, ReviewStatus, Timestamp};
 
 /// Errors raised by segmentation operations.
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -175,6 +176,23 @@ pub struct Segment {
     pub visible: bool,
     /// Overlay opacity in `[0, 1]`.
     pub opacity: f32,
+    /// Who created the segment and whether it was confirmed.
+    pub provenance: Provenance,
+}
+
+impl Segment {
+    /// A visible segment in the palette colour of `label` with the default
+    /// opacity, drawn by a person.
+    pub fn new(label: u8, name: impl Into<String>) -> Self {
+        Self {
+            label,
+            name: name.into(),
+            color: palette_color(label),
+            visible: true,
+            opacity: DEFAULT_OPACITY,
+            provenance: Provenance::default(),
+        }
+    }
 }
 
 /// Default segment colours, cycled by label value.
@@ -255,13 +273,7 @@ impl SegmentationSet {
         let mut all: Vec<Segment> = segments.into_iter().filter(|s| s.label != 0).collect();
         for label in 1..=255u8 {
             if counts[usize::from(label)] > 0 && !all.iter().any(|s| s.label == label) {
-                all.push(Segment {
-                    label,
-                    name: format!("Segment {label}"),
-                    color: palette_color(label),
-                    visible: true,
-                    opacity: DEFAULT_OPACITY,
-                });
+                all.push(Segment::new(label, format!("Segment {label}")));
             }
         }
         all.sort_by_key(|s| s.label);
@@ -321,7 +333,7 @@ impl SegmentationSet {
         let label = (1..=255u8).find(|l| self.segment(*l).is_none()).ok_or(SegmentationError::NoFreeLabel)?;
         let name = name.trim();
         let name = if name.is_empty() { format!("Segment {label}") } else { name.to_owned() };
-        let seg = Segment { label, name, color: palette_color(label), visible: true, opacity: DEFAULT_OPACITY };
+        let seg = Segment::new(label, name);
         let at = self.segments.partition_point(|s| s.label < label);
         self.segments.insert(at, seg);
         self.touch(None);
@@ -384,6 +396,31 @@ impl SegmentationSet {
         self.segment_mut(label)?.opacity = if opacity.is_finite() { opacity.clamp(0.0, 1.0) } else { 0.0 };
         self.touch(None);
         Ok(())
+    }
+
+    /// Replaces a segment's provenance.
+    pub fn set_provenance(&mut self, label: u8, provenance: Provenance) -> Result<(), SegmentationError> {
+        self.segment_mut(label)?.provenance = provenance;
+        self.touch(None);
+        Ok(())
+    }
+
+    /// Records a review decision on a segment (see [`Provenance::review`]).
+    pub fn review(
+        &mut self,
+        label: u8,
+        status: ReviewStatus,
+        by: Option<&str>,
+        at: Timestamp,
+    ) -> Result<(), SegmentationError> {
+        self.segment_mut(label)?.provenance.review(status, by, at);
+        self.touch(None);
+        Ok(())
+    }
+
+    /// Number of segments waiting for review.
+    pub fn pending(&self) -> usize {
+        self.segments.iter().filter(|s| s.provenance.is_pending()).count()
     }
 
     /// Number of voxels labelled `label`.
@@ -717,9 +754,9 @@ mod tests {
         data[5] = 3;
         data[7] = 1;
         let labels = LabelMap::from_data(dims(), data).unwrap();
-        let named = Segment { label: 3, name: "Tumour".into(), color: [9, 9, 9], visible: true, opacity: 1.0 };
-        let empty = Segment { label: 8, name: "Unused".into(), color: [1, 1, 1], visible: false, opacity: 0.2 };
-        let zero = Segment { label: 0, name: "bg".into(), color: [0, 0, 0], visible: true, opacity: 1.0 };
+        let named = Segment { color: [9, 9, 9], opacity: 1.0, ..Segment::new(3, "Tumour") };
+        let empty = Segment { color: [1, 1, 1], visible: false, opacity: 0.2, ..Segment::new(8, "Unused") };
+        let zero = Segment::new(0, "bg");
         let s = SegmentationSet::from_labels(labels, vec![named.clone(), empty, zero]);
         let names: Vec<_> = s.segments().iter().map(|s| (s.label, s.name.as_str())).collect();
         assert_eq!(names, vec![(1, "Segment 1"), (3, "Tumour"), (8, "Unused")]);
@@ -728,5 +765,21 @@ mod tests {
         let mut s = s;
         assert_eq!(s.take_dirty(), Some(VoxelBox::full(dims())));
         assert_eq!(s.dims(), dims());
+    }
+
+    #[test]
+    fn segment_provenance_and_review() {
+        let mut s = SegmentationSet::new(dims());
+        let a = s.add_segment("Liver").unwrap();
+        assert_eq!(s.pending(), 0, "drawn segments are confirmed");
+        s.set_provenance(a, Provenance::engine("TotalSegmentator", "2.18", false, Timestamp(1))).unwrap();
+        assert_eq!(s.pending(), 1);
+        let revision = s.revision();
+        s.review(a, ReviewStatus::Confirmed, Some("dr.k"), Timestamp(2)).unwrap();
+        assert!(s.revision() > revision, "reviews count as changes (saved workspaces)");
+        assert_eq!(s.pending(), 0);
+        assert_eq!(s.segment(a).unwrap().provenance.reviewed_by.as_deref(), Some("dr.k"));
+        assert_eq!(s.review(9, ReviewStatus::Rejected, None, Timestamp(3)), Err(SegmentationError::UnknownSegment(9)));
+        assert!(s.set_provenance(9, Provenance::default()).is_err());
     }
 }

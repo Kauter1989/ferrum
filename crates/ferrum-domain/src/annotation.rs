@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 
 use glam::Vec2;
 
+use crate::provenance::{Provenance, ReviewStatus, Timestamp};
 use crate::slice::SliceAxis;
 
 /// Identifies the slice an annotation belongs to.
@@ -221,13 +222,14 @@ impl Annotation {
     }
 }
 
-/// One stored annotation: where it lives, what it is and what the user
-/// called it.
+/// One stored annotation: where it lives, what it is, what the user called
+/// it and who created it.
 #[derive(Debug, Clone, PartialEq)]
 struct Entry {
     key: SliceKey,
     annotation: Annotation,
     name: String,
+    provenance: Provenance,
 }
 
 /// Collection of named annotations indexed by slice.
@@ -240,12 +242,55 @@ pub struct AnnotationSet {
 impl AnnotationSet {
     /// Adds an annotation with a default name (`"Distance 3"`, …) and
     /// returns its id.
+    /// The annotation counts as drawn by a person (default [`Provenance`]).
     pub fn add(&mut self, key: SliceKey, annotation: Annotation) -> AnnotationId {
+        self.add_with(key, annotation, Provenance::default())
+    }
+
+    /// Adds an annotation with a default name and the given provenance.
+    pub fn add_with(&mut self, key: SliceKey, annotation: Annotation, provenance: Provenance) -> AnnotationId {
         let id = self.next_id;
         self.next_id += 1;
         let name = format!("{} {}", annotation.kind(), id + 1);
-        self.items.insert(id, Entry { key, annotation, name });
+        self.items.insert(id, Entry { key, annotation, name, provenance });
         id
+    }
+
+    /// Inserts an annotation under a given id (e.g. when loading a saved
+    /// set). Returns `false`, leaving the set unchanged, if the id is taken
+    /// or the trimmed name is empty. Later [`AnnotationSet::add`] calls use
+    /// ids above every inserted one.
+    pub fn insert(
+        &mut self,
+        id: AnnotationId,
+        key: SliceKey,
+        annotation: Annotation,
+        name: &str,
+        provenance: Provenance,
+    ) -> bool {
+        let name = name.trim();
+        if self.items.contains_key(&id) || name.is_empty() {
+            return false;
+        }
+        self.items.insert(id, Entry { key, annotation, name: name.to_owned(), provenance });
+        self.next_id = self.next_id.max(id.saturating_add(1));
+        true
+    }
+
+    /// Provenance of an annotation.
+    pub fn provenance(&self, id: AnnotationId) -> Option<&Provenance> {
+        self.items.get(&id).map(|e| &e.provenance)
+    }
+
+    /// Records a review decision (see [`Provenance::review`]). Returns
+    /// `false` if the annotation does not exist.
+    pub fn review(&mut self, id: AnnotationId, status: ReviewStatus, by: Option<&str>, at: Timestamp) -> bool {
+        self.items.get_mut(&id).map(|e| e.provenance.review(status, by, at)).is_some()
+    }
+
+    /// Number of annotations waiting for review.
+    pub fn pending(&self) -> usize {
+        self.items.values().filter(|e| e.provenance.is_pending()).count()
     }
 
     /// Removes an annotation; returns it if it existed.
@@ -410,6 +455,36 @@ mod tests {
         assert_eq!(all, vec![(d, 7, "Distance", "Tumour diameter".to_string()), (t, 2, "Text", "Text 2".to_string())]);
         set.remove(d);
         assert_eq!(set.name(d), None);
+    }
+
+    #[test]
+    fn provenance_insert_and_review() {
+        let mut set = AnnotationSet::default();
+        let k = SliceKey::new(SliceAxis::Axial, 1);
+        let human = set.add(k, Annotation::Distance { a: Vec2::ZERO, b: Vec2::X });
+        assert_eq!(set.provenance(human), Some(&Provenance::default()));
+        let agent = set.add_with(
+            k,
+            Annotation::Text { pos: Vec2::ZERO, text: "x".into() },
+            Provenance::agent(None, Timestamp(5)),
+        );
+        assert_eq!(set.pending(), 1);
+        assert!(set.review(agent, ReviewStatus::Rejected, Some("dr.k"), Timestamp(9)));
+        assert!(!set.review(42, ReviewStatus::Confirmed, None, Timestamp(9)));
+        assert_eq!(set.pending(), 0);
+        assert_eq!(set.provenance(agent).unwrap().status, ReviewStatus::Rejected);
+
+        let mut loaded = AnnotationSet::default();
+        let p = Provenance::engine("E", "1", false, Timestamp(1));
+        assert!(loaded.insert(7, k, Annotation::Text { pos: Vec2::ZERO, text: "y".into() }, " Note ", p.clone()));
+        assert!(!loaded.insert(7, k, Annotation::Text { pos: Vec2::ZERO, text: "z".into() }, "Again", p.clone()));
+        assert!(!loaded.insert(8, k, Annotation::Text { pos: Vec2::ZERO, text: "z".into() }, "  ", p));
+        assert_eq!((loaded.name(7), loaded.pending()), (Some("Note"), 1));
+        assert_eq!(
+            loaded.add(k, Annotation::Distance { a: Vec2::ZERO, b: Vec2::X }),
+            8,
+            "ids continue after inserted ones"
+        );
     }
 
     #[test]

@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use glam::{Vec2, Vec3};
 
 use crate::annotation::{AnnotationId, AnnotationSet};
+use crate::provenance::Provenance;
 use crate::repository::StudyInfo;
 use crate::slice::SliceAxis;
 use crate::volume::Volume;
@@ -36,6 +37,8 @@ pub struct AnnotationRecord {
     /// The same points as continuous voxel coordinates `(i, j, k)` of the
     /// loaded volume; integer values are voxel centres.
     pub points_voxel: Vec<Vec3>,
+    /// Who created the annotation and whether it was confirmed.
+    pub provenance: Provenance,
 }
 
 /// All annotations of a study plus what identifies the study.
@@ -77,6 +80,7 @@ impl AnnotationReport {
                     },
                     points_mm,
                     points_voxel,
+                    provenance: set.provenance(id).cloned().unwrap_or_default(),
                 })
             })
             .collect();

@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use ferrum_app::{AiStatus, InputKind, ToolKind, ToolOutcome, Viewer};
 use ferrum_domain::{
-    Dims3, EngineError, EngineInfo, InteractiveSession, LoadedSeries, Prompt, PromptKind, RepositoryError,
-    SegmentationEngine, SeriesDescriptor, SeriesMetadata, SliceAxis, Volume, VolumeRepository,
+    Author, Dims3, EngineError, EngineInfo, InteractiveSession, LoadedSeries, Prompt, PromptKind, RepositoryError,
+    ReviewStatus, SegmentationEngine, SeriesDescriptor, SeriesMetadata, SliceAxis, Volume, VolumeRepository,
 };
 use ferrum_engines::{HttpConfig, HttpEngine, MockEngine};
 use glam::{UVec3, Vec2, Vec3};
@@ -148,6 +148,25 @@ fn prompts_include_exclude_undo_accept_and_discard() {
 }
 
 #[test]
+fn ai_results_are_proposals_until_accepted() {
+    let mut v = viewer();
+    v.connect_engine(Arc::new(Counting { sessions: AtomicUsize::new(0), interactive: true }), "mock");
+    v.wait_ai_idle();
+    assert!(v.ai_prompt(Prompt::Point { positive: true, voxel: CENTRE }));
+    v.wait_ai_idle();
+    let target = v.ai().target().unwrap();
+    let provenance = |v: &Viewer| v.segmentation().set().unwrap().segment(target).unwrap().provenance.clone();
+    let p = provenance(&v);
+    assert_eq!((p.author.kind(), p.status), ("engine", ReviewStatus::Proposed), "AI results are proposals");
+    assert!(matches!(p.author, Author::Engine { research_only: true, .. }));
+    assert!(p.created.is_some());
+    v.ai_accept();
+    let p = provenance(&v);
+    assert_eq!((p.author.kind(), p.status), ("engine", ReviewStatus::Confirmed), "the author stays the engine");
+    assert!(p.reviewed.is_some());
+}
+
+#[test]
 fn sessions_follow_the_dataset_and_disconnect_cleans_up() {
     let mut v = viewer();
     let engine = Arc::new(Counting { sessions: AtomicUsize::new(0), interactive: true });
@@ -217,6 +236,14 @@ fn automatic_segmentation_creates_named_segments() {
     let rows = v.segment_summaries();
     assert_eq!(rows.len(), 1, "only structures that were found become segments");
     assert_eq!(rows[0].segment.name, "bright");
+    assert!(rows[0].segment.provenance.is_pending(), "automatic results wait for review");
+    assert_eq!(v.segmentation().set().unwrap().pending(), 1);
+    let label = rows[0].segment.label;
+    v.review_segment(label, ReviewStatus::Rejected, Some("dr.k")).unwrap();
+    let p = &v.segment_summaries()[0].segment.provenance;
+    assert_eq!((p.status, p.reviewed_by.as_deref()), (ReviewStatus::Rejected, Some("dr.k")));
+    assert!(p.reviewed.is_some());
+    assert!(v.review_segment(200, ReviewStatus::Confirmed, None).is_err());
     assert!(rows[0].voxels > 500);
     assert!(v.status.message.contains("1 structure"), "{}", v.status.message);
     assert_eq!(*v.ai().status(), AiStatus::Ready);

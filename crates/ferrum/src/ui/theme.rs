@@ -26,6 +26,8 @@ pub const TEXT: Color32 = Color32::from_rgb(226, 232, 242);
 pub const TEXT_DIM: Color32 = Color32::from_rgb(134, 149, 173);
 /// Text drawn over images (orientation labels, read-outs).
 pub const OVERLAY: Color32 = Color32::from_rgb(222, 228, 236);
+/// Pending review (proposals of agents and engines), research-only badges.
+pub const WARN: Color32 = Color32::from_rgb(240, 190, 60);
 /// Errors and destructive actions.
 pub const DANGER: Color32 = Color32::from_rgb(232, 104, 96);
 
