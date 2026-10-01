@@ -1,5 +1,13 @@
-# Builds release archives of the ferrum binary and attaches them to
-# the GitHub release of the pushed tag.
+# Builds release archives of the ferrum binary and publishes them as a
+# GitHub release.
+#
+# Two ways to release:
+# - push a `v*` tag, or
+# - run the workflow manually (Actions → Release → Run workflow) with the
+#   `tag` input, e.g. `v0.2.0`: the tag is created on the selected branch's
+#   head together with the release.
+# A manual run with an empty `tag` is a dry run: archives are built and kept
+# as workflow artifacts, nothing is published.
 
 name: Release
 
@@ -7,12 +15,18 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Version tag to create and publish (e.g. v0.2.0). Empty = dry run.'
+        required: false
+        default: ''
 
 permissions:
   contents: write
 
 env:
   CARGO_TERM_COLOR: always
+  TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   build:
@@ -42,7 +56,7 @@ jobs:
         if: matrix.archive == 'tar.gz'
         shell: bash
         run: |
-          name=ferrum-${{ github.ref_name }}-${{ matrix.target }}
+          name=ferrum-${TAG}-${{ matrix.target }}
           mkdir "$name"
           cp target/${{ matrix.target }}/release/ferrum README.md LICENSE "$name"/
           tar czf "$name.tar.gz" "$name"
@@ -51,7 +65,7 @@ jobs:
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
-          $name = "ferrum-${{ github.ref_name }}-${{ matrix.target }}"
+          $name = "ferrum-$env:TAG-${{ matrix.target }}"
           New-Item -ItemType Directory $name | Out-Null
           Copy-Item target/${{ matrix.target }}/release/ferrum.exe, README.md, LICENSE $name
           Compress-Archive -Path $name -DestinationPath "$name.zip"
@@ -60,8 +74,21 @@ jobs:
         with:
           name: ${{ matrix.target }}
           path: ${{ env.ASSET }}
-      - name: Attach to release
-        if: startsWith(github.ref, 'refs/tags/')
+
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/') || inputs.tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish the release (creates the tag if needed)
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ env.ASSET }}
+          tag_name: ${{ env.TAG }}
+          target_commitish: ${{ github.sha }}
+          name: FERRUM ${{ env.TAG }}
+          generate_release_notes: true
+          files: dist/*
