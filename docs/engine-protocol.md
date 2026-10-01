@@ -287,5 +287,5 @@ Every label value present in the map becomes a segment, named after
 | Engine | Bridge | Prompts | Automatic | Notes |
 |---|---|---|---|---|
 | nnInteractive | [`bridges/`](../bridges) `ferrum-bridge nninteractive` (Python, FastAPI; [demo guide](ai-demo.md)) | point, box (planar), scribble, lasso | — | Weights CC BY-NC-SA 4.0 → `research_only: true`; NVIDIA GPU, ~10 GB VRAM recommended |
-| MONAI Label | `bridges/monailabel` | point (DeepEdit / DeepGrow / SAM2) | app models | Translates sessions to MONAI Label's datastore and `/infer` |
+| MONAI Label | [`bridges/`](../bridges) `ferrum-bridge monailabel` ([demo guide](ai-demo.md#monai-label-your-own-models)) | point (DeepEdit / DeepGrow / SAM2), box (SAM2) | yes: the app's `segmentation` model and its labels | Client of a running MONAI Label server: one MONAI Label session per volume, clicks replayed on `/infer` (undo = replay without the last prompt); `research_only: true` unless `--clinical-weights` |
 | TotalSegmentator | [`bridges/`](../bridges) `ferrum-bridge totalsegmentator` ([demo guide](ai-demo.md)) | — | yes: 117 CT classes (`total`), 50 MR (`total_mr`), other tasks | Code and `total` Apache-2.0; licensed tasks → `research_only: true`; usage statistics disabled by the bridge |

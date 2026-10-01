@@ -16,7 +16,9 @@ dependencies = ["fastapi>=0.110", "uvicorn>=0.27", "numpy"]
 nninteractive = ["nninteractive>=2.6,<3"]
 # TotalSegmentator: code Apache-2.0; some tasks need a licence.
 totalsegmentator = ["TotalSegmentator>=2.18,<3", "nibabel"]
-test = ["pytest", "httpx", "nibabel"]
+# MONAI Label: a client of a running MONAI Label server (Apache-2.0); no model here.
+monailabel = ["httpx", "nibabel"]
+test = ["pytest", "httpx", "nibabel", "python-multipart"]
 
 [project.scripts]
 ferrum-bridge = "ferrum_bridges.__main__:main"

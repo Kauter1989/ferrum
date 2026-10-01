@@ -150,7 +150,7 @@ review by qualified people.
 | AI segmentation panel | 🚧 in review |
 | nnInteractive bridge and [demo guide](ai-demo.md) | 🚧 in review |
 | Automatic segmentation; TotalSegmentator bridge | 🚧 in review |
-| MONAI Label bridge | 📋 Stage 14 |
+| MONAI Label bridge | 🚧 in review |
 | Agent skill: provenance, workspaces, `ferrum-cli` (CLI + MCP), skill package, review queue | 📋 Stage 15 |
 | DICOM SEG and SR export | 📋 Stage 15 |
 

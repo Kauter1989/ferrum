@@ -115,7 +115,7 @@ FERRUM is a core, not a monolith. The principles, in short (full text:
 | AI segmentation panel (point, box, scribble, lasso; include/exclude; accept, discard, undo) | 🚧 in review |
 | nnInteractive bridge (FastAPI, Docker) and [demo guide](docs/ai-demo.md) | 🚧 in review |
 | Automatic segmentation; TotalSegmentator bridge | 🚧 in review |
-| MONAI Label bridge | 📋 [Stage 14](dev_plan.md) |
+| MONAI Label bridge (DeepEdit / DeepGrow / SAM2 clicks, segmentation models) | 🚧 in review |
 | Agent skill: provenance, workspaces, `ferrum-cli` (CLI + MCP), review queue, DICOM SEG/SR | 📋 [Stage 15](dev_plan.md) |
 
 > FERRUM is research and engineering software, not a certified medical
