@@ -146,7 +146,7 @@ fn segment_list_edits_segments_in_both_tabs() {
     let dir = tempfile::tempdir().unwrap();
     let mut app = loaded_app(dir.path(), None);
     let mut h = Harness::builder()
-        .with_size(egui::vec2(1200.0, 900.0))
+        .with_size(egui::vec2(1200.0, 1400.0))
         .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
     h.run();
     h.get_by_label_contains(" Add").click();
@@ -172,6 +172,59 @@ fn segment_list_edits_segments_in_both_tabs() {
     h.get_by_label("Colour of Tumour");
     app = loaded_app(dir.path(), None);
     assert!(app.viewer.segment_summaries().is_empty(), "a new study starts without segments");
+}
+
+#[test]
+fn ai_tools_are_visible_but_disabled_until_an_engine_connects() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = loaded_app(dir.path(), None);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1200.0, 1000.0))
+        .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
+    h.run();
+    h.get_by_label("Engine URL");
+    h.get_by_label("AI point").click();
+    h.run();
+    assert_eq!(h.state().viewer.tool, ToolKind::Pan, "disabled without an engine");
+
+    // connect to the mock engine through the reference server
+    let server =
+        ferrum_engines::EngineServer::start(Arc::new(ferrum_engines::MockEngine::default()), "127.0.0.1:0", None)
+            .unwrap();
+    h.state_mut().panel.ai.url = server.url();
+    h.run();
+    h.get_by_label_contains("Connect").click();
+    h.step(); // the app keeps repainting while the engine is busy
+    h.state_mut().viewer.wait_ai_idle();
+    h.run();
+    assert!(h.state().viewer.ai().status().is_connected(), "{:?}", h.state().viewer.ai().status());
+    h.get_by_label("AI point").click();
+    h.run();
+    assert_eq!(h.state().viewer.tool, ToolKind::AiPoint);
+
+    // a prompt in the axial view segments the bright core of the phantom
+    let viewer = &mut h.state_mut().viewer;
+    viewer.set_slice_index(SliceAxis::Axial, 20);
+    viewer.slice_input(
+        SliceAxis::Axial,
+        ferrum_app::InputKind::Press,
+        glam::Vec2::splat(100.0),
+        glam::Vec2::splat(200.0),
+    );
+    viewer.wait_ai_idle();
+    h.run();
+    let target = h.state().viewer.ai().target().expect("target segment");
+    assert!(h.state().viewer.segmentation().set().unwrap().voxel_count(target) > 1000);
+    h.get_by_label_contains("Accept").click();
+    h.step();
+    h.state_mut().viewer.wait_ai_idle();
+    h.run();
+    assert_eq!(h.state().viewer.ai().target(), None);
+    assert_eq!(h.state().viewer.segment_summaries().len(), 1, "the accepted segment stays");
+    h.get_by_label_contains("Disconnect").click();
+    h.run();
+    assert!(!h.state().viewer.ai().status().is_connected());
+    assert_eq!(h.state().viewer.tool, ToolKind::Pan);
 }
 
 fn gpu_render_state() -> Option<egui_wgpu::RenderState> {

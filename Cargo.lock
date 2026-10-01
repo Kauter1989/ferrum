@@ -1382,6 +1382,7 @@ dependencies = [
  "env_logger",
  "ferrum-app",
  "ferrum-domain",
+ "ferrum-engines",
  "ferrum-io",
  "ferrum-processing",
  "ferrum-render",
@@ -1398,6 +1399,7 @@ name = "ferrum-app"
 version = "0.1.0"
 dependencies = [
  "ferrum-domain",
+ "ferrum-engines",
  "ferrum-io",
  "ferrum-processing",
  "ferrum-render",

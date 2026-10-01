@@ -111,8 +111,9 @@ FERRUM is a core, not a monolith. The principles, in short (full text:
 | Area | Status |
 |---|---|
 | Viewer, annotations with JSON export, segments with 2D/3D overlay and NIfTI label maps | ✅ |
-| Engine port, `ferrum-engine/1` client, mock engine, reference server, conformance suite | 🚧 in review |
-| AI segmentation panel, nnInteractive bridge and demo; MONAI Label and TotalSegmentator bridges | 📋 [Stage 14](dev_plan.md) |
+| Engine port, `ferrum-engine/1` client, mock engine, reference server, conformance suite | ✅ |
+| AI segmentation panel (point, box, scribble, lasso; include/exclude; accept, discard, undo) | 🚧 in review |
+| nnInteractive bridge and demo; MONAI Label and TotalSegmentator bridges | 📋 [Stage 14](dev_plan.md) |
 | Agent skill: provenance, workspaces, `ferrum-cli` (CLI + MCP), review queue, DICOM SEG/SR | 📋 [Stage 15](dev_plan.md) |
 
 > FERRUM is research and engineering software, not a certified medical
@@ -218,12 +219,32 @@ Views show quiet corner read-outs (plane, matrix, W/L, slice, zoom),
 patient-orientation edge labels (R/L, A/P, S/I), a slice scrubber, and an
 L/P/S orientation gizmo in 3D.
 
-**Segmentation engines** — the `SegmentationEngine` port with an HTTP
-client for [`ferrum-engine/1`](docs/engine-protocol.md) and a mock engine
-without a model (region growing) for tests and demos. Try the protocol
-without a GPU with
+**AI segmentation** — the collapsible *AI segmentation* section, in the
+*Image* and *Volume* tabs, is always visible.
+- **Without an engine** its tools are disabled, and a hint explains how
+  to connect one.
+- **Connecting:** enter the engine URL (default `http://127.0.0.1:8765`
+  or `FERRUM_ENGINE_URL`) and press **Connect**. The section then shows
+  the engine's name and device. A *Research use only* badge and the
+  licence notice appear when the engine reports them.
+- **Prompts** are drawn in the 2D views:
+  - *point*: click;
+  - *box*: drag;
+  - *scribble*: paint;
+  - *lasso*: outline.
+
+  Each prompt either **includes** the area or **excludes** it.
+- **Results:** the volume is uploaded once in the background. Each
+  prompt refines the current object, which is shown live as the target
+  segment.
+- **Finishing an object:** **Accept** keeps the segment and starts the
+  next object, **Discard** removes it, and **Undo prompt** steps back
+  when the engine supports it.
+
+Engines speak [`ferrum-engine/1`](docs/engine-protocol.md). To try the
+tools without a GPU or a model, run the mock engine (region growing):
 `cargo run -p ferrum-engines --example mock_server -- 127.0.0.1:8765`.
-The AI panel in the viewer and the nnInteractive demo are next.
+The nnInteractive bridge and demo are next.
 
 **Output** — PNG screenshots, NIfTI volume and label-map export,
 annotation JSON, and the series' DICOM attributes in the *Details* tab.

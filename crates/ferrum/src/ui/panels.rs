@@ -12,6 +12,7 @@ use ferrum_domain::{
     WindowPreset,
 };
 
+use super::ai_panel::{self, AiPanelState};
 use super::segments_panel::{self, SegmentsPanelState};
 use super::tf_editor::{self, TfEditorState};
 use super::theme::{ACCENT, OVERLAY, TEXT, TEXT_DIM};
@@ -59,6 +60,8 @@ pub struct PanelState {
     pub export_annotations: bool,
     /// State of the "Segments" section.
     pub segments: SegmentsPanelState,
+    /// State of the "AI segmentation" section.
+    pub ai: AiPanelState,
 }
 
 fn collapsible(ui: &mut egui::Ui, id: &str, icon_str: &str, title: &str, open: bool, body: impl FnOnce(&mut egui::Ui)) {
@@ -154,9 +157,13 @@ fn image_settings(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelState
     segments_section(ui, viewer, state);
 }
 
-/// Collapsible segment list, shown in the image and volume tabs.
+/// Collapsible segment list and AI tools, shown in the image and volume
+/// tabs. The AI section is always visible; its tools need an engine.
 fn segments_section(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelState) {
     ui.add_space(6.0);
+    collapsible(ui, "ai", icon::MAGIC_WAND, "AI segmentation", true, |ui| {
+        ai_panel::show(ui, viewer, &mut state.ai);
+    });
     collapsible(ui, "segments", icon::POLYGON, "Segments", true, |ui| {
         segments_panel::show(ui, viewer, &mut state.segments);
     });
