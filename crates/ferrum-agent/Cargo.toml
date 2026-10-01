@@ -1,0 +1,24 @@
+[package]
+name = "ferrum-agent"
+description = "FERRUM as an agent skill: headless commands with a JSON envelope (ferrum-agent/1), workspaces, operator configuration and audit log."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+ferrum-domain.workspace = true
+ferrum-io.workspace = true
+glam.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+toml.workspace = true
+image.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

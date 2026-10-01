@@ -1,0 +1,203 @@
+//! A study loaded from a workspace: the volume plus the annotations and
+//! segments saved next to it.
+//!
+//! The command line is stateless: every call opens the workspace, checks
+//! the source hashes, loads the series and saves what it changed.
+
+use std::path::{Path, PathBuf};
+
+use ferrum_domain::{
+    AnnotationReport, AnnotationSet, NoProgress, SegmentationSet, SeriesDescriptor, SeriesMetadata, Volume,
+    VolumeRepository,
+};
+use ferrum_io::{CompositeRepository, Workspace};
+use sha2::{Digest, Sha256};
+
+use crate::config::AgentConfig;
+use crate::envelope::{AgentError, ErrorCode};
+
+/// Name and version written into the files FERRUM produces.
+pub fn generator() -> String {
+    format!("FERRUM {}", env!("CARGO_PKG_VERSION"))
+}
+
+/// Stable, salted pseudonym of an identifier (`anon-` + 16 hex digits).
+pub fn pseudonym(salt: &str, id: &str) -> String {
+    let mut h = Sha256::new();
+    h.update(salt.as_bytes());
+    h.update([0]);
+    h.update(id.as_bytes());
+    let hex: String = h.finalize().iter().take(8).map(|b| format!("{b:02x}")).collect();
+    format!("anon-{hex}")
+}
+
+/// How series are named in outputs: their id, or its pseudonym.
+pub fn series_key(config: &AgentConfig, id: &str) -> String {
+    if config.pseudonymise_uids {
+        pseudonym(&config.salt, id)
+    } else {
+        id.to_owned()
+    }
+}
+
+/// Finds all series under `paths`.
+pub fn scan(paths: &[PathBuf]) -> Result<Vec<SeriesDescriptor>, AgentError> {
+    CompositeRepository::default().scan(paths, &NoProgress).map_err(|e| match e {
+        ferrum_domain::RepositoryError::NothingFound => {
+            AgentError::not_found("no DICOM or NIfTI series found").hint("give a DICOM folder or a .nii/.nii.gz file")
+        }
+        other => AgentError::internal(other.to_string()),
+    })
+}
+
+/// An open study.
+#[derive(Debug)]
+pub struct Study {
+    /// The workspace.
+    pub workspace: Workspace,
+    /// The volume in the canonical LPS frame.
+    pub volume: Volume,
+    /// Metadata of the series.
+    pub metadata: SeriesMetadata,
+    /// Annotations saved in the workspace.
+    pub annotations: AnnotationSet,
+    /// Segments saved in the workspace (an empty set if there are none).
+    pub segments: SegmentationSet,
+    /// SHA-256 over the source file hashes: identifies the data the
+    /// results belong to.
+    pub source_sha256: String,
+}
+
+impl Study {
+    /// Opens `source` into the workspace at `root` (creating it), choosing
+    /// `series` (an id or its pseudonym) when the source holds several.
+    /// An existing workspace is reused if it holds the same series.
+    pub fn open(config: &AgentConfig, root: &Path, source: &Path, series: Option<&str>) -> Result<Self, AgentError> {
+        let source = config.check_source(source)?;
+        if !source.exists() {
+            return Err(AgentError::not_found(format!("{} does not exist", source.display())));
+        }
+        let found = scan(std::slice::from_ref(&source))?;
+        let chosen = choose_series(config, &found, series)?;
+        if root.join(ferrum_io::workspace::files::MANIFEST).exists() {
+            let ws = Workspace::open(root)?;
+            let m = &ws.manifest().source;
+            if m.path != source || m.series_id != chosen.id {
+                return Err(AgentError::bad_request(format!("{} already holds another series", root.display()))
+                    .hint("use a new workspace for each series"));
+            }
+            return Self::load(config, root);
+        }
+        check_size(config, chosen)?;
+        let workspace = Workspace::create(root, &source, chosen, &generator())?;
+        Self::from_workspace(workspace, chosen)
+    }
+
+    /// Loads the study of the workspace at `root`.
+    pub fn load(config: &AgentConfig, root: &Path) -> Result<Self, AgentError> {
+        if !root.join(ferrum_io::workspace::files::MANIFEST).exists() {
+            return Err(AgentError::new(ErrorCode::NoStudy, format!("{} is not a workspace", root.display()))
+                .hint("open a study first: study open --workspace <ws> <path>"));
+        }
+        let workspace = Workspace::open(root)?;
+        let src = workspace.manifest().source.clone();
+        config.check_source(&src.path)?;
+        workspace.verify_sources()?;
+        let found = scan(std::slice::from_ref(&src.path))?;
+        let series = found.iter().find(|s| s.id == src.series_id).ok_or_else(|| {
+            AgentError::new(ErrorCode::SourceChanged, "the workspace's series is no longer in its source")
+        })?;
+        check_size(config, series)?;
+        Self::from_workspace(workspace, series)
+    }
+
+    fn from_workspace(workspace: Workspace, series: &SeriesDescriptor) -> Result<Self, AgentError> {
+        let loaded = CompositeRepository::default()
+            .load(series, &NoProgress)
+            .map_err(|e| AgentError::internal(format!("cannot load the series: {e}")))?;
+        let volume = loaded.volume;
+        let d = volume.dims();
+        let annotations = workspace.load_annotations([d.x, d.y, d.z])?.unwrap_or_default();
+        let segments = workspace.load_segments(&volume)?.unwrap_or_else(|| SegmentationSet::new(d));
+        let mut h = Sha256::new();
+        for f in &workspace.manifest().source.files {
+            h.update(f.sha256.as_bytes());
+        }
+        let source_sha256 = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
+        Ok(Self { workspace, volume, metadata: loaded.metadata, annotations, segments, source_sha256 })
+    }
+
+    /// Saves the annotations into the workspace.
+    pub fn save_annotations(&self) -> Result<(), AgentError> {
+        let report = AnnotationReport::build(
+            self.workspace.manifest().source.path.clone(),
+            self.metadata.study.clone(),
+            &self.volume,
+            &self.annotations,
+        );
+        Ok(self.workspace.save_annotations(&report, &generator())?)
+    }
+
+    /// Saves the segments into the workspace.
+    pub fn save_segments(&self) -> Result<(), AgentError> {
+        Ok(self.workspace.save_segments(&self.segments, &self.volume, &generator())?)
+    }
+
+    /// Folder of renders.
+    pub fn renders_dir(&self) -> PathBuf {
+        self.workspace.path(ferrum_io::workspace::files::RENDERS)
+    }
+
+    /// Unit of the voxel values: `HU` for CT, empty otherwise.
+    pub fn value_unit(&self) -> &'static str {
+        if self.metadata.modality.eq_ignore_ascii_case("CT") {
+            "HU"
+        } else {
+            ""
+        }
+    }
+}
+
+fn choose_series<'a>(
+    config: &AgentConfig,
+    found: &'a [SeriesDescriptor],
+    wanted: Option<&str>,
+) -> Result<&'a SeriesDescriptor, AgentError> {
+    match (wanted, found) {
+        (None, [one]) => Ok(one),
+        (None, _) => Err(AgentError::bad_request(format!("the source holds {} series", found.len()))
+            .hint("choose one with series (see study scan)")),
+        (Some(w), _) => found
+            .iter()
+            .find(|s| s.id == w || series_key(config, &s.id) == w)
+            .ok_or_else(|| AgentError::not_found(format!("no series {w} in the source")).hint("see study scan")),
+    }
+}
+
+fn check_size(config: &AgentConfig, s: &SeriesDescriptor) -> Result<(), AgentError> {
+    let n = s.dims.voxel_count() as u64;
+    if n > config.max_voxels {
+        return Err(AgentError::new(
+            ErrorCode::Limit,
+            format!("the series has {n} voxels; the limit is {}", config.max_voxels),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pseudonyms_are_stable_and_salted() {
+        let a = pseudonym("s", "1.2.3");
+        assert_eq!(a, pseudonym("s", "1.2.3"));
+        assert_ne!(a, pseudonym("t", "1.2.3"));
+        assert!(a.starts_with("anon-") && a.len() == 21);
+        let open = AgentConfig { pseudonymise_uids: false, ..AgentConfig::default() };
+        assert_eq!(series_key(&open, "1.2.3"), "1.2.3");
+        assert_eq!(series_key(&AgentConfig::default(), "1.2.3"), pseudonym("ferrum", "1.2.3"));
+        assert!(generator().starts_with("FERRUM "));
+    }
+}
