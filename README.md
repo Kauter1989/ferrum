@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/Kauter1989/ferrum/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Kauter1989/ferrum/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Kauter1989/ferrum)](https://github.com/Kauter1989/ferrum/releases)
-![Coverage](https://img.shields.io/badge/line%20coverage-90.9%25-brightgreen)
+![Coverage](https://img.shields.io/badge/line%20coverage-90.8%25-brightgreen)
 ![Rust](https://img.shields.io/badge/rust-stable-orange)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -50,8 +50,8 @@ skipping, isosurface refinement, local ambient occlusion; see
 | Metrics | |
 |---|---|
 | Code size | ≈ 12 000 lines of Rust in `src/` (including in-module unit tests), ≈ 1 900 lines of integration tests and benchmarks, ≈ 500 lines of WGSL |
-| Tests | 233: unit, property-based, data layer, shader validation, GPU-vs-CPU parity, engine-protocol conformance, application and UI |
-| Test coverage | 90.9 % of lines, 89.2 % of functions (`cargo-llvm-cov`); CI fails below 87 % |
+| Tests | 244: unit, property-based, data layer, shader validation, GPU-vs-CPU parity, engine-protocol conformance, application (incl. AI with a mock engine) and UI |
+| Test coverage | 90.8 % of lines, 89.6 % of functions (`cargo-llvm-cov`); CI fails below 87 % |
 | Complexity budget | per function: cognitive complexity ≤ 25, ≤ 120 lines, nesting ≤ 6 (enforced by clippy) |
 | Lints | rustfmt and clippy with warnings as errors; no `unsafe`, no `unwrap` outside tests |
 | Load speed | 512×512×252 CT DICOM series decoded in 0.34 s on 4 CPU cores |
