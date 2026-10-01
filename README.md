@@ -98,15 +98,20 @@ undo and full restore.
 
 **Processing** — Gaussian smoothing and Sobel edge filters.
 
-**Interface** — a full-bleed dark canvas with floating "glass" docks: modes
-and planes on the left, tools in the centre, file actions on the right, and
-a collapsible settings panel (**Tab**). Views carry HUD corner brackets,
-patient-orientation edge labels (R/L, A/P, S/I), an L/P/S orientation gizmo
-in 3D and a slice scrubber on the edge of every 2D view. The start screen
-keeps a list of recently opened studies.
+**Interface** — a calm, workstation-style layout in navy tones with a
+single blue accent:
+- a header with the open study, the 2D / 3D / MPR switch and file actions;
+- a toolbar with the tools of the current mode;
+- a *Studies* sidebar with the current study and recently opened ones;
+- a settings panel (**Tab**) with *Image*, *Volume* and *Details* tabs;
+- a status bar.
 
-**Output** — PNG screenshots, NIfTI export, and a viewer for the series'
-DICOM attributes.
+Views show quiet corner read-outs (plane, matrix, W/L, slice, zoom),
+patient-orientation edge labels (R/L, A/P, S/I), a slice scrubber, and an
+L/P/S orientation gizmo in 3D.
+
+**Output** — PNG screenshots, NIfTI export, and the series' DICOM
+attributes in the *Details* tab.
 
 ## Quick start
 

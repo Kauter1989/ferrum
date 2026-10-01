@@ -35,7 +35,7 @@ flowchart TB
 | GPU parity | `ferrum-render/tests/gpu_parity.rs` | GPU image vs CPU reference (mean abs. difference < 2.5/255, < 2 % outliers) for tissue, isosurface, MIP, TF-DVR, clip box + view cut + cut surface, oblique plane, eraser mask, ambient occlusion; empty-space skipping leaves the image unchanged in every mode; GPU slice rendering equals domain slice extraction ±2/255; oversized volumes downsample to fit the device |
 | CPU renderer | `ferrum-render/src/cpu/raycast.rs` | shading sanity, picking, mask effect, TF lookup |
 | Application | `ferrum-app/tests/use_cases.rs`, `src/tools.rs` | load flow (auto-load, series choice, errors), GPU synchronisation uploads only what changed (volume, LUT, occupancy, full vs partial mask, AO), eraser + undo + reset, background AO, filters replace dataset, slice navigation, windowing, MPR navigation, measurements in mm from screen input, text annotation flow, probe, slice rect fitting, reload resets state; every 2D tool state machine |
-| UI | `ferrum/tests/ui.rs` | the real `ViewerApp` driven through the accessibility tree (welcome screen, mode/tool/render-mode switching, info dialog) and full-window wgpu renders of 2D, 3D (4 modes) and MPR asserting the views are drawn |
+| UI | `ferrum/tests/ui.rs` | the real `ViewerApp` driven through the accessibility tree (welcome screen, mode/tool/render-mode switching, Details tab) and full-window wgpu renders of 2D, 3D (4 modes) and MPR asserting the views are drawn |
 
 ## Oracles
 

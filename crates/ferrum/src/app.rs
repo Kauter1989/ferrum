@@ -1,26 +1,26 @@
 //! The eframe application: composition root of the presentation layer.
 //!
-//! Layout: the viewports fill the whole window; controls float above them
-//! in "glass" docks — brand (top-left), tools (top-centre), actions
-//! (top-right), view modes (left), zoom (bottom-left), settings panel
-//! (right) and a status HUD (bottom-centre).
+//! Layout (top to bottom): a header with the study, the view-mode switch
+//! and file actions; a toolbar with the tools of the current mode; the
+//! studies sidebar on the left, the viewports in the centre and the
+//! settings panel on the right; a status bar at the bottom.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use egui::{Align2, Color32, Id, Order, Pos2, Rect, RichText, Stroke, Vec2};
+use egui::{Align, Align2, Color32, Id, Layout, Order, Pos2, Rect, RichText, Stroke, UiBuilder, Vec2};
 use egui_phosphor::light as icon;
 use ferrum_app::{GpuSyncState, ToolKind, ViewMode, Viewer};
 use ferrum_domain::{SliceAxis, ViewPreset, VolumeRepository};
 use ferrum_render::gpu::VolumeRenderer;
 
 use crate::gpu_bridge::{self, RendererSink};
-use crate::ui::panels::{self, PanelState};
+use crate::ui::panels::{self, PanelState, PanelTab};
 use crate::ui::recent::RecentFiles;
 use crate::ui::slice_view::{self, SliceViewState};
-use crate::ui::theme::{self, ACCENT, HUD, TEXT, TEXT_DIM};
+use crate::ui::theme::{self, ACCENT, ACCENT_SOFT, BORDER, DANGER, OVERLAY, TEXT, TEXT_DIM};
 use crate::ui::volume_view::{self, VolumeViewState};
-use crate::ui::widgets::{self, dock_separator, round_button, round_text_button};
+use crate::ui::widgets::{self, segmented, tool_button, tool_button_enabled, toolbar_separator};
 
 /// Top-level application.
 pub struct ViewerApp {
@@ -31,13 +31,14 @@ pub struct ViewerApp {
     slice_states: [SliceViewState; 3],
     volume_state: VolumeViewState,
     show_panel: bool,
-    show_info: bool,
+    show_studies: bool,
     show_about: bool,
     text_input: String,
     pending_screenshot: Option<PathBuf>,
     last_frame: Option<std::time::Instant>,
     frame_ms: f32,
     recent: RecentFiles,
+    current: Option<PathBuf>,
     styled: bool,
 }
 
@@ -57,12 +58,19 @@ fn tool_icon(t: ToolKind) -> &'static str {
     }
 }
 
-fn dock(ctx: &egui::Context, id: &str, align: Align2, offset: Vec2, add: impl FnOnce(&mut egui::Ui)) -> Rect {
-    egui::Area::new(Id::new(id))
-        .anchor(align, offset)
-        .order(Order::Foreground)
-        .show(ctx, |ui| theme::glass().show(ui, add).response.rect)
-        .inner
+/// The entry recorded for an open action: the folder, or the single file.
+fn study_entry(paths: &[PathBuf]) -> Option<PathBuf> {
+    let first = paths.first()?;
+    Some(if paths.len() > 1 { first.parent().map(Path::to_path_buf).unwrap_or(first.clone()) } else { first.clone() })
+}
+
+fn file_name(p: &Path) -> String {
+    p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.to_string_lossy().into_owned())
+}
+
+/// Runs `add` in a horizontal, vertically centred child of `ui` limited to `rect`.
+fn row_in(ui: &mut egui::Ui, rect: Rect, layout: Layout, add: impl FnOnce(&mut egui::Ui)) {
+    ui.scope_builder(UiBuilder::new().max_rect(rect).layout(layout), add);
 }
 
 impl ViewerApp {
@@ -75,6 +83,7 @@ impl ViewerApp {
         if let Some(rs) = render_state {
             gpu_bridge::install(rs);
         }
+        let current = study_entry(&paths);
         let mut viewer = Viewer::new(repo);
         viewer.open_paths(paths);
         Self {
@@ -84,26 +93,32 @@ impl ViewerApp {
             slice_states: Default::default(),
             volume_state: VolumeViewState::default(),
             show_panel: true,
-            show_info: false,
+            show_studies: true,
             show_about: false,
             text_input: String::new(),
             pending_screenshot: None,
             last_frame: None,
             frame_ms: 0.0,
             recent: RecentFiles::in_memory(),
+            current,
             styled: false,
         }
     }
 
-    /// Uses a persistent "recently opened" list.
+    /// Uses a persistent "recently opened" list. Paths passed to
+    /// [`ViewerApp::new`] are recorded in it.
     pub fn with_recent(mut self, recent: RecentFiles) -> Self {
         self.recent = recent;
+        if let Some(c) = self.current.clone() {
+            self.recent.record(&[c]);
+        }
         self
     }
 
     fn open(&mut self, paths: Vec<PathBuf>) {
         if !paths.is_empty() {
             self.recent.record(&paths);
+            self.current = study_entry(&paths);
             self.viewer.open_paths(paths);
         }
     }
@@ -139,20 +154,30 @@ impl ViewerApp {
         self.handle_screenshot_events(&ctx);
         self.sync_gpu(render_state);
 
-        egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::CANVAS)).show(ui, |ui| self.main_area(ui));
-
-        if self.viewer.dataset().is_some() {
-            self.tool_dock(&ctx);
-            self.action_dock(&ctx);
-            self.mode_dock(&ctx);
-            if self.viewer.view_mode == ViewMode::Slice2d {
-                self.zoom_dock(&ctx);
+        let has_data = self.viewer.dataset().is_some();
+        egui::Panel::top("header").exact_size(56.0).frame(theme::bar()).show(ui, |ui| self.header(ui));
+        if has_data {
+            egui::Panel::top("toolbar").exact_size(48.0).frame(theme::bar()).show(ui, |ui| self.toolbar(ui));
+            egui::Panel::bottom("status").exact_size(28.0).frame(theme::bar()).show(ui, |ui| self.status_bar(ui));
+            if self.show_studies {
+                egui::Panel::left("studies")
+                    .exact_size(232.0)
+                    .resizable(false)
+                    .frame(theme::side())
+                    .show(ui, |ui| self.studies(ui));
             }
             if self.show_panel {
-                self.settings_panel(&ctx);
+                egui::Panel::right("settings")
+                    .exact_size(324.0)
+                    .resizable(false)
+                    .frame(theme::side())
+                    .show(ui, |ui| panels::show(ui, &mut self.viewer, &mut self.panel));
             }
-            self.status_hud(&ctx);
         }
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(theme::BG).inner_margin(egui::Margin::same(8)))
+            .show(ui, |ui| self.main_area(ui));
+
         if self.viewer.is_loading() {
             self.loading_overlay(&ctx);
         }
@@ -171,15 +196,6 @@ impl ViewerApp {
             self.start_screen(ui);
             return;
         }
-        // Keep the images clear of the floating docks and the settings panel.
-        let full = ui.max_rect();
-        let right = if self.show_panel { 364.0 } else { 16.0 };
-        let inner = Rect::from_min_max(full.min + Vec2::new(84.0, 76.0), full.max - Vec2::new(right, 60.0));
-        let inner = if inner.width() > 200.0 && inner.height() > 150.0 { inner } else { full };
-        ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| self.viewports(ui));
-    }
-
-    fn viewports(&mut self, ui: &mut egui::Ui) {
         match self.viewer.view_mode {
             ViewMode::Slice2d => {
                 let axis = self.viewer.slices.axis;
@@ -188,7 +204,7 @@ impl ViewerApp {
             ViewMode::Volume3d => volume_view::show(ui, &mut self.viewer, &mut self.volume_state),
             ViewMode::Mpr => {
                 let full = ui.available_rect_before_wrap();
-                let gap = 4.0;
+                let gap = 8.0;
                 let half = (full.size() - Vec2::splat(gap)) * 0.5;
                 let cell = |col: f32, row: f32| {
                     Rect::from_min_size(full.min + Vec2::new(col * (half.x + gap), row * (half.y + gap)), half)
@@ -200,7 +216,7 @@ impl ViewerApp {
                     (cell(1.0, 1.0), Some(SliceAxis::Sagittal)),
                 ];
                 for (rect, axis) in layout {
-                    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| match axis {
+                    ui.scope_builder(UiBuilder::new().max_rect(rect), |ui| match axis {
                         Some(a) => slice_view::show(ui, &mut self.viewer, a, &mut self.slice_states[a.normal_axis()]),
                         None => volume_view::show(ui, &mut self.viewer, &mut self.volume_state),
                     });
@@ -210,210 +226,241 @@ impl ViewerApp {
         }
     }
 
-    // ---------------------------------------------------------------- docks
+    // ----------------------------------------------------------------- bars
 
-    fn tool_dock(&mut self, ctx: &egui::Context) {
-        let mode = self.viewer.view_mode;
-        dock(ctx, "tools", Align2::CENTER_TOP, Vec2::new(0.0, 14.0), |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-                if mode == ViewMode::Volume3d {
-                    let erasing = self.viewer.volume.eraser_enabled;
-                    if round_button(ui, icon::CUBE_FOCUS, "Rotate", !erasing).clicked() {
-                        self.viewer.volume.eraser_enabled = false;
-                    }
-                    if round_button(ui, icon::ERASER, "Volume eraser", erasing).clicked() {
-                        self.viewer.volume.eraser_enabled = !erasing;
-                    }
-                    dock_separator(ui, false);
-                    for p in ViewPreset::ALL {
-                        if round_text_button(ui, p.label(), p.name(), false).clicked() {
-                            self.viewer.volume.camera.look_from(p);
-                        }
-                    }
-                    dock_separator(ui, false);
-                    if round_button(ui, icon::ARROW_COUNTER_CLOCKWISE, "Reset camera", false).clicked() {
-                        self.viewer.reset_view_3d();
-                    }
-                    let can_undo = self.viewer.erase_history_len() > 0;
-                    if widgets::round_button_sized(
-                        ui,
-                        icon::ARROW_U_UP_LEFT,
-                        "Undo erase",
-                        false,
-                        widgets::ROUND,
-                        can_undo,
-                    )
-                    .clicked()
-                    {
-                        self.viewer.undo_erase();
-                    }
+    fn header(&mut self, ui: &mut egui::Ui) {
+        let rect = ui.max_rect();
+        let has_data = self.viewer.dataset().is_some();
+        let left = Layout::left_to_right(Align::Center);
+
+        // brand and study
+        row_in(ui, rect, left, |ui| {
+            ui.spacing_mut().item_spacing.x = 10.0;
+            if has_data && tool_button(ui, icon::SIDEBAR_SIMPLE, "Studies panel", false).clicked() {
+                self.show_studies = !self.show_studies;
+            }
+            let (r, resp) = ui.allocate_exact_size(Vec2::splat(32.0), egui::Sense::click());
+            widgets::logo(ui.painter(), r);
+            if resp.on_hover_text("About FERRUM").clicked() {
+                self.show_about = true;
+            }
+            ui.label(RichText::new("FERRUM").size(16.0).strong().color(TEXT));
+            if let Some(d) = self.viewer.dataset() {
+                let (sep, _) = ui.allocate_exact_size(Vec2::new(12.0, 28.0), egui::Sense::hover());
+                ui.painter().line_segment([sep.center_top(), sep.center_bottom()], Stroke::new(1.0, BORDER));
+                let v = &d.volume;
+                let dims = v.dims();
+                let title = if d.metadata.description.is_empty() {
+                    self.current.as_deref().map(file_name).unwrap_or_else(|| "Study".into())
                 } else {
-                    for t in ToolKind::ALL {
-                        if round_button(ui, tool_icon(t), t.label(), self.viewer.tool == t)
-                            .on_hover_text(t.hint())
-                            .clicked()
-                        {
-                            self.viewer.select_tool(t);
-                        }
-                    }
-                    dock_separator(ui, false);
-                    let any = !self.viewer.annotations().is_empty();
-                    if widgets::round_button_sized(ui, icon::TRASH, "Clear annotations", false, widgets::ROUND, any)
-                        .clicked()
-                    {
-                        self.viewer.clear_annotations();
-                    }
-                }
-            });
-        });
-    }
-
-    fn action_dock(&mut self, ctx: &egui::Context) {
-        dock(ctx, "actions", Align2::RIGHT_TOP, Vec2::new(-14.0, 14.0), |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-                if round_button(ui, icon::FOLDER_OPEN, "Open folder", false).clicked() {
-                    self.pick_folder();
-                }
-                if round_button(ui, icon::FILE_PLUS, "Open files", false).clicked() {
-                    self.pick_files();
-                }
-                if round_button(ui, icon::DOWNLOAD_SIMPLE, "Export NIfTI", false).clicked() {
-                    self.export_nifti();
-                }
-                if round_button(ui, icon::CAMERA, "Screenshot", false).clicked() {
-                    self.request_screenshot(ui.ctx());
-                }
-                if round_button(ui, icon::INFO, "Info", self.show_info).clicked() {
-                    self.show_info = !self.show_info;
-                }
-                dock_separator(ui, false);
-                if round_button(ui, icon::SLIDERS_HORIZONTAL, "Settings panel", self.show_panel).clicked() {
-                    self.show_panel = !self.show_panel;
-                }
-                if round_button(ui, icon::QUESTION, "About", self.show_about).clicked() {
-                    self.show_about = !self.show_about;
-                }
-            });
-        });
-    }
-
-    fn mode_dock(&mut self, ctx: &egui::Context) {
-        dock(ctx, "modes", Align2::LEFT_TOP, Vec2::new(14.0, 14.0), |ui| {
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 6.0;
-                let (r, resp) = ui.allocate_exact_size(Vec2::splat(widgets::ROUND), egui::Sense::click());
-                widgets::logo(ui.painter(), r.center(), 30.0, TEXT);
-                if resp.on_hover_text("About FERRUM").clicked() {
-                    self.show_about = true;
-                }
-                dock_separator(ui, true);
-                for (m, label) in [(ViewMode::Slice2d, "2D"), (ViewMode::Volume3d, "3D"), (ViewMode::Mpr, "MPR")] {
-                    if round_text_button(ui, label, label, self.viewer.view_mode == m).clicked() {
-                        self.viewer.view_mode = m;
-                    }
-                }
-                if self.viewer.view_mode == ViewMode::Slice2d {
-                    dock_separator(ui, true);
-                    for a in SliceAxis::ALL {
-                        let active = self.viewer.slices.axis == a;
-                        if round_text_button(ui, &a.label()[..1], a.label(), active).clicked() {
-                            self.viewer.slices.axis = a;
-                        }
-                    }
-                }
-            });
-        });
-    }
-
-    fn zoom_dock(&mut self, ctx: &egui::Context) {
-        let axis = self.viewer.slices.axis;
-        dock(ctx, "zoom", Align2::LEFT_BOTTOM, Vec2::new(14.0, -14.0), |ui| {
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 6.0;
-                let view = &mut self.viewer.slices.views[axis.normal_axis()];
-                let mut scale = |f: f32| {
-                    let z =
-                        (view.zoom * f).clamp(ferrum_domain::SliceView::MIN_ZOOM, ferrum_domain::SliceView::MAX_ZOOM);
-                    view.pan *= z / view.zoom;
-                    view.zoom = z;
+                    d.metadata.description.clone()
                 };
-                if round_button(ui, icon::MAGNIFYING_GLASS_PLUS, "Zoom in", false).clicked() {
-                    scale(1.25);
+                let mut sub = format!("{} × {} × {}", dims.x, dims.y, dims.z);
+                if !d.metadata.modality.is_empty() {
+                    sub = format!("{} · {sub}", d.metadata.modality);
                 }
-                if round_button(ui, icon::MAGNIFYING_GLASS_MINUS, "Zoom out", false).clicked() {
-                    scale(0.8);
-                }
-                if round_button(ui, icon::ARROWS_IN, "Fit to view", false).clicked() {
-                    *view = ferrum_domain::SliceView::default();
+                ui.vertical(|ui| {
+                    ui.add_space(9.0);
+                    ui.spacing_mut().item_spacing.y = 1.0;
+                    ui.label(RichText::new(title).size(13.5).strong().color(TEXT));
+                    ui.label(RichText::new(sub).size(11.5).color(TEXT_DIM));
+                });
+            }
+        });
+
+        // view-mode switch in the middle
+        if has_data {
+            let mid = Rect::from_center_size(rect.center(), Vec2::new(190.0, rect.height()));
+            row_in(ui, mid, Layout::left_to_right(Align::Center), |ui| {
+                let modes = [ViewMode::Slice2d, ViewMode::Volume3d, ViewMode::Mpr];
+                let current = modes.iter().position(|m| *m == self.viewer.view_mode);
+                if let Some(i) = segmented(ui, &["2D", "3D", "MPR"], current) {
+                    self.viewer.view_mode = modes[i];
                 }
             });
+        }
+
+        // actions
+        row_in(ui, rect, Layout::right_to_left(Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            if tool_button(ui, icon::QUESTION, "About", self.show_about).clicked() {
+                self.show_about = !self.show_about;
+            }
+            if !has_data {
+                return;
+            }
+            if tool_button(ui, icon::SLIDERS_HORIZONTAL, "Settings panel", self.show_panel).clicked() {
+                self.show_panel = !self.show_panel;
+            }
+            let details = self.show_panel && self.panel.tab == PanelTab::Details;
+            if tool_button(ui, icon::INFO, "Info", details).clicked() {
+                if details {
+                    self.show_panel = false;
+                } else {
+                    self.show_panel = true;
+                    self.panel.tab = PanelTab::Details;
+                }
+            }
+            toolbar_separator(ui);
+            if tool_button(ui, icon::CAMERA, "Screenshot", false).clicked() {
+                self.request_screenshot(ui.ctx());
+            }
+            if tool_button(ui, icon::DOWNLOAD_SIMPLE, "Export NIfTI", false).clicked() {
+                self.export_nifti();
+            }
+            if tool_button(ui, icon::FILE_PLUS, "Open files", false).clicked() {
+                self.pick_files();
+            }
+            if tool_button(ui, icon::FOLDER_OPEN, "Open folder", false).clicked() {
+                self.pick_folder();
+            }
         });
     }
 
-    fn settings_panel(&mut self, ctx: &egui::Context) {
-        let screen = ctx.content_rect();
-        let max_h = (screen.height() - 160.0).max(200.0);
-        egui::Area::new(Id::new("settings")).anchor(Align2::RIGHT_TOP, [-14.0, 76.0]).order(Order::Foreground).show(
-            ctx,
-            |ui| {
-                theme::panel().show(ui, |ui| {
-                    ui.set_width(318.0);
-                    ui.set_max_height(max_h);
-                    panels::show(ui, &mut self.viewer, &mut self.panel);
-                });
-            },
-        );
+    fn toolbar(&mut self, ui: &mut egui::Ui) {
+        let rect = ui.max_rect();
+        let mode = self.viewer.view_mode;
+        row_in(ui, rect, Layout::left_to_right(Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            if mode == ViewMode::Volume3d {
+                let erasing = self.viewer.volume.eraser_enabled;
+                if tool_button(ui, icon::CUBE_FOCUS, "Rotate", !erasing).clicked() {
+                    self.viewer.volume.eraser_enabled = false;
+                }
+                if tool_button(ui, icon::ERASER, "Volume eraser", erasing).clicked() {
+                    self.viewer.volume.eraser_enabled = !erasing;
+                }
+                toolbar_separator(ui);
+                for p in ViewPreset::ALL {
+                    if tool_button(ui, p.label(), p.name(), false).clicked() {
+                        self.viewer.volume.camera.look_from(p);
+                    }
+                }
+                toolbar_separator(ui);
+                if tool_button(ui, icon::ARROW_COUNTER_CLOCKWISE, "Reset camera", false).clicked() {
+                    self.viewer.reset_view_3d();
+                }
+                let can_undo = self.viewer.erase_history_len() > 0;
+                if tool_button_enabled(ui, icon::ARROW_U_UP_LEFT, "Undo erase", false, can_undo).clicked() {
+                    self.viewer.undo_erase();
+                }
+            } else {
+                for t in ToolKind::ALL {
+                    if tool_button(ui, tool_icon(t), t.label(), self.viewer.tool == t).on_hover_text(t.hint()).clicked()
+                    {
+                        self.viewer.select_tool(t);
+                    }
+                }
+                toolbar_separator(ui);
+                let any = !self.viewer.annotations().is_empty();
+                if tool_button_enabled(ui, icon::TRASH, "Clear annotations", false, any).clicked() {
+                    self.viewer.clear_annotations();
+                }
+                if mode == ViewMode::Slice2d {
+                    toolbar_separator(ui);
+                    self.zoom_buttons(ui);
+                }
+            }
+        });
+        if mode == ViewMode::Slice2d {
+            row_in(ui, rect, Layout::right_to_left(Align::Center), |ui| {
+                let current = SliceAxis::ALL.iter().position(|a| *a == self.viewer.slices.axis);
+                let labels = SliceAxis::ALL.map(|a| a.label());
+                if let Some(i) = segmented(ui, &labels, current) {
+                    self.viewer.slices.axis = SliceAxis::ALL[i];
+                }
+            });
+        }
     }
 
-    fn status_hud(&mut self, ctx: &egui::Context) {
-        egui::Area::new(Id::new("status")).anchor(Align2::CENTER_BOTTOM, [0.0, -14.0]).order(Order::Foreground).show(
-            ctx,
-            |ui| {
-                egui::Frame::new()
-                    .fill(Color32::from_black_alpha(170))
-                    .stroke(Stroke::new(1.0, theme::HAIRLINE))
-                    .corner_radius(14)
-                    .inner_margin(egui::Margin::symmetric(14, 6))
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            if self.viewer.is_computing() {
-                                ui.spinner();
-                            }
-                            ui.label(RichText::new(&self.viewer.status.message).size(12.5).color(TEXT_DIM));
-                            if let Some(p) = self.viewer.probe {
-                                ui.label(
-                                    RichText::new(format!(
-                                        "· ({}, {}, {}) = {:.1}",
-                                        p.voxel.x, p.voxel.y, p.voxel.z, p.value
-                                    ))
-                                    .monospace()
-                                    .size(12.0)
-                                    .color(HUD),
-                                );
-                            }
-                            ui.label(
-                                RichText::new(format!("· {:.1} ms", self.frame_ms))
-                                    .monospace()
-                                    .size(11.5)
-                                    .color(TEXT_DIM),
-                            );
-                        });
-                    });
-            },
-        );
+    fn zoom_buttons(&mut self, ui: &mut egui::Ui) {
+        let axis = self.viewer.slices.axis;
+        let view = &mut self.viewer.slices.views[axis.normal_axis()];
+        let mut scale = |f: f32| {
+            let z = (view.zoom * f).clamp(ferrum_domain::SliceView::MIN_ZOOM, ferrum_domain::SliceView::MAX_ZOOM);
+            view.pan *= z / view.zoom;
+            view.zoom = z;
+        };
+        if tool_button(ui, icon::MAGNIFYING_GLASS_PLUS, "Zoom in", false).clicked() {
+            scale(1.25);
+        }
+        if tool_button(ui, icon::MAGNIFYING_GLASS_MINUS, "Zoom out", false).clicked() {
+            scale(0.8);
+        }
+        if tool_button(ui, icon::ARROWS_IN, "Fit to view", false).clicked() {
+            *view = ferrum_domain::SliceView::default();
+        }
+    }
+
+    fn status_bar(&mut self, ui: &mut egui::Ui) {
+        let rect = ui.max_rect();
+        row_in(ui, rect, Layout::left_to_right(Align::Center), |ui| {
+            if self.viewer.is_computing() {
+                ui.spinner();
+            }
+            ui.label(RichText::new(&self.viewer.status.message).size(12.0).color(TEXT_DIM));
+        });
+        row_in(ui, rect, Layout::right_to_left(Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 16.0;
+            ui.label(RichText::new(format!("{:.1} ms", self.frame_ms)).monospace().size(11.5).color(TEXT_DIM));
+            if let Some(p) = self.viewer.probe {
+                ui.label(
+                    RichText::new(format!("({}, {}, {}) = {:.1}", p.voxel.x, p.voxel.y, p.voxel.z, p.value))
+                        .monospace()
+                        .size(11.5)
+                        .color(OVERLAY),
+                );
+            }
+        });
+    }
+
+    // -------------------------------------------------------------- studies
+
+    fn studies(&mut self, ui: &mut egui::Ui) {
+        ui.label(RichText::new("Studies").size(13.5).strong().color(TEXT));
+        ui.add_space(2.0);
+        let mut chosen = None;
+        if let Some(d) = self.viewer.dataset() {
+            let v = &d.volume;
+            let dims = v.dims();
+            let title = self.current.as_deref().map(file_name).unwrap_or_else(|| "Current study".into());
+            let mut sub = format!("{} × {} × {}", dims.x, dims.y, dims.z);
+            if !d.metadata.modality.is_empty() {
+                sub = format!("{} · {sub}", d.metadata.modality);
+            }
+            study_row(ui, &title, &sub, true);
+        }
+        let others: Vec<PathBuf> =
+            self.recent.items().iter().filter(|p| Some(*p) != self.current.as_ref()).cloned().collect();
+        if !others.is_empty() {
+            ui.add_space(8.0);
+            ui.label(RichText::new(format!("{}  Recent", icon::CLOCK_COUNTER_CLOCKWISE)).size(12.0).color(TEXT_DIM));
+            for p in others {
+                let parent = p.parent().map(|q| q.to_string_lossy().into_owned()).unwrap_or_default();
+                if study_row(ui, &file_name(&p), &parent, false).on_hover_text(p.to_string_lossy()).clicked() {
+                    chosen = Some(p);
+                }
+            }
+        }
+        if let Some(p) = chosen {
+            self.open(vec![p]);
+        }
+        ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
+            ui.label(
+                RichText::new("Drop a DICOM folder or a NIfTI file anywhere to open it.").size(11.5).color(TEXT_DIM),
+            );
+        });
     }
 
     fn loading_overlay(&mut self, ctx: &egui::Context) {
         egui::Area::new(Id::new("loading")).anchor(Align2::CENTER_CENTER, [0.0, 0.0]).order(Order::Tooltip).show(
             ctx,
             |ui| {
-                theme::panel().show(ui, |ui| {
+                theme::overlay().show(ui, |ui| {
                     ui.set_width(360.0);
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.label(RichText::new("Loading").size(16.0).strong().color(TEXT));
+                        ui.label(RichText::new("Loading").size(15.0).strong().color(TEXT));
                     });
                     ui.label(RichText::new(&self.viewer.status.message).color(TEXT_DIM));
                     if let Some(p) = self.viewer.status.progress {
@@ -434,21 +481,22 @@ impl ViewerApp {
         }
         let screen = ctx.content_rect();
         let p = ctx.layer_painter(egui::LayerId::new(Order::Tooltip, Id::new("drop")));
-        p.rect_filled(screen, 0.0, Color32::from_black_alpha(170));
+        p.rect_filled(screen, 0.0, Color32::from_black_alpha(160));
         let card = Rect::from_center_size(screen.center(), Vec2::new(420.0, 180.0));
-        p.rect_stroke(card, 24.0, Stroke::new(2.0, ACCENT), egui::StrokeKind::Inside);
+        p.rect_filled(card, 16.0, theme::SURFACE);
+        dashed_rect(&p, card.shrink(8.0), 12.0, ACCENT);
         p.text(
             card.center() - Vec2::new(0.0, 20.0),
             Align2::CENTER_CENTER,
             icon::DOWNLOAD_SIMPLE,
-            egui::FontId::proportional(40.0),
+            egui::FontId::proportional(38.0),
             ACCENT,
         );
         p.text(
             card.center() + Vec2::new(0.0, 30.0),
             Align2::CENTER_CENTER,
             "Drop to open",
-            egui::FontId::proportional(18.0),
+            egui::FontId::proportional(17.0),
             TEXT,
         );
     }
@@ -457,88 +505,66 @@ impl ViewerApp {
 
     fn start_screen(&mut self, ui: &mut egui::Ui) {
         let rect = ui.max_rect();
-        let p = ui.painter();
-        // background: faint grid and a glow behind the mark
-        let grid = Color32::from_rgba_unmultiplied(92, 225, 255, 6);
-        let step = 48.0;
-        let mut x = rect.min.x - (rect.min.x % step);
-        while x < rect.max.x {
-            p.line_segment([Pos2::new(x, rect.min.y), Pos2::new(x, rect.max.y)], Stroke::new(1.0, grid));
-            x += step;
-        }
-        let mut y = rect.min.y - (rect.min.y % step);
-        while y < rect.max.y {
-            p.line_segment([Pos2::new(rect.min.x, y), Pos2::new(rect.max.x, y)], Stroke::new(1.0, grid));
-            y += step;
-        }
-        let top = rect.center_top() + Vec2::new(0.0, (rect.height() * 0.16).max(40.0));
-        for (r, a) in [(140.0, 6u8), (95.0, 10), (60.0, 16)] {
-            p.circle_filled(
-                top + Vec2::new(0.0, 50.0),
-                r,
-                Color32::from_rgba_unmultiplied(ACCENT.r(), ACCENT.g(), ACCENT.b(), a),
-            );
-        }
-        widgets::logo(p, top + Vec2::new(0.0, 50.0), 92.0, TEXT);
-
         ui.vertical_centered(|ui| {
-            ui.add_space((rect.height() * 0.16).max(40.0) + 124.0);
-            ui.label(RichText::new("FERRUM").size(34.0).color(TEXT).strong());
-            ui.label(
-                RichText::new("GPU volume rendering · MPR · measurements for DICOM and NIfTI")
-                    .size(15.0)
-                    .color(TEXT_DIM),
-            );
-            ui.add_space(28.0);
+            ui.add_space((rect.height() * 0.12).max(24.0));
+            let (r, _) = ui.allocate_exact_size(Vec2::splat(76.0), egui::Sense::hover());
+            widgets::logo(ui.painter(), r);
+            ui.add_space(10.0);
+            ui.label(RichText::new("FERRUM").size(30.0).strong().color(TEXT));
+            ui.label(RichText::new("High-performance medical imaging").size(15.0).color(TEXT_DIM));
+            ui.add_space(24.0);
 
-            let card_w = 560.0f32.min(ui.available_width() - 40.0);
-            theme::panel().show(ui, |ui| {
+            let card_w = 520.0f32.min(ui.available_width() - 40.0);
+            theme::card().inner_margin(egui::Margin::same(18)).show(ui, |ui| {
                 ui.set_width(card_w);
-                let (r, _) = ui.allocate_exact_size(Vec2::new(card_w, 130.0), egui::Sense::hover());
-                dashed_rect(ui.painter(), r.shrink(4.0), 18.0, TEXT_DIM.gamma_multiply(0.6));
+                let (r, _) = ui.allocate_exact_size(Vec2::new(card_w, 120.0), egui::Sense::hover());
+                ui.painter().rect_filled(r, 10.0, theme::BG);
+                dashed_rect(ui.painter(), r.shrink(1.0), 10.0, BORDER.gamma_multiply(1.6));
                 ui.painter().text(
                     r.center() - Vec2::new(0.0, 16.0),
                     Align2::CENTER_CENTER,
                     icon::FOLDER_OPEN,
-                    egui::FontId::proportional(34.0),
+                    egui::FontId::proportional(30.0),
                     ACCENT,
                 );
                 ui.painter().text(
-                    r.center() + Vec2::new(0.0, 28.0),
+                    r.center() + Vec2::new(0.0, 24.0),
                     Align2::CENTER_CENTER,
                     "Drop a DICOM folder or a NIfTI file here",
-                    egui::FontId::proportional(15.0),
-                    TEXT,
+                    egui::FontId::proportional(14.0),
+                    TEXT_DIM,
                 );
-                ui.add_space(10.0);
+                ui.add_space(14.0);
                 ui.horizontal(|ui| {
-                    ui.add_space((card_w - 2.0 * 170.0 - 12.0).max(0.0) / 2.0);
-                    if pill_button(ui, icon::FOLDER_OPEN, "Open folder").clicked() {
+                    ui.add_space((card_w - 2.0 * 168.0 - 10.0).max(0.0) / 2.0);
+                    ui.spacing_mut().item_spacing.x = 10.0;
+                    if pill_button(ui, icon::FOLDER_OPEN, "Open folder", true).clicked() {
                         self.pick_folder();
                     }
-                    if pill_button(ui, icon::FILE_PLUS, "Open files").clicked() {
+                    if pill_button(ui, icon::FILE_PLUS, "Open files", false).clicked() {
                         self.pick_files();
                     }
                 });
                 if !self.recent.items().is_empty() {
-                    ui.add_space(10.0);
-                    widgets::section_title(ui, icon::CLOCK_COUNTER_CLOCKWISE, "Recent");
-                    let mut chosen = None;
-                    for p in self.recent.items() {
-                        let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                        let r = ui
-                            .add(
-                                egui::Button::new(RichText::new(format!("{}  {name}", icon::FILE_TEXT)).color(TEXT))
-                                    .frame(false),
-                            )
-                            .on_hover_text(p.to_string_lossy());
-                        if r.clicked() {
-                            chosen = Some(p.clone());
+                    ui.add_space(14.0);
+                    ui.with_layout(Layout::top_down(Align::Min), |ui| {
+                        ui.label(
+                            RichText::new(format!("{}  Recent studies", icon::CLOCK_COUNTER_CLOCKWISE))
+                                .size(12.5)
+                                .color(TEXT_DIM),
+                        );
+                        let mut chosen = None;
+                        for p in self.recent.items() {
+                            let parent = p.parent().map(|q| q.to_string_lossy().into_owned()).unwrap_or_default();
+                            if study_row(ui, &file_name(p), &parent, false).on_hover_text(p.to_string_lossy()).clicked()
+                            {
+                                chosen = Some(p.clone());
+                            }
                         }
-                    }
-                    if let Some(p) = chosen {
-                        self.open(vec![p]);
-                    }
+                        if let Some(p) = chosen {
+                            self.open(vec![p]);
+                        }
+                    });
                 }
             });
             ui.add_space(14.0);
@@ -567,7 +593,7 @@ impl ViewerApp {
                                     self.viewer.load_series(s.clone());
                                 }
                                 ui.label(
-                                    RichText::new(format!("{} · {}", s.modality, s.format)).color(HUD).monospace(),
+                                    RichText::new(format!("{} · {}", s.modality, s.format)).color(OVERLAY).monospace(),
                                 );
                                 ui.label(&s.description);
                             });
@@ -607,43 +633,10 @@ impl ViewerApp {
                 None => {}
             }
         }
-        if self.show_info {
-            let mut open = true;
-            egui::Window::new("Series information").open(&mut open).default_pos([80.0, 90.0]).show(ctx, |ui| {
-                if let Some(d) = self.viewer.dataset() {
-                    let v = &d.volume;
-                    egui::Grid::new("info").striped(true).show(ui, |ui| {
-                        let dims = v.dims();
-                        let sp = v.spacing();
-                        ui.label("Dimensions");
-                        ui.label(RichText::new(format!("{} × {} × {}", dims.x, dims.y, dims.z)).color(HUD).monospace());
-                        ui.end_row();
-                        ui.label("Spacing");
-                        ui.label(
-                            RichText::new(format!("{:.3} × {:.3} × {:.3} mm", sp.x, sp.y, sp.z)).color(HUD).monospace(),
-                        );
-                        ui.end_row();
-                        ui.label("Intensity range");
-                        ui.label(
-                            RichText::new(format!("{:.1} … {:.1}", v.range().min, v.range().max))
-                                .color(HUD)
-                                .monospace(),
-                        );
-                        ui.end_row();
-                        for (k, val) in &d.metadata.attributes {
-                            ui.label(k);
-                            ui.label(val);
-                            ui.end_row();
-                        }
-                    });
-                }
-            });
-            self.show_info = open;
-        }
         if !self.viewer.status.errors.is_empty() {
             egui::Window::new("Errors").collapsible(false).anchor(Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
                 for e in &self.viewer.status.errors {
-                    ui.colored_label(ACCENT, format!("{} {e}", icon::WARNING));
+                    ui.colored_label(DANGER, format!("{} {e}", icon::WARNING));
                 }
                 if ui.button("Dismiss").clicked() {
                     self.viewer.status.errors.clear();
@@ -653,7 +646,14 @@ impl ViewerApp {
         if self.show_about {
             let mut open = true;
             egui::Window::new("About").open(&mut open).anchor(Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
-                ui.heading("FERRUM");
+                ui.horizontal(|ui| {
+                    let (r, _) = ui.allocate_exact_size(Vec2::splat(40.0), egui::Sense::hover());
+                    widgets::logo(ui.painter(), r);
+                    ui.vertical(|ui| {
+                        ui.heading("FERRUM");
+                        ui.label(RichText::new("High-performance medical imaging").color(TEXT_DIM));
+                    });
+                });
                 ui.label("GPU volume rendering and 2D/MPR viewing of DICOM and NIfTI data.");
                 ui.label(RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION"))).color(TEXT_DIM));
                 ui.hyperlink_to("Source code", "https://github.com/Kauter1989/dicom_renderer");
@@ -665,10 +665,10 @@ impl ViewerApp {
                     ("Ctrl + wheel", "zoom slice"),
                     ("Ctrl+O", "open folder"),
                     ("Ctrl+Z", "undo erase"),
-                    ("Tab", "toggle settings panel"),
+                    ("Tab", "toggle the settings panel"),
                 ] {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(k).monospace().color(HUD));
+                        ui.label(RichText::new(k).monospace().color(OVERLAY));
                         ui.label(RichText::new(v).color(TEXT_DIM));
                     });
                 }
@@ -777,17 +777,48 @@ impl ViewerApp {
     }
 }
 
-/// Large rounded button with icon and text, used on the start screen.
-fn pill_button(ui: &mut egui::Ui, icon_str: &str, text: &str) -> egui::Response {
+/// Large button with icon and text, used on the start screen.
+fn pill_button(ui: &mut egui::Ui, icon_str: &str, text: &str, primary: bool) -> egui::Response {
+    let color = if primary { Color32::WHITE } else { TEXT };
     let r = ui.add(
-        egui::Button::new(RichText::new(format!("{icon_str}   {text}")).size(15.0).color(TEXT))
-            .min_size(Vec2::new(170.0, 42.0))
-            .corner_radius(21.0)
-            .fill(theme::CONTROL),
+        egui::Button::new(RichText::new(format!("{icon_str}   {text}")).size(14.0).color(color))
+            .min_size(Vec2::new(168.0, 40.0))
+            .corner_radius(10.0)
+            .fill(if primary { ACCENT } else { theme::CONTROL }),
     );
     let label = text.to_string();
     r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label));
     r
+}
+
+/// Row of the studies list: file name and a dim second line.
+fn study_row(ui: &mut egui::Ui, title: &str, subtitle: &str, selected: bool) -> egui::Response {
+    let width = ui.available_width();
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, 46.0), egui::Sense::click());
+    let label = title.to_string();
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, &label));
+    let p = ui.painter();
+    if selected {
+        p.rect_filled(rect, 8.0, ACCENT_SOFT);
+        p.rect_stroke(rect, 8.0, Stroke::new(1.0, ACCENT.gamma_multiply(0.8)), egui::StrokeKind::Inside);
+    } else if resp.hovered() {
+        p.rect_filled(rect, 8.0, theme::CONTROL);
+    }
+    let tile = Rect::from_min_size(rect.min + Vec2::new(8.0, 7.0), Vec2::splat(32.0));
+    p.rect_filled(tile, 6.0, theme::CANVAS);
+    p.text(tile.center(), Align2::CENTER_CENTER, icon::IMAGE, egui::FontId::proportional(17.0), TEXT_DIM);
+    let text_x = tile.max.x + 10.0;
+    let clip = Rect::from_min_max(Pos2::new(text_x, rect.min.y), rect.max - Vec2::new(6.0, 0.0));
+    let painter = p.with_clip_rect(clip);
+    painter.text(Pos2::new(text_x, rect.min.y + 8.0), Align2::LEFT_TOP, title, egui::FontId::proportional(13.0), TEXT);
+    painter.text(
+        Pos2::new(text_x, rect.min.y + 26.0),
+        Align2::LEFT_TOP,
+        subtitle,
+        egui::FontId::proportional(11.0),
+        TEXT_DIM,
+    );
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 fn dashed_rect(p: &egui::Painter, rect: Rect, radius: f32, color: Color32) {

@@ -1,5 +1,6 @@
-//! Floating settings panel. Tools, modes and orientations live in the docks
-//! (see `app.rs`); this panel holds the continuous parameters.
+//! Right-hand settings panel with three tabs: image (window, slices,
+//! annotations, filters), 3D (technique, transfer function, clipping,
+//! eraser) and details (series information).
 
 use egui::{RichText, Slider};
 use egui_phosphor::light as icon;
@@ -9,17 +10,31 @@ use ferrum_domain::{
 };
 
 use super::tf_editor::{self, TfEditorState};
-use super::theme::{HUD, TEXT_DIM};
-use super::widgets::{chip, icon_slider, section_title};
+use super::theme::{OVERLAY, TEXT, TEXT_DIM};
+use super::widgets::{chip, icon_slider, section_title, segmented, slider_row};
 
-/// Which parameter group the panel shows in MPR mode.
+/// Tab of the settings panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PanelTab {
-    /// Slice parameters.
+    /// Window/level, slices, annotations and filters.
     #[default]
-    Slices,
+    Image,
     /// Volume rendering parameters.
     Volume,
+    /// Series information.
+    Details,
+}
+
+impl PanelTab {
+    const ALL: [PanelTab; 3] = [PanelTab::Image, PanelTab::Volume, PanelTab::Details];
+
+    fn label(self) -> &'static str {
+        match self {
+            PanelTab::Image => "Image",
+            PanelTab::Volume => "Volume",
+            PanelTab::Details => "Details",
+        }
+    }
 }
 
 /// Persistent UI-only state of the panel.
@@ -29,18 +44,21 @@ pub struct PanelState {
     pub tf_editor: TfEditorState,
     /// Sigma of the Gaussian filter.
     pub gaussian_sigma: f32,
-    /// Tab shown in MPR mode.
+    /// Selected tab.
     pub tab: PanelTab,
+    /// View mode seen on the previous frame; switching to 2D or 3D selects
+    /// the matching tab.
+    last_mode: Option<ViewMode>,
 }
 
 impl Default for PanelState {
     fn default() -> Self {
-        Self { tf_editor: TfEditorState::default(), gaussian_sigma: 1.0, tab: PanelTab::default() }
+        Self { tf_editor: TfEditorState::default(), gaussian_sigma: 1.0, tab: PanelTab::default(), last_mode: None }
     }
 }
 
 fn collapsible(ui: &mut egui::Ui, id: &str, icon_str: &str, title: &str, open: bool, body: impl FnOnce(&mut egui::Ui)) {
-    let header = RichText::new(format!("{icon_str}  {}", title.to_uppercase())).size(11.5).strong().color(TEXT_DIM);
+    let header = RichText::new(format!("{icon_str}  {title}")).size(13.5).strong().color(TEXT);
     egui::CollapsingHeader::new(header).id_salt(id).default_open(open).show(ui, body);
 }
 
@@ -49,57 +67,50 @@ pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelState) {
     if viewer.dataset().is_none() {
         return;
     }
-    let tab = match viewer.view_mode {
-        ViewMode::Slice2d => PanelTab::Slices,
-        ViewMode::Volume3d => PanelTab::Volume,
-        ViewMode::Mpr => {
-            ui.horizontal(|ui| {
-                if chip(ui, &format!("{}  Slices", icon::SQUARES_FOUR), state.tab == PanelTab::Slices).clicked() {
-                    state.tab = PanelTab::Slices;
-                }
-                if chip(ui, &format!("{}  Volume", icon::CUBE), state.tab == PanelTab::Volume).clicked() {
-                    state.tab = PanelTab::Volume;
-                }
-            });
-            ui.add_space(4.0);
-            state.tab
+    if state.last_mode != Some(viewer.view_mode) {
+        match viewer.view_mode {
+            ViewMode::Slice2d => state.tab = PanelTab::Image,
+            ViewMode::Volume3d => state.tab = PanelTab::Volume,
+            ViewMode::Mpr => {}
         }
-    };
-    egui::ScrollArea::vertical().auto_shrink([false, true]).show(ui, |ui| match tab {
-        PanelTab::Slices => slice_settings(ui, viewer, state),
+        state.last_mode = Some(viewer.view_mode);
+    }
+    let labels = PanelTab::ALL.map(PanelTab::label);
+    let selected = PanelTab::ALL.iter().position(|t| *t == state.tab);
+    if let Some(i) = segmented(ui, &labels, selected) {
+        state.tab = PanelTab::ALL[i];
+    }
+    ui.add_space(4.0);
+    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| match state.tab {
+        PanelTab::Image => image_settings(ui, viewer, state),
         PanelTab::Volume => volume_settings(ui, viewer, state),
+        PanelTab::Details => details(ui, viewer),
     });
 }
 
-fn slice_settings(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelState) {
+fn image_settings(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelState) {
     let Some(volume) = viewer.dataset().map(|d| d.volume.clone()) else {
         return;
     };
-    section_title(ui, icon::CIRCLE_HALF, "Window");
-    let range = volume.range();
-    let WindowLevel { mut center, mut width } = viewer.slices.window;
-    let speed = range.span() / 500.0;
-    let mut changed = false;
-    ui.horizontal(|ui| {
-        ui.label(RichText::new("L").color(TEXT_DIM));
-        changed |= ui.add(egui::DragValue::new(&mut center).speed(speed).max_decimals(0)).changed();
-        ui.label(RichText::new("W").color(TEXT_DIM));
-        changed |=
-            ui.add(egui::DragValue::new(&mut width).speed(speed).range(0.001..=f32::MAX).max_decimals(0)).changed();
-    });
-    if changed {
-        viewer.slices.window = WindowLevel::new(center, width);
-    }
+    section_title(ui, icon::CIRCLE_HALF, "Window level");
     ui.horizontal_wrapped(|ui| {
+        if chip(ui, &format!("{} Auto", icon::SPARKLE), false).clicked() {
+            viewer.auto_window();
+        }
         for p in WindowPreset::ALL {
             if chip(ui, p.label(), false).clicked() {
                 viewer.apply_window_preset(p);
             }
         }
-        if chip(ui, &format!("{} Auto", icon::SPARKLE), false).clicked() {
-            viewer.auto_window();
-        }
     });
+    let range = volume.range();
+    let WindowLevel { mut center, mut width } = viewer.slices.window;
+    let span = range.span().max(1.0);
+    let mut changed = slider_row(ui, "Window", &mut width, 1.0..=span * 2.0);
+    changed |= slider_row(ui, "Level", &mut center, range.min..=range.max);
+    if changed {
+        viewer.slices.window = WindowLevel::new(center, width.max(0.001));
+    }
 
     section_title(ui, icon::STACK, "Slices");
     let axes: Vec<SliceAxis> =
@@ -108,7 +119,9 @@ fn slice_settings(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelState
         let n = axis.slice_count(&volume);
         let mut idx = viewer.slices.index(axis);
         ui.horizontal(|ui| {
-            ui.label(RichText::new(&axis.label()[..1]).color(super::slice_view::axis_color(axis)).strong());
+            let (dot, _) = ui.allocate_exact_size(egui::vec2(8.0, 16.0), egui::Sense::hover());
+            ui.painter().circle_filled(dot.center(), 4.0, super::slice_view::axis_color(axis));
+            ui.label(RichText::new(axis.label()).color(TEXT_DIM));
             if ui.add(Slider::new(&mut idx, 0..=n.saturating_sub(1))).changed() {
                 viewer.set_slice_index(axis, idx);
             }
@@ -135,10 +148,11 @@ fn slice_settings(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelState
                 p.value
             ))
             .monospace()
-            .color(HUD),
+            .color(OVERLAY),
         );
     }
 
+    ui.add_space(4.0);
     collapsible(ui, "filters", icon::FUNNEL, "Filters", false, |ui| {
         let busy = viewer.is_computing();
         ui.horizontal(|ui| {
@@ -209,6 +223,7 @@ fn volume_settings(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelStat
         });
     }
 
+    ui.add_space(4.0);
     collapsible(ui, "clipping", icon::SCISSORS, "Clipping", true, |ui| {
         let clip = &mut viewer.volume.clip;
         icon_slider(ui, icon::SCISSORS, "Cut (view)", &mut clip.view_cut, 0.0..=1.0);
@@ -223,7 +238,7 @@ fn volume_settings(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelStat
         for (i, name) in ["X", "Y", "Z"].iter().enumerate() {
             ui.horizontal(|ui| {
                 ui.label(RichText::new(*name).color(TEXT_DIM).monospace());
-                ui.spacing_mut().slider_width = 110.0;
+                ui.spacing_mut().slider_width = 100.0;
                 ui.add(Slider::new(&mut min[i], 0.0..=1.0).show_value(false).trailing_fill(false));
                 ui.add(Slider::new(&mut max[i], 0.0..=1.0).show_value(false));
             });
@@ -268,5 +283,27 @@ fn volume_settings(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelStat
     collapsible(ui, "perf", icon::LIGHTNING, "Performance", false, |ui| {
         ui.checkbox(&mut viewer.volume.settings.empty_space_skipping, "Empty-space skipping");
         icon_slider(ui, icon::GAUGE, "Resolution while rotating", &mut viewer.volume.interactive_scale, 0.25..=1.0);
+    });
+}
+
+fn details(ui: &mut egui::Ui, viewer: &Viewer) {
+    let Some(d) = viewer.dataset() else {
+        return;
+    };
+    section_title(ui, icon::INFO, "Series information");
+    let v = &d.volume;
+    let dims = v.dims();
+    let sp = v.spacing();
+    let rows = [
+        ("Dimensions".to_string(), format!("{} × {} × {}", dims.x, dims.y, dims.z)),
+        ("Spacing".to_string(), format!("{:.3} × {:.3} × {:.3} mm", sp.x, sp.y, sp.z)),
+        ("Intensity range".to_string(), format!("{:.1} … {:.1}", v.range().min, v.range().max)),
+    ];
+    egui::Grid::new("details").num_columns(2).spacing([12.0, 6.0]).striped(false).show(ui, |ui| {
+        for (k, val) in rows.iter().chain(d.metadata.attributes.iter()) {
+            ui.label(RichText::new(k).color(TEXT_DIM));
+            ui.add(egui::Label::new(RichText::new(val).color(TEXT)).wrap());
+            ui.end_row();
+        }
     });
 }

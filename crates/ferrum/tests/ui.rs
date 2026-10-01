@@ -141,8 +141,9 @@ fn every_view_mode_renders_the_volume() {
         .renderer(renderer)
         .build_ui_state(move |ui, app: &mut ViewerApp| app.show(ui, Some(&rs2)), app);
     let out_dir = std::env::var_os("FERRUM_SNAPSHOT_DIR").map(PathBuf::from);
-    // central area: left of the 320 pt settings panel, between bars
-    let central = egui::Rect::from_min_max(egui::pos2(10.0, 40.0), egui::pos2(850.0, 760.0));
+    // central area: between the studies sidebar (232 pt) and the settings
+    // panel (324 pt), below the header and toolbar, above the status bar
+    let central = egui::Rect::from_min_max(egui::pos2(242.0, 114.0), egui::pos2(866.0, 762.0));
     for (mode, render) in [
         (ViewMode::Slice2d, RenderMode::Tissue),
         (ViewMode::Volume3d, RenderMode::Isosurface),

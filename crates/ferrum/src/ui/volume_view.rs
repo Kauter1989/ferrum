@@ -28,7 +28,7 @@ pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut VolumeViewState)
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, theme::CANVAS);
     if viewer.dataset().is_none() {
-        painter.text(rect.center(), Align2::CENTER_CENTER, "No data", FontId::proportional(14.0), Color32::GRAY);
+        painter.text(rect.center(), Align2::CENTER_CENTER, "No data", FontId::proportional(14.0), theme::TEXT_DIM);
         return;
     }
     let aspect = rect.width() / rect.height().max(1.0);
@@ -84,19 +84,16 @@ pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut VolumeViewState)
 
     // -------------------------------------------------------------- overlay
     let s = &viewer.volume.settings;
-    let mut info = format!("{} · quality {:.0}%", s.mode.label(), s.quality * 100.0);
+    let mut lines = vec![
+        ("Volume rendering".to_string(), theme::OVERLAY),
+        (s.mode.label().to_string(), theme::OVERLAY),
+        (format!("Quality {:.0}%", s.quality * 100.0), theme::TEXT_DIM),
+    ];
     if viewer.is_computing() {
-        info.push_str(" · computing…");
+        lines.push(("Computing…".to_string(), theme::TEXT_DIM));
     }
-    widgets::hud_corners(&painter, rect, theme::HUD.gamma_multiply(0.55));
-    widgets::hud_label(
-        &painter,
-        rect.left_top() + egui::vec2(14.0, 14.0),
-        Align2::LEFT_TOP,
-        &info.to_uppercase(),
-        theme::HUD,
-        12.0,
-    );
+    widgets::view_frame(&painter, rect, response.hovered());
+    widgets::overlay_lines(&painter, rect.left_top() + egui::vec2(12.0, 10.0), Align2::LEFT_TOP, &lines, 12.5);
     orientation_gizmo(&painter, rect.left_bottom() + egui::vec2(58.0, -58.0), 38.0, &viewer.volume.camera);
     if erasing {
         if let Some(p) = response.hover_pos() {
@@ -111,13 +108,13 @@ pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut VolumeViewState)
 
 /// Axis triad showing the patient orientation (LPS) as seen by the camera.
 fn orientation_gizmo(p: &egui::Painter, center: Pos2, radius: f32, camera: &ferrum_domain::OrbitCamera) {
-    p.circle_filled(center, radius + 12.0, Color32::from_black_alpha(120));
-    p.circle_stroke(center, radius + 12.0, Stroke::new(1.0, theme::HUD.gamma_multiply(0.25)));
+    p.circle_filled(center, radius + 12.0, theme::BG.gamma_multiply(0.75));
+    p.circle_stroke(center, radius + 12.0, Stroke::new(1.0, theme::BORDER));
     let (right, up, view) = (camera.right(), camera.up(), camera.view_dir());
     let axes = [
-        (glam::Vec3::X, "L", "R", Color32::from_rgb(235, 90, 90)),
-        (glam::Vec3::Y, "P", "A", Color32::from_rgb(100, 210, 110)),
-        (glam::Vec3::Z, "S", "I", Color32::from_rgb(95, 155, 255)),
+        (glam::Vec3::X, "L", "R", Color32::from_rgb(214, 104, 104)),
+        (glam::Vec3::Y, "P", "A", Color32::from_rgb(104, 186, 128)),
+        (glam::Vec3::Z, "S", "I", Color32::from_rgb(98, 146, 236)),
     ];
     // draw far axes first so nearer ones overlap them
     let mut items: Vec<(f32, egui::Vec2, &str, Color32, bool)> = Vec::new();
@@ -134,10 +131,10 @@ fn orientation_gizmo(p: &egui::Painter, center: Pos2, radius: f32, camera: &ferr
         if positive {
             p.line_segment([center, tip], Stroke::new(2.0, c.gamma_multiply(fade)));
             p.circle_filled(tip, 8.0, c.gamma_multiply(fade));
-            p.text(tip, Align2::CENTER_CENTER, label, theme::hud_font(10.5), Color32::BLACK);
+            p.text(tip, Align2::CENTER_CENTER, label, theme::mono(10.5), Color32::BLACK);
         } else {
             p.circle_stroke(tip, 6.0, Stroke::new(1.0, c.gamma_multiply(0.6 * fade)));
-            p.text(tip, Align2::CENTER_CENTER, label, theme::hud_font(9.0), c.gamma_multiply(0.8 * fade));
+            p.text(tip, Align2::CENTER_CENTER, label, theme::mono(9.0), c.gamma_multiply(0.8 * fade));
         }
     }
 }

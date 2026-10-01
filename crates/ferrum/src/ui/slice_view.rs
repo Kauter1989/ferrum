@@ -15,8 +15,8 @@ pub struct SliceViewState {
     scroll_acc: f32,
 }
 
-const ANNOTATION_COLOR: Color32 = Color32::from_rgb(255, 214, 10);
-const PREVIEW_COLOR: Color32 = Color32::from_rgb(120, 200, 255);
+const ANNOTATION_COLOR: Color32 = Color32::from_rgb(126, 176, 255);
+const PREVIEW_COLOR: Color32 = Color32::from_rgb(226, 232, 242);
 
 fn g2e(v: glam::Vec2) -> Pos2 {
     Pos2::new(v.x, v.y)
@@ -35,7 +35,7 @@ pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, axis: SliceAxis, state: &mut
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, theme::CANVAS);
     let Some(dataset) = viewer.dataset() else {
-        painter.text(rect.center(), Align2::CENTER_CENTER, "No data", FontId::proportional(14.0), Color32::GRAY);
+        painter.text(rect.center(), Align2::CENTER_CENTER, "No data", FontId::proportional(14.0), theme::TEXT_DIM);
         return;
     };
     let volume = dataset.volume.clone();
@@ -148,40 +148,56 @@ pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, axis: SliceAxis, state: &mut
             }
         }
     }
-    // HUD frame in the orientation's colour
-    widgets::hud_corners(&painter, rect, axis_color(axis).gamma_multiply(0.9));
+    widgets::view_frame(&painter, rect, response.hovered());
 
     // anatomical orientation markers at the image edges
     let [l, r, t, b] = axis.edge_labels();
-    let inner = rect.shrink(18.0);
+    // keep clear of the slice scrubber on the right edge
+    let inner = Rect::from_min_max(rect.min + egui::vec2(18.0, 18.0), rect.max - egui::vec2(40.0, 18.0));
     let mid = img.center();
     let clampx = |x: f32| x.clamp(inner.min.x, inner.max.x);
     let clampy = |y: f32| y.clamp(inner.min.y, inner.max.y);
-    let font = theme::hud_font(15.0);
-    let lc = theme::HUD;
-    painter.text(Pos2::new(clampx(img.min.x + 10.0), clampy(mid.y)), Align2::LEFT_CENTER, l, font.clone(), lc);
-    painter.text(Pos2::new(clampx(img.max.x - 10.0), clampy(mid.y)), Align2::RIGHT_CENTER, r, font.clone(), lc);
-    painter.text(Pos2::new(clampx(mid.x), clampy(img.min.y + 10.0)), Align2::CENTER_TOP, t, font.clone(), lc);
-    painter.text(Pos2::new(clampx(mid.x), clampy(img.max.y - 10.0)), Align2::CENTER_BOTTOM, b, font, lc);
+    let lc = theme::OVERLAY;
+    let edge = |pos: Pos2, align: Align2, text: &str| {
+        widgets::overlay_text(&painter, pos, align, text, lc, 14.0);
+    };
+    edge(Pos2::new(clampx(img.min.x + 10.0), clampy(mid.y)), Align2::LEFT_CENTER, l);
+    edge(Pos2::new(clampx(img.max.x - 10.0), clampy(mid.y)), Align2::RIGHT_CENTER, r);
+    edge(Pos2::new(clampx(mid.x), clampy(img.min.y + 10.0)), Align2::CENTER_TOP, t);
+    edge(Pos2::new(clampx(mid.x), clampy(img.max.y - 10.0)), Align2::CENTER_BOTTOM, b);
 
-    // read-outs
+    // read-outs in the corners
     let n = axis.slice_count(&volume);
     let w = viewer.slices.window;
-    widgets::hud_label(
+    let (cols, rows) = match axis {
+        SliceAxis::Axial => (volume.dims().x, volume.dims().y),
+        SliceAxis::Coronal => (volume.dims().x, volume.dims().z),
+        SliceAxis::Sagittal => (volume.dims().y, volume.dims().z),
+    };
+    let mut top = Vec::new();
+    let description = viewer.dataset().map(|d| d.metadata.description.clone()).unwrap_or_default();
+    if !description.is_empty() && viewer.view_mode != ViewMode::Mpr {
+        top.push((description, theme::OVERLAY));
+    }
+    top.push((axis.label().to_string(), axis_color(axis)));
+    top.push((format!("{cols} × {rows}"), theme::TEXT_DIM));
+    widgets::overlay_lines(&painter, rect.left_top() + egui::vec2(12.0, 10.0), Align2::LEFT_TOP, &top, 12.5);
+    widgets::overlay_lines(
         &painter,
-        rect.left_top() + egui::vec2(14.0, 14.0),
-        Align2::LEFT_TOP,
-        &format!("{}  {:>3}/{}", axis.label().to_uppercase(), index + 1, n),
-        axis_color(axis),
-        12.0,
-    );
-    widgets::hud_label(
-        &painter,
-        rect.left_bottom() + egui::vec2(14.0, -14.0),
+        rect.left_bottom() + egui::vec2(12.0, -10.0),
         Align2::LEFT_BOTTOM,
-        &format!("W {:.0}  L {:.0}  ·  {:.0}%", w.width, w.center, view.zoom * 100.0),
-        theme::TEXT_DIM,
-        11.5,
+        &[(format!("W: {:.0}   L: {:.0}", w.width, w.center), theme::OVERLAY)],
+        12.5,
+    );
+    widgets::overlay_lines(
+        &painter,
+        rect.right_bottom() + egui::vec2(-36.0, -10.0),
+        Align2::RIGHT_BOTTOM,
+        &[
+            (format!("Slice {} / {}", index + 1, n), theme::OVERLAY),
+            (format!("Zoom {:.0}%", view.zoom * 100.0), theme::TEXT_DIM),
+        ],
+        12.5,
     );
 
     // slice scrubber along the right edge
@@ -192,11 +208,14 @@ pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, axis: SliceAxis, state: &mut
         );
         if track.height() > 40.0 {
             let frac = index as f32 / (n - 1) as f32;
-            painter.rect_filled(track, 4.0, Color32::from_white_alpha(14));
+            let track = Rect::from_center_size(track.center(), egui::vec2(4.0, track.height()));
+            painter.rect_filled(track, 2.0, Color32::from_white_alpha(22));
             let y = track.max.y - frac * track.height();
             let filled = Rect::from_min_max(Pos2::new(track.min.x, y), track.max);
-            painter.rect_filled(filled, 4.0, axis_color(axis).gamma_multiply(0.35));
-            painter.circle_filled(Pos2::new(track.center().x, y), 6.0, axis_color(axis));
+            painter.rect_filled(filled, 2.0, theme::ACCENT.gamma_multiply(0.8));
+            let knob = Pos2::new(track.center().x, y);
+            painter.circle_filled(knob, 7.0, theme::ACCENT);
+            painter.circle_filled(knob, 3.0, Color32::WHITE);
             if let Some(p) = scrub.interact_pointer_pos() {
                 let f = ((track.max.y - p.y) / track.height()).clamp(0.0, 1.0);
                 viewer.set_slice_index(axis, (f * (n - 1) as f32).round() as u32);
@@ -205,12 +224,13 @@ pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, axis: SliceAxis, state: &mut
     }
 }
 
-/// Colour coding of orientations (sagittal red, coronal green, axial blue).
+/// Colour coding of orientations (sagittal red, coronal green, axial
+/// blue), muted to sit quietly over the image.
 pub fn axis_color(axis: SliceAxis) -> Color32 {
     match axis {
-        SliceAxis::Sagittal => Color32::from_rgb(230, 80, 80),
-        SliceAxis::Coronal => Color32::from_rgb(90, 200, 90),
-        SliceAxis::Axial => Color32::from_rgb(90, 150, 255),
+        SliceAxis::Sagittal => Color32::from_rgb(214, 104, 104),
+        SliceAxis::Coronal => Color32::from_rgb(104, 186, 128),
+        SliceAxis::Axial => Color32::from_rgb(98, 146, 236),
     }
 }
 
@@ -239,9 +259,11 @@ fn draw_annotation(painter: &egui::Painter, a: &Annotation, to_screen: &dyn Fn(g
     let label = a.label();
     if !label.is_empty() {
         let pos = to_screen(a.label_anchor()) + egui::vec2(6.0, -6.0);
-        let galley = painter.layout_no_wrap(label, FontId::proportional(13.0), color);
-        let bg = Rect::from_min_size(pos - egui::vec2(2.0, galley.size().y), galley.size() + egui::vec2(4.0, 2.0));
-        painter.rect_filled(bg, 2.0, Color32::from_black_alpha(170));
-        painter.galley(bg.min + egui::vec2(2.0, 1.0), galley, color);
+        let galley = painter.layout_no_wrap(label, FontId::proportional(12.5), theme::OVERLAY);
+        let bg =
+            Rect::from_min_size(pos - egui::vec2(6.0, galley.size().y + 4.0), galley.size() + egui::vec2(12.0, 8.0));
+        painter.rect_filled(bg, 6.0, theme::BG.gamma_multiply(0.9));
+        painter.rect_stroke(bg, 6.0, Stroke::new(1.0, color.gamma_multiply(0.6)), egui::StrokeKind::Inside);
+        painter.galley(bg.min + egui::vec2(6.0, 4.0), galley, theme::OVERLAY);
     }
 }

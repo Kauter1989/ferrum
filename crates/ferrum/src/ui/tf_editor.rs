@@ -34,7 +34,7 @@ pub fn show(
     let to_screen = |x: f32, y: f32| Pos2::new(plot.min.x + x * plot.width(), plot.max.y - y * plot.height());
     let from_screen = |p: Pos2| ((p.x - plot.min.x) / plot.width(), (plot.max.y - p.y) / plot.height());
 
-    painter.rect_filled(rect, 4.0, Color32::from_gray(18));
+    painter.rect_filled(rect, 8.0, Color32::from_rgb(9, 14, 24));
     // histogram
     if !histogram.is_empty() {
         let bw = plot.width() / histogram.len() as f32;
@@ -44,7 +44,7 @@ pub fn show(
             painter.rect_filled(
                 Rect::from_min_max(Pos2::new(x0, top), Pos2::new(x0 + bw.max(1.0), plot.max.y)),
                 0.0,
-                Color32::from_gray(55),
+                Color32::from_rgb(44, 62, 92),
             );
         }
     }
@@ -61,18 +61,18 @@ pub fn show(
             to_color(c, a.max(0.15)),
         );
     }
-    painter.rect_stroke(plot, 0.0, Stroke::new(1.0, Color32::from_gray(80)), StrokeKind::Inside);
+    painter.rect_stroke(plot, 0.0, Stroke::new(1.0, super::theme::BORDER), StrokeKind::Inside);
 
     // curve
     let pts: Vec<Pos2> = tf.points().iter().map(|p| to_screen(p.position, p.opacity)).collect();
-    painter.add(egui::Shape::line(pts.clone(), Stroke::new(1.5, Color32::from_gray(220))));
+    painter.add(egui::Shape::line(pts.clone(), Stroke::new(1.5, super::theme::OVERLAY)));
     for (i, (p, cp)) in pts.iter().zip(tf.points()).enumerate() {
         let selected = state.selected == Some(i);
         painter.circle_filled(*p, POINT_RADIUS, to_color(cp.color, 1.0));
         painter.circle_stroke(
             *p,
             POINT_RADIUS,
-            Stroke::new(if selected { 2.5 } else { 1.0 }, if selected { Color32::YELLOW } else { Color32::WHITE }),
+            Stroke::new(if selected { 2.5 } else { 1.0 }, if selected { super::theme::ACCENT } else { Color32::WHITE }),
         );
     }
 
