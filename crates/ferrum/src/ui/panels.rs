@@ -118,13 +118,14 @@ fn image_settings(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelState
         if viewer.view_mode == ViewMode::Mpr { SliceAxis::ALL.to_vec() } else { vec![viewer.slices.axis] };
     for axis in axes {
         let n = axis.slice_count(&volume);
-        let mut idx = viewer.slices.index(axis);
+        // slice numbers are shown one-based everywhere in the UI
+        let mut number = viewer.slices.index(axis) + 1;
         ui.horizontal(|ui| {
             let (dot, _) = ui.allocate_exact_size(egui::vec2(8.0, 16.0), egui::Sense::hover());
             ui.painter().circle_filled(dot.center(), 4.0, super::slice_view::axis_color(axis));
             ui.label(RichText::new(axis.label()).color(TEXT_DIM));
-            if ui.add(Slider::new(&mut idx, 0..=n.saturating_sub(1))).changed() {
-                viewer.set_slice_index(axis, idx);
+            if ui.add(Slider::new(&mut number, 1..=n.max(1))).changed() {
+                viewer.set_slice_index(axis, number.saturating_sub(1));
             }
         });
     }
