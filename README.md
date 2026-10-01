@@ -117,7 +117,7 @@ attributes in the *Details* tab.
 
 **Prebuilt binary (no Rust needed).** Download the archive for your system
 (Linux x86_64, macOS Apple Silicon, Windows x86_64) from
-[Releases](https://github.com/Kauter1989/dicom_renderer/releases), unpack
+[Releases](https://github.com/Kauter1989/ferrum/releases), unpack
 it and run `ferrum`. You can also pass paths on the command line:
 
 ```bash
@@ -127,15 +127,15 @@ it and run `ferrum`. You can also pass paths on the command line:
 **Install with Cargo** (puts `ferrum` on your `PATH`):
 
 ```bash
-cargo install --git https://github.com/Kauter1989/dicom_renderer ferrum
+cargo install --git https://github.com/Kauter1989/ferrum ferrum
 ferrum /path/to/dicom-folder
 ```
 
 **From source:**
 
 ```bash
-git clone https://github.com/Kauter1989/dicom_renderer
-cd dicom_renderer
+git clone https://github.com/Kauter1989/ferrum
+cd ferrum
 cargo run --release -- /path/to/dicom-folder
 ```
 

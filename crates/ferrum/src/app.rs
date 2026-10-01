@@ -656,7 +656,7 @@ impl ViewerApp {
                 });
                 ui.label("GPU volume rendering and 2D/MPR viewing of DICOM and NIfTI data.");
                 ui.label(RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION"))).color(TEXT_DIM));
-                ui.hyperlink_to("Source code", "https://github.com/Kauter1989/dicom_renderer");
+                ui.hyperlink_to("Source code", "https://github.com/Kauter1989/ferrum");
                 ui.add_space(6.0);
                 ui.label(RichText::new("Shortcuts").strong());
                 for (k, v) in [
