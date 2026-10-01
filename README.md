@@ -3,10 +3,16 @@
 **FERRUM. High-performance medical imaging.**
 
 *Ferrum* is Latin for iron, the metal whose oxide gives Rust its name.
-FERRUM is a fast desktop viewer for volumetric medical images (CT and MRI
-in DICOM or NIfTI), written in Rust. It shows 2D slices, multiplanar
-reconstruction (MPR) and GPU volume rendering, with interactive transfer
-functions, clipping, measurements and a volume eraser.
+FERRUM is a new desktop viewer for volumetric medical images (CT, MRI and
+other modalities, in DICOM or NIfTI), written in Rust. Its renderer
+combines proven, peer-reviewed techniques from scientific volume
+visualization, such as GPU ray casting, empty-space skipping, isosurface
+refinement and local ambient occlusion
+(see [Rendering](#rendering)), in one modern single-pass GPU pipeline.
+
+It offers 2D slices, multiplanar reconstruction (MPR) and interactive 3D
+volume rendering, with transfer-function editing, clipping, measurements
+and a volume eraser.
 
 ![MPR layout of a chest CT: axial, coronal and sagittal slices in the lung window with a 3D transfer-function rendering](docs/images/mpr.png)
 
@@ -39,6 +45,7 @@ functions, clipping, measurements and a volume eraser.
 - [Testing](#testing)
 - [Project layout](#project-layout)
 - [Sample data](#sample-data)
+- [References](#references)
 - [License](#license)
 
 ## Features
@@ -177,15 +184,22 @@ Vulkan, Metal, DX12 or GL depending on the platform. The volume is uploaded
 once as a 16-bit 3D texture (`R16Unorm`, with an `R16Float` fallback).
 Volumes larger than the device limit are downsampled automatically.
 
-The ray-casting algorithms are a WGSL port of the author's own WebGL shaders
-from an earlier web viewer:
-- tissue band plus isosurface compositing;
-- bisection refinement of isosurface hits;
-- gradient-based Phong shading;
-- MIP;
-- transfer-function integration.
+The image-formation model follows established volume-rendering research:
 
-The port reworks the pipeline for performance:
+| Technique | Used for | Reference |
+|---|---|---|
+| Ray casting with front-to-back emission–absorption compositing | all 3D techniques | Levoy 1988; Max 1995 |
+| Gradient estimation by central differences and Phong shading | surfaces, lit transfer functions | Levoy 1988 |
+| Single-pass GPU ray casting, early ray termination, empty-space skipping | performance | Krüger & Westermann 2003 |
+| Isosurface ray casting with bisection refinement of the hit point | *Isosurface* and *Tissue* | Hadwiger et al. 2005 |
+| Opacity correction for the sampling rate; stochastic jittering of ray starts | *Transfer function*, quality control | Engel et al. 2006 |
+| Maximum intensity projection | *MIP* | Wallis et al. 1989 |
+| Local ambient occlusion (vicinity shading) | depth perception on surfaces | Stewart 2003; Hernell et al. 2010 |
+
+The *Tissue* technique combines two of these: a translucent band
+composited in front of a shaded isosurface.
+
+The engineering keeps these methods interactive on large data:
 
 1. **Single pass.** One full-screen triangle per frame. Each pixel builds
    its ray from the inverse view-projection matrix and intersects it
@@ -199,9 +213,9 @@ The port reworks the pipeline for performance:
    image is identical with and without skipping.
 4. **Dynamic resolution.** The 3D view renders at reduced resolution while
    you rotate it and at full resolution when you stop.
-5. **Precomputed ambient occlusion.** Volumetric obscurance is computed once
-   per threshold with separable box filters, instead of tracing occlusion
-   rays per pixel.
+5. **Precomputed ambient occlusion.** Obscurance is computed once per
+   threshold with separable box filters, instead of tracing occlusion rays
+   per pixel.
 6. **Correct anisotropy.** Normals and step sizes account for non-cubic
    voxels.
 7. **Jittered ray starts.** Each pixel's starting offset is jittered to
@@ -246,15 +260,21 @@ open as one slice; 3D rendering is meaningless for them.
   and 2D display, and measurements stay in physical millimetres. In
   practice, 1024³ (2 GB of VRAM) renders interactively on a mid-range
   discrete GPU.
-- The earlier web viewer this project replaces capped 3D data at
-  512×512×256.
 
 ## Performance
 
-All numbers come from the same 4-core cloud VM, with no hardware GPU.
-Rendering ran on **llvmpipe**, Mesa's software Vulkan rasteriser, so the
-frame rates are a floor. A discrete GPU is one to two orders of magnitude
-faster at rendering.
+**Test machine.** All numbers below come from one machine:
+
+| Component | Details |
+|---|---|
+| CPU | Intel Xeon @ 2.80 GHz, 4 cores (cloud VM) |
+| RAM | 16 GB |
+| GPU | none; rendering ran on **llvmpipe** (Mesa 25.2, LLVM 20), a software Vulkan rasteriser running on the same 4 CPU cores |
+| Build | `--release`, Rust 1.98 |
+
+Because the GPU is emulated on the CPU, the frame rates are a lower bound.
+A discrete GPU renders one to two orders of magnitude faster. Load and
+processing times do not use the GPU and are representative.
 
 **Chest CT, 512×512×252 DICOM series (`lung_053`), 3D view at 1200×672:**
 
@@ -264,6 +284,7 @@ faster at rendering.
 | Histogram + brick grid | 55 ms |
 | Upload to the GPU (`R16Unorm`) | 116 ms |
 | Change a 2D slice | 4 ms |
+| Open the same scan as `.nii.gz` | 1.2 s |
 
 | Technique | Empty-space skipping off | on |
 |---|---|---|
@@ -276,31 +297,12 @@ Frame times include reading the image back to the CPU. MIP gains nothing
 from skipping, because every non-empty brick can hold the maximum. On a
 CPU rasteriser, the extra brick lookups make MIP slower.
 
-**Comparison with the original web viewer (React + three.js/WebGL2) on the
-same files.** The web viewer ran in headless Chromium, whose WebGL2 is
-backed by SwiftShader, another software rasteriser:
-
-| Scenario | Web viewer | FERRUM | Speed-up |
-|---|---|---|---|
-| Load the 252-slice chest CT | 4.3 s | 0.34 s (0.51 s ready to render in 3D) | ≈ 8–13× |
-| Load a 19-slice 320×320 DICOM series | ≈ 870 ms | ≈ 15 ms | ≈ 58× |
-| Switch to 3D after loading (chest CT) | 30.9 s, UI frozen | ready immediately | — |
-| 3D tissue rendering, 1200×672 | 6.8 fps | 10.2 fps | 1.5× |
-| Open `lung_053.nii.gz` | fails | 1.2 s | — |
-
-Notes:
-- The web viewer loses the last slice of the 19-slice series and reports
-  a data-length error.
-- Its 3D view does not work in the current state of that repository. The
-  shader loader was patched locally just to get these numbers.
-- Its fps comes from the browser render loop without read-back, while
-  FERRUM's numbers include read-back. The 3D comparison therefore
-  favours the web viewer.
-
-Micro-benchmarks (`cargo bench --workspace`), same machine:
+Other measurements on the same machine (`cargo bench --workspace` and
+`make snapshot`):
 
 | Operation | Result |
 |---|---|
+| Load a 19-slice 320×320 DICOM series | ≈ 15 ms |
 | Load a 256×256×128 DICOM series | ≈ 50 ms |
 | Histogram of a 256³ volume | 1.5 Gvoxel/s |
 | Min/max brick grid, 256³ | 2 Gvoxel/s |
@@ -417,6 +419,28 @@ Decathlon, extract `imagesTr/lung_053.nii.gz`, and run:
 ```bash
 make showcase ARGS="path/to/lung_053.nii.gz docs/images"
 ```
+
+## References
+
+- M. Levoy. *Display of surfaces from volume data.* IEEE Computer
+  Graphics and Applications 8(3), 29–37, 1988.
+- N. Max. *Optical models for direct volume rendering.* IEEE Transactions
+  on Visualization and Computer Graphics 1(2), 99–108, 1995.
+- J. Krüger, R. Westermann. *Acceleration techniques for GPU-based volume
+  rendering.* IEEE Visualization 2003, 287–292.
+- M. Hadwiger, C. Sigg, H. Scharsach, K. Bühler, M. Gross. *Real-time
+  ray-casting and advanced shading of discrete isosurfaces.* Computer
+  Graphics Forum 24(3), 303–312, 2005.
+- K. Engel, M. Hadwiger, J. Kniss, C. Rezk-Salama, D. Weiskopf.
+  *Real-Time Volume Graphics.* A K Peters, 2006.
+- J. W. Wallis, T. R. Miller, C. A. Lerner, E. C. Kleerup.
+  *Three-dimensional display in nuclear medicine.* IEEE Transactions on
+  Medical Imaging 8(4), 297–303, 1989.
+- A. J. Stewart. *Vicinity shading for enhanced perception of volumetric
+  data.* IEEE Visualization 2003, 355–362.
+- F. Hernell, P. Ljung, A. Ynnerman. *Local ambient occlusion in direct
+  volume rendering.* IEEE Transactions on Visualization and Computer
+  Graphics 16(4), 548–559, 2010.
 
 ## License
 

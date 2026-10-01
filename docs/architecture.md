@@ -1,10 +1,10 @@
 # Architecture
 
-This workspace re-implements the non-segmentation
-functionality of the author's earlier web viewer (React/WebGL, whose ray-casting shaders were ported to WGSL): DICOM/NIfTI loading, 2D slices, MPR,
-GPU volume rendering, transfer function editing, clipping, measurements
-and the volume eraser. See [ADR 0001](decisions/0001-rust-desktop-viewer.md)
-for the motivation.
+FERRUM provides DICOM/NIfTI loading, 2D slices, MPR, GPU volume
+rendering, transfer function editing, clipping, measurements and the
+volume eraser. This document describes how the workspace is layered and
+which conventions every crate follows; the rendering techniques and their
+references are listed in the README.
 
 ## Layers and crates
 
@@ -98,17 +98,3 @@ is kept in sync by the GPU/CPU parity tests.
 | Model `p` | box centred at 0, longest physical side = 1: `p = (t − ½)·extent` |
 | Slice view `uv` | `u` right, `v` down; head at the top for coronal/sagittal |
 | Annotations | in-plane millimetres from the image's top-left corner |
-
-## Feature mapping from the web viewer
-
-| Earlier web viewer | This workspace |
-|---|---|
-| `LoaderDicom.js`, `LoaderDcmDaikon.js` | `ferrum-io::dicom` (dicom-rs, parallel) |
-| `LoaderNifti`, `SaverNifti.js` | `ferrum-io::nifti` |
-| `Graphics2d.jsx` + `tools2d/*` | `ferrum-app::tools`, `ferrum::ui::slice_view`, `shaders/slice.wgsl` |
-| `VolumeRenderer3d.js` + `gfx/*` + `shaders/*` | `ferrum-render` (`volume.wgsl`, `VolumeRenderer`) |
-| `TransFunc.js`, `transferTexture.js`, `UiHistogram.jsx` | `ferrum-domain::transfer`, `ferrum-processing::histogram`, `ui::tf_editor` |
-| `ambientTexture.js` | `ferrum-processing::ambient_occlusion` |
-| `Eraser.js` | `ferrum-domain::mask`, `Viewer::erase_at` |
-| `imgproc/Gauss.js`, `Sobel.js` | `ferrum-processing::filters` |
-| TF.js segmentation, ROI palettes | out of scope |
