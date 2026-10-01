@@ -254,10 +254,23 @@ also implement the following endpoints. Interactive-only engines return
 - The version is part of the path (`/v1`) and of `info.protocol`. Fields
   and endpoints may be added to v1; anything that would break an existing
   client needs `/v2`.
-- FERRUM's `MockEngine` implements the whole protocol in-process for
-  tests. A conformance test suite, runnable against any server URL, will
-  ship with the first bridge so that third-party engines can check
-  themselves.
+- The crate `ferrum-engines` contains:
+  - the client, `HttpEngine`;
+  - `MockEngine`, a deterministic engine without a model that uses region
+    growing;
+  - a reference server that serves any engine. Run
+    `cargo run -p ferrum-engines --example mock_server -- 127.0.0.1:8765`
+    to try the AI tools without a GPU.
+- The conformance suite (`crates/ferrum-engines/tests/conformance.rs`)
+  checks any server, so third-party engines can test themselves:
+
+  ```bash
+  FERRUM_ENGINE_URL=http://127.0.0.1:8765 [FERRUM_ENGINE_TOKEN=…] \
+    cargo test -p ferrum-engines --test conformance
+  ```
+
+- The mask's `X-Ferrum-Revision` header and the error codes are part of
+  the conformance suite.
 
 ## 6. Mapping of the planned bridges
 

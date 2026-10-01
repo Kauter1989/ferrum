@@ -16,6 +16,7 @@ flowchart LR
     P["ferrum-processing<br/>Parallel algorithms"]
     R["ferrum-render<br/>WGSL/wgpu + CPU reference"]
     IO["ferrum-io<br/>DICOM · NIfTI repositories"]
+    EN["ferrum-engines<br/>ferrum-engine/1 client · mock · server"]
 
     V --> A
     V --> R
@@ -27,6 +28,7 @@ flowchart LR
     R --> P
     P --> D
     IO -->|"implements VolumeRepository"| D
+    EN -->|"implements SegmentationEngine"| D
 ```
 
 | Crate | Responsibility | Must not |
@@ -35,6 +37,7 @@ flowchart LR
 | `ferrum-processing` | histogram, min/max bricks, ambient occlusion, filters, resampling (rayon) | own application state |
 | `ferrum-io` | DICOM scan → series grouping → slice ordering → parallel decode; NIfTI read/write with reorientation to LPS; NIfTI label maps mapped onto the volume grid; annotation JSON | know about rendering or UI |
 | `ferrum-render` | `FrameParams` (pure), WGSL shaders, `VolumeRenderer` (feature `gpu`), `CpuRaycaster` | own application state |
+| `ferrum-engines` | `HttpEngine` (`ferrum-engine/1` client over HTTP), `MockEngine` (region growing, no model), reference protocol server and conformance suite | know about rendering or UI |
 | `ferrum-app` | `Viewer` facade, background `JobQueue`, `ToolController`, `GpuSink` port | depend on wgpu or egui |
 | `ferrum` | panels, widgets, paint callbacks, dialogs; composition root | contain business logic |
 
@@ -47,7 +50,7 @@ FERRUM is a visualisation core meant to be extended
 | Extension | Port (in `ferrum-domain`) | Status |
 |---|---|---|
 | Data sources | `VolumeRepository` | implemented: DICOM, NIfTI |
-| Segmentation engines | `SegmentationEngine`, `InteractiveSession` | planned: `ferrum-engines` with `HttpEngine` and `MockEngine` |
+| Segmentation engines | `SegmentationEngine`, `InteractiveSession` | implemented: `ferrum-engines` with `HttpEngine`, `MockEngine` and a reference server; the AI panel follows |
 | Exporters | `Exporter` | planned; annotation JSON export exists |
 
 Out-of-process engines (nnInteractive, MONAI Label, TotalSegmentator or

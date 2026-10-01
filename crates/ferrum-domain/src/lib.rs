@@ -20,6 +20,7 @@ pub mod annotation;
 pub mod camera;
 pub mod clip;
 pub mod color;
+pub mod engine;
 pub mod geometry;
 pub mod mask;
 pub mod render_settings;
@@ -35,6 +36,10 @@ pub use annotation::{Annotation, AnnotationId, AnnotationSet, SliceKey};
 pub use camera::{OrbitCamera, ViewPreset};
 pub use clip::{ClipBox, ClipPlane, ClipSettings};
 pub use color::{Rgb, Rgba8};
+pub use engine::{
+    EngineCapabilities, EngineError, EngineInfo, EngineLabel, InteractiveSession, Prompt, PromptKind, PromptResult,
+    SegmentationEngine, ENGINE_PROTOCOL,
+};
 pub use geometry::{Aabb, Dims3, Ray};
 pub use mask::{EraseStroke, EraserBrush, MaskHistory, VoxelMask};
 pub use render_settings::{RenderMode, RenderSettings, TissueThresholds};
