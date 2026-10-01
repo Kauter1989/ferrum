@@ -2,6 +2,12 @@
 
 **FERRUM. High-performance medical imaging.**
 
+[![CI](https://github.com/Kauter1989/ferrum/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Kauter1989/ferrum/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Kauter1989/ferrum)](https://github.com/Kauter1989/ferrum/releases)
+![Coverage](https://img.shields.io/badge/line%20coverage-88.6%25-brightgreen)
+![Rust](https://img.shields.io/badge/rust-stable-orange)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 *Ferrum* is Latin for iron, the metal whose oxide gives Rust its name.
 FERRUM is a desktop viewer for volumetric medical images (CT, MRI and
 other modalities, in DICOM or NIfTI), written from scratch in Rust. It
@@ -14,6 +20,29 @@ empty-space skipping, isosurface refinement, local ambient occlusion; see
 It offers 2D slices, multiplanar reconstruction (MPR) and interactive 3D
 volume rendering, with transfer-function editing, clipping, measurements
 and a volume eraser.
+
+### At a glance
+
+| Stack | |
+|---|---|
+| Language | Rust (stable, edition 2021), WGSL shaders |
+| GPU | [wgpu](https://wgpu.rs) 30: Vulkan, Metal, DirectX 12, OpenGL |
+| UI | [egui / eframe](https://github.com/emilk/egui) 0.36, Phosphor icons |
+| Medical I/O | [dicom-rs](https://github.com/Enet4/dicom-rs) 0.10 (JPEG, JPEG 2000, RLE), own NIfTI-1 reader/writer |
+| Parallelism, maths | rayon, glam |
+| Testing | cargo test, proptest, naga (shader validation), egui_kittest (UI), criterion (benchmarks) |
+| Architecture | clean architecture: 6 crates, domain ← data, presentation → application |
+| Platforms | Linux x86_64, macOS Apple Silicon, Windows x86_64 ([prebuilt releases](https://github.com/Kauter1989/ferrum/releases)) |
+
+| Metrics | |
+|---|---|
+| Code size | ≈ 8 800 lines of Rust in `src/` (including in-module unit tests), ≈ 1 350 lines of integration tests and benchmarks, ≈ 400 lines of WGSL |
+| Tests | 186: unit, property-based, data layer, shader validation, GPU-vs-CPU parity, application and UI |
+| Test coverage | 88.6 % of lines, 87.6 % of functions (`cargo-llvm-cov`); CI fails below 87 % |
+| Complexity budget | per function: cognitive complexity ≤ 25, ≤ 120 lines, nesting ≤ 6 (enforced by clippy) |
+| Lints | rustfmt and clippy with warnings as errors; no `unsafe`, no `unwrap` outside tests |
+| Load speed | 512×512×252 CT DICOM series decoded in 0.34 s on 4 CPU cores |
+| Rendering | isosurface ≈ 20 fps at 1200×672 even on a software GPU; see [Performance](#performance) |
 
 ![MPR layout of a chest CT: axial, coronal and sagittal slices in the lung window with a 3D transfer-function rendering](docs/images/mpr.png)
 

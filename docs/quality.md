@@ -22,6 +22,8 @@ make coverage                           # HTML report: target/llvm-cov/html/inde
   `Makefile` (87 %). The baseline when the gate was introduced was 88.5 %
   of lines and 87.8 % of functions. Raise the floor as coverage improves;
   never lower it to get a pull request through.
+- The coverage badge and the *At a glance* table in the README are
+  updated by hand; refresh them when the figure changes noticeably.
 - Excluded from the figure: the binary entry point (`main.rs`), examples
   and benchmarks.
 - WGSL shaders are not instrumented. They are verified by the GPU-parity
