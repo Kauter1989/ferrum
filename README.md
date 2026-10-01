@@ -3,12 +3,13 @@
 **FERRUM. High-performance medical imaging.**
 
 *Ferrum* is Latin for iron, the metal whose oxide gives Rust its name.
-FERRUM is a new desktop viewer for volumetric medical images (CT, MRI and
-other modalities, in DICOM or NIfTI), written in Rust. Its renderer
-combines proven, peer-reviewed techniques from scientific volume
-visualization, such as GPU ray casting, empty-space skipping, isosurface
-refinement and local ambient occlusion
-(see [Rendering](#rendering)), in one modern single-pass GPU pipeline.
+FERRUM is a desktop viewer for volumetric medical images (CT, MRI and
+other modalities, in DICOM or NIfTI), written from scratch in Rust. It
+rethinks the best practices of medical volume rendering that its author
+has worked with, rebuilding them on a modern GPU stack. Proven,
+peer-reviewed techniques from scientific visualization (GPU ray casting,
+empty-space skipping, isosurface refinement, local ambient occlusion; see
+[Rendering](#rendering)) come together in one single-pass GPU pipeline.
 
 It offers 2D slices, multiplanar reconstruction (MPR) and interactive 3D
 volume rendering, with transfer-function editing, clipping, measurements
