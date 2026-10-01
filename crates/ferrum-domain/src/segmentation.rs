@@ -42,6 +42,9 @@ pub enum SegmentationError {
     /// All 255 labels are in use.
     #[error("all 255 segment labels are in use")]
     NoFreeLabel,
+    /// There is no volume to segment.
+    #[error("no volume is loaded")]
+    NoVolume,
     /// The label does not name a segment.
     #[error("no segment with label {0}")]
     UnknownSegment(u8),
@@ -337,9 +340,9 @@ impl SegmentationSet {
                 if *v == label {
                     *v = 0;
                     let p = index_to_voxel(dims, idx);
-                    bounds = Some(bounds.map_or(VoxelBox::new(p, p + UVec3::ONE), |b| {
-                        b.union(VoxelBox::new(p, p + UVec3::ONE))
-                    }));
+                    bounds = Some(
+                        bounds.map_or(VoxelBox::new(p, p + UVec3::ONE), |b| b.union(VoxelBox::new(p, p + UVec3::ONE))),
+                    );
                 }
             }
             self.counts[0] += self.counts[usize::from(label)];

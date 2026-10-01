@@ -223,7 +223,9 @@ impl NiftiHeader {
             Some([
                 Vec3::new(a * a + b * b - cq * cq - d * d, 2.0 * (b * cq + a * d), 2.0 * (b * d - a * cq)) * p(1),
                 Vec3::new(2.0 * (b * cq - a * d), a * a + cq * cq - b * b - d * d, 2.0 * (cq * d + a * b)) * p(2),
-                Vec3::new(2.0 * (b * d + a * cq), 2.0 * (cq * d - a * b), a * a + d * d - cq * cq - b * b) * qfac * p(3),
+                Vec3::new(2.0 * (b * d + a * cq), 2.0 * (cq * d - a * b), a * a + d * d - cq * cq - b * b)
+                    * qfac
+                    * p(3),
             ])
         } else {
             None
@@ -339,7 +341,15 @@ pub fn read_label_nifti(path: &Path, volume: &Volume) -> Result<LabelMap, IoErro
     if dims != volume.dims() {
         return Err(IoError::invalid(
             path,
-            format!("label map is {}×{}×{}, the volume is {}×{}×{}", dims.x, dims.y, dims.z, volume.dims().x, volume.dims().y, volume.dims().z),
+            format!(
+                "label map is {}×{}×{}, the volume is {}×{}×{}",
+                dims.x,
+                dims.y,
+                dims.z,
+                volume.dims().x,
+                volume.dims().y,
+                volume.dims().z
+            ),
         ));
     }
     LabelMap::from_data(dims, labels).map_err(|e| IoError::invalid(path, e.to_string()))
@@ -393,7 +403,7 @@ fn header_bytes(volume: &Volume, enc: &Encoding) -> Vec<u8> {
     put_f32(&mut hdr, 112, enc.slope);
     put_f32(&mut hdr, 116, enc.inter);
     hdr[123] = 2; // xyzt_units: mm
-    // sform: the patient geometry of the grid, LPS converted to RAS
+                  // sform: the patient geometry of the grid, LPS converted to RAS
     let g = volume.geometry();
     put_i16(&mut hdr, 254, 1);
     let cols = [g.direction.x_axis * s.x, g.direction.y_axis * s.y, g.direction.z_axis * s.z].map(ras_lps);
@@ -617,7 +627,10 @@ mod tests {
 
     fn coronal_volume() -> Volume {
         // DICOM-like coronal stack: i → left, j → inferior, k → posterior
-        let g = Geometry { origin: Vec3::new(-50.0, -20.0, 80.0), direction: Mat3::from_cols(Vec3::X, Vec3::NEG_Z, Vec3::Y) };
+        let g = Geometry {
+            origin: Vec3::new(-50.0, -20.0, 80.0),
+            direction: Mat3::from_cols(Vec3::X, Vec3::NEG_Z, Vec3::Y),
+        };
         sample_volume().with_geometry(g)
     }
 

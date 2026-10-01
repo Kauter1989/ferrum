@@ -113,6 +113,15 @@ source file or folder and the DICOM study identification (study and
 series UIDs, date and time, descriptions, modality), with points in
 in-plane millimetres and voxel coordinates.
 
+**Segments** — a label map on the volume grid with up to 255 segments,
+each with a name, colour, visibility, opacity and volume in millilitres.
+Segments are drawn in 2D (fill plus outline) and in 3D (shaded, depth
+correct, hidden by the eraser), and are imported from or exported to NIfTI
+label maps placed in patient space, so files from other tools (e.g.
+TotalSegmentator or ITK-SNAP) line up with the image. Segment edits can be
+undone. This is the base for AI segmentation engines
+([ADR 0007](docs/decisions/0007-extensibility-and-engine-protocol.md)).
+
 **3D rendering**
 - Four techniques:
   - *Tissue*: a translucent band followed by a shaded surface.
@@ -367,11 +376,11 @@ flowchart LR
 
 | Crate | Responsibility |
 |---|---|
-| `ferrum-domain` | Volume, window/level, transfer function, render settings, clipping, camera, slice geometry, annotations, eraser mask. Also the `VolumeRepository` port. No I/O. |
+| `ferrum-domain` | Volume, window/level, transfer function, render settings, clipping, camera, slice geometry, annotations, eraser mask, patient geometry, label maps and segments. Also the `VolumeRepository` port. No I/O. |
 | `ferrum-processing` | Histogram, brick grid, ambient occlusion, filters and resampling, parallelised with rayon |
-| `ferrum-io` | DICOM and NIfTI repositories (dicom-rs): scanning, series grouping, slice ordering, parallel decoding |
+| `ferrum-io` | DICOM and NIfTI repositories (dicom-rs): scanning, series grouping, slice ordering, parallel decoding; NIfTI label maps; annotation JSON |
 | `ferrum-render` | Frame model shared by GPU and CPU, WGSL shaders, the wgpu renderer (feature `gpu`) and the CPU ray caster |
-| `ferrum-app` | The `Viewer` facade: loading jobs, slice and 3D state, 2D tool state machines, eraser with undo, and GPU synchronisation through the `GpuSink` port |
+| `ferrum-app` | The `Viewer` facade: loading jobs, slice and 3D state, 2D tool state machines, eraser with undo, segments, and GPU synchronisation through the `GpuSink` port |
 | `ferrum` | eframe/egui application: panels, widgets, paint callbacks, dialogs |
 
 Extension points and the out-of-process engine protocol:
@@ -411,9 +420,9 @@ About 190 tests run headlessly with `cargo test --workspace`:
 |---|---|
 | Unit | domain maths, windowing, transfer functions, clipping, camera, measurements, processing algorithms |
 | Property-based | invariants over random inputs, e.g. that empty-space skipping can never hide visible material |
-| Data layer | DICOM files generated at test time: transfer syntaxes, rescale, signed data, MONOCHROME1, multi-frame, several series, corrupt files; NIfTI round-trip |
+| Data layer | DICOM files generated at test time: transfer syntaxes, rescale, signed data, MONOCHROME1, multi-frame, several series, corrupt files; NIfTI round-trip, patient geometry and label maps |
 | Shaders | WGSL validated with naga, and uniform layouts matched to the Rust structs |
-| GPU parity | every render mode and feature, GPU image compared to the CPU reference |
+| GPU parity | every render mode and feature (including the segment overlay), GPU image compared to the CPU reference |
 | Application | use cases with an in-memory repository and a recording GPU sink |
 | UI | the real app driven with egui_kittest, plus full-window renders of 2D, 3D and MPR |
 

@@ -31,9 +31,9 @@ flowchart LR
 
 | Crate | Responsibility | Must not |
 |---|---|---|
-| `ferrum-domain` | `Volume`, `WindowLevel`, `TransferFunction`, `RenderSettings`, `ClipSettings`, `OrbitCamera`, slice geometry, annotations, `VoxelMask`; the `VolumeRepository` port | do I/O, know GPUs or UI |
+| `ferrum-domain` | `Volume` with its patient `Geometry`, `WindowLevel`, `TransferFunction`, `RenderSettings`, `ClipSettings`, `OrbitCamera`, slice geometry, annotations, `VoxelMask`, `LabelMap` / `SegmentationSet`; the `VolumeRepository` port | do I/O, know GPUs or UI |
 | `ferrum-processing` | histogram, min/max bricks, ambient occlusion, filters, resampling (rayon) | own application state |
-| `ferrum-io` | DICOM scan → series grouping → slice ordering → parallel decode; NIfTI read/write with reorientation to LPS | know about rendering or UI |
+| `ferrum-io` | DICOM scan → series grouping → slice ordering → parallel decode; NIfTI read/write with reorientation to LPS; NIfTI label maps mapped onto the volume grid; annotation JSON | know about rendering or UI |
 | `ferrum-render` | `FrameParams` (pure), WGSL shaders, `VolumeRenderer` (feature `gpu`), `CpuRaycaster` | own application state |
 | `ferrum-app` | `Viewer` facade, background `JobQueue`, `ToolController`, `GpuSink` port | depend on wgpu or egui |
 | `ferrum` | panels, widgets, paint callbacks, dialogs; composition root | contain business logic |
@@ -75,7 +75,7 @@ sequenceDiagram
     App->>App: histogram + bricks (rayon)
     loop every frame
         UI->>App: poll(), sync_gpu(GpuSink)
-        App->>GPU: upload changed volume / LUT / occupancy / mask / AO
+        App->>GPU: upload changed volume / LUT / occupancy / mask / AO / labels
         UI->>GPU: paint callbacks (slice views, 3D view)
     end
 ```
@@ -98,7 +98,15 @@ sequenceDiagram
    `Tissue` (triangular band + shaded surface), `Isosurface` (first hit,
    6-step bisection, Phong + AO), `MIP`, `TransferFunction`
    (LUT-based DVR with opacity correction).
-6. **Presentation** — the 3D view is rendered into an off-screen target at
+6. **Segment overlay** — when segments are shown, every sample looks up
+   the `u8` label map (nearest voxel, hidden where the eraser removed
+   material). Entering a visible label composites the segment colour once,
+   front to back, with the segment's opacity and diffuse shading from the
+   label boundary normal. Empty-space skipping is disabled while segments
+   are shown, because brick occupancy describes intensities only. In 2D the
+   slice shader blends the segment colour (fill) and draws a one-pixel
+   outline where the label changes between neighbouring screen pixels.
+7. **Presentation** — the 3D view is rendered into an off-screen target at
    dynamic resolution (reduced while rotating) and blitted into egui.
    2D slices sample the same 3D texture directly in the egui pass.
 
@@ -115,3 +123,5 @@ is kept in sync by the GPU/CPU parity tests.
 | Model `p` | box centred at 0, longest physical side = 1: `p = (t − ½)·extent` |
 | Slice view `uv` | `u` right, `v` down; head at the top for coronal/sagittal |
 | Annotations | in-plane millimetres from the image's top-left corner |
+| Patient position | `Volume::voxel_to_patient(v) = origin + direction · (v ⊙ spacing)` (LPS, mm): DICOM Image Position/Orientation of the first ordered plane; NIfTI `sform`/`qform` carried through the reorientation |
+| Label maps | one `u8` per voxel on the volume grid (`0` background, `1–255` segments); NIfTI label maps are permuted/flipped onto that grid using both geometries |

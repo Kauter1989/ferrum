@@ -1,6 +1,6 @@
-//! Right-hand settings panel with three tabs: image (window, slices and,
-//! in the 2D view, the annotation list), 3D (technique, transfer function,
-//! clipping, eraser) and details (series information).
+//! Right-hand settings panel with three tabs: image (window, slices, in the
+//! 2D view the annotation list, and segments), 3D (technique, transfer
+//! function, clipping, eraser, segments) and details (series information).
 
 use egui::{RichText, Slider};
 use egui_phosphor::light as icon;
@@ -12,6 +12,7 @@ use ferrum_domain::{
     WindowPreset,
 };
 
+use super::segments_panel::{self, SegmentsPanelState};
 use super::tf_editor::{self, TfEditorState};
 use super::theme::{ACCENT, OVERLAY, TEXT, TEXT_DIM};
 use super::widgets::{chip, icon_slider, section_title, segmented, slider_row, tool_button};
@@ -56,6 +57,8 @@ pub struct PanelState {
     /// Set when the user asks to export annotations; the application
     /// handles it (file dialog) and resets the flag.
     pub export_annotations: bool,
+    /// State of the "Segments" section.
+    pub segments: SegmentsPanelState,
 }
 
 fn collapsible(ui: &mut egui::Ui, id: &str, icon_str: &str, title: &str, open: bool, body: impl FnOnce(&mut egui::Ui)) {
@@ -148,6 +151,15 @@ fn image_settings(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelState
     if viewer.view_mode == ViewMode::Slice2d {
         annotation_list(ui, viewer, state);
     }
+    segments_section(ui, viewer, state);
+}
+
+/// Collapsible segment list, shown in the image and volume tabs.
+fn segments_section(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelState) {
+    ui.add_space(6.0);
+    collapsible(ui, "segments", icon::POLYGON, "Segments", true, |ui| {
+        segments_panel::show(ui, viewer, &mut state.segments);
+    });
 }
 
 /// Annotations of all slices: editable names, value, plane and slice.
@@ -368,6 +380,8 @@ fn volume_settings(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelStat
             }
         });
     });
+
+    segments_section(ui, viewer, state);
 
     collapsible(ui, "perf", icon::LIGHTNING, "Performance", false, |ui| {
         ui.checkbox(&mut viewer.volume.settings.empty_space_skipping, "Empty-space skipping");

@@ -2,6 +2,7 @@
 
 pub mod panels;
 pub mod recent;
+pub mod segments_panel;
 pub mod slice_view;
 pub mod tf_editor;
 pub mod theme;
