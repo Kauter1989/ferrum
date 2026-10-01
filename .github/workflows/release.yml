@@ -1,4 +1,4 @@
-# Builds release archives of the dicom_renderer binary and attaches them to
+# Builds release archives of the ferrum binary and attaches them to
 # the GitHub release of the pushed tag.
 
 name: Release
@@ -37,23 +37,23 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
       - name: Build
-        run: cargo build --release --locked -p dicom_renderer --target ${{ matrix.target }}
+        run: cargo build --release --locked -p ferrum --target ${{ matrix.target }}
       - name: Package (tar.gz)
         if: matrix.archive == 'tar.gz'
         shell: bash
         run: |
-          name=dicom_renderer-${{ github.ref_name }}-${{ matrix.target }}
+          name=ferrum-${{ github.ref_name }}-${{ matrix.target }}
           mkdir "$name"
-          cp target/${{ matrix.target }}/release/dicom_renderer README.md LICENSE "$name"/
+          cp target/${{ matrix.target }}/release/ferrum README.md LICENSE "$name"/
           tar czf "$name.tar.gz" "$name"
           echo "ASSET=$name.tar.gz" >> "$GITHUB_ENV"
       - name: Package (zip)
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
-          $name = "dicom_renderer-${{ github.ref_name }}-${{ matrix.target }}"
+          $name = "ferrum-${{ github.ref_name }}-${{ matrix.target }}"
           New-Item -ItemType Directory $name | Out-Null
-          Copy-Item target/${{ matrix.target }}/release/dicom_renderer.exe, README.md, LICENSE $name
+          Copy-Item target/${{ matrix.target }}/release/ferrum.exe, README.md, LICENSE $name
           Compress-Archive -Path $name -DestinationPath "$name.zip"
           "ASSET=$name.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
       - uses: actions/upload-artifact@v4

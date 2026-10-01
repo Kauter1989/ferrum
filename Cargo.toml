@@ -1,13 +1,13 @@
 [workspace]
 resolver = "2"
-default-members = ["crates/dicom_renderer"]
+default-members = ["crates/ferrum"]
 members = [
-    "crates/mri-domain",
-    "crates/mri-processing",
-    "crates/mri-io",
-    "crates/mri-render",
-    "crates/mri-app",
-    "crates/dicom_renderer",
+    "crates/ferrum-domain",
+    "crates/ferrum-processing",
+    "crates/ferrum-io",
+    "crates/ferrum-render",
+    "crates/ferrum-app",
+    "crates/ferrum",
 ]
 
 [workspace.package]
@@ -15,15 +15,15 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.95"
 license = "MIT"
-authors = ["dicom_renderer contributors"]
+authors = ["FERRUM contributors"]
 repository = "https://github.com/Kauter1989/dicom_renderer"
 
 [workspace.dependencies]
-mri-domain = { path = "crates/mri-domain" }
-mri-processing = { path = "crates/mri-processing" }
-mri-io = { path = "crates/mri-io" }
-mri-render = { path = "crates/mri-render", default-features = false }
-mri-app = { path = "crates/mri-app" }
+ferrum-domain = { path = "crates/ferrum-domain" }
+ferrum-processing = { path = "crates/ferrum-processing" }
+ferrum-io = { path = "crates/ferrum-io" }
+ferrum-render = { path = "crates/ferrum-render", default-features = false }
+ferrum-app = { path = "crates/ferrum-app" }
 
 glam = { version = "0.33", features = ["bytemuck"] }
 rayon = "1.10"

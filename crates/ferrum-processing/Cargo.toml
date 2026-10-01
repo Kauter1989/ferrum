@@ -1,0 +1,24 @@
+[package]
+name = "ferrum-processing"
+description = "Parallel volume processing algorithms: histograms, min/max bricks, ambient occlusion, filters, resampling."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+ferrum-domain.workspace = true
+glam.workspace = true
+rayon.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "processing"
+harness = false
+
+[lints]
+workspace = true

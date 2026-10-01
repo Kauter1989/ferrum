@@ -1,6 +1,6 @@
 # Development plan
 
-This is the working plan for dicom_renderer. Each stage groups features
+This is the working plan for FERRUM. Each stage groups features
 as user stories with acceptance criteria. Status legend:
 ✅ done · 🚧 in progress · 📋 planned.
 
@@ -22,9 +22,9 @@ Personas:
 
 | # | User story | Acceptance criteria |
 |---|---|---|
-| 1.1 | As a **developer**, I want a layered workspace (domain, processing, io, render, app, viewer) so that I can change the UI, file formats or GPU backend independently. | `mri-domain` has no I/O/GPU/UI dependencies. `mri-app` compiles without wgpu and egui. Dependencies point inward (see `docs/architecture.md`). |
+| 1.1 | As a **developer**, I want a layered workspace (domain, processing, io, render, app, viewer) so that I can change the UI, file formats or GPU backend independently. | `ferrum-domain` has no I/O/GPU/UI dependencies. `ferrum-app` compiles without wgpu and egui. Dependencies point inward (see `docs/architecture.md`). |
 | 1.2 | As a **developer**, I want storage and GPU access behind ports (`VolumeRepository`, `GpuSink`) so that use cases can be tested without files or a graphics card. | Application tests run against an in-memory repository and a recording GPU sink. |
-| 1.3 | As a **developer**, I want CI that checks formatting, lints, tests on a software GPU and a release build so that regressions are caught before merge. | `.github/workflows/ci.yml` runs fmt, clippy `-D warnings`, `MRI_REQUIRE_GPU=1` tests on lavapipe, and a release build. |
+| 1.3 | As a **developer**, I want CI that checks formatting, lints, tests on a software GPU and a release build so that regressions are caught before merge. | `.github/workflows/ci.yml` runs fmt, clippy `-D warnings`, `FERRUM_REQUIRE_GPU=1` tests on lavapipe, and a release build. |
 | 1.4 | As a **developer**, I want recorded architecture decisions so that the reasons behind the design survive. | ADRs in `docs/decisions/` (Rust + wgpu + egui; canonical LPS frame). |
 
 ## Stage 2 — Loading data ✅
@@ -107,9 +107,23 @@ Personas:
 | 10.2 | As a **developer**, I want reproducible benchmarks and screenshots so that performance and visuals can be compared over time. | `make bench`, `make snapshot` (timings per technique) and `make showcase` (README images from public data). |
 | 10.3 | As a **visitor**, I want a README with real-data screenshots, limits and performance numbers so that I can judge the project quickly. | README: gallery from the MSD lung CT, supported modalities and grid limits, and a comparison with the original web viewer. |
 
+## Stage 11 — FERRUM brand and calm workspace UI ✅
+
+The visual language of Stage 9 (floating glass docks, coral and cyan) is
+replaced by a docked workstation layout in calm navy tones.
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 11.1 | As a **visitor**, I want the project to have a clear name and tagline so that I remember what it is. | The product is **FERRUM**, "High-performance medical imaging". Crates are `ferrum-*`, the binary is `ferrum`, and environment variables use the `FERRUM_` prefix (ADR 0004). The logo is the "Fe" tile of the periodic table. |
+| 11.2 | As a **radiologist**, I want a calm interface that does not compete with the images during long reading sessions. | Navy surfaces, one blue accent, light-grey read-outs over a black canvas. No glow or saturated decorations. |
+| 11.3 | As a **radiologist**, I want a predictable workstation layout so that every control is always in the same place. | The header holds the study, the 2D/3D/MPR switch and file actions. The toolbar holds the tools of the current mode. The right panel has *Image*, *Volume* and *Details* tabs, and a status bar sits at the bottom. |
+| 11.4 | As a **radiologist**, I want to switch between recent studies without a file dialog. | A *Studies* sidebar shows the current study and the recently opened ones. One click opens a study. |
+| 11.5 | As a **radiologist**, I want window and level as sliders with exact values, besides presets. | *Window* and *Level* rows with a slider and an editable value. Presets and *Auto* are chips. |
+| 11.6 | As a **radiologist**, I want the series attributes next to the image, not in a pop-up. | **Info** opens the *Details* tab: dimensions, spacing, intensity range and DICOM attributes. |
+
 ---
 
 ## Next stages 📋
 
-Future stages are added here as they are planned (e.g. "Stage 11 — …"),
+Future stages are added here as they are planned (e.g. "Stage 12 — …"),
 with user stories and acceptance criteria in the same format.

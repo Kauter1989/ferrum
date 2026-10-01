@@ -1,0 +1,48 @@
+[package]
+name = "ferrum-render"
+description = "GPU (wgpu/WGSL) volume and slice renderer with a bit-compatible CPU reference implementation."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+ferrum-domain.workspace = true
+ferrum-processing.workspace = true
+glam.workspace = true
+rayon.workspace = true
+bytemuck.workspace = true
+half = { workspace = true, optional = true }
+wgpu = { workspace = true, optional = true }
+pollster = { workspace = true, optional = true }
+log.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+naga.workspace = true
+proptest.workspace = true
+criterion.workspace = true
+image.workspace = true
+ferrum-io.workspace = true
+
+[features]
+default = ["gpu"]
+## wgpu renderer (disable to use only the pure frame model and CPU renderer)
+gpu = ["dep:wgpu", "dep:pollster", "dep:half"]
+
+[[bench]]
+name = "render"
+harness = false
+required-features = ["gpu"]
+
+[[test]]
+name = "gpu_parity"
+required-features = ["gpu"]
+
+[[example]]
+name = "snapshot"
+required-features = ["gpu"]
+
+[lints]
+workspace = true

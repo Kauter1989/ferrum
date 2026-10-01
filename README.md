@@ -1,9 +1,12 @@
-# dicom_renderer
+# FERRUM
 
-Fast desktop viewer for volumetric medical images — CT and MRI in DICOM or
-NIfTI — written in Rust. It shows 2D slices, multiplanar reconstruction
-(MPR) and GPU volume rendering, with interactive transfer functions,
-clipping, measurements and a volume eraser.
+**FERRUM. High-performance medical imaging.**
+
+*Ferrum* is Latin for iron, the metal whose oxide gives Rust its name.
+FERRUM is a fast desktop viewer for volumetric medical images (CT and MRI
+in DICOM or NIfTI), written in Rust. It shows 2D slices, multiplanar
+reconstruction (MPR) and GPU volume rendering, with interactive transfer
+functions, clipping, measurements and a volume eraser.
 
 ![MPR layout of a chest CT: axial, coronal and sagittal slices in the lung window with a 3D transfer-function rendering](docs/images/mpr.png)
 
@@ -95,32 +98,37 @@ undo and full restore.
 
 **Processing** — Gaussian smoothing and Sobel edge filters.
 
-**Interface** — a full-bleed dark canvas with floating "glass" docks: modes
-and planes on the left, tools in the centre, file actions on the right, and
-a collapsible settings panel (**Tab**). Views carry HUD corner brackets,
-patient-orientation edge labels (R/L, A/P, S/I), an L/P/S orientation gizmo
-in 3D and a slice scrubber on the edge of every 2D view. The start screen
-keeps a list of recently opened studies.
+**Interface** — a calm, workstation-style layout in navy tones with a
+single blue accent:
+- a header with the open study, the 2D / 3D / MPR switch and file actions;
+- a toolbar with the tools of the current mode;
+- a *Studies* sidebar with the current study and recently opened ones;
+- a settings panel (**Tab**) with *Image*, *Volume* and *Details* tabs;
+- a status bar.
 
-**Output** — PNG screenshots, NIfTI export, and a viewer for the series'
-DICOM attributes.
+Views show quiet corner read-outs (plane, matrix, W/L, slice, zoom),
+patient-orientation edge labels (R/L, A/P, S/I), a slice scrubber, and an
+L/P/S orientation gizmo in 3D.
+
+**Output** — PNG screenshots, NIfTI export, and the series' DICOM
+attributes in the *Details* tab.
 
 ## Quick start
 
 **Prebuilt binary (no Rust needed).** Download the archive for your system
 (Linux x86_64, macOS Apple Silicon, Windows x86_64) from
 [Releases](https://github.com/Kauter1989/dicom_renderer/releases), unpack
-it and run `dicom_renderer`. You can also pass paths on the command line:
+it and run `ferrum`. You can also pass paths on the command line:
 
 ```bash
-./dicom_renderer /path/to/dicom-folder
+./ferrum /path/to/dicom-folder
 ```
 
-**Install with Cargo** (puts `dicom_renderer` on your `PATH`):
+**Install with Cargo** (puts `ferrum` on your `PATH`):
 
 ```bash
-cargo install --git https://github.com/Kauter1989/dicom_renderer dicom_renderer
-dicom_renderer /path/to/dicom-folder
+cargo install --git https://github.com/Kauter1989/dicom_renderer ferrum
+ferrum /path/to/dicom-folder
 ```
 
 **From source:**
@@ -272,7 +280,7 @@ CPU rasteriser, the extra brick lookups make MIP slower.
 same files.** The web viewer ran in headless Chromium, whose WebGL2 is
 backed by SwiftShader, another software rasteriser:
 
-| Scenario | Web viewer | dicom_renderer | Speed-up |
+| Scenario | Web viewer | FERRUM | Speed-up |
 |---|---|---|---|
 | Load the 252-slice chest CT | 4.3 s | 0.34 s (0.51 s ready to render in 3D) | ≈ 8–13× |
 | Load a 19-slice 320×320 DICOM series | ≈ 870 ms | ≈ 15 ms | ≈ 58× |
@@ -286,7 +294,7 @@ Notes:
 - Its 3D view does not work in the current state of that repository. The
   shader loader was patched locally just to get these numbers.
 - Its fps comes from the browser render loop without read-back, while
-  dicom_renderer's numbers include read-back. The 3D comparison therefore
+  FERRUM's numbers include read-back. The 3D comparison therefore
   favours the web viewer.
 
 Micro-benchmarks (`cargo bench --workspace`), same machine:
@@ -310,11 +318,11 @@ layer compiles without any GPU or UI library.
 
 ```mermaid
 flowchart LR
-    V["dicom_renderer<br/>egui UI"] --> A["mri-app<br/>state · use cases · tools · jobs"]
-    V --> R["mri-render<br/>WGSL / wgpu · CPU reference"]
-    V --> IO["mri-io<br/>DICOM · NIfTI"]
-    A --> D["mri-domain<br/>entities · rules · ports"]
-    A --> P["mri-processing<br/>parallel algorithms"]
+    V["ferrum<br/>egui UI"] --> A["ferrum-app<br/>state · use cases · tools · jobs"]
+    V --> R["ferrum-render<br/>WGSL / wgpu · CPU reference"]
+    V --> IO["ferrum-io<br/>DICOM · NIfTI"]
+    A --> D["ferrum-domain<br/>entities · rules · ports"]
+    A --> P["ferrum-processing<br/>parallel algorithms"]
     A -->|"frame model, picking"| R
     R --> D
     P --> D
@@ -323,12 +331,12 @@ flowchart LR
 
 | Crate | Responsibility |
 |---|---|
-| `mri-domain` | Volume, window/level, transfer function, render settings, clipping, camera, slice geometry, annotations, eraser mask. Also the `VolumeRepository` port. No I/O. |
-| `mri-processing` | Histogram, brick grid, ambient occlusion, filters and resampling, parallelised with rayon |
-| `mri-io` | DICOM and NIfTI repositories (dicom-rs): scanning, series grouping, slice ordering, parallel decoding |
-| `mri-render` | Frame model shared by GPU and CPU, WGSL shaders, the wgpu renderer (feature `gpu`) and the CPU ray caster |
-| `mri-app` | The `Viewer` facade: loading jobs, slice and 3D state, 2D tool state machines, eraser with undo, and GPU synchronisation through the `GpuSink` port |
-| `dicom_renderer` | eframe/egui application: panels, widgets, paint callbacks, dialogs |
+| `ferrum-domain` | Volume, window/level, transfer function, render settings, clipping, camera, slice geometry, annotations, eraser mask. Also the `VolumeRepository` port. No I/O. |
+| `ferrum-processing` | Histogram, brick grid, ambient occlusion, filters and resampling, parallelised with rayon |
+| `ferrum-io` | DICOM and NIfTI repositories (dicom-rs): scanning, series grouping, slice ordering, parallel decoding |
+| `ferrum-render` | Frame model shared by GPU and CPU, WGSL shaders, the wgpu renderer (feature `gpu`) and the CPU ray caster |
+| `ferrum-app` | The `Viewer` facade: loading jobs, slice and 3D state, 2D tool state machines, eraser with undo, and GPU synchronisation through the `GpuSink` port |
+| `ferrum` | eframe/egui application: panels, widgets, paint callbacks, dialogs |
 
 Details: [docs/architecture.md](docs/architecture.md) ·
 decisions: [docs/decisions/](docs/decisions/).
@@ -339,7 +347,7 @@ decisions: [docs/decisions/](docs/decisions/).
 make test        # all tests; GPU tests are skipped without an adapter
 make test-gpu    # same, but a missing GPU adapter fails the run (CI mode)
 make lint        # rustfmt --check + clippy -D warnings
-make install     # install the dicom_renderer binary into ~/.cargo/bin
+make install     # install the ferrum binary into ~/.cargo/bin
 make bench       # criterion benchmarks
 make snapshot ARGS="<input> <out_dir>"   # headless PNG renders of every mode
 make showcase ARGS="<input> <out_dir>"   # regenerate the README screenshots
@@ -371,7 +379,7 @@ About 180 tests run headlessly with `cargo test --workspace`:
 | UI | the real app driven with egui_kittest, plus full-window renders of 2D, 3D and MPR |
 
 To also test on a real DICOM series:
-`MRI_SAMPLE_DICOM=/path/to/series cargo test -p mri-io`.
+`FERRUM_SAMPLE_DICOM=/path/to/series cargo test -p ferrum-io`.
 More in [docs/testing.md](docs/testing.md).
 
 ## Project layout
@@ -379,14 +387,14 @@ More in [docs/testing.md](docs/testing.md).
 ```
 .
 ├── crates/
-│   ├── mri-domain/       # domain model and ports
-│   ├── mri-processing/   # parallel volume algorithms
-│   ├── mri-io/           # DICOM / NIfTI repositories
-│   ├── mri-render/       # shaders, GPU renderer, CPU reference
-│   ├── mri-app/          # application layer
-│   └── dicom_renderer/   # desktop application (binary: dicom_renderer)
-├── docs/                 # architecture, testing, ADRs
-├── .github/workflows/    # CI (fmt, clippy, tests on lavapipe) and release archives
+│   ├── ferrum-domain/       # domain model and ports
+│   ├── ferrum-processing/   # parallel volume algorithms
+│   ├── ferrum-io/           # DICOM / NIfTI repositories
+│   ├── ferrum-render/       # shaders, GPU renderer, CPU reference
+│   ├── ferrum-app/          # application layer
+│   └── ferrum/              # desktop application (binary: ferrum)
+├── docs/                    # architecture, testing, ADRs
+├── .github/workflows/       # CI (fmt, clippy, tests on lavapipe) and release archives
 └── Makefile
 ```
 

@@ -925,29 +925,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dicom_renderer"
-version = "0.1.0"
-dependencies = [
- "eframe",
- "egui",
- "egui-phosphor",
- "egui-wgpu",
- "egui_kittest",
- "env_logger",
- "glam",
- "image",
- "log",
- "mri-app",
- "mri-domain",
- "mri-io",
- "mri-processing",
- "mri-render",
- "rfd",
- "tempfile",
- "wgpu",
-]
-
-[[package]]
 name = "dispatch"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1368,6 +1345,105 @@ name = "fearless_simd"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b97b65636e5b9ef369943878ac74335ba1c55c1cb6adbf1e2c293c624248d693"
+
+[[package]]
+name = "ferrum"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "egui",
+ "egui-phosphor",
+ "egui-wgpu",
+ "egui_kittest",
+ "env_logger",
+ "ferrum-app",
+ "ferrum-domain",
+ "ferrum-io",
+ "ferrum-processing",
+ "ferrum-render",
+ "glam",
+ "image",
+ "log",
+ "rfd",
+ "tempfile",
+ "wgpu",
+]
+
+[[package]]
+name = "ferrum-app"
+version = "0.1.0"
+dependencies = [
+ "ferrum-domain",
+ "ferrum-io",
+ "ferrum-processing",
+ "ferrum-render",
+ "glam",
+ "log",
+ "proptest",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "ferrum-domain"
+version = "0.1.0"
+dependencies = [
+ "approx",
+ "glam",
+ "proptest",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "ferrum-io"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "dicom-core",
+ "dicom-dictionary-std",
+ "dicom-object",
+ "dicom-pixeldata",
+ "ferrum-domain",
+ "flate2",
+ "glam",
+ "log",
+ "proptest",
+ "rayon",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "ferrum-processing"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "ferrum-domain",
+ "glam",
+ "proptest",
+ "rayon",
+]
+
+[[package]]
+name = "ferrum-render"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "criterion",
+ "ferrum-domain",
+ "ferrum-io",
+ "ferrum-processing",
+ "glam",
+ "half",
+ "image",
+ "log",
+ "naga",
+ "pollster 0.4.0",
+ "proptest",
+ "rayon",
+ "thiserror 2.0.21",
+ "wgpu",
+]
 
 [[package]]
 name = "find-msvc-tools"
@@ -2333,82 +2409,6 @@ checksum = "bb85c154ba489f01b25c0d36ae69a87e4a1c73a72631fc6c0eb6dde34a73e44b"
 dependencies = [
  "num-traits",
  "pxfm",
-]
-
-[[package]]
-name = "mri-app"
-version = "0.1.0"
-dependencies = [
- "glam",
- "log",
- "mri-domain",
- "mri-io",
- "mri-processing",
- "mri-render",
- "proptest",
- "tempfile",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "mri-domain"
-version = "0.1.0"
-dependencies = [
- "approx",
- "glam",
- "proptest",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "mri-io"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "dicom-core",
- "dicom-dictionary-std",
- "dicom-object",
- "dicom-pixeldata",
- "flate2",
- "glam",
- "log",
- "mri-domain",
- "proptest",
- "rayon",
- "tempfile",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "mri-processing"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "glam",
- "mri-domain",
- "proptest",
- "rayon",
-]
-
-[[package]]
-name = "mri-render"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "criterion",
- "glam",
- "half",
- "image",
- "log",
- "mri-domain",
- "mri-io",
- "mri-processing",
- "naga",
- "pollster 0.4.0",
- "proptest",
- "rayon",
- "thiserror 2.0.21",
- "wgpu",
 ]
 
 [[package]]
