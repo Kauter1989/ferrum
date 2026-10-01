@@ -1,2 +1,7 @@
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
+
+# Complexity budget (see docs/quality.md).
+cognitive-complexity-threshold = 25
+too-many-lines-threshold = 120
+excessive-nesting-threshold = 6

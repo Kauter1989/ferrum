@@ -547,24 +547,7 @@ impl ViewerApp {
                 });
                 if !self.recent.items().is_empty() {
                     ui.add_space(14.0);
-                    ui.with_layout(Layout::top_down(Align::Min), |ui| {
-                        ui.label(
-                            RichText::new(format!("{}  Recent studies", icon::CLOCK_COUNTER_CLOCKWISE))
-                                .size(12.5)
-                                .color(TEXT_DIM),
-                        );
-                        let mut chosen = None;
-                        for p in self.recent.items() {
-                            let parent = p.parent().map(|q| q.to_string_lossy().into_owned()).unwrap_or_default();
-                            if study_row(ui, &file_name(p), &parent, false).on_hover_text(p.to_string_lossy()).clicked()
-                            {
-                                chosen = Some(p.clone());
-                            }
-                        }
-                        if let Some(p) = chosen {
-                            self.open(vec![p]);
-                        }
-                    });
+                    ui.with_layout(Layout::top_down(Align::Min), |ui| self.recent_studies(ui));
                 }
             });
             ui.add_space(14.0);
@@ -576,33 +559,49 @@ impl ViewerApp {
         });
     }
 
+    /// "Recent studies" list of the start screen; a click opens the study.
+    fn recent_studies(&mut self, ui: &mut egui::Ui) {
+        ui.label(
+            RichText::new(format!("{}  Recent studies", icon::CLOCK_COUNTER_CLOCKWISE)).size(12.5).color(TEXT_DIM),
+        );
+        let mut chosen = None;
+        for p in self.recent.items() {
+            let parent = p.parent().map(|q| q.to_string_lossy().into_owned()).unwrap_or_default();
+            if study_row(ui, &file_name(p), &parent, false).on_hover_text(p.to_string_lossy()).clicked() {
+                chosen = Some(p.clone());
+            }
+        }
+        if let Some(p) = chosen {
+            self.open(vec![p]);
+        }
+    }
+
     // -------------------------------------------------------------- dialogs
+
+    /// Series picker shown when a folder holds more than one series.
+    fn series_dialog(&mut self, ctx: &egui::Context, series: Vec<ferrum_domain::SeriesDescriptor>) {
+        egui::Window::new("Select series")
+            .collapsible(false)
+            .resizable(true)
+            .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label(RichText::new("Several series were found").color(TEXT_DIM));
+                egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
+                    for s in series {
+                        if series_row(ui, &s) {
+                            self.viewer.load_series(s);
+                        }
+                    }
+                });
+                if ui.button("Cancel").clicked() {
+                    self.viewer.series_choice = None;
+                }
+            });
+    }
 
     fn dialogs(&mut self, ctx: &egui::Context) {
         if let Some(series) = self.viewer.series_choice.clone() {
-            egui::Window::new("Select series")
-                .collapsible(false)
-                .resizable(true)
-                .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
-                .show(ctx, |ui| {
-                    ui.label(RichText::new("Several series were found").color(TEXT_DIM));
-                    egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
-                        for s in series {
-                            ui.horizontal(|ui| {
-                                if ui.button(format!("{} Load", icon::CARET_RIGHT)).clicked() {
-                                    self.viewer.load_series(s.clone());
-                                }
-                                ui.label(
-                                    RichText::new(format!("{} · {}", s.modality, s.format)).color(OVERLAY).monospace(),
-                                );
-                                ui.label(&s.description);
-                            });
-                        }
-                    });
-                    if ui.button("Cancel").clicked() {
-                        self.viewer.series_choice = None;
-                    }
-                });
+            self.series_dialog(ctx, series);
         }
         if self.viewer.pending_text.is_some() {
             let mut close = None;
@@ -775,6 +774,17 @@ impl ViewerApp {
             }
         }
     }
+}
+
+/// One row of the series picker. Returns `true` when "Load" was clicked.
+fn series_row(ui: &mut egui::Ui, s: &ferrum_domain::SeriesDescriptor) -> bool {
+    ui.horizontal(|ui| {
+        let load = ui.button(format!("{} Load", icon::CARET_RIGHT)).clicked();
+        ui.label(RichText::new(format!("{} · {}", s.modality, s.format)).color(OVERLAY).monospace());
+        ui.label(&s.description);
+        load
+    })
+    .inner
 }
 
 /// Large button with icon and text, used on the start screen.
