@@ -172,6 +172,9 @@ impl ViewerApp {
                     .resizable(false)
                     .frame(theme::side())
                     .show(ui, |ui| panels::show(ui, &mut self.viewer, &mut self.panel));
+                if std::mem::take(&mut self.panel.export_annotations) {
+                    self.export_annotations();
+                }
             }
         }
         egui::CentralPanel::default()
@@ -701,6 +704,32 @@ impl ViewerApp {
         if let Some(path) = rfd::FileDialog::new().set_file_name("volume.nii.gz").save_file() {
             match ferrum_io::write_nifti(&volume, &path) {
                 Ok(()) => self.viewer.status.message = format!("Exported {}", path.display()),
+                Err(e) => self.viewer.status.errors.push(e.to_string()),
+            }
+        }
+    }
+
+    fn export_annotations(&mut self) {
+        let Some(report) = self.viewer.annotation_report() else {
+            return;
+        };
+        let stem = report
+            .source
+            .file_stem()
+            .map(|s| s.to_string_lossy().trim_end_matches(".nii").to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "study".into());
+        let generator = format!("FERRUM {}", env!("CARGO_PKG_VERSION"));
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("JSON", &["json"])
+            .set_file_name(format!("{stem}_annotations.json"))
+            .save_file()
+        {
+            match ferrum_io::write_annotation_report(&report, &generator, &path) {
+                Ok(()) => {
+                    self.viewer.status.message =
+                        format!("Exported {} annotations to {}", report.annotations.len(), path.display())
+                }
                 Err(e) => self.viewer.status.errors.push(e.to_string()),
             }
         }

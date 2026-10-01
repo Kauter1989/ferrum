@@ -23,6 +23,7 @@ pub mod color;
 pub mod geometry;
 pub mod mask;
 pub mod render_settings;
+pub mod report;
 pub mod repository;
 pub mod slice;
 pub mod transfer;
@@ -36,8 +37,9 @@ pub use color::{Rgb, Rgba8};
 pub use geometry::{Aabb, Dims3, Ray};
 pub use mask::{EraseStroke, EraserBrush, MaskHistory, VoxelMask};
 pub use render_settings::{RenderMode, RenderSettings, TissueThresholds};
+pub use report::{AnnotationRecord, AnnotationReport};
 pub use repository::{
-    CancelFlag, LoadedSeries, NoProgress, ProgressSink, RepositoryError, SeriesDescriptor, SeriesMetadata,
+    CancelFlag, LoadedSeries, NoProgress, ProgressSink, RepositoryError, SeriesDescriptor, SeriesMetadata, StudyInfo,
     VolumeRepository,
 };
 pub use slice::{SliceAxis, SliceImage, SliceView};

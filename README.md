@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/Kauter1989/ferrum/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Kauter1989/ferrum/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Kauter1989/ferrum)](https://github.com/Kauter1989/ferrum/releases)
-![Coverage](https://img.shields.io/badge/line%20coverage-88.6%25-brightgreen)
+![Coverage](https://img.shields.io/badge/line%20coverage-89.5%25-brightgreen)
 ![Rust](https://img.shields.io/badge/rust-stable-orange)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -36,9 +36,9 @@ and a volume eraser.
 
 | Metrics | |
 |---|---|
-| Code size | ≈ 8 800 lines of Rust in `src/` (including in-module unit tests), ≈ 1 350 lines of integration tests and benchmarks, ≈ 400 lines of WGSL |
-| Tests | 186: unit, property-based, data layer, shader validation, GPU-vs-CPU parity, application and UI |
-| Test coverage | 88.6 % of lines, 87.6 % of functions (`cargo-llvm-cov`); CI fails below 87 % |
+| Code size | ≈ 9 300 lines of Rust in `src/` (including in-module unit tests), ≈ 1 400 lines of integration tests and benchmarks, ≈ 400 lines of WGSL |
+| Tests | 194: unit, property-based, data layer, shader validation, GPU-vs-CPU parity, application and UI |
+| Test coverage | 89.5 % of lines, 88.5 % of functions (`cargo-llvm-cov`); CI fails below 87 % |
 | Complexity budget | per function: cognitive complexity ≤ 25, ≤ 120 lines, nesting ≤ 6 (enforced by clippy) |
 | Lints | rustfmt and clippy with warnings as errors; no `unsafe`, no `unwrap` outside tests |
 | Load speed | 512×512×252 CT DICOM series decoded in 0.34 s on 4 CPU cores |
@@ -56,7 +56,7 @@ and a volume eraser.
 | | |
 |---|---|
 | ![Axial slice in the lung window with distance, angle, area and text annotations](docs/images/slice_measurements.png) | ![Start screen with a drop zone and the list of recently opened studies](docs/images/start_screen.png) |
-| Measurements in millimetres on an axial slice | Start screen with drag-and-drop and recent studies |
+| Named measurements and the annotation list | Start screen with drag-and-drop and recent studies |
 
 <sub>Screenshots show the real application rendering a public chest CT — see [Sample data](#sample-data).</sub>
 
@@ -103,9 +103,15 @@ and a volume eraser.
   colour-coded by plane; right-click jumps all views to a point.
 - Voxel probe that reads the physical value (e.g. Hounsfield units).
 
-**Measurements** — distance, angle, free-form area, rectangle and text
-notes, all in millimetres (anisotropic voxels are handled). You can move,
-delete and clear them.
+**Measurements and annotations** — distance, angle, free-form area,
+rectangle and text notes, all in millimetres (anisotropic voxels are
+handled). Every annotation has an editable name. In the 2D view, the
+*Image* tab lists all annotations of the study with their value, plane
+and slice: a click shows that slice, and each annotation can be renamed
+or deleted. **Export JSON** saves the named annotations together with the
+source file or folder and the DICOM study identification (study and
+series UIDs, date and time, descriptions, modality), with points in
+in-plane millimetres and voxel coordinates.
 
 **3D rendering**
 - Four techniques:
@@ -132,8 +138,6 @@ that adapt to the data range of the loaded scan.
 
 **Volume eraser** — a cylindrical brush with adjustable radius and depth,
 undo and full restore.
-
-**Processing** — Gaussian smoothing and Sobel edge filters.
 
 **Interface** — a calm, workstation-style layout in navy tones with a
 single blue accent:
@@ -399,7 +403,7 @@ driver (`mesa-vulkan-drivers` on Debian/Ubuntu).
 
 ## Testing
 
-About 180 tests run headlessly with `cargo test --workspace`:
+About 190 tests run headlessly with `cargo test --workspace`:
 
 | Level | What is checked |
 |---|---|
@@ -413,7 +417,7 @@ About 180 tests run headlessly with `cargo test --workspace`:
 
 To also test on a real DICOM series:
 `FERRUM_SAMPLE_DICOM=/path/to/series cargo test -p ferrum-io`.
-Line coverage is about 88 %, and CI fails if it drops below 87 %. Clippy
+Line coverage is about 89 %, and CI fails if it drops below 87 %. Clippy
 also enforces a complexity budget for every function. More in
 [docs/testing.md](docs/testing.md) and [docs/quality.md](docs/quality.md).
 

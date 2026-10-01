@@ -38,6 +38,14 @@ fn loads_explicit_little_endian_series_in_spatial_order() {
     assert!((l.volume.spacing() - Vec3::new(0.6, 0.8, 2.0)).length() < 1e-5);
     assert_eq!(l.metadata.modality, "CT");
     assert!(l.metadata.attributes.iter().any(|(k, v)| k == "Ordering" && v == "Position"));
+    // study identification and source folder for annotation export
+    let s = &l.metadata.study;
+    assert_eq!(s.study_date, "20240428");
+    assert_eq!(s.study_time, "102417");
+    assert_eq!(s.study_description, "Chest CT");
+    assert_eq!(s.study_instance_uid, "1.2.826.0.1.3680043.2.1");
+    assert!(!s.series_instance_uid.is_empty());
+    assert_eq!(l.metadata.source, dir.path());
 }
 
 #[test]

@@ -86,6 +86,31 @@ pub struct SeriesDescriptor {
     pub sources: Vec<PathBuf>,
 }
 
+/// Study and series identification of a loaded series, taken from the
+/// DICOM header (empty strings when the format has no such field).
+/// Dates and times keep the DICOM `YYYYMMDD` / `HHMMSS` form.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct StudyInfo {
+    /// Study Instance UID.
+    pub study_instance_uid: String,
+    /// Series Instance UID.
+    pub series_instance_uid: String,
+    /// Study date (`YYYYMMDD`).
+    pub study_date: String,
+    /// Study time (`HHMMSS[.ffffff]`).
+    pub study_time: String,
+    /// Study description.
+    pub study_description: String,
+    /// Series description.
+    pub series_description: String,
+    /// Series number.
+    pub series_number: String,
+    /// Accession number.
+    pub accession_number: String,
+    /// Imaging modality.
+    pub modality: String,
+}
+
 /// Descriptive metadata of a loaded series.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SeriesMetadata {
@@ -97,6 +122,10 @@ pub struct SeriesMetadata {
     pub default_window: Option<WindowLevel>,
     /// Name/value pairs shown in the "info" dialog.
     pub attributes: Vec<(String, String)>,
+    /// Study identification (DICOM only).
+    pub study: StudyInfo,
+    /// What was opened: the folder of a DICOM series or the NIfTI file.
+    pub source: PathBuf,
 }
 
 /// A fully loaded series.

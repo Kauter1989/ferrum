@@ -4,9 +4,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use ferrum_domain::{
-    Annotation, AnnotationId, AnnotationSet, ClipSettings, Dims3, EraserBrush, LoadedSeries, MaskHistory, OrbitCamera,
-    RenderMode, RenderSettings, Rgba8, SeriesDescriptor, SliceAxis, SliceKey, SliceView, TransferFunction, Volume,
-    VolumeRepository, VoxelMask, WindowLevel, WindowPreset,
+    Annotation, AnnotationId, AnnotationReport, AnnotationSet, ClipSettings, Dims3, EraserBrush, LoadedSeries,
+    MaskHistory, OrbitCamera, RenderMode, RenderSettings, Rgba8, SeriesDescriptor, SliceAxis, SliceKey, SliceView,
+    TransferFunction, Volume, VolumeRepository, VoxelMask, WindowLevel, WindowPreset,
 };
 use ferrum_processing::AmbientOcclusion;
 use ferrum_render::cpu::{CpuRaycaster, CpuScene};
@@ -467,6 +467,38 @@ impl Viewer {
     /// Adds an annotation to a slice (e.g. imported or scripted).
     pub fn add_annotation(&mut self, key: SliceKey, annotation: Annotation) -> AnnotationId {
         self.annotations.add(key, annotation)
+    }
+
+    /// Renames an annotation (see [`AnnotationSet::rename`]).
+    pub fn rename_annotation(&mut self, id: AnnotationId, name: &str) -> bool {
+        self.annotations.rename(id, name)
+    }
+
+    /// Deletes one annotation.
+    pub fn remove_annotation(&mut self, id: AnnotationId) {
+        self.annotations.remove(id);
+        self.tool_ctl.cancel();
+    }
+
+    /// Shows the slice an annotation was drawn on: switches the 2D view to
+    /// its plane and slice. Returns `false` if the annotation is unknown.
+    pub fn go_to_annotation(&mut self, id: AnnotationId) -> bool {
+        let Some(key) = self.annotations.slice_of(id) else {
+            return false;
+        };
+        let Some(axis) = key.slice_axis() else {
+            return false;
+        };
+        self.slices.axis = axis;
+        self.set_slice_index(axis, key.index);
+        true
+    }
+
+    /// Report of all annotations with the study identification, ready for
+    /// export. `None` without a loaded dataset.
+    pub fn annotation_report(&self) -> Option<AnnotationReport> {
+        let d = self.dataset.as_ref()?;
+        Some(AnnotationReport::build(d.metadata.source.clone(), d.metadata.study.clone(), &d.volume, &self.annotations))
     }
 
     /// Removes all annotations.

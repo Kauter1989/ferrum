@@ -7,8 +7,9 @@ use std::sync::Arc;
 
 use ferrum_app::{FilterKind, GpuSink, GpuSyncState, InputKind, ToolKind, ToolOutcome, ViewMode, Viewer};
 use ferrum_domain::{
-    Dims3, LoadedSeries, ProgressSink, RenderMode, RepositoryError, Rgba8, SeriesDescriptor, SeriesMetadata, SliceAxis,
-    SliceKey, TransferFunction, Volume, VolumeRepository, VoxelMask, WindowLevel, WindowPreset,
+    Annotation, Dims3, LoadedSeries, ProgressSink, RenderMode, RepositoryError, Rgba8, SeriesDescriptor,
+    SeriesMetadata, SliceAxis, SliceKey, StudyInfo, TransferFunction, Volume, VolumeRepository, VoxelMask, WindowLevel,
+    WindowPreset,
 };
 use ferrum_processing::AmbientOcclusion;
 use glam::{UVec3, Vec2, Vec3};
@@ -73,6 +74,8 @@ impl VolumeRepository for FakeRepo {
                 description: s.description.clone(),
                 default_window: Some(WindowLevel::new(500.0, 1000.0)),
                 attributes: vec![],
+                study: StudyInfo { study_date: "20240428".into(), modality: "CT".into(), ..Default::default() },
+                source: PathBuf::from("/data/phantom"),
             },
         })
     }
@@ -344,4 +347,30 @@ fn reloading_resets_view_state() {
     assert_eq!(v.slices.views[2].zoom, 1.0);
     assert!(v.annotation_preview().is_none());
     assert_eq!(v.volume.camera, ferrum_domain::OrbitCamera::default());
+}
+
+#[test]
+fn annotations_are_named_listed_navigated_and_reported() {
+    let mut v = loaded_viewer();
+    v.view_mode = ViewMode::Slice2d;
+    let a = v.add_annotation(SliceKey::new(SliceAxis::Coronal, 5), Annotation::Distance { a: Vec2::ZERO, b: Vec2::X });
+    let b = v.add_annotation(SliceKey::new(SliceAxis::Axial, 3), Annotation::Rect { a: Vec2::ZERO, b: Vec2::ONE });
+    assert!(v.rename_annotation(a, "Bronchus"));
+    assert_eq!(v.annotations().name(a), Some("Bronchus"));
+
+    assert!(v.go_to_annotation(a));
+    assert_eq!(v.slices.axis, SliceAxis::Coronal);
+    assert_eq!(v.slices.index(SliceAxis::Coronal), 5);
+    assert!(v.go_to_annotation(b));
+    assert_eq!((v.slices.axis, v.slices.index(SliceAxis::Axial)), (SliceAxis::Axial, 3));
+    assert!(!v.go_to_annotation(999));
+
+    let r = v.annotation_report().expect("dataset loaded");
+    assert_eq!(r.source, PathBuf::from("/data/phantom"));
+    assert_eq!(r.study.study_date, "20240428");
+    let names: Vec<_> = r.annotations.iter().map(|x| x.name.as_str()).collect();
+    assert_eq!(names, ["Bronchus", "Rectangle 2"]);
+
+    v.remove_annotation(b);
+    assert_eq!(v.annotations().len(), 1);
 }
