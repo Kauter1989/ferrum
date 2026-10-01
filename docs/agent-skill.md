@@ -363,8 +363,10 @@ allow_harness_confirmation = false
 | `ferrum` | Open workspace, review queue |
 | `skills/ferrum` (new) | `SKILL.md`, reference pages, schemas, plugin manifest |
 
-The layering stays as it is: `ferrum-agent` and `ferrum-cli` depend on
-`ferrum-app` and `ferrum-io` exactly like the desktop app.
+The layering stays as it is. `ferrum-agent` depends on `ferrum-domain` and
+`ferrum-io`: it needs no interactive state from `ferrum-app`, and renders
+slices on the CPU. `ferrum-cli` only parses arguments. The implemented
+commands are listed in [agent-cli.md](agent-cli.md).
 
 ## Appendix A — draft `SKILL.md`
 

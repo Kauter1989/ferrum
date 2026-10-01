@@ -25,6 +25,8 @@ flowchart LR
     R["ferrum-render<br/>WGSL/wgpu + CPU reference"]
     IO["ferrum-io<br/>DICOM · NIfTI repositories"]
     EN["ferrum-engines<br/>ferrum-engine/1 client · mock · server"]
+    AG["ferrum-agent<br/>agent commands · envelope · workspaces"]
+    CLI["ferrum-cli<br/>command line"]
 
     V --> A
     V --> R
@@ -37,6 +39,9 @@ flowchart LR
     P --> D
     IO -->|"implements VolumeRepository"| D
     EN -->|"implements SegmentationEngine"| D
+    CLI --> AG
+    AG --> D
+    AG --> IO
 ```
 
 | Crate | Responsibility | Must not |
@@ -48,6 +53,8 @@ flowchart LR
 | `ferrum-engines` | `HttpEngine` (`ferrum-engine/1` client over HTTP), `MockEngine` (region growing, no model), reference protocol server and conformance suite | know about rendering or UI |
 | `ferrum-app` | `Viewer` facade, background `JobQueue`, `ToolController`, `GpuSink` port | depend on wgpu or egui |
 | `ferrum` | panels, widgets, paint callbacks, dialogs; composition root | contain business logic |
+| `ferrum-agent` | agent skill ([design](agent-skill.md), [CLI](agent-cli.md)): commands on JSON parameters, `ferrum-agent/1` envelope and error codes, operator configuration, workspace sessions, CPU slice renders with pixel mapping, audit log | depend on wgpu, egui or `ferrum-app` state |
+| `ferrum-cli` | `ferrum-cli` binary: argument parsing to agent calls, exit codes | contain command logic |
 
 
 ## Extension points

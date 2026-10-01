@@ -36,6 +36,10 @@ ferrum (presentation) → ferrum-app (application) → ferrum-domain ← ferrum-
 - `ferrum-engines` implements `SegmentationEngine` (`ferrum-engine/1`
   client, mock, reference server); nothing else talks to engines. Protocol
   changes update `docs/engine-protocol.md` and the conformance suite.
+- `ferrum-agent` holds the agent commands (JSON in, `ferrum-agent/1`
+  envelope out) and depends only on `ferrum-domain` and `ferrum-io`;
+  `ferrum-cli` only parses arguments. New commands update
+  `docs/agent-cli.md` and the contract tests in `crates/ferrum-agent/tests`.
 - No business logic in `ferrum` widgets — add a use case to `Viewer`.
 - DICOM tags only through `dicom_dictionary_std::tags` constants — never raw
   tag literals.
