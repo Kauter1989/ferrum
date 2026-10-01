@@ -58,6 +58,14 @@ any other) speak the [FERRUM Engine Protocol](engine-protocol.md) through
 thin bridges in `bridges/`. Implementations are composed at compile time;
 native plugins are not loaded dynamically.
 
+FERRUM is also planned as an **agent skill**
+([ADR 0008](decisions/0008-agent-skill.md), [specification](agent-skill.md)).
+Two new crates will sit beside the desktop app on top of `ferrum-app`:
+`ferrum-agent` (typed `ferrum-agent/1` commands, JSON Schemas, workspaces,
+audit log) and `ferrum-cli` (a command line and an MCP server, with no UI
+dependencies). Agents work in workspaces that the desktop app opens for
+clinician review.
+
 ## Data flow
 
 ```mermaid
