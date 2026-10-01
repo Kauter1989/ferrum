@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ferrum-nninteractive"
+version = "0.1.0"
+description = "Bridge serving nnInteractive over the FERRUM Engine Protocol (ferrum-engine/1)"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = ["fastapi>=0.110", "uvicorn>=0.27", "numpy"]
+
+[project.optional-dependencies]
+# The model backend; installs PyTorch. Code Apache-2.0, weights CC BY-NC-SA 4.0.
+nninteractive = ["nninteractive>=2.6,<3"]
+test = ["pytest", "httpx"]
+
+[project.scripts]
+ferrum-nninteractive = "ferrum_nninteractive.__main__:main"
+
+[tool.setuptools]
+packages = ["ferrum_nninteractive"]

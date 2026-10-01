@@ -276,6 +276,6 @@ also implement the following endpoints. Interactive-only engines return
 
 | Engine | Bridge | Prompts | Automatic | Notes |
 |---|---|---|---|---|
-| nnInteractive | `bridges/nninteractive` (Python, FastAPI) | point, box (planar), scribble, lasso | — | Weights CC BY-NC-SA 4.0 → `research_only: true`; NVIDIA GPU, ~10 GB VRAM recommended |
+| nnInteractive | [`bridges/nninteractive`](../bridges/nninteractive) (Python, FastAPI; [demo guide](ai-demo.md)) | point, box (planar), scribble, lasso | — | Weights CC BY-NC-SA 4.0 → `research_only: true`; NVIDIA GPU, ~10 GB VRAM recommended |
 | MONAI Label | `bridges/monailabel` | point (DeepEdit / DeepGrow / SAM2) | app models | Translates sessions to MONAI Label's datastore and `/infer` |
 | TotalSegmentator | `bridges/totalsegmentator` | — | yes, 117 CT / 50 MR classes | Some subtasks need a licence; the bridge reports this in `license` |

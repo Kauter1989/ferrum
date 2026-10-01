@@ -53,7 +53,9 @@ fn connection(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut AiPanelState) 
             }
         } else if ui.button(format!("{} Connect", icon::PLUGS_CONNECTED)).clicked() {
             let url = state.url.trim().to_owned();
-            viewer.connect_engine(Arc::new(HttpEngine::new(HttpConfig::new(&url))), &url);
+            // the access token comes from the environment, never from the UI
+            let token = std::env::var("FERRUM_ENGINE_TOKEN").ok().filter(|t| !t.is_empty());
+            viewer.connect_engine(Arc::new(HttpEngine::new(HttpConfig { token, ..HttpConfig::new(&url) })), &url);
         }
     });
     let (color, text) = status_line(viewer);
