@@ -149,7 +149,8 @@ review by qualified people.
 | Engine port, `ferrum-engine/1` client, mock engine, reference server, conformance suite | ✅ |
 | AI segmentation panel | 🚧 in review |
 | nnInteractive bridge and [demo guide](ai-demo.md) | 🚧 in review |
-| MONAI Label and TotalSegmentator bridges | 📋 Stage 14 |
+| Automatic segmentation; TotalSegmentator bridge | 🚧 in review |
+| MONAI Label bridge | 📋 Stage 14 |
 | Agent skill: provenance, workspaces, `ferrum-cli` (CLI + MCP), skill package, review queue | 📋 Stage 15 |
 | DICOM SEG and SR export | 📋 Stage 15 |
 

@@ -1,7 +1,9 @@
 # docker compose up --build   →   FERRUM: AI segmentation → http://127.0.0.1:8765 → Connect
 services:
   nninteractive:
-    build: .
+    build:
+      context: ..
+      dockerfile: nninteractive/Dockerfile
     image: ferrum-nninteractive:latest
     ports:
       - "127.0.0.1:8765:8765"   # local only; use an SSH tunnel for a remote GPU

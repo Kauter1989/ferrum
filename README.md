@@ -114,7 +114,8 @@ FERRUM is a core, not a monolith. The principles, in short (full text:
 | Engine port, `ferrum-engine/1` client, mock engine, reference server, conformance suite | ✅ |
 | AI segmentation panel (point, box, scribble, lasso; include/exclude; accept, discard, undo) | 🚧 in review |
 | nnInteractive bridge (FastAPI, Docker) and [demo guide](docs/ai-demo.md) | 🚧 in review |
-| MONAI Label and TotalSegmentator bridges | 📋 [Stage 14](dev_plan.md) |
+| Automatic segmentation; TotalSegmentator bridge | 🚧 in review |
+| MONAI Label bridge | 📋 [Stage 14](dev_plan.md) |
 | Agent skill: provenance, workspaces, `ferrum-cli` (CLI + MCP), review queue, DICOM SEG/SR | 📋 [Stage 15](dev_plan.md) |
 
 > FERRUM is research and engineering software, not a certified medical
@@ -253,7 +254,8 @@ Engines speak [`ferrum-engine/1`](docs/engine-protocol.md). To try the
 tools without a GPU or a model, run the mock engine (region growing):
 `cargo run -p ferrum-engines --example mock_server -- 127.0.0.1:8765`.
 For real AI segmentation, run nnInteractive on a GPU machine through
-[`bridges/nninteractive`](bridges/nninteractive) — see the demo guide
+[`bridges/`](bridges) (`ferrum-bridge nninteractive`), and automatic
+segmentation with TotalSegmentator (`ferrum-bridge totalsegmentator`) — see the demo guide
 [docs/ai-demo.md](docs/ai-demo.md) (Docker, SSH tunnel, walkthrough;
 weights CC BY-NC-SA 4.0, research use only).
 
@@ -557,7 +559,7 @@ also enforces a complexity budget for every function. More in
 │   ├── ferrum-engines/      # segmentation engines: protocol client, mock, reference server
 │   ├── ferrum-app/          # application layer
 │   └── ferrum/              # desktop application (binary: ferrum)
-├── bridges/nninteractive/   # nnInteractive served over ferrum-engine/1 (Python, Docker)
+├── bridges/                # engines over ferrum-engine/1: nnInteractive, TotalSegmentator (Python, Docker)
 ├── docs/                    # vision, architecture, engine protocol, agent skill, AI demo, testing, ADRs
 ├── .github/workflows/       # CI (fmt, clippy, tests on lavapipe) and release archives
 └── Makefile

@@ -8,9 +8,9 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from ferrum_nninteractive.backends import FakeBackend, diff_box, grow
-from ferrum_nninteractive.nninteractive_backend import NnInteractiveSession, _research_only
-from ferrum_nninteractive.protocol import create_app
+from ferrum_bridges.backends import FakeBackend, diff_box, grow
+from ferrum_bridges.nninteractive import NnInteractiveSession, _research_only
+from ferrum_bridges.protocol import create_app
 
 DIMS = [20, 16, 12]  # nx, ny, nz
 

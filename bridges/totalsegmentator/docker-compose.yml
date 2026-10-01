@@ -1,0 +1,28 @@
+# docker compose up --build   →   FERRUM: AI segmentation → http://127.0.0.1:8766 → Connect
+# Options: TOTALSEG_TASK (default total), TOTALSEG_LICENSE for licensed tasks.
+services:
+  totalsegmentator:
+    build:
+      context: ..
+      dockerfile: totalsegmentator/Dockerfile
+    image: ferrum-totalsegmentator:latest
+    command: ["--task", "${TOTALSEG_TASK:-total}"]
+    ports:
+      - "127.0.0.1:8766:8765"   # local only; use an SSH tunnel for a remote GPU
+    volumes:
+      - totalsegmentator-weights:/weights
+    environment:
+      FERRUM_ENGINE_TOKEN: ${FERRUM_ENGINE_TOKEN:-}
+      TOTALSEG_DEVICE: ${TOTALSEG_DEVICE:-gpu}
+      TOTALSEG_LICENSE: ${TOTALSEG_LICENSE:-}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  totalsegmentator-weights:

@@ -8,7 +8,7 @@ This guide sets up FERRUM with [nnInteractive](https://github.com/MIC-DKFZ/nnInt
 - every prompt refines the result.
 
 FERRUM talks to nnInteractive through a small bridge
-([`bridges/nninteractive`](../bridges/nninteractive)) that serves the
+([`bridges/`](../bridges), `ferrum-bridge nninteractive`) that serves the
 [FERRUM Engine Protocol](engine-protocol.md). FERRUM itself runs no
 inference; the model runs on a GPU machine, which can be your workstation
 or a server reached through an SSH tunnel.
@@ -46,7 +46,7 @@ geometry and the modality string.
 
 ```bash
 git clone https://github.com/Kauter1989/ferrum
-cd ferrum/bridges/nninteractive
+cd ferrum/bridges/nninteractive        # the image is built from bridges/
 docker compose up --build
 ```
 
@@ -63,11 +63,11 @@ docker compose up --build
 ### Option B — Python environment
 
 ```bash
-cd ferrum/bridges/nninteractive
+cd ferrum/bridges
 python -m venv .venv && . .venv/bin/activate
 pip install torch --index-url https://download.pytorch.org/whl/cu128   # PyTorch for your CUDA
 pip install ".[nninteractive]"
-ferrum-nninteractive --port 8765           # --device cuda:1, --torch-compile, --model-dir …
+ferrum-bridge --port 8765 nninteractive    # --device cuda:1, --torch-compile, --model-dir …
 ```
 
 | Setting | Flag / environment |
@@ -83,13 +83,52 @@ ferrum-nninteractive --port 8765           # --device cuda:1, --torch-compile, -
 ### Check the set-up without a GPU
 
 ```bash
-pip install . && ferrum-nninteractive --backend fake
+cd ferrum/bridges && pip install . && ferrum-bridge fake
 ```
 
 The fake backend grows regions without a model. With it you can verify the
 network path and FERRUM's tools before you spend time on CUDA. FERRUM's own
 mock engine works too:
 `cargo run -p ferrum-engines --example mock_server -- 127.0.0.1:8765`.
+
+### TotalSegmentator: automatic segmentation
+
+[TotalSegmentator](https://github.com/wasserth/TotalSegmentator) segments
+up to 117 anatomical structures in CT (task `total`) and 50 in MR
+(`total_mr`). It runs without prompts, so it fills the *Automatic* part of
+FERRUM's AI section.
+
+```bash
+cd ferrum/bridges/totalsegmentator && docker compose up --build    # published on 127.0.0.1:8766
+# or: cd ferrum/bridges && pip install ".[totalsegmentator]" && ferrum-bridge --port 8766 totalsegmentator
+```
+
+| Setting | Flag / environment |
+|---|---|
+| Task | `--task total` (default), `total_mr`, `lung_vessels`, … / `TOTALSEG_TASK` |
+| Device | `--device gpu` (`gpu:1`, `cpu`, `mps`) / `TOTALSEG_DEVICE` |
+| Faster, lighter 3 mm model | `--fast` |
+| Licence for licensed tasks | `--license-number` / `TOTALSEG_LICENSE` |
+| Weights and config | `TOTALSEG_WEIGHTS_PATH`, `TOTALSEG_HOME_DIR` (Docker: the `/weights` volume) |
+
+Notes:
+- The full `total` model needs about 10 GB of GPU memory. `--fast` runs on
+  smaller GPUs and, slowly, on the CPU.
+- **Usage statistics are switched off.** TotalSegmentator sends anonymous
+  usage statistics by default; the bridge disables them before the first
+  run, so nothing leaves the machine except the one-time weight download.
+- **Licences:** the code and the `total` task are Apache-2.0. Tasks that
+  need a TotalSegmentator licence (free for non-commercial use) are
+  marked *Research use only* in FERRUM.
+- **Placement:** the bridge builds a NIfTI image with the volume's patient
+  geometry, so TotalSegmentator sees the orientation and spacing it
+  expects. The result is mapped back onto FERRUM's grid.
+
+In FERRUM, connect to `http://127.0.0.1:8766`, then:
+1. Optionally pick structures (e.g. *liver*, *spleen*) with the filter.
+2. Press **Segment all structures** or **Segment N structure(s)**.
+3. Follow the progress, or **Cancel**. Each structure found becomes a
+   named segment with its volume in ml.
 
 ## 3. Reach a remote GPU
 

@@ -141,7 +141,7 @@ class NnInteractiveBackend(Backend):
             "max_voxels": 0,
         }
 
-    def open(self, volume, spacing, modality):
+    def open(self, volume, spacing, modality, origin=None, direction=None):
         # nnInteractive works in voxel space; spacing is accepted but unused
         self.session.set_image(volume[None], {"spacing": list(spacing)[::-1]})  # [z, y, x]
         target = self.torch.zeros(volume.shape, dtype=self.torch.uint8)

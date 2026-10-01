@@ -65,19 +65,19 @@ jobs:
             target/llvm-cov/html
 
   bridge:
-    # nnInteractive bridge: protocol tests with the model-free backend, then
-    # FERRUM's conformance suite against the running bridge. The model itself
-    # needs a GPU and is not exercised in CI.
+    # Engine bridges: protocol tests with the model-free backend, then
+    # FERRUM's conformance suite against the running bridge. The models need
+    # a GPU and are not exercised in CI.
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: bridges/nninteractive
+        working-directory: bridges
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Install the bridge
+      - name: Install the bridges
         run: pip install ".[test]"
       - name: Bridge tests
         run: pytest -q
@@ -85,7 +85,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Start the bridge (fake backend)
         run: |
-          ferrum-nninteractive --backend fake --port 8765 > bridge.log 2>&1 &
+          ferrum-bridge --port 8765 fake > bridge.log 2>&1 &
           for i in $(seq 1 60); do curl -sf http://127.0.0.1:8765/v1/info && exit 0; sleep 1; done
           cat bridge.log; exit 1
       - name: Conformance suite against the bridge

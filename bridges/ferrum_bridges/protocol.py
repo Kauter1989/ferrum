@@ -1,10 +1,13 @@
 """FERRUM Engine Protocol (``ferrum-engine/1``) server on top of a backend.
 
+Shared by every bridge in ``bridges/`` (nnInteractive, TotalSegmentator,
+MONAI Label).
+
 The protocol is specified in ``docs/engine-protocol.md``. This module is
 engine independent: it parses requests, validates prompts against the
 uploaded grid, keeps sessions and revisions, and maps errors to the
 protocol's ``{"error": {"code", "message"}}`` bodies. The engine itself is a
-:class:`~ferrum_nninteractive.backends.Backend`.
+:class:`~ferrum_bridges.backends.Backend`.
 
 Axis conventions: the protocol uses voxel indices ``(i, j, k)`` with ``i``
 fastest. Backends receive NumPy arrays in C order ``[k, j, i]`` (``z, y, x``)
@@ -30,10 +33,10 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from .backends import Backend, BackendSession, ZyxBox
+from .backends import Backend, BackendSession, Unsupported, ZyxBox
 
 PROTOCOL = "ferrum-engine/1"
-log = logging.getLogger("ferrum_nninteractive")
+log = logging.getLogger("ferrum_bridges")
 
 DTYPES = {"int16": "<i2", "uint16": "<u2", "float32": "<f4"}
 
@@ -61,6 +64,8 @@ class Session:
     dtype: str
     spacing: tuple
     modality: str
+    origin: tuple = (0.0, 0.0, 0.0)
+    direction: tuple = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
     backend: Optional[BackendSession] = None
     revision: int = 0
     last_used: float = field(default_factory=time.monotonic)
@@ -100,6 +105,7 @@ class Engine:
         self.backend = backend
         self.ttl = session_ttl_s
         self.sessions: dict = {}
+        self.jobs: dict = {}  # job id -> session id
         self.lock = threading.Lock()
 
     # ------------------------------------------------------------------ helpers
@@ -112,14 +118,14 @@ class Engine:
             "vendor": b.get("vendor", ""),
             "device": b.get("device", ""),
             "capabilities": {
-                "interactive": True,
-                "automatic": False,
-                "prompts": b["prompts"],
+                "interactive": b.get("interactive", True),
+                "automatic": b.get("automatic", False),
+                "prompts": b.get("prompts", []),
                 "planar_boxes_only": b.get("planar_boxes_only", False),
                 "undo": b.get("undo", False),
             },
             "modalities": b.get("modalities", []),
-            "labels": [],
+            "labels": b.get("labels", []),
             "research_only": b.get("research_only", False),
             "license": b.get("license", ""),
             "limits": {"max_voxels": b.get("max_voxels", 0), "session_ttl_s": self.ttl},
@@ -132,6 +138,7 @@ class Engine:
             self._close(sid)
 
     def _close(self, sid: str) -> None:
+        self.jobs = {j: s for j, s in self.jobs.items() if s != sid}
         entry = self.sessions.pop(sid, None)
         if entry is not None and entry.backend is not None:
             entry.backend.close()
@@ -165,8 +172,19 @@ class Engine:
             oldest = min(self.sessions, key=lambda s: self.sessions[s].last_used)
             log.info("closing session %s to make room", oldest)
             self._close(oldest)
+        origin = body.get("origin") or [0.0, 0.0, 0.0]
+        direction = body.get("direction") or [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+        if len(origin) != 3 or len(direction) != 3 or any(len(r) != 3 for r in direction):
+            raise bad_request("origin must have 3 numbers and direction 3 rows of 3")
         sid = uuid.uuid4().hex
-        self.sessions[sid] = Session(dims, dtype, tuple(spacing), str(body.get("modality") or ""))
+        self.sessions[sid] = Session(
+            dims,
+            dtype,
+            tuple(spacing),
+            str(body.get("modality") or ""),
+            tuple(float(v) for v in origin),
+            tuple(tuple(float(v) for v in r) for r in direction),
+        )
         return {"session_id": sid, "expires_in_s": self.ttl}
 
     def upload(self, sid: str, data: bytes) -> None:
@@ -178,7 +196,9 @@ class Engine:
         volume = np.frombuffer(data, dtype=dt).reshape(entry.zyx_shape()).astype(np.float32)
         if entry.backend is not None:
             entry.backend.close()
-        entry.backend = self.backend.open(volume, entry.spacing, entry.modality)
+        entry.backend = self.backend.open(
+            volume, entry.spacing, entry.modality, origin=entry.origin, direction=entry.direction
+        )
         entry.revision = 0
 
     def _result(self, entry: Session, changed: Optional[ZyxBox]) -> dict:
@@ -192,7 +212,7 @@ class Engine:
         info = self.backend.info()
         if kind not in ("point", "box", "scribble", "lasso"):
             raise bad_request(f"unknown prompt type {kind!r}")
-        if kind not in info["prompts"]:
+        if kind not in info.get("prompts", []):
             raise ProtocolError(422, "unsupported_prompt", f"{kind} prompts are not supported")
         positive = bool(body.get("positive", True))
         dims = entry.dims
@@ -243,6 +263,51 @@ class Engine:
         done, changed = entry.backend.undo()
         return self._result(entry, changed if done else None)
 
+    # ---------------------------------------------------------------- automatic
+    def _automatic(self) -> None:
+        if not self.backend.info().get("automatic", False):
+            raise ProtocolError(404, "not_found", "this engine has no automatic segmentation")
+
+    def segment(self, sid: str, body: dict) -> dict:
+        self._automatic()
+        entry = self._get(sid)
+        labels = body.get("labels")
+        if labels is not None and (not isinstance(labels, list) or not all(isinstance(l, str) for l in labels)):
+            raise bad_request("labels must be an array of strings or null")
+        try:
+            job = entry.backend.start_job(labels)
+        except ValueError as e:
+            raise bad_request(str(e)) from e
+        except RuntimeError as e:
+            raise ProtocolError(503, "busy", str(e), retry_after=5) from e
+        self.jobs[job] = sid
+        return {"job_id": job}
+
+    def _job_session(self, job: str) -> Session:
+        self._automatic()
+        sid = self.jobs.get(job)
+        if sid is None:
+            raise ProtocolError(404, "not_found", f"unknown job {job}")
+        return self._get(sid)
+
+    def job_status(self, job: str) -> dict:
+        s = self._job_session(job).backend.job_status(job)
+        return {"state": s["state"], "progress": float(s.get("progress", 0.0)), "message": s.get("message", "")}
+
+    def cancel_job(self, job: str) -> None:
+        self._job_session(job).backend.cancel_job(job)
+
+    def label_map(self, sid: str) -> bytes:
+        self._automatic()
+        entry = self._get(sid)
+        try:
+            values = entry.backend.label_map()
+        except ValueError as e:
+            raise ProtocolError(409, "no_result", str(e)) from e
+        if tuple(values.shape) != entry.zyx_shape():
+            raise ProtocolError(500, "internal", f"label map shape {values.shape} != volume {entry.zyx_shape()}")
+        return np.ascontiguousarray(values, dtype="<u2").tobytes()
+
     def reset(self, sid: str) -> None:
         entry = self._get(sid)
         entry.backend.reset()
@@ -275,6 +340,10 @@ def create_app(backend: Backend, token: Optional[str] = None, session_ttl_s: int
     @app.exception_handler(RequestValidationError)
     async def validation_error(_req: Request, e: RequestValidationError):
         return error(bad_request(str(e)))
+
+    @app.exception_handler(Unsupported)
+    async def unsupported(_req: Request, e: Unsupported):
+        return error(ProtocolError(422, "unsupported_prompt", f"{e} not supported"))
 
     @app.exception_handler(Exception)
     async def internal_error(_req: Request, e: Exception):
@@ -346,6 +415,29 @@ def create_app(backend: Backend, token: Optional[str] = None, session_ttl_s: int
     def reset(sid: str):
         locked(engine.reset, sid)
         return Response(status_code=204)
+
+    @app.post("/v1/sessions/{sid}/segment", status_code=202)
+    async def segment(sid: str, request: Request):
+        body = await body_json(request)
+        return JSONResponse(locked(engine.segment, sid, body), status_code=202)
+
+    @app.get("/v1/jobs/{job}")
+    def job_status(job: str):
+        return locked(engine.job_status, job)
+
+    @app.delete("/v1/jobs/{job}", status_code=204)
+    def cancel_job(job: str):
+        locked(engine.cancel_job, job)
+        return Response(status_code=204)
+
+    @app.get("/v1/sessions/{sid}/labelmap")
+    def label_map(sid: str, request: Request):
+        data = locked(engine.label_map, sid)
+        headers = {}
+        if len(data) > 1024 and "gzip" in request.headers.get("accept-encoding", ""):
+            data = gzip.compress(data, compresslevel=1)
+            headers["Content-Encoding"] = "gzip"
+        return Response(data, media_type="application/octet-stream", headers=headers)
 
     @app.delete("/v1/sessions/{sid}", status_code=204)
     def delete(sid: str):
