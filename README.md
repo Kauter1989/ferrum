@@ -113,7 +113,8 @@ FERRUM is a core, not a monolith. The principles, in short (full text:
 | Viewer, annotations with JSON export, segments with 2D/3D overlay and NIfTI label maps | ✅ |
 | Engine port, `ferrum-engine/1` client, mock engine, reference server, conformance suite | ✅ |
 | AI segmentation panel (point, box, scribble, lasso; include/exclude; accept, discard, undo) | 🚧 in review |
-| nnInteractive bridge and demo; MONAI Label and TotalSegmentator bridges | 📋 [Stage 14](dev_plan.md) |
+| nnInteractive bridge (FastAPI, Docker) and [demo guide](docs/ai-demo.md) | 🚧 in review |
+| MONAI Label and TotalSegmentator bridges | 📋 [Stage 14](dev_plan.md) |
 | Agent skill: provenance, workspaces, `ferrum-cli` (CLI + MCP), review queue, DICOM SEG/SR | 📋 [Stage 15](dev_plan.md) |
 
 > FERRUM is research and engineering software, not a certified medical
@@ -244,7 +245,10 @@ L/P/S orientation gizmo in 3D.
 Engines speak [`ferrum-engine/1`](docs/engine-protocol.md). To try the
 tools without a GPU or a model, run the mock engine (region growing):
 `cargo run -p ferrum-engines --example mock_server -- 127.0.0.1:8765`.
-The nnInteractive bridge and demo are next.
+For real AI segmentation, run nnInteractive on a GPU machine through
+[`bridges/nninteractive`](bridges/nninteractive) — see the demo guide
+[docs/ai-demo.md](docs/ai-demo.md) (Docker, SSH tunnel, walkthrough;
+weights CC BY-NC-SA 4.0, research use only).
 
 **Output** — PNG screenshots, NIfTI volume and label-map export,
 annotation JSON, and the series' DICOM attributes in the *Details* tab.
@@ -546,7 +550,8 @@ also enforces a complexity budget for every function. More in
 │   ├── ferrum-engines/      # segmentation engines: protocol client, mock, reference server
 │   ├── ferrum-app/          # application layer
 │   └── ferrum/              # desktop application (binary: ferrum)
-├── docs/                    # vision, architecture, engine protocol, agent skill, testing, ADRs
+├── bridges/nninteractive/   # nnInteractive served over ferrum-engine/1 (Python, Docker)
+├── docs/                    # vision, architecture, engine protocol, agent skill, AI demo, testing, ADRs
 ├── .github/workflows/       # CI (fmt, clippy, tests on lavapipe) and release archives
 └── Makefile
 ```
