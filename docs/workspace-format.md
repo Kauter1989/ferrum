@@ -7,7 +7,8 @@ NIfTI, readable by any tool. This page specifies them:
 - `ferrum-segments` v1: metadata of a label map;
 - `ferrum-workspace` v1: a directory that ties results to their source
   data;
-- provenance: who created an item and whether a person confirmed it.
+- provenance: who created an item and whether a person confirmed it;
+- DICOM export: Segmentation and a measurement report for PACS.
 
 They are implemented in `ferrum-io` (`annotations.rs`, `segments.rs`,
 `workspace.rs`). The agent skill ([agent-skill.md](agent-skill.md)) and,
@@ -170,3 +171,69 @@ ws/ct1/
 - `annotations.json` copies the study identification (UIDs, date,
   description) from the source header, as the annotation export does.
 - Keep workspaces where the source data may live.
+
+## 5. DICOM export
+
+`export bundle` with the `dicom` format writes two DICOM objects next to
+the JSON report, so results can be stored in a PACS and read by DICOM
+viewers. Implemented in `ferrum-io` (`dicom/export.rs`).
+
+| File | Object |
+|---|---|
+| `segmentation.dcm` | Segmentation (SEG, `1.2.840.10008.5.1.4.1.1.66.4`), binary |
+| `measurements.dcm` | Comprehensive 3D SR (`1.2.840.10008.5.1.4.1.1.88.34`), TID 1500 *Imaging Measurement Report* |
+
+**Segmentation:**
+- One segment per FERRUM segment with voxels, numbered from 1 in label
+  order; the FERRUM label is in the segment description.
+- One frame per segment and slice that holds it, on the volume grid:
+  rows along `j`, columns along `i`, 1-bit pixels.
+- Shared groups: pixel spacing and orientation; per-frame groups:
+  position, segment number and, when source UIDs are kept, the source
+  image of the slice (Derivation Image).
+- Algorithm type from the author: `MANUAL` (human), `SEMIAUTOMATIC`
+  (agent) or `AUTOMATIC` (engine, with its name and version).
+- Category and type are generic (*Anatomical Structure*, *Tissue*): FERRUM
+  does not know what a segment is.
+- Display colour as CIELab.
+
+**Measurement report** (TID 1500):
+- Observer: device *FERRUM*; language en-US; procedure *Imaging
+  procedure*.
+- One Measurement Group (TID 1501) per distance, area or rectangle: a
+  *Length* (mm) or *Area* (mm²) inferred from a 3D polyline or polygon in
+  patient coordinates on the frame of reference of the segmentation.
+  Angles and text notes are not exported.
+- One Volumetric ROI group (TID 1411) per exported segment: *Referenced
+  Segment* in the SEG, the source series, and *Volume* in ml.
+- Every group has a tracking identifier (the item's name) and a stable
+  tracking UID.
+- `VerificationFlag` is `UNVERIFIED`; `CompletionFlag` is `PARTIAL` while
+  any item is unconfirmed.
+
+**Review status:**
+- Rejected items are left out of both objects.
+- Proposed items are exported and marked: in the segment description
+  (`proposed by engine …; unconfirmed`) and, in the report, by a code in
+  FERRUM's private scheme `99FERRUM`:
+
+| Concept | Values |
+|---|---|
+| `(review-status, 99FERRUM, "Review status")` | `proposed`, `confirmed`, `rejected` |
+| `(provenance, 99FERRUM, "Provenance")` | text: author and reviewer |
+
+**Privacy:** what is copied from the source follows the operator's
+configuration (`ferrum-agent.toml`):
+
+| Setting | Off (default) | On |
+|---|---|---|
+| `expose_identifiers` | patient name and ID empty, `PatientIdentityRemoved` = `YES` | patient name, ID, sex, accession number, study ID copied |
+| `expose_dates` | study date and time empty | copied (and the birth date, with identifiers) |
+| `pseudonymise_uids` | study, series and frame-of-reference UIDs replaced by salted hashes (`2.25.…`); source images not referenced | source UIDs kept; frames reference their source images |
+
+Sources that are not DICOM (NIfTI) get a new study and frame of
+reference; patient attributes stay empty.
+
+**Validation:** the objects are read back with
+[highdicom](https://github.com/ImagingDataCommons/highdicom) in CI
+(`scripts/validate_dicom_export.py`).

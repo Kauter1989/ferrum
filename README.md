@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/Kauter1989/ferrum/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Kauter1989/ferrum/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Kauter1989/ferrum)](https://github.com/Kauter1989/ferrum/releases)
-![Coverage](https://img.shields.io/badge/line%20coverage-92.0%25-brightgreen)
+![Coverage](https://img.shields.io/badge/line%20coverage-92.4%25-brightgreen)
 ![Rust](https://img.shields.io/badge/rust-stable-orange)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
 
@@ -50,9 +50,9 @@ skipping, isosurface refinement, local ambient occlusion; see
 
 | Metrics | |
 |---|---|
-| Code size | ≈ 23 800 lines of Rust in `src/` (including in-module unit tests), ≈ 4 500 lines of integration tests, benchmarks and examples, ≈ 600 lines of WGSL; engine bridges: ≈ 1 400 lines of Python plus ≈ 600 lines of tests |
-| Tests | 322 Rust tests: unit, property-based, data layer, shader validation, GPU-vs-CPU parity, engine-protocol conformance, agent commands on phantoms, CLI ↔ MCP equivalence, skill evaluations, identifier scan, application (incl. AI with a mock engine) and UI; 17 bridge tests (pytest), and the conformance suite against the running bridge in CI |
-| Test coverage | 92.0 % of lines, 89.4 % of functions (`cargo-llvm-cov`); CI fails below 87 % |
+| Code size | ≈ 24 800 lines of Rust in `src/` (including in-module unit tests), ≈ 4 800 lines of integration tests, benchmarks and examples, ≈ 600 lines of WGSL; engine bridges: ≈ 1 400 lines of Python plus ≈ 600 lines of tests |
+| Tests | 329 Rust tests: unit, property-based, data layer, shader validation, GPU-vs-CPU parity, engine-protocol conformance, agent commands on phantoms, CLI ↔ MCP equivalence, skill evaluations, identifier scan, DICOM SEG/SR export, application (incl. AI with a mock engine) and UI; 17 bridge tests (pytest); in CI also the conformance suite against the running bridge and highdicom validation of the exported DICOM |
+| Test coverage | 92.4 % of lines, 89.6 % of functions (`cargo-llvm-cov`); CI fails below 87 % |
 | Complexity budget | per function: cognitive complexity ≤ 25, ≤ 120 lines, nesting ≤ 6 (enforced by clippy) |
 | Lints | rustfmt and clippy with warnings as errors; no `unsafe`, no `unwrap` outside tests |
 | Load speed | 512×512×252 CT DICOM series decoded in 0.34 s on 4 CPU cores |
@@ -123,7 +123,7 @@ FERRUM is a core, not a monolith. The principles, in short (full text:
 | Agent skill package ([`skills/ferrum`](skills/ferrum)): `SKILL.md`, references, schemas, plugin folder in the releases; evaluations with known answers (`ferrum-cli eval`); identifier scan | ✅ |
 | Review in the desktop app: *Open workspace*, review queue with author and status, decisions saved to the workspace and its audit log | ✅ |
 | Agent skill with segmentation engines: `engine info`, `segment interactive`, `segment auto` (allow-listed engines, results proposed by the engine) | ✅ |
-| DICOM SEG and SR export | 📋 [Stage 15](dev_plan.md) |
+| DICOM export for PACS: binary Segmentation and Comprehensive 3D SR (TID 1500) with lengths, areas and segment volumes; review status marked, identifiers per operator consent; validated with highdicom ([format](docs/workspace-format.md#5-dicom-export)) | ✅ |
 
 > FERRUM is research and engineering software, not a certified medical
 > device. Measurements, segmentations and AI results are proposals for
@@ -280,6 +280,7 @@ ferrum-cli study open -w ws/ct1 /data/lung_053.nii.gz
 ferrum-cli view slice -w ws/ct1 --plane axial --slice-number 120 --window lung   # PNG + pixel mapping
 ferrum-cli probe -w ws/ct1 r-0001:412,318                                         # the value under a pixel
 ferrum-cli segment threshold -w ws/ct1 --seed r-0001:412,318 --min -100 --max 200 --max-ml 50
+ferrum-cli export bundle -w ws/ct1 --format ferrum --format dicom                 # JSON, NIfTI, DICOM SEG + SR
 ```
 
 Harnesses that speak MCP start `ferrum-cli mcp`; every command is then a
@@ -570,13 +571,13 @@ driver (`mesa-vulkan-drivers` on Debian/Ubuntu).
 
 ## Testing
 
-About 320 tests run headlessly with `cargo test --workspace`:
+About 330 tests run headlessly with `cargo test --workspace`:
 
 | Level | What is checked |
 |---|---|
 | Unit | domain maths, windowing, transfer functions, clipping, camera, measurements, processing algorithms |
 | Property-based | invariants over random inputs, e.g. that empty-space skipping can never hide visible material |
-| Data layer | DICOM files generated at test time: transfer syntaxes, rescale, signed data, MONOCHROME1, multi-frame, several series, corrupt files; NIfTI round-trip, patient geometry and label maps; annotation, segment and workspace formats (round trips, v1 documents, changed sources) |
+| Data layer | DICOM files generated at test time: transfer syntaxes, rescale, signed data, MONOCHROME1, multi-frame, several series, corrupt files; NIfTI round-trip, patient geometry and label maps; annotation, segment and workspace formats (round trips, v1 documents, changed sources); DICOM SEG and SR export (frames, geometry, source references, review status, privacy), read back with highdicom in CI |
 | Shaders | WGSL validated with naga, and uniform layouts matched to the Rust structs |
 | GPU parity | every render mode and feature (including the segment overlay), GPU image compared to the CPU reference |
 | Engine protocol | conformance suite against the reference server, or any engine with `FERRUM_ENGINE_URL` |
@@ -587,7 +588,7 @@ About 320 tests run headlessly with `cargo test --workspace`:
 
 To also test on a real DICOM series:
 `FERRUM_SAMPLE_DICOM=/path/to/series cargo test -p ferrum-io`.
-Line coverage is about 91 %, and CI fails if it drops below 87 %. Clippy
+Line coverage is about 92 %, and CI fails if it drops below 87 %. Clippy
 also enforces a complexity budget for every function. More in
 [docs/testing.md](docs/testing.md) and [docs/quality.md](docs/quality.md).
 

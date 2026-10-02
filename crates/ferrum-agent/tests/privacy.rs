@@ -101,7 +101,7 @@ fn session(agent: &Agent, ws: &str, src: &Path) -> Vec<Value> {
         ("segment threshold", json!({ "workspace": ws, "seed": { "voxel": [8, 8, 3] }, "min": 300, "max": 500 })),
         ("segment list", json!({ "workspace": ws })),
         ("review list", json!({ "workspace": ws })),
-        ("export bundle", json!({ "workspace": ws })),
+        ("export bundle", json!({ "workspace": ws, "formats": ["ferrum", "dicom"] })),
     ];
     calls.iter().map(|(c, p)| agent.run(c, p)).collect()
 }
@@ -146,6 +146,19 @@ fn outputs_contain_no_identifiers() {
     assert_eq!((ids["study_date"].as_str(), ids["accession_number"].as_str()), (Some("20240428"), Some("ACC-0815")));
     assert_eq!(ids["study_instance_uid"], STUDY_UID);
     assert!(!info.to_string().contains("DOE^JANE"), "patient names are never read");
+
+    // DICOM objects for the PACS carry the patient only with that consent
+    let open_agent = Agent::new(AgentConfig {
+        expose_identifiers: true,
+        expose_dates: true,
+        pseudonymise_uids: false,
+        ..AgentConfig::default()
+    });
+    let env = open_agent.run("export bundle", &json!({ "workspace": ws_text, "formats": ["dicom"] }));
+    assert!(!env.to_string().contains("DOE^JANE"), "the envelope still carries no names");
+    let seg = std::fs::read(ws.join("export/segmentation.dcm")).unwrap();
+    let text = String::from_utf8_lossy(&seg);
+    assert!(text.contains("MRN-4711") && text.contains(STUDY_UID) && text.contains(SERIES_UID), "filed with the study");
 }
 
 fn gunzip(bytes: &[u8]) -> Vec<u8> {

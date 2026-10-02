@@ -261,8 +261,14 @@ pub fn command_schema(command: &str) -> Option<(&'static str, Value)> {
             ),
         ),
         "export bundle" => (
-            "Writes export/ in the workspace: report.json (study, measurements, segments with volumes; unconfirmed items marked), annotations.json, segments.nii.gz + segments.json, with SHA-256 of every file.",
-            ws_only(),
+            "Writes export/ in the workspace, with SHA-256 of every file: report.json (study, measurements, segments with volumes; unconfirmed items marked) and, by format, annotations.json + segments.nii.gz + segments.json (ferrum) or a DICOM SEG + Comprehensive 3D SR measurement report (dicom). Rejected items are left out of DICOM; proposed ones are marked.",
+            obj(
+                json!({
+                    "workspace": workspace(),
+                    "formats": { "type": "array", "items": { "type": "string", "enum": ["ferrum", "dicom"] }, "minItems": 1, "description": "formats besides report.json (default [\"ferrum\"])" },
+                }),
+                &["workspace"],
+            ),
         ),
         "probe" => (
             "Value of the voxel nearest to a point, with unit (HU for CT).",

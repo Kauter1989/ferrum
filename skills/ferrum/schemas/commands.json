@@ -1977,13 +1977,25 @@
     }
   },
   "export bundle": {
-    "description": "Writes export/ in the workspace: report.json (study, measurements, segments with volumes; unconfirmed items marked), annotations.json, segments.nii.gz + segments.json, with SHA-256 of every file.",
+    "description": "Writes export/ in the workspace, with SHA-256 of every file: report.json (study, measurements, segments with volumes; unconfirmed items marked) and, by format, annotations.json + segments.nii.gz + segments.json (ferrum) or a DICOM SEG + Comprehensive 3D SR measurement report (dicom). Rejected items are left out of DICOM; proposed ones are marked.",
     "parameters": {
       "type": "object",
       "properties": {
         "workspace": {
           "type": "string",
           "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "formats": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "ferrum",
+              "dicom"
+            ]
+          },
+          "minItems": 1,
+          "description": "formats besides report.json (default [\"ferrum\"])"
         }
       },
       "required": [
