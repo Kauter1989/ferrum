@@ -199,7 +199,7 @@ all three:
   "data": { "value": -812.4, "unit": "HU", "voxel": [251, 198, 156], "patient_mm": [-42.1, 10.5, -130.0] },
   "warnings": [],
   "provenance": {
-    "ferrum": "0.2.0",
+    "ferrum": "0.2.1",
     "command": "probe",
     "params": { "point": { "voxel": [251, 198, 156] } },
     "source_sha256": "9f2c…",
