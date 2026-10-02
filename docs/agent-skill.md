@@ -110,7 +110,8 @@ ferrum-cli measure distance --workspace ws/ct1 --from-mm -42.1,10.5,-130 --to-mm
 - The exit code is 0 for success, 2 for a usage error and 1 for a
   command error.
 
-**MCP over stdio** — `ferrum-cli mcp --workspace-root ws/`:
+**MCP over stdio** — `ferrum-cli mcp --workspace-root ws/` (implemented;
+see [agent-cli.md](agent-cli.md#mcp-server)):
 
 - Every command is a tool named like `ferrum_view_slice`, with its JSON
   Schema as the input schema.

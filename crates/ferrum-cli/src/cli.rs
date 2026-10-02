@@ -94,6 +94,17 @@ pub enum Command {
     },
     /// Lists the command names.
     Commands,
+    /// Prints the JSON Schema of one command's parameters (or of all).
+    Schema {
+        /// Command name, e.g. "view slice".
+        command: Option<String>,
+    },
+    /// Serves every command as an MCP tool over stdio.
+    Mcp {
+        /// Workspace root, if the operator configuration sets none.
+        #[arg(long)]
+        workspace_root: Option<PathBuf>,
+    },
 }
 
 /// `study …`.
@@ -409,6 +420,8 @@ impl Command {
                 (command.clone(), p)
             }
             Command::Commands => ("commands".to_owned(), json!({})),
+            Command::Schema { command } => ("schema".to_owned(), json!({ "command": command })),
+            Command::Mcp { workspace_root } => ("mcp".to_owned(), json!({ "workspace_root": workspace_root })),
         })
     }
 }

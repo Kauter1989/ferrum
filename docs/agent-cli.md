@@ -1,4 +1,4 @@
-# `ferrum-cli`: the agent skill on the command line
+# `ferrum-cli`: the agent skill on the command line and over MCP
 
 `ferrum-cli` lets an AI agent, or a script, work with a medical image the
 way a careful person works with FERRUM:
@@ -74,8 +74,15 @@ workspace paths are placed under the operator's `data.workspace_root`.
 | `segment rename\|delete -w W …` | Only segments the agent created |
 | `review list -w W` | Proposed annotations and segments |
 | `review confirm\|reject -w W (--annotation ID \| --segment L) --by NAME` | Only if the operator allows harness review |
-| `run "<command>" --params '<json>'` | Any command with JSON parameters: the same call the MCP server will make |
+| `run "<command>" --params '<json>'` | Any command with JSON parameters: the same call the MCP server makes |
 | `commands` | The command names |
+| `schema ["<command>"]` | JSON Schema of a command's parameters (or of all commands) |
+| `mcp [--workspace-root DIR]` | Serves every command as an MCP tool over stdio ([below](#mcp-server)) |
+
+**Parameter checks:** every call is checked against its JSON Schema
+before it runs. A missing, misspelt or mistyped parameter is a
+`bad_request` that names the parameter, e.g. `params.points[1]: not a
+point`.
 
 ## Renders
 
@@ -161,18 +168,57 @@ allow_harness_confirmation = false
 - Outputs never contain patient names, IDs or birth dates. The agent does
   not output DICOM attributes.
 
-## Limits of this first part
+## MCP server
+
+`ferrum-cli mcp` serves the same commands to MCP-capable harnesses. It
+uses the Model Context Protocol over stdio: JSON-RPC 2.0, one message per
+line, protocol revisions 2025-06-18, 2025-03-26 and 2024-11-05.
+
+```json
+{ "mcpServers": {
+    "ferrum": { "command": "ferrum-cli", "args": ["mcp", "--workspace-root", "/data/workspaces"],
+                "env": { "FERRUM_AGENT_CONFIG": "/etc/ferrum-agent.toml" } } } }
+```
+
+**Tools:**
+- Every command is a tool named `ferrum_<command>`, e.g.
+  `ferrum_view_slice` or `ferrum_measure_distance`.
+- Each tool has its JSON Schema as `inputSchema` and hints for clients:
+  read-only, destructive.
+
+**Results:**
+- A tool result holds the same envelope as the command line, as text and
+  as `structuredContent`.
+- Renders add the PNG as image content.
+- Command errors are tool results with `isError: true`, not protocol
+  errors, so the agent sees the error code and hint.
+
+**Guidance:** the server's `instructions` summarise the clinical safety
+rules: not a medical device, numbers from tools, no diagnoses, review at
+the end.
+
+**Loaded series stay in memory between calls:**
+- A series is reused while its source files keep their size and
+  modification time; otherwise it is hashed and loaded again.
+- Annotations and segments are read from the workspace on every call, so
+  decisions made meanwhile in the desktop app are never overwritten.
+
+**Workspace root:** `--workspace-root` applies only when the operator
+configuration sets none.
+
+**Equivalence:** a test runs the same session through the command line
+and through MCP and checks that both give identical JSON.
+
+## Limits
 
 These are planned:
 - `view mpr`, `view montage` and `view volume` (3D);
 - `profile`;
 - `export bundle`;
-- JSON Schemas;
-- the MCP server (15.4);
 - engine commands (15.7).
 
 Also note:
 - NIfTI files carry no modality, so their values have no unit. Treat
   them as HU only if you know the file is CT.
-- The CLI reloads the series for each call (a CT series in about 0.3 s).
-  The MCP server will keep it in memory.
+- The command line reloads the series for each call (a CT series in about
+  0.3 s); the MCP server keeps it in memory.

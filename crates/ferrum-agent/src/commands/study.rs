@@ -41,7 +41,7 @@ pub fn scan(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
 pub fn open(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     let root = ctx.workspace_path(p)?;
     let source = PathBuf::from(p.req_str("path")?);
-    let study = Study::open(ctx.config, &root, &source, p.str("series")?)?;
+    let study = Study::open(ctx.config, &root, &source, p.str("series")?, ctx.cache.as_deref_mut())?;
     let out = describe(ctx.config, &study);
     ctx.study = Some(study);
     Ok(out)

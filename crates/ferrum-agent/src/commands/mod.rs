@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use crate::config::AgentConfig;
 use crate::envelope::{AgentError, Output};
 use crate::params::Params;
-use crate::study::Study;
+use crate::study::{Study, VolumeCache};
 
 pub mod annotate;
 pub mod inspect;
@@ -21,6 +21,8 @@ pub struct Ctx<'a> {
     pub config: &'a AgentConfig,
     /// The study, once a command loaded it.
     pub study: Option<Study>,
+    /// Series kept in memory between calls (long-running servers).
+    pub cache: Option<&'a mut VolumeCache>,
 }
 
 impl Ctx<'_> {
@@ -34,7 +36,7 @@ impl Ctx<'_> {
     pub fn study(&mut self, p: &Params) -> Result<&mut Study, AgentError> {
         if self.study.is_none() {
             let root = self.workspace_path(p)?;
-            self.study = Some(Study::load(self.config, &root)?);
+            self.study = Some(Study::load(self.config, &root, self.cache.as_deref_mut())?);
         }
         self.study.as_mut().ok_or_else(|| AgentError::internal("study not loaded"))
     }

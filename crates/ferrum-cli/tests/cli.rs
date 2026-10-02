@@ -67,3 +67,59 @@ fn scripted_session() {
     let (code, env) = cli(&["--config", "/nonexistent.toml", "study", "info", "-w", "s1"], None);
     assert_eq!((code, env["ok"].as_bool()), (1, Some(false)));
 }
+
+#[test]
+fn mcp_over_stdio_and_schemas() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::process::Stdio;
+
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("p.nii.gz");
+    phantom(&src);
+    let mut child = Command::new(env!("CARGO_BIN_EXE_ferrum-cli"))
+        .args(["mcp", "--workspace-root", dir.path().join("ws").to_str().unwrap()])
+        .env_remove("FERRUM_AGENT_CONFIG")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut out = BufReader::new(child.stdout.take().unwrap());
+    // a notification gets no reply, so it travels in front of the next request
+    let mut ask = |msg: Value, notify_first: bool| -> Value {
+        if notify_first {
+            writeln!(stdin, "{}", serde_json::json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }))
+                .unwrap();
+        }
+        writeln!(stdin, "{msg}").unwrap();
+        let mut line = String::new();
+        out.read_line(&mut line).unwrap();
+        serde_json::from_str(&line).unwrap()
+    };
+    let init = ask(
+        serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": { "name": "test", "version": "1" } } }),
+        false,
+    );
+    assert_eq!(init["result"]["serverInfo"]["name"], "ferrum");
+    let tools = ask(serde_json::json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }), true);
+    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 20);
+    let open = ask(
+        serde_json::json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+        "params": { "name": "ferrum_study_open", "arguments": { "workspace": "a", "path": src } } }),
+        false,
+    );
+    assert_eq!(open["result"]["isError"], false, "{open}");
+    assert!(dir.path().join("ws/a/workspace.json").exists(), "relative workspaces go below --workspace-root");
+    drop(stdin);
+    assert!(child.wait().unwrap().success());
+
+    let out = Command::new(env!("CARGO_BIN_EXE_ferrum-cli")).args(["schema", "probe"]).output().unwrap();
+    let schema: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(schema["parameters"]["required"], serde_json::json!(["workspace", "point"]));
+    let all = Command::new(env!("CARGO_BIN_EXE_ferrum-cli")).arg("schema").output().unwrap();
+    assert_eq!(serde_json::from_slice::<Value>(&all.stdout).unwrap().as_object().unwrap().len(), 20);
+    assert_eq!(
+        Command::new(env!("CARGO_BIN_EXE_ferrum-cli")).args(["schema", "nope"]).status().unwrap().code(),
+        Some(2)
+    );
+}

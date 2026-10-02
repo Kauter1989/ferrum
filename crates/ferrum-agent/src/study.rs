@@ -4,7 +4,10 @@
 //! The command line is stateless: every call opens the workspace, checks
 //! the source hashes, loads the series and saves what it changed.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::SystemTime;
 
 use ferrum_domain::{
     AnnotationReport, AnnotationSet, NoProgress, SegmentationSet, SeriesDescriptor, SeriesMetadata, Volume,
@@ -50,15 +53,57 @@ pub fn scan(paths: &[PathBuf]) -> Result<Vec<SeriesDescriptor>, AgentError> {
     })
 }
 
+/// Loaded series kept in memory between calls of a long-running server
+/// (MCP), keyed by workspace. An entry is reused while every source file
+/// keeps its size and modification time; otherwise the sources are hashed
+/// and loaded again. Annotations and segments are never cached: they are
+/// read from the workspace on every call, so decisions made meanwhile in
+/// the desktop app are not overwritten.
+#[derive(Debug, Default)]
+pub struct VolumeCache {
+    entries: HashMap<PathBuf, CachedSeries>,
+}
+
+#[derive(Debug, Clone)]
+struct CachedSeries {
+    series_id: String,
+    stamps: Vec<(u64, Option<SystemTime>)>,
+    volume: Arc<Volume>,
+    metadata: Arc<SeriesMetadata>,
+}
+
+impl VolumeCache {
+    /// Number of cached series.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// `true` if nothing is cached.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    fn get(&self, root: &Path, ws: &Workspace) -> Option<CachedSeries> {
+        let e = self.entries.get(root)?;
+        let src = &ws.manifest().source;
+        (e.series_id == src.series_id && e.stamps == stamps(&src.file_paths())).then(|| e.clone())
+    }
+}
+
+/// Size and modification time of each file (`(0, None)` if missing).
+fn stamps(files: &[PathBuf]) -> Vec<(u64, Option<SystemTime>)> {
+    files.iter().map(|f| std::fs::metadata(f).map_or((0, None), |m| (m.len(), m.modified().ok()))).collect()
+}
+
 /// An open study.
 #[derive(Debug)]
 pub struct Study {
     /// The workspace.
     pub workspace: Workspace,
     /// The volume in the canonical LPS frame.
-    pub volume: Volume,
+    pub volume: Arc<Volume>,
     /// Metadata of the series.
-    pub metadata: SeriesMetadata,
+    pub metadata: Arc<SeriesMetadata>,
     /// Annotations saved in the workspace.
     pub annotations: AnnotationSet,
     /// Segments saved in the workspace (an empty set if there are none).
@@ -72,7 +117,13 @@ impl Study {
     /// Opens `source` into the workspace at `root` (creating it), choosing
     /// `series` (an id or its pseudonym) when the source holds several.
     /// An existing workspace is reused if it holds the same series.
-    pub fn open(config: &AgentConfig, root: &Path, source: &Path, series: Option<&str>) -> Result<Self, AgentError> {
+    pub fn open(
+        config: &AgentConfig,
+        root: &Path,
+        source: &Path,
+        series: Option<&str>,
+        cache: Option<&mut VolumeCache>,
+    ) -> Result<Self, AgentError> {
         let source = config.check_source(source)?;
         if !source.exists() {
             return Err(AgentError::not_found(format!("{} does not exist", source.display())));
@@ -86,15 +137,20 @@ impl Study {
                 return Err(AgentError::bad_request(format!("{} already holds another series", root.display()))
                     .hint("use a new workspace for each series"));
             }
-            return Self::load(config, root);
+            return Self::load(config, root, cache);
         }
         check_size(config, chosen)?;
         let workspace = Workspace::create(root, &source, chosen, &generator())?;
-        Self::from_workspace(workspace, chosen)
+        let loaded = load_series(chosen)?;
+        if let Some(c) = cache {
+            c.entries.insert(root.to_path_buf(), cached(&workspace, &loaded));
+        }
+        Self::from_workspace(workspace, loaded.volume, loaded.metadata)
     }
 
-    /// Loads the study of the workspace at `root`.
-    pub fn load(config: &AgentConfig, root: &Path) -> Result<Self, AgentError> {
+    /// Loads the study of the workspace at `root`, reusing a cached series
+    /// when its source files are unchanged.
+    pub fn load(config: &AgentConfig, root: &Path, cache: Option<&mut VolumeCache>) -> Result<Self, AgentError> {
         if !root.join(ferrum_io::workspace::files::MANIFEST).exists() {
             return Err(AgentError::new(ErrorCode::NoStudy, format!("{} is not a workspace", root.display()))
                 .hint("open a study first: study open --workspace <ws> <path>"));
@@ -102,20 +158,27 @@ impl Study {
         let workspace = Workspace::open(root)?;
         let src = workspace.manifest().source.clone();
         config.check_source(&src.path)?;
+        if let Some(hit) = cache.as_deref().and_then(|c| c.get(root, &workspace)) {
+            return Self::from_workspace(workspace, hit.volume, hit.metadata);
+        }
         workspace.verify_sources()?;
         let found = scan(std::slice::from_ref(&src.path))?;
         let series = found.iter().find(|s| s.id == src.series_id).ok_or_else(|| {
             AgentError::new(ErrorCode::SourceChanged, "the workspace's series is no longer in its source")
         })?;
         check_size(config, series)?;
-        Self::from_workspace(workspace, series)
+        let loaded = load_series(series)?;
+        if let Some(c) = cache {
+            c.entries.insert(root.to_path_buf(), cached(&workspace, &loaded));
+        }
+        Self::from_workspace(workspace, loaded.volume, loaded.metadata)
     }
 
-    fn from_workspace(workspace: Workspace, series: &SeriesDescriptor) -> Result<Self, AgentError> {
-        let loaded = CompositeRepository::default()
-            .load(series, &NoProgress)
-            .map_err(|e| AgentError::internal(format!("cannot load the series: {e}")))?;
-        let volume = loaded.volume;
+    fn from_workspace(
+        workspace: Workspace,
+        volume: Arc<Volume>,
+        metadata: Arc<SeriesMetadata>,
+    ) -> Result<Self, AgentError> {
         let d = volume.dims();
         let annotations = workspace.load_annotations([d.x, d.y, d.z])?.unwrap_or_default();
         let segments = workspace.load_segments(&volume)?.unwrap_or_else(|| SegmentationSet::new(d));
@@ -124,7 +187,7 @@ impl Study {
             h.update(f.sha256.as_bytes());
         }
         let source_sha256 = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
-        Ok(Self { workspace, volume, metadata: loaded.metadata, annotations, segments, source_sha256 })
+        Ok(Self { workspace, volume, metadata, annotations, segments, source_sha256 })
     }
 
     /// Saves the annotations into the workspace.
@@ -155,6 +218,29 @@ impl Study {
         } else {
             ""
         }
+    }
+}
+
+/// A series as loaded from its source.
+struct Loaded {
+    volume: Arc<Volume>,
+    metadata: Arc<SeriesMetadata>,
+}
+
+fn load_series(series: &SeriesDescriptor) -> Result<Loaded, AgentError> {
+    let loaded = CompositeRepository::default()
+        .load(series, &NoProgress)
+        .map_err(|e| AgentError::internal(format!("cannot load the series: {e}")))?;
+    Ok(Loaded { volume: Arc::new(loaded.volume), metadata: Arc::new(loaded.metadata) })
+}
+
+fn cached(ws: &Workspace, loaded: &Loaded) -> CachedSeries {
+    let src = &ws.manifest().source;
+    CachedSeries {
+        series_id: src.series_id.clone(),
+        stamps: stamps(&src.file_paths()),
+        volume: loaded.volume.clone(),
+        metadata: loaded.metadata.clone(),
     }
 }
 

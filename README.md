@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/Kauter1989/ferrum/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Kauter1989/ferrum/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Kauter1989/ferrum)](https://github.com/Kauter1989/ferrum/releases)
-![Coverage](https://img.shields.io/badge/line%20coverage-92.1%25-brightgreen)
+![Coverage](https://img.shields.io/badge/line%20coverage-92.2%25-brightgreen)
 ![Rust](https://img.shields.io/badge/rust-stable-orange)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -24,9 +24,10 @@ and research use alike.
   segmentation engines and exporters are ports with swappable
   implementations.
 - **For AI:** segmentation engines in any language connect through an
-  open protocol, [`ferrum-engine/1`](docs/engine-protocol.md). A planned
-  [agent skill](docs/agent-skill.md) lets AI agents in medical harnesses
-  view, measure and segment images, while clinicians stay in control.
+  open protocol, [`ferrum-engine/1`](docs/engine-protocol.md). The
+  [agent skill](docs/agent-skill.md) (`ferrum-cli`, command line and MCP)
+  lets AI agents in medical harnesses view, measure and segment images,
+  while clinicians stay in control.
 
 The rendering rebuilds proven, peer-reviewed techniques from scientific
 visualization on a modern GPU stack (GPU ray casting, empty-space
@@ -44,14 +45,14 @@ skipping, isosurface refinement, local ambient occlusion; see
 | Parallelism, maths | rayon, glam |
 | Testing | cargo test, proptest, naga (shader validation), egui_kittest (UI), criterion (benchmarks) |
 | Architecture | clean architecture: 9 crates, domain ← data, presentation → application; ports for data sources and segmentation engines |
-| Interfaces | desktop UI; Rust crates; `ferrum-engine/1` HTTP protocol for AI engines; agent skill: `ferrum-cli` with JSON output (MCP planned) |
+| Interfaces | desktop UI; Rust crates; `ferrum-engine/1` HTTP protocol for AI engines; agent skill: `ferrum-cli` with JSON output and an MCP server |
 | Platforms | Linux x86_64, macOS Apple Silicon, Windows x86_64 ([prebuilt releases](https://github.com/Kauter1989/ferrum/releases)) |
 
 | Metrics | |
 |---|---|
-| Code size | ≈ 20 900 lines of Rust in `src/` (including in-module unit tests), ≈ 3 400 lines of integration tests, benchmarks and examples, ≈ 600 lines of WGSL; engine bridges: ≈ 1 400 lines of Python plus ≈ 600 lines of tests |
-| Tests | 293 Rust tests: unit, property-based, data layer, shader validation, GPU-vs-CPU parity, engine-protocol conformance, agent commands on phantoms, application (incl. AI with a mock engine) and UI; 17 bridge tests (pytest), and the conformance suite against the running bridge in CI |
-| Test coverage | 92.1 % of lines, 90.0 % of functions (`cargo-llvm-cov`); CI fails below 87 % |
+| Code size | ≈ 21 600 lines of Rust in `src/` (including in-module unit tests), ≈ 3 600 lines of integration tests, benchmarks and examples, ≈ 600 lines of WGSL; engine bridges: ≈ 1 400 lines of Python plus ≈ 600 lines of tests |
+| Tests | 300 Rust tests: unit, property-based, data layer, shader validation, GPU-vs-CPU parity, engine-protocol conformance, agent commands on phantoms, CLI ↔ MCP equivalence, application (incl. AI with a mock engine) and UI; 17 bridge tests (pytest), and the conformance suite against the running bridge in CI |
+| Test coverage | 92.2 % of lines, 90.2 % of functions (`cargo-llvm-cov`); CI fails below 87 % |
 | Complexity budget | per function: cognitive complexity ≤ 25, ≤ 120 lines, nesting ≤ 6 (enforced by clippy) |
 | Lints | rustfmt and clippy with warnings as errors; no `unsafe`, no `unwrap` outside tests |
 | Load speed | 512×512×252 CT DICOM series decoded in 0.34 s on 4 CPU cores |
@@ -118,7 +119,8 @@ FERRUM is a core, not a monolith. The principles, in short (full text:
 | MONAI Label bridge (DeepEdit / DeepGrow / SAM2 clicks, segmentation models) | ✅ |
 | Provenance (author, proposed/confirmed/rejected) on annotations and segments; `ferrum-annotations` v2, `ferrum-segments`, `ferrum-workspace` v1 ([formats](docs/workspace-format.md)) | ✅ |
 | Agent skill, command line: `ferrum-cli` with study, slice renders with pixel mapping, probe, stats, measure, annotate, threshold segments, review; operator configuration, audit log ([reference](docs/agent-cli.md)) | ✅ |
-| Agent skill: MPR/3D renders, export bundle, MCP server, skill package, review queue, DICOM SEG/SR | 📋 [Stage 15](dev_plan.md) |
+| Agent skill over MCP (`ferrum-cli mcp`): every command as a tool with a JSON Schema, renders as images, series kept in memory | ✅ |
+| Agent skill: MPR/3D renders, export bundle, skill package, review queue, DICOM SEG/SR | 📋 [Stage 15](dev_plan.md) |
 
 > FERRUM is research and engineering software, not a certified medical
 > device. Measurements, segmentations and AI results are proposals for
@@ -273,6 +275,10 @@ ferrum-cli view slice -w ws/ct1 --plane axial --slice-number 120 --window lung  
 ferrum-cli probe -w ws/ct1 r-0001:412,318                                         # the value under a pixel
 ferrum-cli segment threshold -w ws/ct1 --seed r-0001:412,318 --min -100 --max 200 --max-ml 50
 ```
+
+Harnesses that speak MCP start `ferrum-cli mcp`; every command is then a
+tool (`ferrum_view_slice`, `ferrum_probe`, …) with a JSON Schema, and
+renders come back as images.
 
 Agent results are proposals: the desktop app shows them with
 **Confirm / Reject**, and an operator configuration controls what the
@@ -510,7 +516,7 @@ Extension points:
 
 The agent skill has two crates: `ferrum-agent` (commands, envelope,
 operator configuration, workspaces; on `ferrum-domain` and `ferrum-io`)
-and `ferrum-cli` (the command line; the MCP server follows). See
+and `ferrum-cli` (the command line and the MCP server). See
 [docs/agent-cli.md](docs/agent-cli.md).
 
 Read more: [vision](docs/vision.md) ·
@@ -545,7 +551,7 @@ driver (`mesa-vulkan-drivers` on Debian/Ubuntu).
 
 ## Testing
 
-About 290 tests run headlessly with `cargo test --workspace`:
+About 300 tests run headlessly with `cargo test --workspace`:
 
 | Level | What is checked |
 |---|---|
@@ -556,7 +562,7 @@ About 290 tests run headlessly with `cargo test --workspace`:
 | GPU parity | every render mode and feature (including the segment overlay), GPU image compared to the CPU reference |
 | Engine protocol | conformance suite against the reference server, or any engine with `FERRUM_ENGINE_URL` |
 | Bridges | pytest for the Python bridges (protocol, jobs, nnInteractive, TotalSegmentator and MONAI Label adapters with stubbed models), then the conformance suite against a running bridge |
-| Agent commands | every command on synthetic phantoms with known answers (sphere and cube volumes, distances, render pixel ↔ voxel round trips), operator rules, provenance protection, and a scripted `ferrum-cli` session with exit codes |
+| Agent commands | every command on synthetic phantoms with known answers (sphere and cube volumes, distances, render pixel ↔ voxel round trips), operator rules, provenance protection, schema checks, a scripted `ferrum-cli` session with exit codes, and the same session over MCP giving identical JSON |
 | Application | use cases with an in-memory repository and a recording GPU sink |
 | UI | the real app driven with egui_kittest, plus full-window renders of 2D, 3D and MPR |
 
