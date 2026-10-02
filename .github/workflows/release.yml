@@ -11,8 +11,7 @@
 # as workflow artifacts, nothing is published.
 #
 # Before releasing, bump the version in Cargo.toml (workspace),
-# skills/plugin/plugin.json and CITATION.cff, add a CHANGELOG.md entry and
-# update the static release badge in README.md.
+# skills/plugin/plugin.json and CITATION.cff and add a CHANGELOG.md entry.
 
 name: Release
 

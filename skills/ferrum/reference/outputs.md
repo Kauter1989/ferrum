@@ -3,7 +3,7 @@
 ## Envelope
 ```json
 { "api": "ferrum-agent/1", "ok": true, "data": { }, "warnings": [ ],
-  "provenance": { "ferrum": "FERRUM 0.2.1", "command": "probe", "params": { }, "source_sha256": "…", "renderer": "cpu", "time": "…" } }
+  "provenance": { "ferrum": "FERRUM 0.2.2", "command": "probe", "params": { }, "source_sha256": "…", "renderer": "cpu", "time": "…" } }
 { "api": "ferrum-agent/1", "ok": false, "error": { "code": "out_of_volume", "message": "…", "hint": "…" } }
 ```
 
