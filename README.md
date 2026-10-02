@@ -674,6 +674,11 @@ Contact: Viacheslav Chukanov, [research@vchukanov.ru](mailto:research@vchukanov.
 FERRUM is developed by Viacheslav Chukanov with the help of
 [Claude Code](https://claude.com/claude-code).
 
+FERRUM grew out of the author's work on
+[mriviewer](https://github.com/epam/mriviewer) (© EPAM Systems,
+Apache-2.0). It is an independent rewrite in Rust; no source code of
+mriviewer is included.
+
 Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md) and the
 [Code of Conduct](CODE_OF_CONDUCT.md). Report vulnerabilities privately as
 described in [SECURITY.md](SECURITY.md).
