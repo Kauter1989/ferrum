@@ -85,7 +85,7 @@ flowchart TB
 - An engine's licence is shown to the user. For example, nnInteractive's
   weights are CC BY-NC-SA 4.0, so those results carry a *Research use
   only* badge.
-- FERRUM's code is MIT and bundles no engine or weights.
+- FERRUM's code is MIT OR Apache-2.0 and bundles no engine or weights.
 
 ### 4. Built for people and for agents
 

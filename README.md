@@ -6,7 +6,7 @@
 [![Release](https://img.shields.io/github/v/release/Kauter1989/ferrum)](https://github.com/Kauter1989/ferrum/releases)
 ![Coverage](https://img.shields.io/badge/line%20coverage-92.0%25-brightgreen)
 ![Rust](https://img.shields.io/badge/rust-stable-orange)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
 
 *Ferrum* is Latin for iron, the metal whose oxide gives Rust its name.
 
@@ -144,6 +144,9 @@ FERRUM is a core, not a monolith. The principles, in short (full text:
 - [Project layout](#project-layout)
 - [Sample data](#sample-data)
 - [References](#references)
+- [Commercial integrations and support](#commercial-integrations-and-support)
+- [Contributing](#contributing)
+- [Citing FERRUM](#citing-ferrum)
 - [License](#license)
 
 ## Features
@@ -546,6 +549,7 @@ decisions: [docs/decisions/](docs/decisions/).
 make test        # all tests; GPU tests are skipped without an adapter
 make test-gpu    # same, but a missing GPU adapter fails the run (CI mode)
 make lint        # rustfmt --check + clippy -D warnings (incl. complexity budget)
+make licenses    # dependency licences fit MIT OR Apache-2.0 (cargo-deny)
 make coverage    # test coverage report (cargo-llvm-cov)
 make install     # install the ferrum binary into ~/.cargo/bin
 make bench       # criterion benchmarks
@@ -650,7 +654,48 @@ make showcase ARGS="path/to/lung_053.nii.gz docs/images"
   volume rendering.* IEEE Transactions on Visualization and Computer
   Graphics 16(4), 548–559, 2010.
 
+## Commercial integrations and support
+
+FERRUM is free to use, embed and ship in commercial products under the
+licence below. Integration work is available from the author:
+
+- connecting a segmentation engine or in-house model through
+  `ferrum-engine/1`;
+- embedding the viewer or the rendering core in another product;
+- data-source connectors (PACS, DICOMweb) and exporters;
+- FERRUM as a skill in a medical agent harness;
+- support agreements and training.
+
+Contact: Viacheslav Chukanov, [research@vchukanov.ru](mailto:research@vchukanov.ru).
+
+## Contributing
+
+Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[Code of Conduct](CODE_OF_CONDUCT.md). Report vulnerabilities privately as
+described in [SECURITY.md](SECURITY.md).
+
+## Citing FERRUM
+
+If you use FERRUM in research, please cite it; GitHub's *Cite this
+repository* button reads [CITATION.cff](CITATION.cff).
+
 ## License
 
-Source code: MIT — see [LICENSE](LICENSE).
+Source code is licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE)), or
+- MIT license ([LICENSE-MIT](LICENSE-MIT)),
+
+at your option. Unless you explicitly state otherwise, any contribution
+intentionally submitted for inclusion in FERRUM by you, as defined in the
+Apache-2.0 license, shall be dual licensed as above, without any
+additional terms or conditions.
+
 Screenshots in `docs/images/`: CC BY-SA 4.0 (see [Sample data](#sample-data)).
+
+### Name
+
+"FERRUM" is the name of this project, maintained by Viacheslav Chukanov.
+The licence covers the code, not the name: you may fork and redistribute
+FERRUM, but please give a modified or redistributed version its own name
+and do not present it as the official FERRUM.

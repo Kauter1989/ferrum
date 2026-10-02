@@ -60,7 +60,7 @@ jobs:
           name=ferrum-${TAG}-${{ matrix.target }}
           bin=target/${{ matrix.target }}/release
           mkdir -p "$name/skills" "$name/ferrum-plugin/.claude-plugin" "$name/ferrum-plugin/skills" "$name/ferrum-plugin/bin"
-          cp "$bin/ferrum" "$bin/ferrum-cli" README.md LICENSE "$name"/
+          cp "$bin/ferrum" "$bin/ferrum-cli" README.md LICENSE-MIT LICENSE-APACHE "$name"/
           cp -R skills/ferrum "$name/skills/"
           cp -R skills/ferrum "$name/ferrum-plugin/skills/"
           cp skills/plugin/plugin.json "$name/ferrum-plugin/.claude-plugin/plugin.json"
@@ -76,7 +76,7 @@ jobs:
           $bin = "target/${{ matrix.target }}/release"
           $plugin = "$name/ferrum-plugin"
           New-Item -ItemType Directory $name, "$name/skills", "$plugin/.claude-plugin", "$plugin/skills", "$plugin/bin" -Force | Out-Null
-          Copy-Item "$bin/ferrum.exe", "$bin/ferrum-cli.exe", README.md, LICENSE $name
+          Copy-Item "$bin/ferrum.exe", "$bin/ferrum-cli.exe", README.md, LICENSE-MIT, LICENSE-APACHE $name
           Copy-Item -Recurse skills/ferrum "$name/skills/"
           Copy-Item -Recurse skills/ferrum "$plugin/skills/"
           Copy-Item skills/plugin/plugin.json "$plugin/.claude-plugin/plugin.json"

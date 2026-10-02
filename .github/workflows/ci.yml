@@ -35,6 +35,15 @@ jobs:
       - name: Release build
         run: cargo build --release
 
+  licenses:
+    # Every dependency's licence must fit "MIT OR Apache-2.0" (deny.toml).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check licenses
+
   coverage:
     runs-on: ubuntu-latest
     steps:

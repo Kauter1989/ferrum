@@ -64,6 +64,7 @@ cargo test --workspace
 FERRUM_REQUIRE_GPU=1 cargo test --workspace     # CI mode (lavapipe)
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
+cargo deny check licenses                      # dependency licences (deny.toml)
 cargo bench --workspace
 make coverage                                # coverage report; CI floor in Makefile
 cargo run --release -- <path>                 # the app is the default member

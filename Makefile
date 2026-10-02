@@ -1,6 +1,6 @@
 # Build shortcuts.
 
-.PHONY: run build install test test-gpu lint coverage coverage-ci complexity bench snapshot showcase
+.PHONY: run build install test test-gpu lint licenses coverage coverage-ci complexity bench snapshot showcase
 
 run:        ## run the desktop viewer (pass ARGS=path/to/dicom)
 	cargo run --release -- $(ARGS)
@@ -20,6 +20,9 @@ test-gpu:   ## full test suite, failing if no GPU/lavapipe adapter exists
 lint:       ## rustfmt + clippy with warnings as errors
 	cargo fmt --all -- --check
 	cargo clippy --workspace --all-targets -- -D warnings
+
+licenses:   ## dependency licences must fit MIT OR Apache-2.0 (needs cargo-deny)
+	cargo deny check licenses
 
 # Code that tests cannot reach meaningfully: binary entry point, examples, benches.
 COVERAGE_IGNORE := (main\.rs|/examples/|/benches/)
