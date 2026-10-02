@@ -671,6 +671,9 @@ Contact: Viacheslav Chukanov, [research@vchukanov.ru](mailto:research@vchukanov.
 
 ## Contributing
 
+FERRUM is developed by Viacheslav Chukanov with the help of
+[Claude Code](https://claude.com/claude-code).
+
 Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md) and the
 [Code of Conduct](CODE_OF_CONDUCT.md). Report vulnerabilities privately as
 described in [SECURITY.md](SECURITY.md).
