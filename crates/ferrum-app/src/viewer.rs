@@ -21,10 +21,12 @@ use crate::tools::{InputKind, ProbeReading, SliceContext, ToolController, ToolIn
 mod ai;
 mod review;
 mod segments;
+mod workflow;
 
 pub use ai::{AiState, AiStatus};
 pub use review::ReviewEntry;
-pub use segments::{SegmentSummary, SegmentationState};
+pub use segments::{RegionSettings, SegmentSummary, SegmentationState};
+pub use workflow::SegmentationStep;
 
 /// Layout of the main area.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -223,8 +225,8 @@ pub struct Viewer {
     jobs: JobQueue,
     dataset: Option<Dataset>,
     next_revision: u64,
-    /// Active layout.
-    pub view_mode: ViewMode,
+    /// Active layout (see [`Viewer::set_view_mode`]).
+    view_mode: ViewMode,
     /// 2D state.
     pub slices: SliceState,
     /// 3D state.
@@ -332,6 +334,7 @@ impl Viewer {
         self.volume.mask_generation = self.bump_revision();
         self.annotations.clear();
         self.clear_segmentation();
+        self.segments.region = RegionSettings::for_window(self.slices.window);
         self.reset_ai_session();
         self.tool_ctl.cancel();
         self.probe = None;
@@ -491,12 +494,6 @@ impl Viewer {
         self.tool_ctl.preview(self.tool)
     }
 
-    /// Selects a 2D tool (cancelling any drawing in progress).
-    pub fn select_tool(&mut self, tool: ToolKind) {
-        self.tool = tool;
-        self.tool_ctl.cancel();
-    }
-
     /// Adds an annotation to a slice (e.g. imported or scripted), as drawn
     /// by the user now.
     pub fn add_annotation(&mut self, key: SliceKey, annotation: Annotation) -> AnnotationId {
@@ -597,6 +594,11 @@ impl Viewer {
             ToolOutcome::RequestText(pos) => self.pending_text = Some((key, *pos)),
             ToolOutcome::Prompt(p) => {
                 self.ai_prompt(p.clone());
+            }
+            ToolOutcome::Seed(voxel) => {
+                if let Err(e) = self.grow_region_at(*voxel) {
+                    self.status.message = e;
+                }
             }
             _ => {}
         }
@@ -724,8 +726,12 @@ impl Viewer {
     }
 
     /// Erases material under `ndc` with the current brush. Returns `true`
-    /// if anything was removed.
+    /// if anything was removed. Only the 3D view erases; in other layouts
+    /// nothing happens.
     pub fn erase_at(&mut self, ndc: Vec2, aspect: f32) -> bool {
+        if self.view_mode != ViewMode::Volume3d {
+            return false;
+        }
         let Some(hit) = self.pick(ndc, aspect) else {
             return false;
         };

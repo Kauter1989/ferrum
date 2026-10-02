@@ -14,8 +14,9 @@ use glam::{UVec3, Vec2};
 
 use crate::prompts::PromptPlane;
 
-/// Available 2D tools: the toolbar tools and the AI prompt tools of the
-/// *AI segmentation* panel.
+/// Available 2D tools: measurement and annotation tools, and segmentation
+/// tools (the built-in region tool and the AI prompt tools). All of them
+/// act on slices, so they work in the 2D and MPR views only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum ToolKind {
     /// Drag to pan, wheel to zoom.
@@ -47,6 +48,9 @@ pub enum ToolKind {
     AiScribble,
     /// AI: draw a closed outline around the object.
     AiLasso,
+    /// Click inside a structure: segments the connected region whose values
+    /// lie in the region range (built in, no engine needed).
+    Region,
 }
 
 impl ToolKind {
@@ -66,6 +70,16 @@ impl ToolKind {
 
     /// AI prompt tools.
     pub const AI: [ToolKind; 4] = [ToolKind::AiPoint, ToolKind::AiBox, ToolKind::AiScribble, ToolKind::AiLasso];
+
+    /// Segmentation tools in toolbar order: the built-in region tool, then
+    /// the AI prompt tools.
+    pub const SEGMENT: [ToolKind; 5] =
+        [ToolKind::Region, ToolKind::AiPoint, ToolKind::AiBox, ToolKind::AiScribble, ToolKind::AiLasso];
+
+    /// `true` for tools that create or edit segments.
+    pub fn is_segmentation(&self) -> bool {
+        Self::SEGMENT.contains(self)
+    }
 
     /// Prompt kind of an AI tool.
     pub fn prompt_kind(&self) -> Option<PromptKind> {
@@ -95,6 +109,7 @@ impl ToolKind {
             ToolKind::AiBox => "AI box",
             ToolKind::AiScribble => "AI scribble",
             ToolKind::AiLasso => "AI lasso",
+            ToolKind::Region => "Region",
         }
     }
 
@@ -115,6 +130,7 @@ impl ToolKind {
             ToolKind::AiBox => "Drag a box around the object on this slice",
             ToolKind::AiScribble => "Paint over the object",
             ToolKind::AiLasso => "Draw a closed outline around the object",
+            ToolKind::Region => "Click inside a structure: fills its connected region within the value range",
         }
     }
 }
@@ -230,6 +246,9 @@ pub enum ToolOutcome {
     Probe(Option<ProbeReading>),
     /// An AI prompt was drawn; the viewer sends it to the engine.
     Prompt(Prompt),
+    /// The region tool was clicked on this voxel; the viewer grows the
+    /// region from it.
+    Seed(UVec3),
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -355,6 +374,10 @@ impl ToolController {
                 _ => ToolOutcome::None,
             },
             ToolKind::AiBox => self.handle_ai_box(input, ctx),
+            ToolKind::Region => match input.kind {
+                InputKind::Press => ctx.probe(input.mm).map_or(ToolOutcome::None, |p| ToolOutcome::Seed(p.voxel)),
+                _ => ToolOutcome::None,
+            },
             ToolKind::AiScribble | ToolKind::AiLasso => self.handle_ai_stroke(tool, input, ctx),
             ToolKind::Delete => match input.kind {
                 InputKind::Press => match ctx.annotations.hit_test(ctx.key, input.mm, ctx.tolerance_mm) {

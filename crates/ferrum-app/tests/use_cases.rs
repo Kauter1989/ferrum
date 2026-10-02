@@ -210,6 +210,8 @@ fn eraser_uploads_mask_incrementally_and_supports_undo() {
     sink.take();
 
     assert!(v.pick(Vec2::ZERO, 1.0).is_some());
+    assert!(!v.erase_at(Vec2::ZERO, 1.0), "only the 3D view erases");
+    v.set_view_mode(ViewMode::Volume3d);
     assert!(!v.erase_at(Vec2::new(0.99, 0.99), 1.0), "corner ray misses the sphere");
     assert!(v.erase_at(Vec2::ZERO, 1.0));
     let erased = v.mask().unwrap().erased_count();
@@ -269,7 +271,7 @@ fn slice_navigation_and_windowing() {
 #[test]
 fn mpr_navigation_moves_other_slices() {
     let mut v = loaded_viewer();
-    v.view_mode = ViewMode::Mpr;
+    v.set_view_mode(ViewMode::Mpr);
     let viewport = Vec2::new(240.0, 240.0);
     // Axial image is 24×24 mm fitted into 240 pt → 10 pt per voxel.
     v.navigate_to(SliceAxis::Axial, Vec2::new(35.0, 185.0), viewport);
@@ -390,7 +392,7 @@ fn reloading_resets_view_state() {
 #[test]
 fn annotations_are_named_listed_navigated_and_reported() {
     let mut v = loaded_viewer();
-    v.view_mode = ViewMode::Slice2d;
+    v.set_view_mode(ViewMode::Slice2d);
     let a = v.add_annotation(SliceKey::new(SliceAxis::Coronal, 5), Annotation::Distance { a: Vec2::ZERO, b: Vec2::X });
     let b = v.add_annotation(SliceKey::new(SliceAxis::Axial, 3), Annotation::Rect { a: Vec2::ZERO, b: Vec2::ONE });
     assert!(v.rename_annotation(a, "Bronchus"));
@@ -497,7 +499,7 @@ fn label_maps_are_imported_and_cleared() {
 #[test]
 fn picking_uses_the_segment_overlay() {
     let mut v = loaded_viewer();
-    v.view_mode = ViewMode::Volume3d;
+    v.set_view_mode(ViewMode::Volume3d);
     v.volume.settings.mode = RenderMode::Isosurface;
     v.volume.settings.iso_threshold = 0.5;
     let before = v.pick(Vec2::ZERO, 1.0).expect("sphere hit");

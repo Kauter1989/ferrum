@@ -44,7 +44,6 @@ pub struct ViewerApp {
 }
 
 /// Icon of a 2D tool.
-/// Icon of a 2D tool.
 pub(crate) fn tool_icon(t: ToolKind) -> &'static str {
     match t {
         ToolKind::Pan => icon::HAND,
@@ -61,6 +60,7 @@ pub(crate) fn tool_icon(t: ToolKind) -> &'static str {
         ToolKind::AiBox => icon::BOUNDING_BOX,
         ToolKind::AiScribble => icon::SCRIBBLE,
         ToolKind::AiLasso => icon::LASSO,
+        ToolKind::Region => icon::PAINT_BUCKET,
     }
 }
 
@@ -215,7 +215,7 @@ impl ViewerApp {
             self.start_screen(ui);
             return;
         }
-        match self.viewer.view_mode {
+        match self.viewer.view_mode() {
             ViewMode::Slice2d => {
                 let axis = self.viewer.slices.axis;
                 slice_view::show(ui, &mut self.viewer, axis, &mut self.slice_states[axis.normal_axis()]);
@@ -292,9 +292,9 @@ impl ViewerApp {
             let mid = Rect::from_center_size(rect.center(), Vec2::new(190.0, rect.height()));
             row_in(ui, mid, Layout::left_to_right(Align::Center), |ui| {
                 let modes = [ViewMode::Slice2d, ViewMode::Volume3d, ViewMode::Mpr];
-                let current = modes.iter().position(|m| *m == self.viewer.view_mode);
+                let current = modes.iter().position(|m| *m == self.viewer.view_mode());
                 if let Some(i) = segmented(ui, &["2D", "3D", "MPR"], current) {
-                    self.viewer.view_mode = modes[i];
+                    self.viewer.set_view_mode(modes[i]);
                 }
             });
         }
@@ -341,7 +341,7 @@ impl ViewerApp {
 
     fn toolbar(&mut self, ui: &mut egui::Ui) {
         let rect = ui.max_rect();
-        let mode = self.viewer.view_mode;
+        let mode = self.viewer.view_mode();
         row_in(ui, rect, Layout::left_to_right(Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             if mode == ViewMode::Volume3d {
@@ -368,10 +368,12 @@ impl ViewerApp {
                 }
             } else {
                 for t in ToolKind::ALL {
-                    if tool_button(ui, tool_icon(t), t.label(), self.viewer.tool == t).on_hover_text(t.hint()).clicked()
-                    {
-                        self.viewer.select_tool(t);
-                    }
+                    self.tool_button(ui, t);
+                }
+                toolbar_separator(ui);
+                ui.label(RichText::new("Segment").size(12.0).color(TEXT_DIM));
+                for t in ToolKind::SEGMENT {
+                    self.tool_button(ui, t);
                 }
                 toolbar_separator(ui);
                 let any = !self.viewer.annotations().is_empty();
@@ -392,6 +394,24 @@ impl ViewerApp {
                     self.viewer.slices.axis = SliceAxis::ALL[i];
                 }
             });
+        }
+    }
+
+    /// A toolbar button selecting `t`; disabled, with the reason on hover,
+    /// when the tool cannot be used now (e.g. an AI tool without engine).
+    fn tool_button(&mut self, ui: &mut egui::Ui, t: ToolKind) {
+        let available = self.viewer.tool_availability(t);
+        let active = self.viewer.tool == t && available.is_ok();
+        let resp = tool_button_enabled(ui, tool_icon(t), t.label(), active, available.is_ok());
+        match available {
+            Ok(()) => {
+                if resp.on_hover_text(t.hint()).clicked() {
+                    self.viewer.select_tool(t);
+                }
+            }
+            Err(reason) => {
+                resp.on_hover_text(format!("{}: {reason}", t.label()));
+            }
         }
     }
 
@@ -685,7 +705,7 @@ impl ViewerApp {
                     ("Wheel · ↑ ↓", "change slice"),
                     ("Ctrl + wheel", "zoom slice"),
                     ("Ctrl+O", "open folder"),
-                    ("Ctrl+Z", "undo erase"),
+                    ("Ctrl+Z", "undo: eraser (3D), segmentation (2D, MPR)"),
                     ("Tab", "toggle the settings panel"),
                 ] {
                     ui.horizontal(|ui| {
@@ -699,6 +719,20 @@ impl ViewerApp {
     }
 
     // --------------------------------------------------------------- actions
+
+    /// Ctrl+Z: undoes what the current view edits — an eraser stroke in
+    /// 3D; on slices the last AI prompt of the current object, or else (no
+    /// object in progress, whose mask the engine owns) the last
+    /// segmentation edit.
+    fn undo(&mut self) {
+        if self.viewer.view_mode() == ViewMode::Volume3d {
+            self.viewer.undo_erase();
+        } else if self.viewer.ai().target().is_some() {
+            self.viewer.ai_undo();
+        } else {
+            self.viewer.undo_segmentation();
+        }
+    }
 
     fn pick_folder(&mut self) {
         if let Some(dir) = rfd::FileDialog::new().pick_folder() {
@@ -856,20 +890,20 @@ impl ViewerApp {
             self.pick_folder();
         }
         if undo {
-            self.viewer.undo_erase();
+            self.undo();
         }
         if tab {
             self.show_panel = !self.show_panel;
         }
         if self.viewer.dataset().is_some() {
             if v2 {
-                self.viewer.view_mode = ViewMode::Slice2d;
+                self.viewer.set_view_mode(ViewMode::Slice2d);
             }
             if v3 {
-                self.viewer.view_mode = ViewMode::Volume3d;
+                self.viewer.set_view_mode(ViewMode::Volume3d);
             }
             if vm {
-                self.viewer.view_mode = ViewMode::Mpr;
+                self.viewer.set_view_mode(ViewMode::Mpr);
             }
         }
     }
