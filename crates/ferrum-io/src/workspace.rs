@@ -19,7 +19,10 @@
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-use ferrum_domain::{AnnotationReport, AnnotationSet, SegmentationSet, SeriesDescriptor, Timestamp, Volume};
+use ferrum_domain::{
+    AnnotationReport, AnnotationSet, ResultStore, ReviewDecision, ReviewItem, ReviewStatus, SegmentationSet,
+    SeriesDescriptor, Timestamp, Volume,
+};
 use rayon::prelude::*;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -365,6 +368,76 @@ impl Workspace {
     }
 }
 
+/// A workspace as the desktop app's [`ResultStore`]: review decisions are
+/// written to the workspace and its audit log.
+#[derive(Debug, Clone)]
+pub struct WorkspaceStore {
+    workspace: Workspace,
+    generator: String,
+}
+
+impl WorkspaceStore {
+    /// Opens the workspace in `root`; `generator` names the application in
+    /// the files it writes.
+    pub fn open(root: &Path, generator: &str) -> Result<Self, IoError> {
+        Ok(Self { workspace: Workspace::open(root)?, generator: generator.to_owned() })
+    }
+
+    /// The workspace.
+    pub fn workspace(&self) -> &Workspace {
+        &self.workspace
+    }
+}
+
+impl ResultStore for WorkspaceStore {
+    fn describe(&self) -> String {
+        self.workspace.root().display().to_string()
+    }
+
+    fn source_paths(&self) -> Vec<PathBuf> {
+        vec![self.workspace.manifest().source.path.clone()]
+    }
+
+    fn series_id(&self) -> String {
+        self.workspace.manifest().source.series_id.clone()
+    }
+
+    fn verify(&self) -> Result<(), String> {
+        self.workspace.verify_sources().map_err(|e| e.to_string())
+    }
+
+    fn load(&self, volume: &Volume) -> Result<(Option<AnnotationSet>, Option<SegmentationSet>), String> {
+        let d = volume.dims();
+        let annotations = self.workspace.load_annotations([d.x, d.y, d.z]).map_err(|e| e.to_string())?;
+        let segments = self.workspace.load_segments(volume).map_err(|e| e.to_string())?;
+        Ok((annotations, segments))
+    }
+
+    fn save(&self, annotations: &AnnotationReport, segments: &SegmentationSet, volume: &Volume) -> Result<(), String> {
+        self.workspace.save_annotations(annotations, &self.generator).map_err(|e| e.to_string())?;
+        self.workspace.save_segments(segments, volume, &self.generator).map_err(|e| e.to_string())
+    }
+
+    fn log(&self, d: &ReviewDecision) -> Result<(), String> {
+        let (kind, id) = match d.item {
+            ReviewItem::Annotation(id) => ("annotation", id),
+            ReviewItem::Segment(label) => ("segment", u64::from(label)),
+        };
+        let command = match d.status {
+            ReviewStatus::Confirmed => "review confirm",
+            ReviewStatus::Rejected => "review reject",
+            ReviewStatus::Proposed => "review reopen",
+        };
+        let entry = json!({
+            "command": command,
+            "source": "desktop",
+            "params": { kind: id, "name": d.name, "by": d.by },
+            "ok": true,
+        });
+        self.workspace.append_audit(entry).map_err(|e| e.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -502,6 +575,50 @@ mod tests {
         assert_eq!(log[1]["time"], "2026-10-01T00:00:00Z");
         std::fs::write(ws.path(files::AUDIT), "{\n").unwrap();
         assert!(ws.read_audit().is_err());
+    }
+
+    #[test]
+    fn workspace_store_reads_writes_and_logs() {
+        let f = fixture();
+        Workspace::create(&f.root, &f.source, &f.series, "t").unwrap();
+        let store = WorkspaceStore::open(&f.root, "FERRUM test").unwrap();
+        assert_eq!(store.describe(), store.workspace().root().display().to_string());
+        assert_eq!(
+            (store.series_id(), store.source_paths()),
+            ("1.2.3".to_owned(), vec![std::path::absolute(&f.source).unwrap()])
+        );
+        store.verify().unwrap();
+        let v = volume();
+        assert_eq!(store.load(&v).unwrap(), (None, None));
+        let mut set = AnnotationSet::default();
+        set.add_with(
+            SliceKey::new(SliceAxis::Axial, 0),
+            Annotation::Text { pos: Vec2::ZERO, text: "x".into() },
+            Provenance::agent(None, Timestamp(1)),
+        );
+        let mut seg = SegmentationSet::new(Dims3::new(2, 2, 2));
+        seg.add_segment("S").unwrap();
+        let report = AnnotationReport::build(f.source.clone(), StudyInfo::default(), &v, &set);
+        store.save(&report, &seg, &v).unwrap();
+        let (a, s) = store.load(&v).unwrap();
+        assert_eq!((a.unwrap().pending(), s.unwrap().segments().len()), (1, 1));
+        let d = ReviewDecision {
+            item: ReviewItem::Segment(1),
+            name: "S".into(),
+            status: ReviewStatus::Rejected,
+            by: Some("dr.k".into()),
+        };
+        store.log(&d).unwrap();
+        store
+            .log(&ReviewDecision { item: ReviewItem::Annotation(0), status: ReviewStatus::Proposed, by: None, ..d })
+            .unwrap();
+        let log = store.workspace().read_audit().unwrap();
+        assert_eq!((log[0]["command"].as_str(), log[0]["source"].as_str()), (Some("review reject"), Some("desktop")));
+        assert_eq!((log[0]["params"]["segment"].as_u64(), log[0]["params"]["by"].as_str()), (Some(1), Some("dr.k")));
+        assert_eq!(log[1]["command"], "review reopen");
+        std::fs::write(&f.series.sources[0], b"changed").unwrap();
+        assert!(store.verify().unwrap_err().contains("source changed"));
+        assert!(WorkspaceStore::open(&f.source, "t").is_err());
     }
 
     #[test]

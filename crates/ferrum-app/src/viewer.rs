@@ -19,9 +19,11 @@ use crate::jobs::{FilterKind, JobEvent, JobQueue};
 use crate::tools::{InputKind, ProbeReading, SliceContext, ToolController, ToolInput, ToolKind, ToolOutcome};
 
 mod ai;
+mod review;
 mod segments;
 
 pub use ai::{AiState, AiStatus};
+pub use review::ReviewEntry;
 pub use segments::{SegmentSummary, SegmentationState};
 
 /// Layout of the main area.
@@ -242,6 +244,8 @@ pub struct Viewer {
     pub series_choice: Option<Vec<SeriesDescriptor>>,
     /// Pending text annotation position (UI shows an input box).
     pub pending_text: Option<(SliceKey, Vec2)>,
+    workspace: Option<review::WorkspaceSession>,
+    pending_workspace: Option<Arc<dyn ferrum_domain::ResultStore>>,
 }
 
 impl Viewer {
@@ -264,6 +268,8 @@ impl Viewer {
             status: Status { message: "Open a DICOM folder or NIfTI file to start".into(), ..Status::default() },
             series_choice: None,
             pending_text: None,
+            workspace: None,
+            pending_workspace: None,
         }
     }
 
@@ -340,6 +346,7 @@ impl Viewer {
             dataset.volume.spacing().z,
         );
         self.dataset = Some(dataset);
+        self.attach_workspace();
     }
 
     fn bump_revision(&mut self) -> u64 {
@@ -380,7 +387,12 @@ impl Viewer {
             }
             JobEvent::Scanned(Ok(mut series)) => {
                 self.status.progress = None;
-                if series.len() == 1 {
+                let opening_workspace = self.pending_workspace.is_some();
+                if let Some(s) = self.take_workspace_series(&mut series) {
+                    self.load_series(s);
+                } else if opening_workspace {
+                    self.status.message = "The workspace could not be opened".into();
+                } else if series.len() == 1 {
                     let s = series.remove(0);
                     self.load_series(s);
                 } else {
@@ -394,6 +406,7 @@ impl Viewer {
             }
             JobEvent::Scanned(Err(e)) | JobEvent::Loaded(Err(e)) => {
                 self.status.progress = None;
+                self.pending_workspace = None;
                 self.status.message = format!("Loading failed: {e}");
                 self.status.errors.push(e.to_string());
             }

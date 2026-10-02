@@ -27,6 +27,7 @@ pub mod provenance;
 pub mod render_settings;
 pub mod report;
 pub mod repository;
+pub mod review;
 pub mod segmentation;
 pub mod slice;
 pub mod transfer;
@@ -50,6 +51,7 @@ pub use repository::{
     CancelFlag, LoadedSeries, NoProgress, ProgressSink, RepositoryError, SeriesDescriptor, SeriesMetadata, StudyInfo,
     VolumeRepository,
 };
+pub use review::{ResultStore, ReviewDecision, ReviewItem};
 pub use segmentation::{LabelEdit, LabelMap, Segment, SegmentationError, SegmentationSet, VoxelBox};
 pub use slice::{SliceAxis, SliceImage, SliceView};
 pub use transfer::{ControlPoint, CtPreset, TransferFunction, TransferFunctionError};

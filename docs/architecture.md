@@ -67,6 +67,7 @@ FERRUM is a visualisation core meant to be extended
 |---|---|---|
 | Data sources | `VolumeRepository` | implemented: DICOM, NIfTI |
 | Segmentation engines | `SegmentationEngine`, `InteractiveSession` | implemented: `ferrum-engines` with `HttpEngine`, `MockEngine` and a reference server; driven by the *AI segmentation* panel |
+| Result stores | `ResultStore` | implemented: `ferrum-io::WorkspaceStore` (`ferrum-workspace` v1); the viewer opens a workspace, shows its review queue and writes decisions back |
 | Exporters | `Exporter` | planned; annotation JSON export exists |
 
 Out-of-process engines (nnInteractive, MONAI Label, TotalSegmentator or

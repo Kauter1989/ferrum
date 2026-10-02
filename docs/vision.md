@@ -155,7 +155,8 @@ review by qualified people.
 | Agent skill command line (`ferrum-cli`, [reference](agent-cli.md)) | ✅ |
 | Agent skill over MCP (`ferrum-cli mcp`) | ✅ |
 | Agent skill package and evaluations ([`skills/ferrum`](../skills/ferrum)) | ✅ |
-| Agent skill: review queue in the desktop app, engine commands | 📋 Stage 15 |
+| Review queue in the desktop app (*Open workspace*) | ✅ |
+| Agent skill: engine commands | 📋 Stage 15 |
 | DICOM SEG and SR export | 📋 Stage 15 |
 
 The detailed plan with user stories is in [dev_plan.md](../dev_plan.md).
