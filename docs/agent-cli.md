@@ -64,8 +64,12 @@ workspace paths are placed under the operator's `data.workspace_root`.
 | `study open -w W <path> [--series S]` | Creates or reuses the workspace W for a series (SHA-256 of every source file) and describes it |
 | `study info -w W` | Dims, spacing, LPS origin and direction, value unit, slice counts, window presets, annotation and segment counts |
 | `view slice -w W --plane P (--slice-number N \| --at POINT) [--window lung\|C,W] [--size PX] [--overlay segments]` | Renders a slice to `renders/r-NNNN.png` with a sidecar JSON |
+| `view montage -w W --plane P [--from N] [--to N] [--step N] [--columns N] [--window …] [--size PX]` | Several slices of one plane as a grid; every tile labelled with its slice number (default: at most 16 tiles) |
+| `view mpr -w W POINT [--window …] [--size PX]` | Axial, coronal and sagittal slices through a point, with a crosshair |
+| `view volume -w W [--mode mip\|isosurface\|transfer_function] [--threshold V] [--preset soft_tissue_bone\|lung_vessels\|bone] [--view anterior\|…\|inferior] [--size PX]` | 3D render on the CPU from a standard viewpoint |
 | `probe -w W POINT` | Value of the nearest voxel, with unit (HU for CT) |
 | `stats -w W (--box A B \| --sphere C --radius-mm R \| --segment L \| --annotation ID)` | Voxels, volume in ml, mean, std, min, max, percentiles |
+| `profile -w W FROM TO [--samples N]` | Values along a line with distances in mm (default: one sample per smallest voxel spacing) |
 | `measure distance\|angle\|area -w W POINT…` | Value, unit, method and points; distances also give an uncertainty of one voxel spacing |
 | `annotate add -w W --kind K --plane P [--name N] [--text T] [--agent ID] POINT…` | Distance, angle, area, rectangle or text on one slice, proposed by the agent |
 | `annotate list\|rename\|delete -w W …` | Annotations with provenance; agents rename or delete only their own |
@@ -73,6 +77,7 @@ workspace paths are placed under the operator's `data.workspace_root`.
 | `segment threshold -w W --seed POINT --min V --max V [--max-ml ML] [--name N] [--agent ID]` | 6-connected region growing from a seed within a value range, as a proposed segment; existing segments are kept |
 | `segment rename\|delete -w W …` | Only segments the agent created |
 | `review list -w W` | Proposed annotations and segments |
+| `export bundle -w W` | `export/` in the workspace: `report.json`, `annotations.json`, `segments.nii.gz` + `segments.json`, each with SHA-256; unconfirmed items are marked in every file |
 | `review confirm\|reject -w W (--annotation ID \| --segment L) --by NAME` | Only if the operator allows harness review |
 | `run "<command>" --params '<json>'` | Any command with JSON parameters: the same call the MCP server makes |
 | `commands` | The command names |
@@ -110,6 +115,29 @@ point`.
   values.
 
 **Overlays:** `segments` draws segment outlines in their colours.
+
+**Tiled renders.**
+- `view montage` and `view mpr` compose several slices into one image.
+  Their sidecars list `tiles`, each with:
+  - `plane`, `slice_number` and `origin` (its top-left pixel);
+  - its own `pixel_to_voxel` and `pixel_to_patient_mm` maps, in pixel
+    coordinates relative to the origin.
+- `r-0003:x,y` on a tiled render resolves through the tile under the
+  pixel. A pixel between tiles is `out_of_volume`.
+- Tiles are labelled with their slice number, and MPR tiles also with
+  `A`, `C` or `S`. MPR draws a crosshair with a small gap at the point.
+- Labels are numbers and plane letters only, never identifiers.
+
+**3D renders.**
+- `view volume` uses the CPU reference ray caster, the same image
+  formation as the desktop app's GPU renderer.
+- Modes:
+  - `mip`;
+  - `isosurface` at a threshold in data values;
+  - a CT transfer-function preset.
+- The camera looks from one of six standard viewpoints.
+- A 3D pixel does not correspond to one voxel. The sidecar has no
+  mapping, and pointing into a 3D render is a `bad_request`.
 
 ## Provenance and review
 
@@ -212,10 +240,9 @@ and through MCP and checks that both give identical JSON.
 ## Limits
 
 These are planned:
-- `view mpr`, `view montage` and `view volume` (3D);
-- `profile`;
-- `export bundle`;
-- engine commands (15.7).
+- engine commands: `engine info`, `segment interactive`, `segment auto`
+  (15.7);
+- DICOM SEG and SR export (15.7).
 
 Also note:
 - NIfTI files carry no modality, so their values have no unit. Treat

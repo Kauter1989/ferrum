@@ -137,6 +137,10 @@ pub fn tools() -> Vec<Value> {
                 c,
                 "study open"
                     | "view slice"
+                    | "view montage"
+                    | "view mpr"
+                    | "view volume"
+                    | "export bundle"
                     | "annotate add"
                     | "annotate rename"
                     | "annotate delete"

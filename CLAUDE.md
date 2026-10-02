@@ -37,7 +37,8 @@ ferrum (presentation) → ferrum-app (application) → ferrum-domain ← ferrum-
   client, mock, reference server); nothing else talks to engines. Protocol
   changes update `docs/engine-protocol.md` and the conformance suite.
 - `ferrum-agent` holds the agent commands (JSON in, `ferrum-agent/1`
-  envelope out) and depends only on `ferrum-domain` and `ferrum-io`;
+  envelope out) and depends only on `ferrum-domain`, `ferrum-io` and
+  `ferrum-render` (CPU renderer, no `gpu` feature, so no wgpu);
   `ferrum-cli` only parses arguments. New commands get a JSON Schema in
   `schema.rs` and update `docs/agent-cli.md` and the contract tests in
   `crates/ferrum-agent/tests`; the CLI and MCP must give identical JSON.

@@ -10,6 +10,7 @@ authors.workspace = true
 [dependencies]
 ferrum-domain.workspace = true
 ferrum-io.workspace = true
+ferrum-render.workspace = true
 glam.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

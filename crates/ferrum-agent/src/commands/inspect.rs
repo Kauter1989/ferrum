@@ -241,6 +241,49 @@ pub fn measure_area(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     Ok(Output::new(measured(study, &pts, n.length() / 2.0, "mm2", "area of the polygon through the points")))
 }
 
+/// Most samples of a profile.
+pub const MAX_SAMPLES: u64 = 2000;
+
+/// `profile`: values at evenly spaced points along a line (nearest voxel).
+pub fn profile(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
+    let study = ctx.study(p)?;
+    let (a, b) = (point(study, p, "from")?, point(study, p, "to")?);
+    let v = &study.volume;
+    let (ma, mb) = (voxel_to_patient(v, a), voxel_to_patient(v, b));
+    let length = ma.distance(mb);
+    let step = f64::from(v.spacing().min_element());
+    let n = match p.u64("samples")? {
+        Some(n) if !(2..=MAX_SAMPLES).contains(&n) => {
+            return Err(AgentError::bad_request(format!("samples must be in 2..={MAX_SAMPLES}")))
+        }
+        Some(n) => n,
+        None => ((length / step).ceil() as u64 + 1).clamp(2, MAX_SAMPLES),
+    };
+    let mut values = Vec::with_capacity(n as usize);
+    let samples: Vec<Value> = (0..n)
+        .map(|i| {
+            let t = i as f64 / (n - 1) as f64;
+            let q = a + (b - a) * t;
+            let value = value_at(v, nearest_voxel(v, q));
+            values.push(value);
+            let mut s = describe(v, q);
+            s["distance_mm"] = json!(round(length * t, 3));
+            s["value"] = json!(round(f64::from(value), 2));
+            s
+        })
+        .collect();
+    let min = values.iter().copied().fold(f32::INFINITY, f32::min);
+    let max = values.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    Ok(Output::new(json!({
+        "length_mm": round(length, 3),
+        "unit": study.value_unit(),
+        "method": "value of the nearest voxel at evenly spaced points from `from` to `to`",
+        "min": f64::from(min),
+        "max": f64::from(max),
+        "samples": samples,
+    })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

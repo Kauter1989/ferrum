@@ -364,9 +364,10 @@ allow_harness_confirmation = false
 | `ferrum` | Open workspace, review queue |
 | `skills/ferrum` (new) | `SKILL.md`, reference pages, schemas, plugin manifest |
 
-The layering stays as it is. `ferrum-agent` depends on `ferrum-domain` and
-`ferrum-io`: it needs no interactive state from `ferrum-app`, and renders
-slices on the CPU. `ferrum-cli` only parses arguments. The implemented
+The layering stays as it is. `ferrum-agent` depends on `ferrum-domain`,
+`ferrum-io` and `ferrum-render` without its GPU feature: it needs no
+interactive state from `ferrum-app`, renders slices directly and 3D views
+with the CPU reference ray caster. `ferrum-cli` only parses arguments. The implemented
 commands are listed in [agent-cli.md](agent-cli.md).
 
 ## Appendix A — draft `SKILL.md`

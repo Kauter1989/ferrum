@@ -114,9 +114,29 @@ fn render_pixel_to_voxel(renders: &Path, id: &str, pixel: [f64; 2]) -> Result<DV
             ));
         }
     }
-    let m = &sidecar["pixel_to_voxel"];
+    if sidecar["kind"] == "volume" {
+        return Err(AgentError::bad_request(format!("{id} is a 3D render; its pixels do not map to voxels"))
+            .hint("point at a pixel of a slice, montage or MPR render"));
+    }
+    // tiled renders (montage, MPR): the tile under the pixel maps it, in
+    // coordinates relative to the tile's origin
+    let (map, pixel) = match sidecar["tiles"].as_array() {
+        None => (&sidecar["pixel_to_voxel"], pixel),
+        Some(tiles) => {
+            let inside = |t: &&Value| {
+                let o = [t["origin"][0].as_f64().unwrap_or(f64::NAN), t["origin"][1].as_f64().unwrap_or(f64::NAN)];
+                let s = [t["size"][0].as_f64().unwrap_or(0.0), t["size"][1].as_f64().unwrap_or(0.0)];
+                (o[0]..=o[0] + s[0]).contains(&pixel[0]) && (o[1]..=o[1] + s[1]).contains(&pixel[1])
+            };
+            let t = tiles.iter().find(inside).ok_or_else(|| {
+                AgentError::new(ErrorCode::OutOfVolume, format!("pixel {pixel:?} lies between the tiles of {id}"))
+            })?;
+            let o = [t["origin"][0].as_f64().unwrap_or(0.0), t["origin"][1].as_f64().unwrap_or(0.0)];
+            (&t["pixel_to_voxel"], [pixel[0] - o[0], pixel[1] - o[1]])
+        }
+    };
     let row = |r: usize| -> Result<f64, AgentError> {
-        let a = (0..3).map(|c| m[r][c].as_f64()).collect::<Option<Vec<_>>>();
+        let a = (0..3).map(|c| map[r][c].as_f64()).collect::<Option<Vec<_>>>();
         let a = a.ok_or_else(|| AgentError::internal(format!("{id}: bad pixel_to_voxel")))?;
         Ok(a[0] * pixel[0] + a[1] * pixel[1] + a[2])
     };

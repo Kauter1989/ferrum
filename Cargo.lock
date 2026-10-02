@@ -1460,6 +1460,7 @@ dependencies = [
  "base64 0.22.1",
  "ferrum-domain",
  "ferrum-io",
+ "ferrum-render",
  "glam",
  "image",
  "log",
