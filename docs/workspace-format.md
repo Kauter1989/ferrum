@@ -58,7 +58,7 @@ Written by *Export annotations* and into workspaces. Version 2 adds
 {
   "format": "ferrum-annotations",
   "version": 2,
-  "generator": "FERRUM 0.2.0",
+  "generator": "FERRUM 0.2.1",
   "source": { "name": "lung_053", "path": "/data/lung_053" },
   "study": { "study_instance_uid": "…", "series_instance_uid": "…", "modality": "CT", "…": "…" },
   "volume": { "dims": [512, 512, 252], "spacing_mm": [0.78, 0.78, 1.25], "frame": "LPS voxel grid: …" },
@@ -98,7 +98,7 @@ what NIfTI cannot hold.
 {
   "format": "ferrum-segments",
   "version": 1,
-  "generator": "FERRUM 0.2.0",
+  "generator": "FERRUM 0.2.1",
   "segments": [
     { "label": 1, "name": "liver", "color": [230, 85, 75], "visible": true, "opacity": 0.5,
       "voxels": 18234, "volume_ml": 412.7, "provenance": { "…": "…" } }
@@ -136,7 +136,7 @@ ws/ct1/
 {
   "format": "ferrum-workspace",
   "version": 1,
-  "generator": "FERRUM 0.2.0",
+  "generator": "FERRUM 0.2.1",
   "created": "2026-10-01T12:00:00Z",
   "source": {
     "path": "/data/incoming/series-17",
