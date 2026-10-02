@@ -93,3 +93,11 @@ jobs:
         env:
           FERRUM_ENGINE_URL: http://127.0.0.1:8765
         run: cargo test -p ferrum-engines --test conformance
+      - name: DICOM SEG and SR export, validated with highdicom
+        working-directory: .
+        env:
+          FERRUM_DICOM_EXPORT_DIR: ${{ runner.temp }}/dicom-export
+        run: |
+          pip install highdicom
+          cargo test -p ferrum-io --test dicom_export
+          python scripts/validate_dicom_export.py "$FERRUM_DICOM_EXPORT_DIR"

@@ -1,6 +1,7 @@
 //! DICOM data source.
 
 pub mod assemble;
+pub mod export;
 pub mod header;
 pub mod series;
 

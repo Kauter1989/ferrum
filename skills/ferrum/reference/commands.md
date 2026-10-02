@@ -56,7 +56,7 @@ use only" when the engine is marked so.
 |---|---|---|
 | `review list` | — | proposed annotations and segments |
 | `review confirm`, `review reject` | `annotation` or `segment`, `by` | only if the operator allows harness review |
-| `export bundle` | — | `export/`: report.json, annotations.json, segments.nii.gz + .json, SHA-256 each |
+| `export bundle` | `formats`: `ferrum` (default), `dicom` | `export/`: report.json; annotations.json, segments.nii.gz + .json (ferrum); segmentation.dcm + measurements.dcm (dicom); SHA-256 each |
 
 ## Examples
 ```bash

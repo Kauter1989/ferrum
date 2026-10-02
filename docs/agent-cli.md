@@ -80,7 +80,7 @@ workspace paths are placed under the operator's `data.workspace_root`.
 | `segment interactive -w W [--engine URL] [--name N] PROMPT…` | Prompts an interactive engine: `+POINT` / `-POINT` (include / exclude) or `±box:POINT:POINT`; the object becomes a segment proposed by the engine |
 | `segment auto -w W [--engine URL] [--label NAME]…` | Runs an automatic engine (e.g. TotalSegmentator); every structure found becomes a segment proposed by the engine; existing segments keep their voxels |
 | `review list -w W` | Proposed annotations and segments |
-| `export bundle -w W` | `export/` in the workspace: `report.json`, `annotations.json`, `segments.nii.gz` + `segments.json`, each with SHA-256; unconfirmed items are marked in every file |
+| `export bundle -w W [--format ferrum\|dicom]…` | `export/` in the workspace, each file with SHA-256: `report.json` and, by format, `annotations.json` + `segments.nii.gz` + `segments.json` (`ferrum`, default) or `segmentation.dcm` (DICOM SEG) + `measurements.dcm` (SR, TID 1500) (`dicom`); unconfirmed items are marked in every file, rejected ones left out of DICOM ([format](workspace-format.md#5-dicom-export)) |
 | `review confirm\|reject -w W (--annotation ID \| --segment L) --by NAME` | Only if the operator allows harness review |
 | `run "<command>" --params '<json>'` | Any command with JSON parameters: the same call the MCP server makes |
 | `commands` | The command names |

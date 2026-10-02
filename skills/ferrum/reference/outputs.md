@@ -44,5 +44,12 @@ the tool result. Renders add the PNG as image content, and errors set
 - `confirmed` per item and `unconfirmed_items`;
 - a disclaimer.
 
-Next to it: `annotations.json`, `segments.nii.gz`, `segments.json`. The
-envelope lists every file with its SHA-256.
+Next to it, by `formats`:
+- `ferrum` (default): `annotations.json`, `segments.nii.gz`,
+  `segments.json`;
+- `dicom`: `segmentation.dcm` (DICOM SEG) and `measurements.dcm` (SR,
+  TID 1500) for a PACS. Rejected items are left out, proposed ones are
+  marked, and angles and text notes are not exported (a warning says
+  what was left out).
+
+The envelope lists every file with its SHA-256.

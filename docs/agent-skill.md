@@ -168,7 +168,7 @@ The command groups mirror the `Viewer` facade. Every command takes
 | `engine info` | Connected engine capabilities | — | `info` from the engine protocol, `research_only` |
 | `segment interactive` | Prompt an interactive engine | segment, prompts (point ±, box, scribble, lasso) | changed box, ml, revision |
 | `segment auto` | Automatic engine job | labels | job id, then segments |
-| `export bundle` | Everything for hand-off | formats (JSON, NIfTI; later DICOM SEG/SR) | file paths + hashes |
+| `export bundle` | Everything for hand-off | formats (`ferrum`: JSON, NIfTI; `dicom`: SEG, SR TID 1500) | file paths + hashes |
 | `review open` | Open the workspace in the desktop app | — | — |
 
 ### Points

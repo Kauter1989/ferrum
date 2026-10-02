@@ -288,6 +288,10 @@ pub enum Export {
     Bundle {
         #[command(flatten)]
         ws: Ws,
+        /// Formats besides report.json: `ferrum` (JSON + NIfTI, default),
+        /// `dicom` (SEG + SR); repeat for several.
+        #[arg(long = "format", value_parser = ["ferrum", "dicom"])]
+        formats: Vec<String>,
     },
 }
 
@@ -546,7 +550,9 @@ impl Command {
                     ("samples", some(*samples)),
                 ],
             ),
-            Command::Export(Export::Bundle { ws: w }) => call("export bundle", vec![ws(w)]),
+            Command::Export(Export::Bundle { ws: w, formats }) => {
+                call("export bundle", vec![ws(w), ("formats", (!formats.is_empty()).then(|| json!(formats)))])
+            }
             Command::Engine(EngineCmd::Info { engine }) => call("engine info", vec![("engine", some(engine.clone()))]),
             Command::Probe { ws: w, point } => call("probe", vec![ws(w), ("point", Some(parse_point(point)?))]),
             Command::Stats { ws: w, bx, sphere, radius_mm, segment, annotation } => {

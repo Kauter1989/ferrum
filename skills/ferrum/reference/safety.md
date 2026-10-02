@@ -33,6 +33,9 @@
   consent, and UIDs are pseudonymised (`anon-…`). Do not try to obtain
   identifiers in other ways. Some images contain burned-in text; do not
   transcribe it.
+- **DICOM export:** `segmentation.dcm` and `measurements.dcm` carry the
+  patient only when the operator allows identifiers. Do not read them to
+  learn who the patient is.
 - **Read-only sources:** source data is read-only. All results stay in
   the workspace.
 - **Operator configuration:** the operator configures FERRUM in
