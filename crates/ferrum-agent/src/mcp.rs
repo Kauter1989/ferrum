@@ -145,6 +145,8 @@ pub fn tools() -> Vec<Value> {
                     | "annotate rename"
                     | "annotate delete"
                     | "segment threshold"
+                    | "segment interactive"
+                    | "segment auto"
                     | "segment rename"
                     | "segment delete"
                     | "review confirm"

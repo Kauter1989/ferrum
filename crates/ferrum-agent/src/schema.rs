@@ -63,6 +63,10 @@ fn agent() -> Value {
     text("id of the agent or harness session, recorded in the provenance of what it creates")
 }
 
+fn engine_param() -> Value {
+    text("engine base URL (default: the first one the operator allows)")
+}
+
 fn ws_only() -> Value {
     obj(json!({ "workspace": workspace() }), &["workspace"])
 }
@@ -175,8 +179,55 @@ fn stats() -> (&'static str, Value) {
     )
 }
 
+/// Schemas of the engine commands.
+fn engine_schema(command: &str) -> Option<(&'static str, Value)> {
+    Some(match command {
+        "engine info" => (
+            "Capabilities, labels and licence of a segmentation engine (ferrum-engine/1). Engines marked research_only are for research use only.",
+            obj(json!({ "engine": engine_param() }), &[]),
+        ),
+        "segment interactive" => (
+            "Prompts an interactive engine with points and boxes; the object becomes a new segment proposed by the engine.",
+            obj(
+                json!({
+                    "workspace": workspace(),
+                    "engine": engine_param(),
+                    "prompts": {
+                        "type": "array",
+                        "minItems": 1,
+                        "description": "applied in order",
+                        "items": {
+                            "oneOf": [
+                                obj(json!({ "type": { "type": "string", "enum": ["point"] }, "point": point("a voxel of (positive) or outside (negative) the object"), "positive": { "type": "boolean" } }), &["type", "point"]),
+                                obj(json!({ "type": { "type": "string", "enum": ["box"] }, "min": point("one corner"), "max": point("the opposite corner"), "positive": { "type": "boolean" } }), &["type", "min", "max"]),
+                            ],
+                        },
+                    },
+                    "name": text("segment name"),
+                }),
+                &["workspace", "prompts"],
+            ),
+        ),
+        "segment auto" => (
+            "Runs an automatic engine (e.g. TotalSegmentator) on the study; each structure found becomes a segment proposed by the engine. Existing segments are kept.",
+            obj(
+                json!({
+                    "workspace": workspace(),
+                    "engine": engine_param(),
+                    "labels": { "type": "array", "items": { "type": "string" }, "description": "structures to segment (default: all; see engine info)" },
+                }),
+                &["workspace"],
+            ),
+        ),
+        _ => return None,
+    })
+}
+
 /// Description and parameter schema of `command`, or `None` if unknown.
 pub fn command_schema(command: &str) -> Option<(&'static str, Value)> {
+    if let Some(s) = engine_schema(command) {
+        return Some(s);
+    }
     let measure = |n: usize, what: &'static str| {
         (what, obj(json!({ "workspace": workspace(), "points": points(n, "the points") }), &["workspace", "points"]))
     };

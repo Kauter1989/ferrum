@@ -1462,6 +1462,7 @@ dependencies = [
  "dicom-dictionary-std",
  "dicom-object",
  "ferrum-domain",
+ "ferrum-engines",
  "ferrum-io",
  "ferrum-render",
  "flate2",

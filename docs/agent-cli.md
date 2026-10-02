@@ -76,6 +76,9 @@ workspace paths are placed under the operator's `data.workspace_root`.
 | `segment list -w W` | Segments with voxel count, ml and provenance |
 | `segment threshold -w W --seed POINT --min V --max V [--max-ml ML] [--name N] [--agent ID]` | 6-connected region growing from a seed within a value range, as a proposed segment; existing segments are kept |
 | `segment rename\|delete -w W …` | Only segments the agent created |
+| `engine info [--engine URL]` | Capabilities, labels, `research_only` and licence of a `ferrum-engine/1` engine |
+| `segment interactive -w W [--engine URL] [--name N] PROMPT…` | Prompts an interactive engine: `+POINT` / `-POINT` (include / exclude) or `±box:POINT:POINT`; the object becomes a segment proposed by the engine |
+| `segment auto -w W [--engine URL] [--label NAME]…` | Runs an automatic engine (e.g. TotalSegmentator); every structure found becomes a segment proposed by the engine; existing segments keep their voxels |
 | `review list -w W` | Proposed annotations and segments |
 | `export bundle -w W` | `export/` in the workspace: `report.json`, `annotations.json`, `segments.nii.gz` + `segments.json`, each with SHA-256; unconfirmed items are marked in every file |
 | `review confirm\|reject -w W (--annotation ID \| --segment L) --by NAME` | Only if the operator allows harness review |
@@ -182,9 +185,13 @@ expose_dates = false                  # study date and time
 pseudonymise_uids = true              # UIDs and series ids become salted hashes (anon-…)
 salt = "site-secret"
 
+[network]
+engines = ["http://127.0.0.1:8765"]   # segmentation engines the agent may use
+
 [limits]
 max_render_px = 1024
 max_voxels = 600_000_000
+engine_job_timeout_s = 900
 
 [review]
 allow_harness_confirmation = false
@@ -237,6 +244,31 @@ configuration sets none.
 **Equivalence:** a test runs the same session through the command line
 and through MCP and checks that both give identical JSON.
 
+## Segmentation engines
+
+`engine info`, `segment interactive` and `segment auto` reach engines over
+the [FERRUM Engine Protocol](engine-protocol.md): FERRUM's mock engine, or
+the nnInteractive, TotalSegmentator and MONAI Label bridges.
+
+**Which engines:**
+- The operator lists the allowed URLs in `[network] engines`. The first
+  one is the default.
+- Without a configuration file, only loopback URLs (`127.0.0.1`,
+  `localhost`, `[::1]`) are allowed. Any other URL is `forbidden`.
+- `FERRUM_ENGINE_URL` supplies a default when none is listed.
+
+**Privacy and limits:**
+- The token comes from `FERRUM_ENGINE_TOKEN`, never from a file or a
+  parameter.
+- Engines receive voxels, geometry and the modality, never identifiers.
+- An automatic job may run up to `limits.engine_job_timeout_s` seconds
+  (default 900). After that it is cancelled and reported as `limit`.
+
+**Results:**
+- Results are segments proposed by the engine: author `engine` (name,
+  version, `research_only`), status `proposed`.
+- Envelopes warn when the engine is for research use only.
+
 ## Skill package and evaluations
 
 [`skills/ferrum/`](../skills/ferrum) is the skill an agent loads:
@@ -279,8 +311,6 @@ and accession numbers only with consent.
 ## Limits
 
 These are planned:
-- engine commands: `engine info`, `segment interactive`, `segment auto`
-  (15.7);
 - DICOM SEG and SR export (15.7).
 
 Also note:
