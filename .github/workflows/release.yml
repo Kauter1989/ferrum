@@ -9,6 +9,10 @@
 #   head together with the release.
 # A manual run with an empty `tag` is a dry run: archives are built and kept
 # as workflow artifacts, nothing is published.
+#
+# Before releasing, bump the version in Cargo.toml (workspace),
+# skills/plugin/plugin.json and CITATION.cff, add a CHANGELOG.md entry and
+# update the static release badge in README.md.
 
 name: Release
 

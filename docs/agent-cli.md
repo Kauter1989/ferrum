@@ -24,7 +24,7 @@ Every command prints one JSON envelope on stdout:
 
 ```json
 { "api": "ferrum-agent/1", "ok": true, "data": { … }, "warnings": [ … ],
-  "provenance": { "ferrum": "FERRUM 0.1.0", "command": "probe", "params": { … },
+  "provenance": { "ferrum": "FERRUM 0.2.0", "command": "probe", "params": { … },
                   "source_sha256": "…", "renderer": "cpu", "time": "2026-10-01T12:00:00Z" } }
 ```
 

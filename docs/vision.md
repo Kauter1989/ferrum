@@ -157,6 +157,6 @@ review by qualified people.
 | Agent skill package and evaluations ([`skills/ferrum`](../skills/ferrum)) | ✅ |
 | Review queue in the desktop app (*Open workspace*) | ✅ |
 | Agent skill with segmentation engines | ✅ |
-| DICOM SEG and SR export | 📋 Stage 15 |
+| DICOM SEG and SR export | ✅ v0.2.0 |
 
 The detailed plan with user stories is in [dev_plan.md](../dev_plan.md).
