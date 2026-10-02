@@ -140,7 +140,7 @@ ws/ct1/
   (implemented in Stage 15.2).
 - If a source file changes (its hash differs), commands fail with
   `source_changed`.
-- The desktop app opens a workspace (*File → Open workspace*) and shows
+- The desktop app opens a workspace (*Open workspace* in the toolbar) and shows
   the review queue (§10).
 
 ## 7. Commands (v1)
@@ -273,7 +273,7 @@ Every render writes a PNG and a sidecar JSON:
   - `reviewed_by` and `reviewed` (time), once confirmed or rejected.
 - Everything created through `ferrum-cli` is `proposed`.
 - The desktop app shows proposed items in a **review queue** with their
-  author. The clinician accepts, edits or rejects each item, and the
+  author (*Open workspace*, implemented in Stage 15.6). The clinician accepts, edits or rejects each item, and the
   decision is written back to the workspace and the audit log.
 - A harness may confirm items itself only through
   `review confirm --by <name>` and only if the operator configuration

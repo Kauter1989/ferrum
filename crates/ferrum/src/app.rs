@@ -333,6 +333,9 @@ impl ViewerApp {
             if tool_button(ui, icon::FOLDER_OPEN, "Open folder", false).clicked() {
                 self.pick_folder();
             }
+            if tool_button(ui, icon::CLIPBOARD_TEXT, "Open workspace", false).clicked() {
+                self.pick_workspace();
+            }
         });
     }
 
@@ -700,6 +703,27 @@ impl ViewerApp {
     fn pick_folder(&mut self) {
         if let Some(dir) = rfd::FileDialog::new().pick_folder() {
             self.open(vec![dir]);
+        }
+    }
+
+    fn pick_workspace(&mut self) {
+        if let Some(dir) = rfd::FileDialog::new().set_title("Open workspace").pick_folder() {
+            self.open_workspace(&dir);
+        }
+    }
+
+    /// Opens a workspace written by the agent skill (`ferrum-cli`): its
+    /// series is loaded and its proposals appear in the Review section.
+    pub fn open_workspace(&mut self, dir: &std::path::Path) {
+        let generator = format!("FERRUM {}", env!("CARGO_PKG_VERSION"));
+        let result = ferrum_io::WorkspaceStore::open(dir, &generator).map_err(|e| e.to_string()).and_then(|store| {
+            use ferrum_domain::ResultStore as _;
+            let sources = store.source_paths();
+            self.viewer.open_workspace(std::sync::Arc::new(store)).map(|()| sources)
+        });
+        match result {
+            Ok(sources) => self.current = study_entry(&sources),
+            Err(e) => self.viewer.status.errors.push(format!("Open workspace: {e}")),
         }
     }
 

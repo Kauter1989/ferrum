@@ -256,9 +256,9 @@ fn automatic_segmentation_runs_from_the_panel() {
     assert!(rows[0].voxels > 1000, "{}", rows[0].voxels);
     assert!(rows[0].segment.provenance.is_pending());
 
-    // the segment list shows the proposal; the user confirms it
-    h.get_by_label_contains("Proposed by engine");
-    h.get_by_label("Confirm").click();
+    // the segment list and the review queue show the proposal; the user confirms it
+    assert_eq!(h.get_all_by_label_contains("Proposed by engine").count(), 2);
+    h.get_all_by_label("Confirm").next().unwrap().click();
     h.run();
     let p = &h.state().viewer.segment_summaries()[0].segment.provenance;
     assert_eq!(p.status, ferrum_domain::ReviewStatus::Confirmed);
@@ -411,4 +411,55 @@ fn start_screen_renders_with_recent_files() {
     }
     let whole = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1600.0, 960.0));
     assert!(lit_fraction(&img, whole) > 0.005, "start screen is empty");
+}
+
+#[test]
+fn agent_proposals_are_reviewed_in_the_desktop_app() {
+    use ferrum_domain::{AnnotationReport, AnnotationSet, NoProgress, Provenance, Timestamp, VolumeRepository};
+    let dir = tempfile::tempdir().unwrap();
+    // an agent's workspace: the series, one proposed measurement
+    let src = phantom_file(dir.path());
+    let repo = ferrum_io::CompositeRepository::default();
+    let series = repo.scan(std::slice::from_ref(&src), &NoProgress).unwrap().remove(0);
+    let ws_dir = dir.path().join("ws");
+    let ws = ferrum_io::Workspace::create(&ws_dir, &src, &series, "agent").unwrap();
+    let volume = repo.load(&series, &NoProgress).unwrap().volume;
+    let mut set = AnnotationSet::default();
+    let key = SliceKey::new(SliceAxis::Axial, 2);
+    let id = set.add_with(
+        key,
+        Annotation::Distance { a: glam::Vec2::ZERO, b: glam::Vec2::new(4.0, 0.0) },
+        Provenance::agent(Some("run-7".into()), Timestamp(5)),
+    );
+    set.rename(id, "Agent distance");
+    ws.save_annotations(&AnnotationReport::build(src.clone(), Default::default(), &volume, &set), "agent").unwrap();
+
+    let mut app = ViewerApp::new(None, Arc::new(ferrum_io::CompositeRepository::default()), vec![]);
+    app.open_workspace(&ws_dir);
+    app.viewer.wait_idle();
+    assert_eq!(app.viewer.review_queue().len(), 1, "{:?}", app.viewer.status);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1200.0, 1400.0))
+        .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
+    h.run();
+    h.get_by_label("Open workspace");
+    h.get_by_label_contains("proposal(s) are not findings");
+    h.get_by_label("Reviewer name").click();
+    h.run();
+    h.get_by_label("Reviewer name").type_text("dr.k");
+    h.run();
+    // every Confirm (review queue or annotation list) records the decision in the workspace
+    h.get_all_by_label("Confirm").next().unwrap().click();
+    h.run();
+    assert!(h.state().viewer.review_queue().is_empty());
+    let log = ws.read_audit().unwrap();
+    let last = log.last().unwrap();
+    assert_eq!((last["command"].as_str(), last["params"]["by"].as_str()), (Some("review confirm"), Some("dr.k")));
+    let saved = ferrum_io::read_annotations(&ws_dir.join("annotations.json"), None).unwrap();
+    let p = saved.provenance(id).unwrap();
+    assert_eq!(
+        (p.status, p.reviewed_by.as_deref(), p.author.kind()),
+        (ferrum_domain::ReviewStatus::Confirmed, Some("dr.k"), "agent")
+    );
+    h.get_by_label_contains("Nothing waits for review");
 }

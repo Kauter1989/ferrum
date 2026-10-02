@@ -34,7 +34,9 @@ Parameters are checked against JSON Schemas (`ferrum-cli schema`).
 5. **Record:** name what you create (`annotate add` with `name`,
    `segment threshold` with `name`).
 6. **Hand over:** `export bundle`, then `review list`. End your answer
-   with the items that need a person's review and the workspace path.
+   with the items that need a person's review and the workspace path. A
+   clinician reviews them in the FERRUM desktop app (*Open workspace* →
+   *Review*).
 
 ## Rules
 - FERRUM is not a medical device. Never state a diagnosis or a

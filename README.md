@@ -50,8 +50,8 @@ skipping, isosurface refinement, local ambient occlusion; see
 
 | Metrics | |
 |---|---|
-| Code size | ≈ 22 800 lines of Rust in `src/` (including in-module unit tests), ≈ 4 100 lines of integration tests, benchmarks and examples, ≈ 600 lines of WGSL; engine bridges: ≈ 1 400 lines of Python plus ≈ 600 lines of tests |
-| Tests | 313 Rust tests: unit, property-based, data layer, shader validation, GPU-vs-CPU parity, engine-protocol conformance, agent commands on phantoms, CLI ↔ MCP equivalence, skill evaluations, identifier scan, application (incl. AI with a mock engine) and UI; 17 bridge tests (pytest), and the conformance suite against the running bridge in CI |
+| Code size | ≈ 23 300 lines of Rust in `src/` (including in-module unit tests), ≈ 4 300 lines of integration tests, benchmarks and examples, ≈ 600 lines of WGSL; engine bridges: ≈ 1 400 lines of Python plus ≈ 600 lines of tests |
+| Tests | 317 Rust tests: unit, property-based, data layer, shader validation, GPU-vs-CPU parity, engine-protocol conformance, agent commands on phantoms, CLI ↔ MCP equivalence, skill evaluations, identifier scan, application (incl. AI with a mock engine) and UI; 17 bridge tests (pytest), and the conformance suite against the running bridge in CI |
 | Test coverage | 92.1 % of lines, 89.9 % of functions (`cargo-llvm-cov`); CI fails below 87 % |
 | Complexity budget | per function: cognitive complexity ≤ 25, ≤ 120 lines, nesting ≤ 6 (enforced by clippy) |
 | Lints | rustfmt and clippy with warnings as errors; no `unsafe`, no `unwrap` outside tests |
@@ -121,7 +121,8 @@ FERRUM is a core, not a monolith. The principles, in short (full text:
 | Agent skill, command line: `ferrum-cli` with study, slice/montage/MPR renders with pixel mapping, 3D renders, probe, stats, profile, measure, annotate, threshold segments, review, export bundle; operator configuration, audit log ([reference](docs/agent-cli.md)) | ✅ |
 | Agent skill over MCP (`ferrum-cli mcp`): every command as a tool with a JSON Schema, renders as images, series kept in memory | ✅ |
 | Agent skill package ([`skills/ferrum`](skills/ferrum)): `SKILL.md`, references, schemas, plugin folder in the releases; evaluations with known answers (`ferrum-cli eval`); identifier scan | ✅ |
-| Agent skill: review queue in the desktop app, engine commands, DICOM SEG/SR | 📋 [Stage 15](dev_plan.md) |
+| Review in the desktop app: *Open workspace*, review queue with author and status, decisions saved to the workspace and its audit log | ✅ |
+| Agent skill: engine commands, DICOM SEG/SR | 📋 [Stage 15](dev_plan.md) |
 
 > FERRUM is research and engineering software, not a certified medical
 > device. Measurements, segmentations and AI results are proposals for
@@ -342,6 +343,18 @@ hides the settings panel.
 **↑ ↓ / PgUp PgDn** change the slice. **Ctrl+O** opens a folder.
 **Ctrl+Z** undoes the last erase.
 
+**Reviewing an agent's work:**
+- **Open workspace** (toolbar) opens a workspace written by `ferrum-cli`:
+  - FERRUM checks the source hashes;
+  - loads the series;
+  - shows the workspace's annotations and segments.
+- The **Review** section lists every proposal of an agent or engine with
+  its author.
+- Enter your name and press **Confirm** or **Reject**, in the Review
+  section or in the Annotations and Segments lists. Each decision is
+  saved to the workspace at once and written to its audit log.
+- Other edits are saved with **Save to workspace**.
+
 ## Rendering
 
 All rendering runs on the GPU through [wgpu](https://wgpu.rs), which means
@@ -552,7 +565,7 @@ driver (`mesa-vulkan-drivers` on Debian/Ubuntu).
 
 ## Testing
 
-About 310 tests run headlessly with `cargo test --workspace`:
+About 320 tests run headlessly with `cargo test --workspace`:
 
 | Level | What is checked |
 |---|---|
@@ -564,7 +577,7 @@ About 310 tests run headlessly with `cargo test --workspace`:
 | Engine protocol | conformance suite against the reference server, or any engine with `FERRUM_ENGINE_URL` |
 | Bridges | pytest for the Python bridges (protocol, jobs, nnInteractive, TotalSegmentator and MONAI Label adapters with stubbed models), then the conformance suite against a running bridge |
 | Agent commands | every command on synthetic phantoms with known answers (sphere and cube volumes, distances, render pixel ↔ voxel round trips), operator rules, provenance protection, schema checks, a scripted `ferrum-cli` session with exit codes, the same session over MCP giving identical JSON, reference solutions of the skill evaluations, and an identifier scan over every output of a CT with patient data |
-| Application | use cases with an in-memory repository and a recording GPU sink |
+| Application | use cases with an in-memory repository and a recording GPU sink; workspace review through an in-memory result store |
 | UI | the real app driven with egui_kittest, plus full-window renders of 2D, 3D and MPR |
 
 To also test on a real DICOM series:

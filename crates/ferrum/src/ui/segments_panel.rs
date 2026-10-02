@@ -35,7 +35,9 @@ enum RowAction {
 }
 
 /// Draws the section body.
-pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut SegmentsPanelState) {
+/// Review decisions are recorded in the name of `reviewer` (and, with a
+/// workspace open, saved and logged there).
+pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut SegmentsPanelState, reviewer: Option<&str>) {
     let rows = viewer.segment_summaries();
     ui.horizontal_wrapped(|ui| {
         if ui.button(format!("{} Add", icon::PLUS)).clicked() {
@@ -82,7 +84,12 @@ pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut SegmentsPanelSta
             RowAction::Color(c) => viewer.set_segment_color(label, c),
             RowAction::Visible(v) => viewer.set_segment_visible(label, v),
             RowAction::Opacity(o) => viewer.set_segment_opacity(label, o),
-            RowAction::Review(status) => viewer.review_segment(label, status, None),
+            RowAction::Review(status) => {
+                if let Err(e) = viewer.decide(ferrum_domain::ReviewItem::Segment(label), status, reviewer) {
+                    viewer.status.errors.push(e);
+                }
+                Ok(())
+            }
             RowAction::Delete => {
                 state.name_edits.remove(&label);
                 viewer.remove_segment(label)

@@ -16,6 +16,9 @@
 - **Proposals:** everything you create is a *proposal* (`author: agent`,
   `status: proposed`) until a clinician confirms it. Say so in your
   answer and list the items (`review list`).
+- **Clinician review:** clinicians review in the FERRUM desktop app:
+  *Open workspace* shows a review queue with the author of each item.
+  Their decisions go to the workspace and its audit log.
 - **Protected items:** you may change or delete only items created by
   agents. Items drawn by people or proposed by engines are protected.
 - **Harness review:** `review confirm` and `review reject` work only if

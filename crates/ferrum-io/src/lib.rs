@@ -27,7 +27,7 @@ pub use dicom::DicomRepository;
 pub use error::IoError;
 pub use nifti::{read_label_nifti, read_nifti, write_label_nifti, write_nifti, NiftiRepository};
 pub use segments::{read_segments, segments_from_json, segments_json, write_segments};
-pub use workspace::{sha256_file, SourceFile, Workspace, WorkspaceManifest, WorkspaceSource};
+pub use workspace::{sha256_file, SourceFile, Workspace, WorkspaceManifest, WorkspaceSource, WorkspaceStore};
 
 /// Repository that dispatches to every supported format.
 pub struct CompositeRepository {

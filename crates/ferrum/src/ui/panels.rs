@@ -62,6 +62,8 @@ pub struct PanelState {
     pub segments: SegmentsPanelState,
     /// State of the "AI segmentation" section.
     pub ai: AiPanelState,
+    /// State of the "Review" section.
+    pub review: super::review_panel::ReviewPanelState,
 }
 
 fn collapsible(ui: &mut egui::Ui, id: &str, icon_str: &str, title: &str, open: bool, body: impl FnOnce(&mut egui::Ui)) {
@@ -165,8 +167,14 @@ fn segments_section(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelSta
         ai_panel::show(ui, viewer, &mut state.ai);
     });
     collapsible(ui, "segments", icon::POLYGON, "Segments", true, |ui| {
-        segments_panel::show(ui, viewer, &mut state.segments);
+        let by = super::review_panel::reviewer(&state.review).map(str::to_owned);
+        segments_panel::show(ui, viewer, &mut state.segments, by.as_deref());
     });
+    if super::review_panel::relevant(viewer) {
+        collapsible(ui, "review", icon::CLIPBOARD_TEXT, "Review", true, |ui| {
+            super::review_panel::show(ui, viewer, &mut state.review);
+        });
+    }
 }
 
 /// Annotations of all slices: editable names, value, plane and slice.
@@ -213,7 +221,10 @@ fn annotation_list(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelStat
                 state.name_edits.remove(&row.id);
             }
             RowAction::Review(status) => {
-                viewer.review_annotation(row.id, status, None);
+                let by = super::review_panel::reviewer(&state.review);
+                if let Err(e) = viewer.decide(ferrum_domain::ReviewItem::Annotation(row.id), status, by) {
+                    viewer.status.errors.push(e);
+                }
             }
         }
     }
