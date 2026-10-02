@@ -17,16 +17,19 @@
 //!   numbers come from `probe`, `stats` and `measure`, not from images.
 //!
 //! The `ferrum-cli` binary exposes the same commands on the command line
-//! (and, later, over MCP).
+//! and as an MCP server over stdio ([`mcp`]).
 
 pub mod agent;
 pub mod commands;
 pub mod config;
 pub mod envelope;
+pub mod mcp;
 pub mod params;
 pub mod points;
+pub mod schema;
 pub mod study;
 
 pub use agent::Agent;
 pub use config::AgentConfig;
 pub use envelope::{AgentError, ErrorCode, Output, API};
+pub use study::VolumeCache;

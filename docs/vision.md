@@ -153,7 +153,8 @@ review by qualified people.
 | MONAI Label bridge | ✅ |
 | Provenance on annotations and segments; workspace and result formats ([spec](workspace-format.md)) | ✅ |
 | Agent skill command line (`ferrum-cli`, [reference](agent-cli.md)) | ✅ first part |
-| Agent skill: MPR/3D renders, export bundle, MCP server, skill package, review queue | 📋 Stage 15 |
+| Agent skill over MCP (`ferrum-cli mcp`) | ✅ |
+| Agent skill: MPR/3D renders, export bundle, skill package, review queue | 📋 Stage 15 |
 | DICOM SEG and SR export | 📋 Stage 15 |
 
 The detailed plan with user stories is in [dev_plan.md](../dev_plan.md).

@@ -7,7 +7,7 @@ use crate::commands::{Ctx, COMMANDS};
 use crate::config::AgentConfig;
 use crate::envelope::{error_envelope, ok_envelope, AgentError, Output};
 use crate::params::Params;
-use crate::study::generator;
+use crate::study::{generator, VolumeCache};
 
 /// Runs commands under one operator configuration.
 #[derive(Debug, Clone, Default)]
@@ -32,9 +32,20 @@ impl Agent {
     }
 
     /// Runs `command` with `params` (a JSON object) and returns the
-    /// `ferrum-agent/1` envelope. Never panics on bad input.
+    /// `ferrum-agent/1` envelope. Never panics on bad input. Every call
+    /// loads the series from its source (command line).
     pub fn run(&self, command: &str, params: &Value) -> Value {
-        let mut ctx = Ctx { config: &self.config, study: None };
+        self.execute(None, command, params)
+    }
+
+    /// Like [`Agent::run`], but keeps loaded series in `cache` between
+    /// calls (long-running servers such as MCP).
+    pub fn run_cached(&self, cache: &mut VolumeCache, command: &str, params: &Value) -> Value {
+        self.execute(Some(cache), command, params)
+    }
+
+    fn execute(&self, cache: Option<&mut VolumeCache>, command: &str, params: &Value) -> Value {
+        let mut ctx = Ctx { config: &self.config, study: None, cache };
         let result = self.dispatch(&mut ctx, command, params);
         let envelope = match &result {
             Ok(out) => {
@@ -67,6 +78,11 @@ impl Agent {
                 .hint(format!("commands: {}", Self::commands().collect::<Vec<_>>().join(", ")))
         })?;
         let p = Params::new(params)?;
+        if let Some((_, schema)) = crate::schema::command_schema(command) {
+            crate::schema::validate(&schema, params, "params").map_err(|e| {
+                AgentError::bad_request(e).hint(format!("see the parameters with: ferrum-cli schema \"{command}\""))
+            })?;
+        }
         f(ctx, &p)
     }
 
