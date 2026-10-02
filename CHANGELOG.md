@@ -4,6 +4,15 @@ All notable changes to FERRUM. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions
 follow [Semantic Versioning](https://semver.org/).
 
+## [0.2.3] — 2026-10-02
+
+### Fixed
+
+- Zenodo archiving: Zenodo could not read the citation metadata of
+  v0.2.2 ("Citation metadata load failed"). `.zenodo.json` now gives it
+  the metadata explicitly; `CITATION.cff` stays for GitHub's *Cite this
+  repository*.
+
 ## [0.2.2] — 2026-10-02
 
 First release archived on Zenodo, which gives FERRUM a citable DOI.
@@ -98,6 +107,7 @@ frame, 2D slices and MPR, GPU volume rendering (tissue, isosurface, MIP,
 transfer functions) with a CPU reference renderer and parity tests,
 measurements, clipping, eraser and headless snapshots.
 
+[0.2.3]: https://github.com/Kauter1989/ferrum/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/Kauter1989/ferrum/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/Kauter1989/ferrum/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Kauter1989/ferrum/compare/v0.1.0...v0.2.0
