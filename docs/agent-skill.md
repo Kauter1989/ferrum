@@ -84,7 +84,8 @@ skills/ferrum/
 │   ├── coordinates.md        # voxel, slice number, patient mm, pixel mapping
 │   ├── outputs.md            # JSON formats and links to the schemas
 │   └── safety.md             # PHI, clinical safety, provenance
-└── schemas/                  # JSON Schemas generated from ferrum-agent types
+├── schemas/commands.json     # JSON Schemas (ferrum-cli schema; a test keeps them in sync)
+└── evals/                    # tasks with known answers; ferrum-cli eval grades transcripts
 ```
 
 - `SKILL.md` is short. The reference pages are loaded only when the agent
@@ -372,8 +373,8 @@ commands are listed in [agent-cli.md](agent-cli.md).
 
 ## Appendix A — draft `SKILL.md`
 
-This draft becomes `skills/ferrum/SKILL.md` when `ferrum-cli` ships. Its
-commands are not implemented yet.
+The shipped skill is [`skills/ferrum/SKILL.md`](../skills/ferrum/SKILL.md)
+(Stage 15.5); this draft is kept as the design record.
 
 ````markdown
 ---

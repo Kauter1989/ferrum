@@ -21,6 +21,10 @@ log.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+dicom-object.workspace = true
+dicom-core.workspace = true
+dicom-dictionary-std.workspace = true
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 
 [lints]
 workspace = true

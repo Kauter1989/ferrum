@@ -42,6 +42,9 @@ ferrum (presentation) → ferrum-app (application) → ferrum-domain ← ferrum-
   `ferrum-cli` only parses arguments. New commands get a JSON Schema in
   `schema.rs` and update `docs/agent-cli.md` and the contract tests in
   `crates/ferrum-agent/tests`; the CLI and MCP must give identical JSON.
+  Regenerate `skills/ferrum/schemas/commands.json` with `ferrum-cli schema`
+  and keep `skills/ferrum/reference/commands.md` complete (tests check
+  both); outputs must pass the identifier scan (`tests/privacy.rs`).
 - No business logic in `ferrum` widgets — add a use case to `Viewer`.
 - DICOM tags only through `dicom_dictionary_std::tags` constants — never raw
   tag literals.

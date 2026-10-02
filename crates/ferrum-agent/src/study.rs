@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use ferrum_domain::{
-    AnnotationReport, AnnotationSet, NoProgress, SegmentationSet, SeriesDescriptor, SeriesMetadata, Volume,
+    AnnotationReport, AnnotationSet, NoProgress, SegmentationSet, SeriesDescriptor, SeriesMetadata, StudyInfo, Volume,
     VolumeRepository,
 };
 use ferrum_io::{CompositeRepository, Workspace};
@@ -190,15 +190,21 @@ impl Study {
         Ok(Self { workspace, volume, metadata, annotations, segments, source_sha256 })
     }
 
-    /// Saves the annotations into the workspace.
-    pub fn save_annotations(&self) -> Result<(), AgentError> {
-        let report = AnnotationReport::build(
+    /// Saves the annotations into the workspace (study identification
+    /// filtered by the operator's privacy settings).
+    pub fn save_annotations(&self, config: &AgentConfig) -> Result<(), AgentError> {
+        Ok(self.workspace.save_annotations(&self.annotation_report(config), &generator())?)
+    }
+
+    /// The annotation report as the agent may write it: study identifiers
+    /// pass [`shared_study`].
+    pub fn annotation_report(&self, config: &AgentConfig) -> AnnotationReport {
+        AnnotationReport::build(
             self.workspace.manifest().source.path.clone(),
-            self.metadata.study.clone(),
+            shared_study(config, &self.metadata.study),
             &self.volume,
             &self.annotations,
-        );
-        Ok(self.workspace.save_annotations(&report, &generator())?)
+        )
     }
 
     /// Saves the segments into the workspace.
@@ -218,6 +224,22 @@ impl Study {
         } else {
             ""
         }
+    }
+}
+
+/// Study identification as the operator allows it to leave FERRUM: UIDs
+/// pseudonymised (unless `pseudonymise_uids` is off), dates only with
+/// `expose_dates`, the accession number only with `expose_identifiers`.
+pub fn shared_study(config: &AgentConfig, s: &StudyInfo) -> StudyInfo {
+    let uid = |id: &str| if id.is_empty() { String::new() } else { series_key(config, id) };
+    let keep = |allowed: bool, v: &str| if allowed { v.to_owned() } else { String::new() };
+    StudyInfo {
+        study_instance_uid: uid(&s.study_instance_uid),
+        series_instance_uid: uid(&s.series_instance_uid),
+        study_date: keep(config.expose_dates, &s.study_date),
+        study_time: keep(config.expose_dates, &s.study_time),
+        accession_number: keep(config.expose_identifiers, &s.accession_number),
+        ..s.clone()
     }
 }
 

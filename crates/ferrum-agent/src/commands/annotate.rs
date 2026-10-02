@@ -21,6 +21,7 @@ pub fn agent_provenance(p: &Params) -> Result<Provenance, AgentError> {
 
 /// `annotate add`: kind, plane, points (one slice), optional name and text.
 pub fn add(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
+    let config = ctx.config;
     let provenance = agent_provenance(p)?;
     let study = ctx.study(p)?;
     let plane = parse_plane(p.req_str("plane")?)?;
@@ -63,7 +64,7 @@ pub fn add(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     if let Some(name) = p.str("name")? {
         study.annotations.rename(id, name);
     }
-    study.save_annotations()?;
+    study.save_annotations(config)?;
     Ok(Output::new(json!({ "annotation": entry(study, id) })))
 }
 
@@ -122,22 +123,24 @@ fn id_param(p: &Params) -> Result<u64, AgentError> {
 
 /// `annotate rename`: renames an annotation the agent created.
 pub fn rename(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
+    let config = ctx.config;
     let study = ctx.study(p)?;
     let id = id_param(p)?;
     own_annotation(study, id)?;
     if !study.annotations.rename(id, p.req_str("name")?) {
         return Err(AgentError::bad_request("the name must not be empty"));
     }
-    study.save_annotations()?;
+    study.save_annotations(config)?;
     Ok(Output::new(json!({ "annotation": entry(study, id) })))
 }
 
 /// `annotate delete`: deletes an annotation the agent created.
 pub fn delete(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
+    let config = ctx.config;
     let study = ctx.study(p)?;
     let id = id_param(p)?;
     own_annotation(study, id)?;
     study.annotations.remove(id);
-    study.save_annotations()?;
+    study.save_annotations(config)?;
     Ok(Output::new(json!({ "deleted": id })))
 }

@@ -90,12 +90,7 @@ pub fn bundle(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     files.push(file_entry(&report_path)?);
     if !study.annotations.is_empty() {
         let path = dir.join("annotations.json");
-        let records = AnnotationReport::build(
-            study.workspace.manifest().source.path.clone(),
-            study.metadata.study.clone(),
-            &study.volume,
-            &study.annotations,
-        );
+        let records = study.annotation_report(config);
         ferrum_io::write_annotation_report(&records, &generator(), &path)?;
         files.push(file_entry(&path)?);
     }
