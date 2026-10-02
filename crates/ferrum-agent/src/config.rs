@@ -15,6 +15,9 @@
 //! pseudonymise_uids = true
 //! salt = "site-secret"                  # keys the UID pseudonyms
 //!
+//! [network]
+//! engines = ["http://127.0.0.1:8765"]   # segmentation engines the agent may use
+//!
 //! [limits]
 //! max_render_px = 1024
 //! max_voxels = 600_000_000
@@ -53,6 +56,12 @@ pub struct AgentConfig {
     pub max_voxels: u64,
     /// `review confirm` / `review reject` are allowed for the harness.
     pub allow_harness_confirmation: bool,
+    /// Segmentation engines (`ferrum-engine/1` base URLs) the agent may
+    /// contact. Without a configuration file only loopback URLs are
+    /// allowed.
+    pub engines: Vec<String>,
+    /// Longest wait for an automatic segmentation job, in seconds.
+    pub engine_job_timeout_s: u64,
     /// `true` when no configuration file was given.
     pub is_default: bool,
 }
@@ -69,6 +78,8 @@ impl Default for AgentConfig {
             max_render_px: 1024,
             max_voxels: 600_000_000,
             allow_harness_confirmation: false,
+            engines: Vec::new(),
+            engine_job_timeout_s: 900,
             is_default: true,
         }
     }
@@ -122,8 +133,19 @@ impl AgentConfig {
             }
             ("limits", "max_voxels") => self.max_voxels = positive()?.unsigned_abs(),
             ("review", "allow_harness_confirmation") => self.allow_harness_confirmation = boolean()?,
-            // engines are configured with Stage 15.7; accepted so one file serves both
-            ("network", "engines") | ("limits", "command_timeout_s") => {}
+            ("network", "engines") => {
+                let list = v.as_array().ok_or_else(|| invalid(format!("{what} must be a list of URLs")))?;
+                self.engines = list
+                    .iter()
+                    .map(|u| {
+                        u.as_str()
+                            .map(|s| s.trim_end_matches('/').to_owned())
+                            .ok_or_else(|| invalid(format!("{what} must be a list of URLs")))
+                    })
+                    .collect::<Result<_, _>>()?;
+            }
+            ("limits", "engine_job_timeout_s") => self.engine_job_timeout_s = positive()?.unsigned_abs(),
+            ("limits", "command_timeout_s") => {}
             _ => return Err(invalid(format!("unknown setting {what}"))),
         }
         Ok(())
@@ -217,6 +239,7 @@ mod tests {
         assert_eq!(c.workspace_root, Some(PathBuf::from("/data/workspaces")));
         assert!(c.expose_identifiers && c.expose_dates && !c.pseudonymise_uids && c.allow_harness_confirmation);
         assert_eq!((c.salt.as_str(), c.max_render_px, c.max_voxels, c.is_default), ("s", 512, 1000, false));
+        assert_eq!(c.engines, vec!["http://127.0.0.1:8765".to_owned()]);
         assert!(AgentConfig::default().is_default);
     }
 

@@ -1540,6 +1540,315 @@
       "additionalProperties": false
     }
   },
+  "engine info": {
+    "description": "Capabilities, labels and licence of a segmentation engine (ferrum-engine/1). Engines marked research_only are for research use only.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "engine": {
+          "type": "string",
+          "description": "engine base URL (default: the first one the operator allows)"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  "segment interactive": {
+    "description": "Prompts an interactive engine with points and boxes; the object becomes a new segment proposed by the engine.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "engine": {
+          "type": "string",
+          "description": "engine base URL (default: the first one the operator allows)"
+        },
+        "prompts": {
+          "type": "array",
+          "minItems": 1,
+          "description": "applied in order",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "point"
+                    ]
+                  },
+                  "point": {
+                    "description": "a voxel of (positive) or outside (negative) the object",
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "voxel": {
+                            "type": "array",
+                            "items": {
+                              "type": "number"
+                            },
+                            "minItems": 3,
+                            "maxItems": 3,
+                            "description": "0-based voxel (i, j, k) of the canonical LPS grid; integers are voxel centres"
+                          }
+                        },
+                        "required": [
+                          "voxel"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "patient_mm": {
+                            "type": "array",
+                            "items": {
+                              "type": "number"
+                            },
+                            "minItems": 3,
+                            "maxItems": 3,
+                            "description": "LPS patient millimetres"
+                          }
+                        },
+                        "required": [
+                          "patient_mm"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "render": {
+                            "type": "string",
+                            "pattern": "^r-[0-9]+$",
+                            "description": "id of an earlier render"
+                          },
+                          "pixel": {
+                            "type": "array",
+                            "items": {
+                              "type": "number"
+                            },
+                            "minItems": 2,
+                            "maxItems": 2,
+                            "description": "pixel (x, y) of that render; pixel centres lie at +0.5"
+                          }
+                        },
+                        "required": [
+                          "render",
+                          "pixel"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "positive": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "type",
+                  "point"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "box"
+                    ]
+                  },
+                  "min": {
+                    "description": "one corner",
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "voxel": {
+                            "type": "array",
+                            "items": {
+                              "type": "number"
+                            },
+                            "minItems": 3,
+                            "maxItems": 3,
+                            "description": "0-based voxel (i, j, k) of the canonical LPS grid; integers are voxel centres"
+                          }
+                        },
+                        "required": [
+                          "voxel"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "patient_mm": {
+                            "type": "array",
+                            "items": {
+                              "type": "number"
+                            },
+                            "minItems": 3,
+                            "maxItems": 3,
+                            "description": "LPS patient millimetres"
+                          }
+                        },
+                        "required": [
+                          "patient_mm"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "render": {
+                            "type": "string",
+                            "pattern": "^r-[0-9]+$",
+                            "description": "id of an earlier render"
+                          },
+                          "pixel": {
+                            "type": "array",
+                            "items": {
+                              "type": "number"
+                            },
+                            "minItems": 2,
+                            "maxItems": 2,
+                            "description": "pixel (x, y) of that render; pixel centres lie at +0.5"
+                          }
+                        },
+                        "required": [
+                          "render",
+                          "pixel"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "max": {
+                    "description": "the opposite corner",
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "voxel": {
+                            "type": "array",
+                            "items": {
+                              "type": "number"
+                            },
+                            "minItems": 3,
+                            "maxItems": 3,
+                            "description": "0-based voxel (i, j, k) of the canonical LPS grid; integers are voxel centres"
+                          }
+                        },
+                        "required": [
+                          "voxel"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "patient_mm": {
+                            "type": "array",
+                            "items": {
+                              "type": "number"
+                            },
+                            "minItems": 3,
+                            "maxItems": 3,
+                            "description": "LPS patient millimetres"
+                          }
+                        },
+                        "required": [
+                          "patient_mm"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "render": {
+                            "type": "string",
+                            "pattern": "^r-[0-9]+$",
+                            "description": "id of an earlier render"
+                          },
+                          "pixel": {
+                            "type": "array",
+                            "items": {
+                              "type": "number"
+                            },
+                            "minItems": 2,
+                            "maxItems": 2,
+                            "description": "pixel (x, y) of that render; pixel centres lie at +0.5"
+                          }
+                        },
+                        "required": [
+                          "render",
+                          "pixel"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "positive": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "type",
+                  "min",
+                  "max"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "name": {
+          "type": "string",
+          "description": "segment name"
+        }
+      },
+      "required": [
+        "workspace",
+        "prompts"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "segment auto": {
+    "description": "Runs an automatic engine (e.g. TotalSegmentator) on the study; each structure found becomes a segment proposed by the engine. Existing segments are kept.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "engine": {
+          "type": "string",
+          "description": "engine base URL (default: the first one the operator allows)"
+        },
+        "labels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "structures to segment (default: all; see engine info)"
+        }
+      },
+      "required": [
+        "workspace"
+      ],
+      "additionalProperties": false
+    }
+  },
   "segment rename": {
     "description": "Renames a segment the agent created.",
     "parameters": {

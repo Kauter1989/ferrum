@@ -40,6 +40,17 @@ underscores) and a `ferrum-cli` sub-command. The parameters are listed in
 | `segment threshold` | `seed`, `min`, `max`, `max_ml?`, `name?`, `agent?` | a proposed segment with voxels and ml |
 | `segment list`, `segment rename`, `segment delete` | `label`, `name` | segments with ml and provenance; only your own can change |
 
+## Segmentation engines
+| Command | Key parameters | Returns |
+|---|---|---|
+| `engine info` | `engine?` | capabilities (interactive prompts, automatic labels), `research_only`, licence |
+| `segment interactive` | `prompts` (`{type: point, point, positive?}`, `{type: box, min, max, positive?}`), `name?`, `engine?` | one segment proposed by the engine |
+| `segment auto` | `labels?`, `engine?` | one segment per structure found, proposed by the engine |
+
+Engines are separate programs (e.g. nnInteractive, TotalSegmentator, MONAI
+Label bridges). The operator decides which ones you may use. Say "research
+use only" when the engine is marked so.
+
 ## Review and hand-off
 | Command | Key parameters | Returns |
 |---|---|---|
@@ -55,5 +66,8 @@ ferrum-cli view slice -w ct1 --plane axial --slice-number 120 --window lung
 ferrum-cli probe -w ct1 r-0002:412,318
 ferrum-cli measure distance -w ct1 r-0002:400,310 r-0002:431,322
 ferrum-cli segment threshold -w ct1 --seed r-0002:412,318 --min -100 --max 200 --max-ml 50 --name "Nodule"
+ferrum-cli engine info
+ferrum-cli segment interactive -w ct1 --name "Nodule" +r-0002:412,318
+ferrum-cli segment auto -w ct1 --label liver --label spleen
 ferrum-cli export bundle -w ct1
 ```

@@ -376,7 +376,7 @@ fn changed_sources_and_bad_calls_are_reported() {
     let env = f.run("study info", json!({}));
     assert_eq!(env["error"]["code"], "source_changed");
     assert!(env["error"]["hint"].as_str().is_some());
-    assert_eq!(Agent::commands().count(), 25);
+    assert_eq!(Agent::commands().count(), 28);
 }
 
 #[test]

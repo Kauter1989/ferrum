@@ -72,6 +72,9 @@ pub enum Command {
         #[arg(long)]
         annotation: Option<u64>,
     },
+    /// Segmentation engines.
+    #[command(subcommand)]
+    Engine(EngineCmd),
     /// Values along a line.
     Profile {
         #[command(flatten)]
@@ -247,6 +250,17 @@ pub enum View {
     },
 }
 
+/// `engine …`.
+#[derive(Debug, Subcommand)]
+pub enum EngineCmd {
+    /// Capabilities, labels and licence of an engine.
+    Info {
+        /// Engine URL (default: the first allowed one).
+        #[arg(long)]
+        engine: Option<String>,
+    },
+}
+
 /// `eval …`.
 #[derive(Debug, Subcommand)]
 pub enum Eval {
@@ -376,6 +390,31 @@ pub enum Segment {
         #[arg(long)]
         name: Option<String>,
     },
+    /// Prompts an interactive engine (points: `+v:i,j,k` or `-v:i,j,k`; boxes: `box:A:B`).
+    Interactive {
+        #[command(flatten)]
+        ws: Ws,
+        /// Engine URL (default: the first allowed one).
+        #[arg(long)]
+        engine: Option<String>,
+        /// Segment name.
+        #[arg(long)]
+        name: Option<String>,
+        /// Prompts in order: +POINT, -POINT, +box:POINT:POINT, -box:POINT:POINT.
+        #[arg(required = true, allow_hyphen_values = true)]
+        prompts: Vec<String>,
+    },
+    /// Runs an automatic engine.
+    Auto {
+        #[command(flatten)]
+        ws: Ws,
+        /// Engine URL (default: the first allowed one).
+        #[arg(long)]
+        engine: Option<String>,
+        /// Structures (default: all).
+        #[arg(long = "label")]
+        labels: Vec<String>,
+    },
     /// Renames a segment the agent created.
     Rename {
         #[command(flatten)]
@@ -440,6 +479,28 @@ pub fn parse_point(s: &str) -> Result<Value, String> {
     }
 }
 
+/// `+POINT` / `-POINT` (include / exclude) or `±box:POINT:POINT`.
+pub fn parse_prompt(s: &str) -> Result<Value, String> {
+    let (positive, rest) = match s.split_at_checked(1) {
+        Some(("+", r)) => (true, r),
+        Some(("-", r)) => (false, r),
+        _ => (true, s),
+    };
+    if let Some(b) = rest.strip_prefix("box:") {
+        let (a, z) = split_box(b).ok_or_else(|| format!("prompt {s:?}: expected box:POINT:POINT"))?;
+        return Ok(json!({ "type": "box", "positive": positive, "min": parse_point(a)?, "max": parse_point(z)? }));
+    }
+    Ok(json!({ "type": "point", "positive": positive, "point": parse_point(rest)? }))
+}
+
+/// Splits `v:1,2,3:v:4,5,6` into its two points.
+fn split_box(b: &str) -> Option<(&str, &str)> {
+    let rest = b.get(1..)?;
+    let second =
+        [":v:", ":mm:", ":voxel:", ":patient_mm:", ":r-"].iter().filter_map(|k| rest.find(k).map(|i| i + 2)).min()?;
+    Some((b[..second].trim_end_matches(':'), &b[second..]))
+}
+
 /// Preset name or `CENTER,WIDTH`.
 pub fn parse_window(s: &str) -> Result<Value, String> {
     match s.split_once(',') {
@@ -486,6 +547,7 @@ impl Command {
                 ],
             ),
             Command::Export(Export::Bundle { ws: w }) => call("export bundle", vec![ws(w)]),
+            Command::Engine(EngineCmd::Info { engine }) => call("engine info", vec![("engine", some(engine.clone()))]),
             Command::Probe { ws: w, point } => call("probe", vec![ws(w), ("point", Some(parse_point(point)?))]),
             Command::Stats { ws: w, bx, sphere, radius_mm, segment, annotation } => {
                 let bx = bx.as_ref().map(|b| -> Result<Value, String> {
@@ -639,6 +701,26 @@ fn segment_call(s: &Segment) -> Result<(String, Value), String> {
                 ("name", some(name.clone())),
             ]),
         ),
+        Segment::Interactive { ws: w, engine, name, prompts } => (
+            "segment interactive".into(),
+            object(vec![
+                ws(w),
+                ("engine", some(engine.clone())),
+                ("name", some(name.clone())),
+                (
+                    "prompts",
+                    Some(Value::Array(prompts.iter().map(String::as_str).map(parse_prompt).collect::<Result<_, _>>()?)),
+                ),
+            ]),
+        ),
+        Segment::Auto { ws: w, engine, labels } => (
+            "segment auto".into(),
+            object(vec![
+                ws(w),
+                ("engine", some(engine.clone())),
+                ("labels", (!labels.is_empty()).then(|| json!(labels))),
+            ]),
+        ),
         Segment::Rename { ws: w, label, name } => {
             ("segment rename".into(), object(vec![ws(w), ("label", Some(json!(label))), ("name", Some(json!(name)))]))
         }
@@ -660,6 +742,15 @@ mod tests {
         for bad in ["1,2,3", "v:1,2", "mm:a,b,c", "x:1,2,3"] {
             assert!(parse_point(bad).is_err(), "{bad}");
         }
+        assert_eq!(
+            parse_prompt("+v:1,2,3").unwrap(),
+            json!({ "type": "point", "positive": true, "point": { "voxel": [1.0, 2.0, 3.0] } })
+        );
+        assert_eq!(parse_prompt("-mm:1,2,3").unwrap()["positive"], false);
+        let b = parse_prompt("box:v:1,2,3:mm:-4,5,6").unwrap();
+        assert_eq!((b["min"]["voxel"][2].as_f64(), b["max"]["patient_mm"][0].as_f64()), (Some(3.0), Some(-4.0)));
+        assert_eq!(parse_prompt("-box:r-0001:1,2:r-0001:5,6").unwrap()["max"]["render"], "r-0001");
+        assert!(parse_prompt("box:v:1,2,3").is_err() && parse_prompt("+x").is_err());
         assert_eq!(parse_window("lung").unwrap(), json!("lung"));
         assert_eq!(parse_window("-600,1500").unwrap(), json!({ "center": -600.0, "width": 1500.0 }));
         assert!(parse_window("a,b").is_err());

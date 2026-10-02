@@ -16,7 +16,8 @@ use crate::params::Params;
 use crate::points::{describe, nearest_voxel};
 use crate::study::Study;
 
-fn segment_json(study: &Study, label: u8) -> Value {
+/// One segment as JSON (`null` for an unknown label).
+pub fn segment_json(study: &Study, label: u8) -> Value {
     let set = &study.segments;
     let Some(s) = set.segment(label) else { return Value::Null };
     json!({

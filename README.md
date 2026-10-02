@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/Kauter1989/ferrum/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Kauter1989/ferrum/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Kauter1989/ferrum)](https://github.com/Kauter1989/ferrum/releases)
-![Coverage](https://img.shields.io/badge/line%20coverage-92.1%25-brightgreen)
+![Coverage](https://img.shields.io/badge/line%20coverage-92.0%25-brightgreen)
 ![Rust](https://img.shields.io/badge/rust-stable-orange)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -50,9 +50,9 @@ skipping, isosurface refinement, local ambient occlusion; see
 
 | Metrics | |
 |---|---|
-| Code size | ≈ 23 300 lines of Rust in `src/` (including in-module unit tests), ≈ 4 300 lines of integration tests, benchmarks and examples, ≈ 600 lines of WGSL; engine bridges: ≈ 1 400 lines of Python plus ≈ 600 lines of tests |
-| Tests | 317 Rust tests: unit, property-based, data layer, shader validation, GPU-vs-CPU parity, engine-protocol conformance, agent commands on phantoms, CLI ↔ MCP equivalence, skill evaluations, identifier scan, application (incl. AI with a mock engine) and UI; 17 bridge tests (pytest), and the conformance suite against the running bridge in CI |
-| Test coverage | 92.1 % of lines, 89.9 % of functions (`cargo-llvm-cov`); CI fails below 87 % |
+| Code size | ≈ 23 800 lines of Rust in `src/` (including in-module unit tests), ≈ 4 500 lines of integration tests, benchmarks and examples, ≈ 600 lines of WGSL; engine bridges: ≈ 1 400 lines of Python plus ≈ 600 lines of tests |
+| Tests | 322 Rust tests: unit, property-based, data layer, shader validation, GPU-vs-CPU parity, engine-protocol conformance, agent commands on phantoms, CLI ↔ MCP equivalence, skill evaluations, identifier scan, application (incl. AI with a mock engine) and UI; 17 bridge tests (pytest), and the conformance suite against the running bridge in CI |
+| Test coverage | 92.0 % of lines, 89.4 % of functions (`cargo-llvm-cov`); CI fails below 87 % |
 | Complexity budget | per function: cognitive complexity ≤ 25, ≤ 120 lines, nesting ≤ 6 (enforced by clippy) |
 | Lints | rustfmt and clippy with warnings as errors; no `unsafe`, no `unwrap` outside tests |
 | Load speed | 512×512×252 CT DICOM series decoded in 0.34 s on 4 CPU cores |
@@ -122,7 +122,8 @@ FERRUM is a core, not a monolith. The principles, in short (full text:
 | Agent skill over MCP (`ferrum-cli mcp`): every command as a tool with a JSON Schema, renders as images, series kept in memory | ✅ |
 | Agent skill package ([`skills/ferrum`](skills/ferrum)): `SKILL.md`, references, schemas, plugin folder in the releases; evaluations with known answers (`ferrum-cli eval`); identifier scan | ✅ |
 | Review in the desktop app: *Open workspace*, review queue with author and status, decisions saved to the workspace and its audit log | ✅ |
-| Agent skill: engine commands, DICOM SEG/SR | 📋 [Stage 15](dev_plan.md) |
+| Agent skill with segmentation engines: `engine info`, `segment interactive`, `segment auto` (allow-listed engines, results proposed by the engine) | ✅ |
+| DICOM SEG and SR export | 📋 [Stage 15](dev_plan.md) |
 
 > FERRUM is research and engineering software, not a certified medical
 > device. Measurements, segmentations and AI results are proposals for

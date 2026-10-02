@@ -43,6 +43,7 @@ flowchart LR
     AG --> D
     AG --> IO
     AG -->|"CPU ray caster"| R
+    AG -->|"engine commands"| EN
 ```
 
 | Crate | Responsibility | Must not |
@@ -54,7 +55,7 @@ flowchart LR
 | `ferrum-engines` | `HttpEngine` (`ferrum-engine/1` client over HTTP), `MockEngine` (region growing, no model), reference protocol server and conformance suite | know about rendering or UI |
 | `ferrum-app` | `Viewer` facade, background `JobQueue`, `ToolController`, `GpuSink` port | depend on wgpu or egui |
 | `ferrum` | panels, widgets, paint callbacks, dialogs; composition root | contain business logic |
-| `ferrum-agent` | agent skill (depends on `ferrum-domain`, `ferrum-io` and `ferrum-render` without its GPU feature) ([design](agent-skill.md), [CLI and MCP](agent-cli.md)): commands on JSON parameters with JSON Schemas, `ferrum-agent/1` envelope and error codes, operator configuration, workspace sessions with a series cache, CPU slice renders with pixel mapping, audit log, MCP server (stdio) | depend on wgpu, egui or `ferrum-app` state |
+| `ferrum-agent` | agent skill (depends on `ferrum-domain`, `ferrum-io`, `ferrum-engines` and `ferrum-render` without its GPU feature) ([design](agent-skill.md), [CLI and MCP](agent-cli.md)): commands on JSON parameters with JSON Schemas, `ferrum-agent/1` envelope and error codes, operator configuration, workspace sessions with a series cache, CPU slice renders with pixel mapping, audit log, MCP server (stdio) | depend on wgpu, egui or `ferrum-app` state |
 | `ferrum-cli` | `ferrum-cli` binary: argument parsing to agent calls, exit codes | contain command logic |
 
 

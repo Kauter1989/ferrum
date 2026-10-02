@@ -9,6 +9,7 @@ use crate::params::Params;
 use crate::study::{Study, VolumeCache};
 
 pub mod annotate;
+pub mod engine;
 pub mod export;
 pub mod inspect;
 pub mod review;
@@ -69,6 +70,9 @@ pub const COMMANDS: &[(&str, Command)] = &[
     ("annotate delete", annotate::delete),
     ("segment list", segment::list),
     ("segment threshold", segment::threshold),
+    ("engine info", engine::info),
+    ("segment interactive", engine::interactive),
+    ("segment auto", engine::auto),
     ("segment rename", segment::rename),
     ("segment delete", segment::delete),
     ("review list", review::list),
