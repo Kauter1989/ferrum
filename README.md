@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/Kauter1989/ferrum/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Kauter1989/ferrum/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Kauter1989/ferrum)](https://github.com/Kauter1989/ferrum/releases)
-![Coverage](https://img.shields.io/badge/line%20coverage-92.0%25-brightgreen)
+![Coverage](https://img.shields.io/badge/line%20coverage-92.1%25-brightgreen)
 ![Rust](https://img.shields.io/badge/rust-stable-orange)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -50,9 +50,9 @@ skipping, isosurface refinement, local ambient occlusion; see
 
 | Metrics | |
 |---|---|
-| Code size | ≈ 22 400 lines of Rust in `src/` (including in-module unit tests), ≈ 3 800 lines of integration tests, benchmarks and examples, ≈ 600 lines of WGSL; engine bridges: ≈ 1 400 lines of Python plus ≈ 600 lines of tests |
-| Tests | 305 Rust tests: unit, property-based, data layer, shader validation, GPU-vs-CPU parity, engine-protocol conformance, agent commands on phantoms, CLI ↔ MCP equivalence, application (incl. AI with a mock engine) and UI; 17 bridge tests (pytest), and the conformance suite against the running bridge in CI |
-| Test coverage | 92.0 % of lines, 90.0 % of functions (`cargo-llvm-cov`); CI fails below 87 % |
+| Code size | ≈ 22 800 lines of Rust in `src/` (including in-module unit tests), ≈ 4 100 lines of integration tests, benchmarks and examples, ≈ 600 lines of WGSL; engine bridges: ≈ 1 400 lines of Python plus ≈ 600 lines of tests |
+| Tests | 313 Rust tests: unit, property-based, data layer, shader validation, GPU-vs-CPU parity, engine-protocol conformance, agent commands on phantoms, CLI ↔ MCP equivalence, skill evaluations, identifier scan, application (incl. AI with a mock engine) and UI; 17 bridge tests (pytest), and the conformance suite against the running bridge in CI |
+| Test coverage | 92.1 % of lines, 89.9 % of functions (`cargo-llvm-cov`); CI fails below 87 % |
 | Complexity budget | per function: cognitive complexity ≤ 25, ≤ 120 lines, nesting ≤ 6 (enforced by clippy) |
 | Lints | rustfmt and clippy with warnings as errors; no `unsafe`, no `unwrap` outside tests |
 | Load speed | 512×512×252 CT DICOM series decoded in 0.34 s on 4 CPU cores |
@@ -120,7 +120,8 @@ FERRUM is a core, not a monolith. The principles, in short (full text:
 | Provenance (author, proposed/confirmed/rejected) on annotations and segments; `ferrum-annotations` v2, `ferrum-segments`, `ferrum-workspace` v1 ([formats](docs/workspace-format.md)) | ✅ |
 | Agent skill, command line: `ferrum-cli` with study, slice/montage/MPR renders with pixel mapping, 3D renders, probe, stats, profile, measure, annotate, threshold segments, review, export bundle; operator configuration, audit log ([reference](docs/agent-cli.md)) | ✅ |
 | Agent skill over MCP (`ferrum-cli mcp`): every command as a tool with a JSON Schema, renders as images, series kept in memory | ✅ |
-| Agent skill: skill package, review queue, engine commands, DICOM SEG/SR | 📋 [Stage 15](dev_plan.md) |
+| Agent skill package ([`skills/ferrum`](skills/ferrum)): `SKILL.md`, references, schemas, plugin folder in the releases; evaluations with known answers (`ferrum-cli eval`); identifier scan | ✅ |
+| Agent skill: review queue in the desktop app, engine commands, DICOM SEG/SR | 📋 [Stage 15](dev_plan.md) |
 
 > FERRUM is research and engineering software, not a certified medical
 > device. Measurements, segmentations and AI results are proposals for
@@ -551,7 +552,7 @@ driver (`mesa-vulkan-drivers` on Debian/Ubuntu).
 
 ## Testing
 
-About 300 tests run headlessly with `cargo test --workspace`:
+About 310 tests run headlessly with `cargo test --workspace`:
 
 | Level | What is checked |
 |---|---|
@@ -562,7 +563,7 @@ About 300 tests run headlessly with `cargo test --workspace`:
 | GPU parity | every render mode and feature (including the segment overlay), GPU image compared to the CPU reference |
 | Engine protocol | conformance suite against the reference server, or any engine with `FERRUM_ENGINE_URL` |
 | Bridges | pytest for the Python bridges (protocol, jobs, nnInteractive, TotalSegmentator and MONAI Label adapters with stubbed models), then the conformance suite against a running bridge |
-| Agent commands | every command on synthetic phantoms with known answers (sphere and cube volumes, distances, render pixel ↔ voxel round trips), operator rules, provenance protection, schema checks, a scripted `ferrum-cli` session with exit codes, and the same session over MCP giving identical JSON |
+| Agent commands | every command on synthetic phantoms with known answers (sphere and cube volumes, distances, render pixel ↔ voxel round trips), operator rules, provenance protection, schema checks, a scripted `ferrum-cli` session with exit codes, the same session over MCP giving identical JSON, reference solutions of the skill evaluations, and an identifier scan over every output of a CT with patient data |
 | Application | use cases with an in-memory repository and a recording GPU sink |
 | UI | the real app driven with egui_kittest, plus full-window renders of 2D, 3D and MPR |
 
@@ -583,10 +584,11 @@ also enforces a complexity budget for every function. More in
 │   ├── ferrum-render/       # shaders, GPU renderer, CPU reference
 │   ├── ferrum-engines/      # segmentation engines: protocol client, mock, reference server
 │   ├── ferrum-agent/        # agent skill: commands, envelope, workspaces, operator config
-│   ├── ferrum-cli/          # agent skill command line (binary: ferrum-cli)
+│   ├── ferrum-cli/          # agent skill command line and MCP server (binary: ferrum-cli)
 │   ├── ferrum-app/          # application layer
 │   └── ferrum/              # desktop application (binary: ferrum)
 ├── bridges/                # engines over ferrum-engine/1: nnInteractive, TotalSegmentator (Python, Docker)
+├── skills/                  # agent skill package (SKILL.md, references, schemas, evals) and plugin manifests
 ├── docs/                    # vision, architecture, engine protocol, agent skill, AI demo, testing, ADRs
 ├── .github/workflows/       # CI (fmt, clippy, tests on lavapipe) and release archives
 └── Makefile

@@ -1458,9 +1458,13 @@ name = "ferrum-agent"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "dicom-core",
+ "dicom-dictionary-std",
+ "dicom-object",
  "ferrum-domain",
  "ferrum-io",
  "ferrum-render",
+ "flate2",
  "glam",
  "image",
  "log",

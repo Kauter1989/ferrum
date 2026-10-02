@@ -154,7 +154,8 @@ review by qualified people.
 | Provenance on annotations and segments; workspace and result formats ([spec](workspace-format.md)) | ✅ |
 | Agent skill command line (`ferrum-cli`, [reference](agent-cli.md)) | ✅ |
 | Agent skill over MCP (`ferrum-cli mcp`) | ✅ |
-| Agent skill: skill package, review queue, engine commands | 📋 Stage 15 |
+| Agent skill package and evaluations ([`skills/ferrum`](../skills/ferrum)) | ✅ |
+| Agent skill: review queue in the desktop app, engine commands | 📋 Stage 15 |
 | DICOM SEG and SR export | 📋 Stage 15 |
 
 The detailed plan with user stories is in [dev_plan.md](../dev_plan.md).

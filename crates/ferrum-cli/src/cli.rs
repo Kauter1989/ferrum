@@ -114,6 +114,9 @@ pub enum Command {
         /// Command name, e.g. "view slice".
         command: Option<String>,
     },
+    /// Skill evaluations: tasks, phantoms and grading.
+    #[command(subcommand)]
+    Eval(Eval),
     /// Serves every command as an MCP tool over stdio.
     Mcp {
         /// Workspace root, if the operator configuration sets none.
@@ -241,6 +244,26 @@ pub enum View {
         /// Overlays (segments).
         #[arg(long = "overlay")]
         overlays: Vec<String>,
+    },
+}
+
+/// `eval …`.
+#[derive(Debug, Subcommand)]
+pub enum Eval {
+    /// Lists the evaluation tasks.
+    Tasks,
+    /// Writes the phantoms the tasks run on.
+    Phantoms {
+        /// Output folder.
+        dir: PathBuf,
+    },
+    /// Grades a transcript ({"calls": [...], "answer": "..."}) of one task.
+    Grade {
+        /// Task id.
+        #[arg(long)]
+        task: String,
+        /// Transcript JSON file.
+        transcript: PathBuf,
     },
 }
 
@@ -452,54 +475,7 @@ impl Command {
                 }
                 Study::Info { ws: w } => call("study info", vec![ws(w)]),
             },
-            Command::View(View::Slice { ws: w, plane, slice_number, at, window, size, overlays }) => call(
-                "view slice",
-                vec![
-                    ws(w),
-                    ("plane", Some(json!(plane))),
-                    ("slice_number", some(*slice_number)),
-                    ("at", at.as_deref().map(parse_point).transpose()?),
-                    ("window", window.as_deref().map(parse_window).transpose()?),
-                    ("size", some(*size)),
-                    ("overlays", (!overlays.is_empty()).then(|| json!(overlays))),
-                ],
-            ),
-            Command::View(View::Montage { ws: w, plane, from, to, step, columns, window, size, overlays }) => call(
-                "view montage",
-                vec![
-                    ws(w),
-                    ("plane", Some(json!(plane))),
-                    ("from", some(*from)),
-                    ("to", some(*to)),
-                    ("step", some(*step)),
-                    ("columns", some(*columns)),
-                    ("window", window.as_deref().map(parse_window).transpose()?),
-                    ("size", some(*size)),
-                    ("overlays", (!overlays.is_empty()).then(|| json!(overlays))),
-                ],
-            ),
-            Command::View(View::Mpr { ws: w, at, window, size, overlays }) => call(
-                "view mpr",
-                vec![
-                    ws(w),
-                    ("at", Some(parse_point(at)?)),
-                    ("window", window.as_deref().map(parse_window).transpose()?),
-                    ("size", some(*size)),
-                    ("overlays", (!overlays.is_empty()).then(|| json!(overlays))),
-                ],
-            ),
-            Command::View(View::Volume { ws: w, mode, threshold, preset, view, size, overlays }) => call(
-                "view volume",
-                vec![
-                    ws(w),
-                    ("mode", some(mode.clone())),
-                    ("threshold", some(*threshold)),
-                    ("preset", some(preset.clone())),
-                    ("view", some(view.clone())),
-                    ("size", some(*size)),
-                    ("overlays", (!overlays.is_empty()).then(|| json!(overlays))),
-                ],
-            ),
+            Command::View(v) => view_call(v)?,
             Command::Profile { ws: w, from, to, samples } => call(
                 "profile",
                 vec![
@@ -560,9 +536,70 @@ impl Command {
             }
             Command::Commands => ("commands".to_owned(), json!({})),
             Command::Schema { command } => ("schema".to_owned(), json!({ "command": command })),
+            Command::Eval(e) => match e {
+                Eval::Tasks => ("eval tasks".to_owned(), json!({})),
+                Eval::Phantoms { dir } => ("eval phantoms".to_owned(), json!({ "dir": dir })),
+                Eval::Grade { task, transcript } => {
+                    ("eval grade".to_owned(), json!({ "task": task, "transcript": transcript }))
+                }
+            },
             Command::Mcp { workspace_root } => ("mcp".to_owned(), json!({ "workspace_root": workspace_root })),
         })
     }
+}
+
+fn view_call(v: &View) -> Result<(String, Value), String> {
+    let call = |name: &str, fields: Vec<(&str, Option<Value>)>| (name.to_owned(), object(fields));
+    Ok(match v {
+        View::Slice { ws: w, plane, slice_number, at, window, size, overlays } => call(
+            "view slice",
+            vec![
+                ws(w),
+                ("plane", Some(json!(plane))),
+                ("slice_number", some(*slice_number)),
+                ("at", at.as_deref().map(parse_point).transpose()?),
+                ("window", window.as_deref().map(parse_window).transpose()?),
+                ("size", some(*size)),
+                ("overlays", (!overlays.is_empty()).then(|| json!(overlays))),
+            ],
+        ),
+        View::Montage { ws: w, plane, from, to, step, columns, window, size, overlays } => call(
+            "view montage",
+            vec![
+                ws(w),
+                ("plane", Some(json!(plane))),
+                ("from", some(*from)),
+                ("to", some(*to)),
+                ("step", some(*step)),
+                ("columns", some(*columns)),
+                ("window", window.as_deref().map(parse_window).transpose()?),
+                ("size", some(*size)),
+                ("overlays", (!overlays.is_empty()).then(|| json!(overlays))),
+            ],
+        ),
+        View::Mpr { ws: w, at, window, size, overlays } => call(
+            "view mpr",
+            vec![
+                ws(w),
+                ("at", Some(parse_point(at)?)),
+                ("window", window.as_deref().map(parse_window).transpose()?),
+                ("size", some(*size)),
+                ("overlays", (!overlays.is_empty()).then(|| json!(overlays))),
+            ],
+        ),
+        View::Volume { ws: w, mode, threshold, preset, view, size, overlays } => call(
+            "view volume",
+            vec![
+                ws(w),
+                ("mode", some(mode.clone())),
+                ("threshold", some(*threshold)),
+                ("preset", some(preset.clone())),
+                ("view", some(view.clone())),
+                ("size", some(*size)),
+                ("overlays", (!overlays.is_empty()).then(|| json!(overlays))),
+            ],
+        ),
+    })
 }
 
 fn annotate_call(a: &Annotate) -> Result<(String, Value), String> {

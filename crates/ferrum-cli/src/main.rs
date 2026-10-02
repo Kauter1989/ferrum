@@ -43,6 +43,7 @@ fn main() -> ExitCode {
             return ExitCode::SUCCESS;
         }
         "schema" => return print_schema(params["command"].as_str()),
+        "eval tasks" | "eval phantoms" | "eval grade" => return eval(&command, &params),
         "mcp" => {
             if let Some(root) = params["workspace_root"].as_str() {
                 match &config.workspace_root {
@@ -70,6 +71,52 @@ fn main() -> ExitCode {
         ExitCode::SUCCESS
     } else {
         ExitCode::from(1)
+    }
+}
+
+/// `eval tasks|phantoms|grade`: prints JSON; grading exits 1 unless the
+/// transcript passes.
+fn eval(command: &str, params: &Value) -> ExitCode {
+    use ferrum_agent::evals;
+    let result: Result<(Value, bool), String> = (|| {
+        let tasks = evals::tasks().map_err(|e| e.to_string())?;
+        match command {
+            "eval tasks" => Ok((
+                json!({ "tasks": tasks.iter().map(|t| json!({ "id": t.id, "phantom": t.phantom, "prompt": t.prompt })).collect::<Vec<_>>() }),
+                true,
+            )),
+            "eval phantoms" => {
+                let dir = std::path::PathBuf::from(params["dir"].as_str().unwrap_or("."));
+                let files = evals::write_phantoms(&dir).map_err(|e| e.to_string())?;
+                Ok((json!({ "phantoms": files }), true))
+            }
+            _ => {
+                let id = params["task"].as_str().unwrap_or_default();
+                let task = tasks
+                    .iter()
+                    .find(|t| t.id == id)
+                    .ok_or_else(|| format!("unknown task {id:?}; see ferrum-cli eval tasks"))?;
+                let path = params["transcript"].as_str().unwrap_or_default();
+                let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+                let transcript: Value = serde_json::from_str(&text).map_err(|e| format!("{path}: {e}"))?;
+                let g = evals::grade(task, &transcript);
+                Ok((g.to_json(task), g.passed()))
+            }
+        }
+    })();
+    match result {
+        Ok((v, passed)) => {
+            println!("{}", serde_json::to_string_pretty(&v).unwrap_or_else(|_| v.to_string()));
+            if passed {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(1)
+            }
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            ExitCode::from(2)
+        }
     }
 }
 
