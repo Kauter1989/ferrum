@@ -1,0 +1,25 @@
+# docker compose up --build   →   FERRUM: AI segmentation → http://127.0.0.1:8765 → Connect
+services:
+  nninteractive:
+    build:
+      context: ..
+      dockerfile: nninteractive/Dockerfile
+    image: ferrum-nninteractive:latest
+    ports:
+      - "127.0.0.1:8765:8765"   # local only; use an SSH tunnel for a remote GPU
+    volumes:
+      - nninteractive-models:/models
+    environment:
+      FERRUM_ENGINE_TOKEN: ${FERRUM_ENGINE_TOKEN:-}
+      NNINTERACTIVE_DEVICE: ${NNINTERACTIVE_DEVICE:-cuda:0}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  nninteractive-models:

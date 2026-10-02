@@ -1,25 +1,38 @@
 # FERRUM
 
-**FERRUM. High-performance medical imaging.**
+**FERRUM. An open, high-performance visualisation core for medical imaging — for people, applications and AI agents.**
 
 [![CI](https://github.com/Kauter1989/ferrum/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Kauter1989/ferrum/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/Kauter1989/ferrum)](https://github.com/Kauter1989/ferrum/releases)
-![Coverage](https://img.shields.io/badge/line%20coverage-88.6%25-brightgreen)
+[![Release](https://img.shields.io/badge/release-v0.2.0-blue)](https://github.com/Kauter1989/ferrum/releases/latest)
+![Coverage](https://img.shields.io/badge/line%20coverage-92.4%25-brightgreen)
 ![Rust](https://img.shields.io/badge/rust-stable-orange)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
 
 *Ferrum* is Latin for iron, the metal whose oxide gives Rust its name.
-FERRUM is a desktop viewer for volumetric medical images (CT, MRI and
-other modalities, in DICOM or NIfTI), written from scratch in Rust. It
-rethinks the best practices of medical volume rendering that its author
-has worked with, rebuilding them on a modern GPU stack. Proven,
-peer-reviewed techniques from scientific visualization (GPU ray casting,
-empty-space skipping, isosurface refinement, local ambient occlusion; see
-[Rendering](#rendering)) come together in one single-pass GPU pipeline.
 
-It offers 2D slices, multiplanar reconstruction (MPR) and interactive 3D
-volume rendering, with transfer-function editing, clipping, measurements
-and a volume eraser.
+FERRUM is a **reusable visualisation core** for volumetric medical images
+(CT, MRI and other modalities, in DICOM or NIfTI), written from scratch in
+Rust. It does one thing very well: it shows and quantifies volumes, with
+2D slices, multiplanar reconstruction (MPR), interactive GPU volume
+rendering, measurements and segments. Everything else plugs in through
+open interfaces. FERRUM is built to be one component among many in an
+ecosystem of tools for medical imaging and patient data, for commercial
+and research use alike.
+
+- **For people:** a fast desktop viewer.
+- **For applications:** a Rust core with extension points. Data sources,
+  segmentation engines and exporters are ports with swappable
+  implementations.
+- **For AI:** segmentation engines in any language connect through an
+  open protocol, [`ferrum-engine/1`](docs/engine-protocol.md). The
+  [agent skill](docs/agent-skill.md) (`ferrum-cli`, command line and MCP)
+  lets AI agents in medical harnesses view, measure and segment images,
+  while clinicians stay in control.
+
+The rendering rebuilds proven, peer-reviewed techniques from scientific
+visualization on a modern GPU stack (GPU ray casting, empty-space
+skipping, isosurface refinement, local ambient occlusion; see
+[Rendering](#rendering)), in one single-pass pipeline.
 
 ### At a glance
 
@@ -31,14 +44,15 @@ and a volume eraser.
 | Medical I/O | [dicom-rs](https://github.com/Enet4/dicom-rs) 0.10 (JPEG, JPEG 2000, RLE), own NIfTI-1 reader/writer |
 | Parallelism, maths | rayon, glam |
 | Testing | cargo test, proptest, naga (shader validation), egui_kittest (UI), criterion (benchmarks) |
-| Architecture | clean architecture: 6 crates, domain ← data, presentation → application |
+| Architecture | clean architecture: 9 crates, domain ← data, presentation → application; ports for data sources and segmentation engines |
+| Interfaces | desktop UI; Rust crates; `ferrum-engine/1` HTTP protocol for AI engines; agent skill: `ferrum-cli` with JSON output and an MCP server |
 | Platforms | Linux x86_64, macOS Apple Silicon, Windows x86_64 ([prebuilt releases](https://github.com/Kauter1989/ferrum/releases)) |
 
 | Metrics | |
 |---|---|
-| Code size | ≈ 8 800 lines of Rust in `src/` (including in-module unit tests), ≈ 1 350 lines of integration tests and benchmarks, ≈ 400 lines of WGSL |
-| Tests | 186: unit, property-based, data layer, shader validation, GPU-vs-CPU parity, application and UI |
-| Test coverage | 88.6 % of lines, 87.6 % of functions (`cargo-llvm-cov`); CI fails below 87 % |
+| Code size | ≈ 24 800 lines of Rust in `src/` (including in-module unit tests), ≈ 4 800 lines of integration tests, benchmarks and examples, ≈ 600 lines of WGSL; engine bridges: ≈ 1 400 lines of Python plus ≈ 600 lines of tests |
+| Tests | 329 Rust tests: unit, property-based, data layer, shader validation, GPU-vs-CPU parity, engine-protocol conformance, agent commands on phantoms, CLI ↔ MCP equivalence, skill evaluations, identifier scan, DICOM SEG/SR export, application (incl. AI with a mock engine) and UI; 17 bridge tests (pytest); in CI also the conformance suite against the running bridge and highdicom validation of the exported DICOM |
+| Test coverage | 92.4 % of lines, 89.6 % of functions (`cargo-llvm-cov`); CI fails below 87 % |
 | Complexity budget | per function: cognitive complexity ≤ 25, ≤ 120 lines, nesting ≤ 6 (enforced by clippy) |
 | Lints | rustfmt and clippy with warnings as errors; no `unsafe`, no `unwrap` outside tests |
 | Load speed | 512×512×252 CT DICOM series decoded in 0.34 s on 4 CPU cores |
@@ -56,14 +70,68 @@ and a volume eraser.
 | | |
 |---|---|
 | ![Axial slice in the lung window with distance, angle, area and text annotations](docs/images/slice_measurements.png) | ![Start screen with a drop zone and the list of recently opened studies](docs/images/start_screen.png) |
-| Measurements in millimetres on an axial slice | Start screen with drag-and-drop and recent studies |
+| Named measurements and the annotation list | Start screen with drag-and-drop and recent studies |
 
 <sub>Screenshots show the real application rendering a public chest CT — see [Sample data](#sample-data).</sub>
 
 ---
 
+## Vision
+
+FERRUM is a core, not a monolith. The principles, in short (full text:
+[docs/vision.md](docs/vision.md)):
+
+1. **A core with extension points.** FERRUM owns visualisation and
+   measurement. Data sources, segmentation engines and exporters plug in
+   through ports, and every use case lives in one UI-independent
+   application layer.
+2. **Open protocols instead of hard-wired integrations.** AI engines run
+   out of process and speak [`ferrum-engine/1`](docs/engine-protocol.md).
+   - Thin bridges connect nnInteractive, MONAI Label and
+     TotalSegmentator.
+   - A commercial engine plugs in through the same protocol.
+   - A conformance suite lets any engine check itself.
+   - There is no inference inside Rust.
+3. **AI assists and stays optional.** The AI tools are visible but
+   disabled until an engine is connected. Interactive AI segmentation
+   starts as a documented nnInteractive demo. Engine licences are shown,
+   with a *Research use only* badge where they apply.
+4. **Built for people and for agents.** As an
+   [agent skill](docs/agent-skill.md), FERRUM gives AI agents typed tools
+   for viewing, measuring and segmenting. Agents propose and clinicians
+   confirm, and every value comes from the voxels, not from pixels.
+5. **Trust by design.**
+   - No patient identifiers leave FERRUM by default.
+   - Volumes are placed correctly in patient space.
+   - The CPU reference renderer reproduces every GPU image.
+   - Data goes in and out in standard formats.
+   - Quality is enforced in CI.
+6. **Fast everywhere.** Vulkan, Metal, DirectX 12 and OpenGL on Linux,
+   macOS and Windows.
+
+| Area | Status |
+|---|---|
+| Viewer, annotations with JSON export, segments with 2D/3D overlay and NIfTI label maps | ✅ |
+| Engine port, `ferrum-engine/1` client, mock engine, reference server, conformance suite | ✅ |
+| AI segmentation panel (point, box, scribble, lasso; include/exclude; accept, discard, undo) | ✅ |
+| nnInteractive bridge (FastAPI, Docker) and [demo guide](docs/ai-demo.md) | ✅ |
+| Automatic segmentation (jobs, progress, cancel, structure selection); TotalSegmentator bridge | ✅ |
+| MONAI Label bridge (DeepEdit / DeepGrow / SAM2 clicks, segmentation models) | ✅ |
+| Provenance (author, proposed/confirmed/rejected) on annotations and segments; `ferrum-annotations` v2, `ferrum-segments`, `ferrum-workspace` v1 ([formats](docs/workspace-format.md)) | ✅ |
+| Agent skill, command line: `ferrum-cli` with study, slice/montage/MPR renders with pixel mapping, 3D renders, probe, stats, profile, measure, annotate, threshold segments, review, export bundle; operator configuration, audit log ([reference](docs/agent-cli.md)) | ✅ |
+| Agent skill over MCP (`ferrum-cli mcp`): every command as a tool with a JSON Schema, renders as images, series kept in memory | ✅ |
+| Agent skill package ([`skills/ferrum`](skills/ferrum)): `SKILL.md`, references, schemas, plugin folder in the releases; evaluations with known answers (`ferrum-cli eval`); identifier scan | ✅ |
+| Review in the desktop app: *Open workspace*, review queue with author and status, decisions saved to the workspace and its audit log | ✅ |
+| Agent skill with segmentation engines: `engine info`, `segment interactive`, `segment auto` (allow-listed engines, results proposed by the engine) | ✅ |
+| DICOM export for PACS: binary Segmentation and Comprehensive 3D SR (TID 1500) with lengths, areas and segment volumes; review status marked, identifiers per operator consent; validated with highdicom ([format](docs/workspace-format.md#5-dicom-export)) | ✅ |
+
+> FERRUM is research and engineering software, not a certified medical
+> device. Measurements, segmentations and AI results are proposals for
+> review by qualified people.
+
 ## Contents
 
+- [Vision](#vision)
 - [Features](#features)
 - [Quick start](#quick-start)
 - [Using the viewer](#using-the-viewer)
@@ -76,6 +144,9 @@ and a volume eraser.
 - [Project layout](#project-layout)
 - [Sample data](#sample-data)
 - [References](#references)
+- [Commercial integrations and support](#commercial-integrations-and-support)
+- [Contributing](#contributing)
+- [Citing FERRUM](#citing-ferrum)
 - [License](#license)
 
 ## Features
@@ -103,9 +174,24 @@ and a volume eraser.
   colour-coded by plane; right-click jumps all views to a point.
 - Voxel probe that reads the physical value (e.g. Hounsfield units).
 
-**Measurements** — distance, angle, free-form area, rectangle and text
-notes, all in millimetres (anisotropic voxels are handled). You can move,
-delete and clear them.
+**Measurements and annotations** — distance, angle, free-form area,
+rectangle and text notes, all in millimetres (anisotropic voxels are
+handled). Every annotation has an editable name. In the 2D view, the
+*Image* tab lists all annotations of the study with their value, plane
+and slice: a click shows that slice, and each annotation can be renamed
+or deleted. **Export JSON** saves the named annotations together with the
+source file or folder and the DICOM study identification (study and
+series UIDs, date and time, descriptions, modality), with points in
+in-plane millimetres and voxel coordinates.
+
+**Segments** — a label map on the volume grid with up to 255 segments,
+each with a name, colour, visibility, opacity and volume in millilitres.
+Segments are drawn in 2D (fill plus outline) and in 3D (shaded, depth
+correct, hidden by the eraser), and are imported from or exported to NIfTI
+label maps placed in patient space, so files from other tools (e.g.
+TotalSegmentator or ITK-SNAP) line up with the image. Segment edits can be
+undone. This is the base for AI segmentation engines
+([ADR 0007](docs/decisions/0007-extensibility-and-engine-protocol.md)).
 
 **3D rendering**
 - Four techniques:
@@ -133,8 +219,6 @@ that adapt to the data range of the loaded scan.
 **Volume eraser** — a cylindrical brush with adjustable radius and depth,
 undo and full restore.
 
-**Processing** — Gaussian smoothing and Sobel edge filters.
-
 **Interface** — a calm, workstation-style layout in navy tones with a
 single blue accent:
 - a header with the open study, the 2D / 3D / MPR switch and file actions;
@@ -147,8 +231,65 @@ Views show quiet corner read-outs (plane, matrix, W/L, slice, zoom),
 patient-orientation edge labels (R/L, A/P, S/I), a slice scrubber, and an
 L/P/S orientation gizmo in 3D.
 
-**Output** — PNG screenshots, NIfTI export, and the series' DICOM
-attributes in the *Details* tab.
+**AI segmentation** — the collapsible *AI segmentation* section, in the
+*Image* and *Volume* tabs, is always visible.
+- **Without an engine** its tools are disabled, and a hint explains how
+  to connect one.
+- **Connecting:** enter the engine URL (default `http://127.0.0.1:8765`
+  or `FERRUM_ENGINE_URL`) and press **Connect**. The section then shows
+  the engine's name and device. A *Research use only* badge and the
+  licence notice appear when the engine reports them.
+- **Prompts** are drawn in the 2D views:
+  - *point*: click;
+  - *box*: drag;
+  - *scribble*: paint;
+  - *lasso*: outline.
+
+  Each prompt either **includes** the area or **excludes** it.
+- **Results:** the volume is uploaded once in the background. Each
+  prompt refines the current object, which is shown live as the target
+  segment.
+- **Finishing an object:** **Accept** keeps the segment and starts the
+  next object, **Discard** removes it, and **Undo prompt** steps back
+  when the engine supports it.
+- **Automatic engines** (such as TotalSegmentator) add an *Automatic*
+  part to the section:
+  - choose structures from the engine's list (with a filter), or segment
+    all of them;
+  - follow the job's progress, or cancel it;
+  - every structure found becomes a named, coloured segment. Voxels that
+    already belong to a segment are kept.
+
+Engines speak [`ferrum-engine/1`](docs/engine-protocol.md). To try the
+tools without a GPU or a model, run the mock engine (region growing):
+`cargo run -p ferrum-engines --example mock_server -- 127.0.0.1:8765`.
+For real AI segmentation, run nnInteractive on a GPU machine through
+[`bridges/`](bridges) (`ferrum-bridge nninteractive`), and automatic
+segmentation with TotalSegmentator (`ferrum-bridge totalsegmentator`) — see the demo guide
+[docs/ai-demo.md](docs/ai-demo.md) (Docker, SSH tunnel, walkthrough;
+weights CC BY-NC-SA 4.0, research use only).
+
+**Output** — PNG screenshots, NIfTI volume and label-map export,
+annotation JSON, and the series' DICOM attributes in the *Details* tab.
+
+**For AI agents** — `ferrum-cli` runs the same core without a GPU and
+answers in JSON ([reference](docs/agent-cli.md)):
+
+```bash
+ferrum-cli study open -w ws/ct1 /data/lung_053.nii.gz
+ferrum-cli view slice -w ws/ct1 --plane axial --slice-number 120 --window lung   # PNG + pixel mapping
+ferrum-cli probe -w ws/ct1 r-0001:412,318                                         # the value under a pixel
+ferrum-cli segment threshold -w ws/ct1 --seed r-0001:412,318 --min -100 --max 200 --max-ml 50
+ferrum-cli export bundle -w ws/ct1 --format ferrum --format dicom                 # JSON, NIfTI, DICOM SEG + SR
+```
+
+Harnesses that speak MCP start `ferrum-cli mcp`; every command is then a
+tool (`ferrum_view_slice`, `ferrum_probe`, …) with a JSON Schema, and
+renders come back as images.
+
+Agent results are proposals: the desktop app shows them with
+**Confirm / Reject**, and an operator configuration controls what the
+agent may read and output.
 
 ## Quick start
 
@@ -206,6 +347,18 @@ Keyboard: **F2 / F3 / F4** switch between 2D, 3D and MPR. **Tab** shows or
 hides the settings panel.
 **↑ ↓ / PgUp PgDn** change the slice. **Ctrl+O** opens a folder.
 **Ctrl+Z** undoes the last erase.
+
+**Reviewing an agent's work:**
+- **Open workspace** (toolbar) opens a workspace written by `ferrum-cli`:
+  - FERRUM checks the source hashes;
+  - loads the series;
+  - shows the workspace's annotations and segments.
+- The **Review** section lists every proposal of an agent or engine with
+  its author.
+- Enter your name and press **Confirm** or **Reject**, in the Review
+  section or in the Annotations and Segments lists. Each decision is
+  saved to the workspace at once and written to its audit log.
+- Other edits are saved with **Save to workspace**.
 
 ## Rendering
 
@@ -359,17 +512,35 @@ flowchart LR
     R --> D
     P --> D
     IO -->|"implements VolumeRepository"| D
+    EN["ferrum-engines<br/>ferrum-engine/1 client · mock · server"] -->|"implements SegmentationEngine"| D
 ```
 
 | Crate | Responsibility |
 |---|---|
-| `ferrum-domain` | Volume, window/level, transfer function, render settings, clipping, camera, slice geometry, annotations, eraser mask. Also the `VolumeRepository` port. No I/O. |
+| `ferrum-domain` | Volume, window/level, transfer function, render settings, clipping, camera, slice geometry, annotations, eraser mask, patient geometry, label maps and segments. Also the `VolumeRepository` port. No I/O. |
 | `ferrum-processing` | Histogram, brick grid, ambient occlusion, filters and resampling, parallelised with rayon |
-| `ferrum-io` | DICOM and NIfTI repositories (dicom-rs): scanning, series grouping, slice ordering, parallel decoding |
+| `ferrum-io` | DICOM and NIfTI repositories (dicom-rs): scanning, series grouping, slice ordering, parallel decoding; NIfTI label maps; annotation JSON |
 | `ferrum-render` | Frame model shared by GPU and CPU, WGSL shaders, the wgpu renderer (feature `gpu`) and the CPU ray caster |
-| `ferrum-app` | The `Viewer` facade: loading jobs, slice and 3D state, 2D tool state machines, eraser with undo, and GPU synchronisation through the `GpuSink` port |
+| `ferrum-engines` | Segmentation engines: the `ferrum-engine/1` HTTP client, a mock engine without a model, a reference server and a conformance suite |
+| `ferrum-app` | The `Viewer` facade: loading jobs, slice and 3D state, 2D tool state machines, eraser with undo, segments, and GPU synchronisation through the `GpuSink` port |
 | `ferrum` | eframe/egui application: panels, widgets, paint callbacks, dialogs |
 
+Extension points:
+
+| Port | Implementations |
+|---|---|
+| `VolumeRepository` (data sources) | DICOM, NIfTI |
+| `SegmentationEngine` / `InteractiveSession` | `HttpEngine` (any `ferrum-engine/1` engine), `MockEngine` |
+| `Exporter` | planned; NIfTI, label maps and annotation JSON exist |
+
+The agent skill has two crates: `ferrum-agent` (commands, envelope,
+operator configuration, workspaces; on `ferrum-domain` and `ferrum-io`)
+and `ferrum-cli` (the command line and the MCP server). See
+[docs/agent-cli.md](docs/agent-cli.md).
+
+Read more: [vision](docs/vision.md) ·
+[engine protocol](docs/engine-protocol.md) ·
+[agent skill](docs/agent-skill.md).
 Details: [docs/architecture.md](docs/architecture.md) ·
 decisions: [docs/decisions/](docs/decisions/).
 
@@ -379,6 +550,7 @@ decisions: [docs/decisions/](docs/decisions/).
 make test        # all tests; GPU tests are skipped without an adapter
 make test-gpu    # same, but a missing GPU adapter fails the run (CI mode)
 make lint        # rustfmt --check + clippy -D warnings (incl. complexity budget)
+make licenses    # dependency licences fit MIT OR Apache-2.0 (cargo-deny)
 make coverage    # test coverage report (cargo-llvm-cov)
 make install     # install the ferrum binary into ~/.cargo/bin
 make bench       # criterion benchmarks
@@ -399,21 +571,24 @@ driver (`mesa-vulkan-drivers` on Debian/Ubuntu).
 
 ## Testing
 
-About 180 tests run headlessly with `cargo test --workspace`:
+About 330 tests run headlessly with `cargo test --workspace`:
 
 | Level | What is checked |
 |---|---|
 | Unit | domain maths, windowing, transfer functions, clipping, camera, measurements, processing algorithms |
 | Property-based | invariants over random inputs, e.g. that empty-space skipping can never hide visible material |
-| Data layer | DICOM files generated at test time: transfer syntaxes, rescale, signed data, MONOCHROME1, multi-frame, several series, corrupt files; NIfTI round-trip |
+| Data layer | DICOM files generated at test time: transfer syntaxes, rescale, signed data, MONOCHROME1, multi-frame, several series, corrupt files; NIfTI round-trip, patient geometry and label maps; annotation, segment and workspace formats (round trips, v1 documents, changed sources); DICOM SEG and SR export (frames, geometry, source references, review status, privacy), read back with highdicom in CI |
 | Shaders | WGSL validated with naga, and uniform layouts matched to the Rust structs |
-| GPU parity | every render mode and feature, GPU image compared to the CPU reference |
-| Application | use cases with an in-memory repository and a recording GPU sink |
+| GPU parity | every render mode and feature (including the segment overlay), GPU image compared to the CPU reference |
+| Engine protocol | conformance suite against the reference server, or any engine with `FERRUM_ENGINE_URL` |
+| Bridges | pytest for the Python bridges (protocol, jobs, nnInteractive, TotalSegmentator and MONAI Label adapters with stubbed models), then the conformance suite against a running bridge |
+| Agent commands | every command on synthetic phantoms with known answers (sphere and cube volumes, distances, render pixel ↔ voxel round trips), operator rules, provenance protection, schema checks, a scripted `ferrum-cli` session with exit codes, the same session over MCP giving identical JSON, reference solutions of the skill evaluations, and an identifier scan over every output of a CT with patient data |
+| Application | use cases with an in-memory repository and a recording GPU sink; workspace review through an in-memory result store |
 | UI | the real app driven with egui_kittest, plus full-window renders of 2D, 3D and MPR |
 
 To also test on a real DICOM series:
 `FERRUM_SAMPLE_DICOM=/path/to/series cargo test -p ferrum-io`.
-Line coverage is about 88 %, and CI fails if it drops below 87 %. Clippy
+Line coverage is about 92 %, and CI fails if it drops below 87 %. Clippy
 also enforces a complexity budget for every function. More in
 [docs/testing.md](docs/testing.md) and [docs/quality.md](docs/quality.md).
 
@@ -426,9 +601,14 @@ also enforces a complexity budget for every function. More in
 │   ├── ferrum-processing/   # parallel volume algorithms
 │   ├── ferrum-io/           # DICOM / NIfTI repositories
 │   ├── ferrum-render/       # shaders, GPU renderer, CPU reference
+│   ├── ferrum-engines/      # segmentation engines: protocol client, mock, reference server
+│   ├── ferrum-agent/        # agent skill: commands, envelope, workspaces, operator config
+│   ├── ferrum-cli/          # agent skill command line and MCP server (binary: ferrum-cli)
 │   ├── ferrum-app/          # application layer
 │   └── ferrum/              # desktop application (binary: ferrum)
-├── docs/                    # architecture, testing, ADRs
+├── bridges/                # engines over ferrum-engine/1: nnInteractive, TotalSegmentator (Python, Docker)
+├── skills/                  # agent skill package (SKILL.md, references, schemas, evals) and plugin manifests
+├── docs/                    # vision, architecture, engine protocol, agent skill, AI demo, testing, ADRs
 ├── .github/workflows/       # CI (fmt, clippy, tests on lavapipe) and release archives
 └── Makefile
 ```
@@ -475,7 +655,56 @@ make showcase ARGS="path/to/lung_053.nii.gz docs/images"
   volume rendering.* IEEE Transactions on Visualization and Computer
   Graphics 16(4), 548–559, 2010.
 
+## Commercial integrations and support
+
+FERRUM is free to use, embed and ship in commercial products under the
+licence below. Integration work is available from the author:
+
+- connecting a segmentation engine or in-house model through
+  `ferrum-engine/1`;
+- embedding the viewer or the rendering core in another product;
+- data-source connectors (PACS, DICOMweb) and exporters;
+- FERRUM as a skill in a medical agent harness;
+- support agreements and training.
+
+Contact: Viacheslav Chukanov, [research@vchukanov.ru](mailto:research@vchukanov.ru).
+
+## Contributing
+
+FERRUM is developed by Viacheslav Chukanov with the help of
+[Claude Code](https://claude.com/claude-code).
+
+FERRUM grew out of the author's work on
+[mriviewer](https://github.com/epam/mriviewer) (© EPAM Systems,
+Apache-2.0). It is an independent rewrite in Rust; no source code of
+mriviewer is included.
+
+Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[Code of Conduct](CODE_OF_CONDUCT.md). Report vulnerabilities privately as
+described in [SECURITY.md](SECURITY.md).
+
+## Citing FERRUM
+
+If you use FERRUM in research, please cite it; GitHub's *Cite this
+repository* button reads [CITATION.cff](CITATION.cff).
+
 ## License
 
-Source code: MIT — see [LICENSE](LICENSE).
+Source code is licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE)), or
+- MIT license ([LICENSE-MIT](LICENSE-MIT)),
+
+at your option. Unless you explicitly state otherwise, any contribution
+intentionally submitted for inclusion in FERRUM by you, as defined in the
+Apache-2.0 license, shall be dual licensed as above, without any
+additional terms or conditions.
+
 Screenshots in `docs/images/`: CC BY-SA 4.0 (see [Sample data](#sample-data)).
+
+### Name
+
+"FERRUM" is the name of this project, maintained by Viacheslav Chukanov.
+The licence covers the code, not the name: you may fork and redistribute
+FERRUM, but please give a modified or redistributed version its own name
+and do not present it as the official FERRUM.

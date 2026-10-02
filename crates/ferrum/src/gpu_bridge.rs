@@ -6,7 +6,7 @@
 //! [`ferrum_app::GpuSink`] port.
 
 use ferrum_app::GpuSink;
-use ferrum_domain::{Dims3, Rgba8, Volume, VoxelMask};
+use ferrum_domain::{Dims3, LabelMap, Rgba8, Volume, VoxelBox, VoxelMask};
 use ferrum_processing::AmbientOcclusion;
 use ferrum_render::gpu::{GpuCaps, ViewId, VolumeRenderer};
 use ferrum_render::{FrameParams, SliceParams};
@@ -71,6 +71,14 @@ impl GpuSink for RendererSink<'_> {
 
     fn upload_ambient_occlusion(&mut self, ao: Option<&AmbientOcclusion>) {
         self.renderer.set_ambient_occlusion(self.device, self.queue, ao);
+    }
+
+    fn upload_labels(&mut self, labels: Option<&LabelMap>, dirty: Option<VoxelBox>) {
+        self.renderer.update_labels(self.device, self.queue, labels, dirty);
+    }
+
+    fn upload_segment_colors(&mut self, lut: &[Rgba8; 256]) {
+        self.renderer.set_segment_colors(self.queue, lut);
     }
 }
 

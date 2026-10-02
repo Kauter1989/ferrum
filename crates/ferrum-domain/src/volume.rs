@@ -1,6 +1,6 @@
 //! The scalar volume entity.
 
-use glam::{UVec3, Vec3};
+use glam::{Mat3, UVec3, Vec3};
 use thiserror::Error;
 
 use crate::geometry::{Aabb, Dims3};
@@ -82,6 +82,37 @@ impl IntensityRange {
     }
 }
 
+/// Placement of the voxel grid in patient space (LPS, millimetres).
+///
+/// The patient position of voxel `(i, j, k)` is
+/// `origin + direction · ((i, j, k) ⊙ spacing)`, where the columns of
+/// `direction` are the unit vectors of the `i`, `j` and `k` axes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Geometry {
+    /// Patient position of the centre of voxel `(0, 0, 0)`.
+    pub origin: Vec3,
+    /// Unit axis vectors of the grid as matrix columns.
+    pub direction: Mat3,
+}
+
+impl Default for Geometry {
+    fn default() -> Self {
+        Self { origin: Vec3::ZERO, direction: Mat3::IDENTITY }
+    }
+}
+
+impl Geometry {
+    /// Patient position of the (fractional) voxel index `v` with `spacing`.
+    pub fn voxel_to_patient(&self, v: Vec3, spacing: Vec3) -> Vec3 {
+        self.origin + self.direction * (v * spacing)
+    }
+
+    /// Direction rows as written by the engine protocol (`i`, `j`, `k`).
+    pub fn direction_rows(&self) -> [[f32; 3]; 3] {
+        [self.direction.x_axis.to_array(), self.direction.y_axis.to_array(), self.direction.z_axis.to_array()]
+    }
+}
+
 /// A regular scalar volume with physical spacing.
 ///
 /// This is the central entity of the viewer. Voxel data is immutable once
@@ -93,6 +124,7 @@ pub struct Volume {
     spacing: Vec3,
     range: IntensityRange,
     data: Vec<u16>,
+    geometry: Geometry,
 }
 
 impl Volume {
@@ -107,7 +139,7 @@ impl Volume {
         if data.len() != dims.voxel_count() {
             return Err(VolumeError::DataLengthMismatch { expected: dims.voxel_count(), actual: data.len() });
         }
-        Ok(Self { dims, spacing, range, data })
+        Ok(Self { dims, spacing, range, data, geometry: Geometry::default() })
     }
 
     /// Creates a volume from physical values, computing the range from data.
@@ -119,6 +151,23 @@ impl Volume {
         let range = if min.is_finite() { IntensityRange::new(min, max)? } else { IntensityRange::new(0.0, 1.0)? };
         let data = values.iter().map(|&v| range.to_storage(v)).collect();
         Self::new(dims, spacing, range, data)
+    }
+
+    /// Returns the volume placed at `geometry` in patient space.
+    #[must_use]
+    pub fn with_geometry(mut self, geometry: Geometry) -> Self {
+        self.geometry = geometry;
+        self
+    }
+
+    /// Placement of the grid in patient space.
+    pub fn geometry(&self) -> Geometry {
+        self.geometry
+    }
+
+    /// Patient position (LPS, mm) of the centre of voxel `v`.
+    pub fn voxel_to_patient(&self, v: Vec3) -> Vec3 {
+        self.geometry.voxel_to_patient(v, self.spacing)
     }
 
     /// Grid dimensions.
@@ -262,6 +311,18 @@ mod tests {
         ));
         assert!(IntensityRange::new(2.0, 1.0).is_err());
         assert!(IntensityRange::new(f32::NAN, 1.0).is_err());
+    }
+
+    #[test]
+    fn geometry_places_voxels_in_patient_space() {
+        let v = ramp(4);
+        assert_eq!(v.geometry(), Geometry::default());
+        assert_eq!(v.voxel_to_patient(Vec3::new(1.0, 2.0, 3.0)), Vec3::new(1.0, 2.0, 3.0));
+        let flip = Mat3::from_cols(Vec3::X, -Vec3::Y, Vec3::Z);
+        let g = Geometry { origin: Vec3::new(-10.0, 5.0, 2.0), direction: flip };
+        let v = Volume::new(v.dims(), Vec3::new(0.5, 2.0, 1.0), v.range(), v.data().to_vec()).unwrap().with_geometry(g);
+        assert_eq!(v.voxel_to_patient(Vec3::new(2.0, 1.0, 3.0)), Vec3::new(-9.0, 3.0, 5.0));
+        assert_eq!(g.direction_rows(), [[1.0, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, 1.0]]);
     }
 
     #[test]

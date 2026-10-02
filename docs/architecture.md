@@ -1,10 +1,18 @@
 # Architecture
 
-FERRUM provides DICOM/NIfTI loading, 2D slices, MPR, GPU volume
-rendering, transfer function editing, clipping, measurements and the
-volume eraser. This document describes how the workspace is layered and
-which conventions every crate follows; the rendering techniques and their
-references are listed in the README.
+FERRUM is a reusable visualisation core ([vision](vision.md)).
+
+- It provides DICOM/NIfTI loading, 2D slices, MPR, GPU volume rendering,
+  transfer function editing, clipping, measurements, annotations,
+  segments and the volume eraser.
+- It reaches everything else through ports: data sources, segmentation
+  engines and (later) exporters.
+- The same use cases serve the desktop UI, embedding applications and
+  the planned agent skill.
+
+This document describes how the workspace is layered and which
+conventions every crate follows. The README lists the rendering
+techniques and their references.
 
 ## Layers and crates
 
@@ -16,6 +24,9 @@ flowchart LR
     P["ferrum-processing<br/>Parallel algorithms"]
     R["ferrum-render<br/>WGSL/wgpu + CPU reference"]
     IO["ferrum-io<br/>DICOM · NIfTI repositories"]
+    EN["ferrum-engines<br/>ferrum-engine/1 client · mock · server"]
+    AG["ferrum-agent<br/>agent commands · envelope · workspaces"]
+    CLI["ferrum-cli<br/>command line"]
 
     V --> A
     V --> R
@@ -27,16 +38,61 @@ flowchart LR
     R --> P
     P --> D
     IO -->|"implements VolumeRepository"| D
+    EN -->|"implements SegmentationEngine"| D
+    CLI --> AG
+    AG --> D
+    AG --> IO
+    AG -->|"CPU ray caster"| R
+    AG -->|"engine commands"| EN
 ```
 
 | Crate | Responsibility | Must not |
 |---|---|---|
-| `ferrum-domain` | `Volume`, `WindowLevel`, `TransferFunction`, `RenderSettings`, `ClipSettings`, `OrbitCamera`, slice geometry, annotations, `VoxelMask`; the `VolumeRepository` port | do I/O, know GPUs or UI |
+| `ferrum-domain` | `Volume` with its patient `Geometry`, `WindowLevel`, `TransferFunction`, `RenderSettings`, `ClipSettings`, `OrbitCamera`, slice geometry, annotations, `VoxelMask`, `LabelMap` / `SegmentationSet`, `Provenance` (author, review status) on annotations and segments; the `VolumeRepository` port | do I/O, know GPUs or UI |
 | `ferrum-processing` | histogram, min/max bricks, ambient occlusion, filters, resampling (rayon) | own application state |
-| `ferrum-io` | DICOM scan → series grouping → slice ordering → parallel decode; NIfTI read/write with reorientation to LPS | know about rendering or UI |
+| `ferrum-io` | DICOM scan → series grouping → slice ordering → parallel decode; NIfTI read/write with reorientation to LPS; NIfTI label maps mapped onto the volume grid; `ferrum-annotations` v2 and `ferrum-segments` JSON (read and write); `ferrum-workspace` v1 directories with hashed sources and an audit log ([format](workspace-format.md)); DICOM SEG and Comprehensive 3D SR (TID 1500) export ([format](workspace-format.md#5-dicom-export)) | know about rendering or UI |
 | `ferrum-render` | `FrameParams` (pure), WGSL shaders, `VolumeRenderer` (feature `gpu`), `CpuRaycaster` | own application state |
+| `ferrum-engines` | `HttpEngine` (`ferrum-engine/1` client over HTTP), `MockEngine` (region growing, no model), reference protocol server and conformance suite | know about rendering or UI |
 | `ferrum-app` | `Viewer` facade, background `JobQueue`, `ToolController`, `GpuSink` port | depend on wgpu or egui |
 | `ferrum` | panels, widgets, paint callbacks, dialogs; composition root | contain business logic |
+| `ferrum-agent` | agent skill (depends on `ferrum-domain`, `ferrum-io`, `ferrum-engines` and `ferrum-render` without its GPU feature) ([design](agent-skill.md), [CLI and MCP](agent-cli.md)): commands on JSON parameters with JSON Schemas, `ferrum-agent/1` envelope and error codes, operator configuration, workspace sessions with a series cache, CPU slice renders with pixel mapping, audit log, MCP server (stdio) | depend on wgpu, egui or `ferrum-app` state |
+| `ferrum-cli` | `ferrum-cli` binary: argument parsing to agent calls, exit codes | contain command logic |
+
+
+## Extension points
+
+FERRUM is a visualisation core meant to be extended
+([ADR 0007](decisions/0007-extensibility-and-engine-protocol.md)):
+
+| Extension | Port (in `ferrum-domain`) | Status |
+|---|---|---|
+| Data sources | `VolumeRepository` | implemented: DICOM, NIfTI |
+| Segmentation engines | `SegmentationEngine`, `InteractiveSession` | implemented: `ferrum-engines` with `HttpEngine`, `MockEngine` and a reference server; driven by the *AI segmentation* panel |
+| Result stores | `ResultStore` | implemented: `ferrum-io::WorkspaceStore` (`ferrum-workspace` v1); the viewer opens a workspace, shows its review queue and writes decisions back |
+| Exporters | `Exporter` | planned as a port; today annotation JSON, NIfTI label maps and DICOM SEG/SR (`ferrum-io::dicom::export`) are called directly |
+
+Out-of-process engines (nnInteractive, MONAI Label, TotalSegmentator or
+any other) speak the [FERRUM Engine Protocol](engine-protocol.md) through
+thin bridges in `bridges/`. Implementations are composed at compile time;
+native plugins are not loaded dynamically.
+
+The AI panel runs the engine on a worker thread owned by `ferrum-app`
+(`viewer/ai.rs`):
+- The volume is uploaded once per dataset revision. Prompts are queued in
+  order.
+- Each result's changed box is read back and written into the target
+  segment, so the UI never blocks on the network.
+- The presentation layer only creates the `HttpEngine` from the URL the
+  user enters. 2D prompt tools convert drawing on a slice into planar
+  prompts in `ferrum-app::prompts`.
+
+FERRUM is also planned as an **agent skill**
+([ADR 0008](decisions/0008-agent-skill.md), [specification](agent-skill.md)).
+Two new crates will sit beside the desktop app on top of `ferrum-app`:
+`ferrum-agent` (typed `ferrum-agent/1` commands, JSON Schemas, workspaces,
+audit log) and `ferrum-cli` (a command line and an MCP server, with no UI
+dependencies). Agents work in workspaces that the desktop app opens for
+clinician review.
 
 ## Data flow
 
@@ -58,7 +114,7 @@ sequenceDiagram
     App->>App: histogram + bricks (rayon)
     loop every frame
         UI->>App: poll(), sync_gpu(GpuSink)
-        App->>GPU: upload changed volume / LUT / occupancy / mask / AO
+        App->>GPU: upload changed volume / LUT / occupancy / mask / AO / labels
         UI->>GPU: paint callbacks (slice views, 3D view)
     end
 ```
@@ -81,7 +137,15 @@ sequenceDiagram
    `Tissue` (triangular band + shaded surface), `Isosurface` (first hit,
    6-step bisection, Phong + AO), `MIP`, `TransferFunction`
    (LUT-based DVR with opacity correction).
-6. **Presentation** — the 3D view is rendered into an off-screen target at
+6. **Segment overlay** — when segments are shown, every sample looks up
+   the `u8` label map (nearest voxel, hidden where the eraser removed
+   material). Entering a visible label composites the segment colour once,
+   front to back, with the segment's opacity and diffuse shading from the
+   label boundary normal. Empty-space skipping is disabled while segments
+   are shown, because brick occupancy describes intensities only. In 2D the
+   slice shader blends the segment colour (fill) and draws a one-pixel
+   outline where the label changes between neighbouring screen pixels.
+7. **Presentation** — the 3D view is rendered into an off-screen target at
    dynamic resolution (reduced while rotating) and blitted into egui.
    2D slices sample the same 3D texture directly in the egui pass.
 
@@ -98,3 +162,5 @@ is kept in sync by the GPU/CPU parity tests.
 | Model `p` | box centred at 0, longest physical side = 1: `p = (t − ½)·extent` |
 | Slice view `uv` | `u` right, `v` down; head at the top for coronal/sagittal |
 | Annotations | in-plane millimetres from the image's top-left corner |
+| Patient position | `Volume::voxel_to_patient(v) = origin + direction · (v ⊙ spacing)` (LPS, mm): DICOM Image Position/Orientation of the first ordered plane; NIfTI `sform`/`qform` carried through the reorientation |
+| Label maps | one `u8` per voxel on the volume grid (`0` background, `1–255` segments); NIfTI label maps are permuted/flipped onto that grid using both geometries |

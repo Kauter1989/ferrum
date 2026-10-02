@@ -4,8 +4,8 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use dicom_pixeldata::PixelDecoder;
-use ferrum_domain::{Dims3, IntensityRange, ProgressSink, Volume};
-use glam::Vec3;
+use ferrum_domain::{Dims3, Geometry, IntensityRange, ProgressSink, Volume};
+use glam::{Mat3, Vec3};
 use rayon::prelude::*;
 
 use super::header::{Photometric, SliceHeader};
@@ -106,5 +106,37 @@ pub fn assemble(
     let px = first.pixel_spacing.unwrap_or(glam::Vec2::ONE);
     let spacing = Vec3::new(px.x, px.y, ordered.slice_spacing.max(1e-3) as f32);
     progress.report(1.0, "Volume assembled");
-    Ok(Volume::new(dims, spacing, range, data)?)
+    let geometry = plane_geometry(&headers[ordered.planes[0].header]);
+    Ok(Volume::new(dims, spacing, range, data)?.with_geometry(geometry))
+}
+
+/// Patient-space placement of a stack whose first plane is `first`: the
+/// origin is its Image Position, the `i`/`j` axes are its row/column
+/// directions and `k` is their cross product (planes are ordered along it).
+pub fn plane_geometry(first: &SliceHeader) -> Geometry {
+    let origin = first.position.map_or(Vec3::ZERO, |p| p.as_vec3());
+    let direction = first.orientation.map_or(Mat3::IDENTITY, |(row, col)| {
+        let (r, c) = (row.normalize_or_zero().as_vec3(), col.normalize_or_zero().as_vec3());
+        Mat3::from_cols(r, c, r.cross(c).normalize_or_zero())
+    });
+    Geometry { origin, direction }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use glam::DVec3;
+
+    #[test]
+    fn geometry_comes_from_the_first_plane() {
+        let mut h = crate::dicom::series::tests::header("1", Some(-40.0), None);
+        h.position = Some(DVec3::new(-120.0, -90.0, -40.0));
+        h.orientation = Some((DVec3::X, DVec3::new(0.0, 0.0, -2.0)));
+        let g = plane_geometry(&h);
+        assert_eq!(g.origin, Vec3::new(-120.0, -90.0, -40.0));
+        assert_eq!(g.direction, Mat3::from_cols(Vec3::X, Vec3::NEG_Z, Vec3::Y));
+        h.position = None;
+        h.orientation = None;
+        assert_eq!(plane_geometry(&h), Geometry::default());
+    }
 }

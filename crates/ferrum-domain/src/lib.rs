@@ -20,10 +20,15 @@ pub mod annotation;
 pub mod camera;
 pub mod clip;
 pub mod color;
+pub mod engine;
 pub mod geometry;
 pub mod mask;
+pub mod provenance;
 pub mod render_settings;
+pub mod report;
 pub mod repository;
+pub mod review;
+pub mod segmentation;
 pub mod slice;
 pub mod transfer;
 pub mod volume;
@@ -33,14 +38,22 @@ pub use annotation::{Annotation, AnnotationId, AnnotationSet, SliceKey};
 pub use camera::{OrbitCamera, ViewPreset};
 pub use clip::{ClipBox, ClipPlane, ClipSettings};
 pub use color::{Rgb, Rgba8};
+pub use engine::{
+    EngineCapabilities, EngineError, EngineInfo, EngineLabel, InteractiveSession, JobState, JobStatus, Prompt,
+    PromptKind, PromptResult, SegmentationEngine, ENGINE_PROTOCOL,
+};
 pub use geometry::{Aabb, Dims3, Ray};
 pub use mask::{EraseStroke, EraserBrush, MaskHistory, VoxelMask};
+pub use provenance::{Author, Provenance, ReviewStatus, Timestamp};
 pub use render_settings::{RenderMode, RenderSettings, TissueThresholds};
+pub use report::{AnnotationRecord, AnnotationReport};
 pub use repository::{
-    CancelFlag, LoadedSeries, NoProgress, ProgressSink, RepositoryError, SeriesDescriptor, SeriesMetadata,
+    CancelFlag, LoadedSeries, NoProgress, ProgressSink, RepositoryError, SeriesDescriptor, SeriesMetadata, StudyInfo,
     VolumeRepository,
 };
+pub use review::{ResultStore, ReviewDecision, ReviewItem};
+pub use segmentation::{LabelEdit, LabelMap, Segment, SegmentationError, SegmentationSet, VoxelBox};
 pub use slice::{SliceAxis, SliceImage, SliceView};
 pub use transfer::{ControlPoint, CtPreset, TransferFunction, TransferFunctionError};
-pub use volume::{IntensityRange, Volume, VolumeError};
+pub use volume::{Geometry, IntensityRange, Volume, VolumeError};
 pub use window::{WindowLevel, WindowPreset};

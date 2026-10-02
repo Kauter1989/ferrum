@@ -58,7 +58,7 @@ pub struct SliceHeader {
     pub photometric: Photometric,
 }
 
-fn str_of(obj: &InMemDicomObject, tag: Tag) -> Option<String> {
+pub(crate) fn str_of(obj: &InMemDicomObject, tag: Tag) -> Option<String> {
     obj.element_opt(tag)
         .ok()
         .flatten()
@@ -66,15 +66,15 @@ fn str_of(obj: &InMemDicomObject, tag: Tag) -> Option<String> {
         .map(|s| s.trim().trim_end_matches('\0').to_string())
 }
 
-fn f64s_of(obj: &InMemDicomObject, tag: Tag) -> Option<Vec<f64>> {
+pub(crate) fn f64s_of(obj: &InMemDicomObject, tag: Tag) -> Option<Vec<f64>> {
     obj.element_opt(tag).ok().flatten().and_then(|e| e.to_multi_float64().ok())
 }
 
-fn f64_of(obj: &InMemDicomObject, tag: Tag) -> Option<f64> {
+pub(crate) fn f64_of(obj: &InMemDicomObject, tag: Tag) -> Option<f64> {
     f64s_of(obj, tag).and_then(|v| v.first().copied()).filter(|v| v.is_finite())
 }
 
-fn int_of(obj: &InMemDicomObject, tag: Tag) -> Option<i64> {
+pub(crate) fn int_of(obj: &InMemDicomObject, tag: Tag) -> Option<i64> {
     obj.element_opt(tag).ok().flatten().and_then(|e| e.to_int::<i64>().ok())
 }
 
@@ -136,6 +136,22 @@ impl SliceHeader {
     /// Unit normal of the image plane (`row × column`), if orientation known.
     pub fn normal(&self) -> Option<DVec3> {
         self.orientation.map(|(r, c)| r.cross(c).normalize_or_zero()).filter(|n| n.length() > 0.5)
+    }
+}
+
+/// Study and series identification of a DICOM object.
+pub fn study_info(obj: &InMemDicomObject) -> ferrum_domain::StudyInfo {
+    let s = |tag| str_of(obj, tag).unwrap_or_default();
+    ferrum_domain::StudyInfo {
+        study_instance_uid: s(tags::STUDY_INSTANCE_UID),
+        series_instance_uid: s(tags::SERIES_INSTANCE_UID),
+        study_date: s(tags::STUDY_DATE),
+        study_time: s(tags::STUDY_TIME),
+        study_description: s(tags::STUDY_DESCRIPTION),
+        series_description: s(tags::SERIES_DESCRIPTION),
+        series_number: s(tags::SERIES_NUMBER),
+        accession_number: s(tags::ACCESSION_NUMBER),
+        modality: s(tags::MODALITY),
     }
 }
 

@@ -27,7 +27,8 @@ pub struct ViewerApp {
     /// Application layer.
     pub viewer: Viewer,
     sync: GpuSyncState,
-    panel: PanelState,
+    /// Settings panel state (tabs, editors, AI connection).
+    pub panel: PanelState,
     slice_states: [SliceViewState; 3],
     volume_state: VolumeViewState,
     show_panel: bool,
@@ -43,7 +44,8 @@ pub struct ViewerApp {
 }
 
 /// Icon of a 2D tool.
-fn tool_icon(t: ToolKind) -> &'static str {
+/// Icon of a 2D tool.
+pub(crate) fn tool_icon(t: ToolKind) -> &'static str {
     match t {
         ToolKind::Pan => icon::HAND,
         ToolKind::WindowLevel => icon::CIRCLE_HALF,
@@ -55,6 +57,10 @@ fn tool_icon(t: ToolKind) -> &'static str {
         ToolKind::Text => icon::TEXT_T,
         ToolKind::Move => icon::ARROWS_OUT_CARDINAL,
         ToolKind::Delete => icon::X,
+        ToolKind::AiPoint => icon::CURSOR_CLICK,
+        ToolKind::AiBox => icon::BOUNDING_BOX,
+        ToolKind::AiScribble => icon::SCRIBBLE,
+        ToolKind::AiLasso => icon::LASSO,
     }
 }
 
@@ -172,6 +178,15 @@ impl ViewerApp {
                     .resizable(false)
                     .frame(theme::side())
                     .show(ui, |ui| panels::show(ui, &mut self.viewer, &mut self.panel));
+                if std::mem::take(&mut self.panel.export_annotations) {
+                    self.export_annotations();
+                }
+                if std::mem::take(&mut self.panel.segments.import_labels) {
+                    self.import_labels();
+                }
+                if std::mem::take(&mut self.panel.segments.export_labels) {
+                    self.export_labels();
+                }
             }
         }
         egui::CentralPanel::default()
@@ -184,7 +199,11 @@ impl ViewerApp {
         self.drop_overlay(&ctx);
         self.dialogs(&ctx);
 
-        if self.viewer.is_loading() || self.viewer.is_computing() || self.viewer.volume.interacting {
+        if self.viewer.is_loading()
+            || self.viewer.is_computing()
+            || self.viewer.ai().is_busy()
+            || self.viewer.volume.interacting
+        {
             ctx.request_repaint();
         }
     }
@@ -313,6 +332,9 @@ impl ViewerApp {
             }
             if tool_button(ui, icon::FOLDER_OPEN, "Open folder", false).clicked() {
                 self.pick_folder();
+            }
+            if tool_button(ui, icon::CLIPBOARD_TEXT, "Open workspace", false).clicked() {
+                self.pick_workspace();
             }
         });
     }
@@ -684,6 +706,27 @@ impl ViewerApp {
         }
     }
 
+    fn pick_workspace(&mut self) {
+        if let Some(dir) = rfd::FileDialog::new().set_title("Open workspace").pick_folder() {
+            self.open_workspace(&dir);
+        }
+    }
+
+    /// Opens a workspace written by the agent skill (`ferrum-cli`): its
+    /// series is loaded and its proposals appear in the Review section.
+    pub fn open_workspace(&mut self, dir: &std::path::Path) {
+        let generator = format!("FERRUM {}", env!("CARGO_PKG_VERSION"));
+        let result = ferrum_io::WorkspaceStore::open(dir, &generator).map_err(|e| e.to_string()).and_then(|store| {
+            use ferrum_domain::ResultStore as _;
+            let sources = store.source_paths();
+            self.viewer.open_workspace(std::sync::Arc::new(store)).map(|()| sources)
+        });
+        match result {
+            Ok(sources) => self.current = study_entry(&sources),
+            Err(e) => self.viewer.status.errors.push(format!("Open workspace: {e}")),
+        }
+    }
+
     fn pick_files(&mut self) {
         if let Some(files) = rfd::FileDialog::new()
             .add_filter("Medical images", &["dcm", "nii", "gz", "ima"])
@@ -701,6 +744,62 @@ impl ViewerApp {
         if let Some(path) = rfd::FileDialog::new().set_file_name("volume.nii.gz").save_file() {
             match ferrum_io::write_nifti(&volume, &path) {
                 Ok(()) => self.viewer.status.message = format!("Exported {}", path.display()),
+                Err(e) => self.viewer.status.errors.push(e.to_string()),
+            }
+        }
+    }
+
+    fn export_annotations(&mut self) {
+        let Some(report) = self.viewer.annotation_report() else {
+            return;
+        };
+        let stem = report
+            .source
+            .file_stem()
+            .map(|s| s.to_string_lossy().trim_end_matches(".nii").to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "study".into());
+        let generator = format!("FERRUM {}", env!("CARGO_PKG_VERSION"));
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("JSON", &["json"])
+            .set_file_name(format!("{stem}_annotations.json"))
+            .save_file()
+        {
+            match ferrum_io::write_annotation_report(&report, &generator, &path) {
+                Ok(()) => {
+                    self.viewer.status.message =
+                        format!("Exported {} annotations to {}", report.annotations.len(), path.display())
+                }
+                Err(e) => self.viewer.status.errors.push(e.to_string()),
+            }
+        }
+    }
+
+    fn import_labels(&mut self) {
+        let Some(volume) = self.viewer.dataset().map(|d| d.volume.clone()) else {
+            return;
+        };
+        let Some(path) = rfd::FileDialog::new().add_filter("NIfTI label map", &["nii", "gz"]).pick_file() else {
+            return;
+        };
+        let result = ferrum_io::read_label_nifti(&path, &volume)
+            .map_err(|e| e.to_string())
+            .and_then(|labels| self.viewer.import_label_map(labels).map_err(|e| e.to_string()));
+        if let Err(e) = result {
+            self.viewer.status.errors.push(format!("Label map import failed: {e}"));
+        }
+    }
+
+    fn export_labels(&mut self) {
+        let Some(volume) = self.viewer.dataset().map(|d| d.volume.clone()) else {
+            return;
+        };
+        let Some(set) = self.viewer.segmentation().set() else {
+            return;
+        };
+        if let Some(path) = rfd::FileDialog::new().set_file_name("segments.nii.gz").save_file() {
+            match ferrum_io::write_label_nifti(set.labels(), &volume, &path) {
+                Ok(()) => self.viewer.status.message = format!("Exported segments to {}", path.display()),
                 Err(e) => self.viewer.status.errors.push(e.to_string()),
             }
         }

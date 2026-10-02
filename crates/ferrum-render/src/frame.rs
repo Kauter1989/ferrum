@@ -18,6 +18,9 @@ pub const MAX_STEPS: u32 = 4096;
 pub const EARLY_EXIT_ALPHA: f32 = 0.97;
 /// Number of bisection steps refining an isosurface hit.
 pub const REFINE_STEPS: u32 = 6;
+/// Ambient term of segment surface shading in 3D (`ambient + (1 - ambient)
+/// · diffuse`).
+pub const SEGMENT_AMBIENT: f32 = 0.35;
 
 /// Everything needed to render one frame of the 3D view.
 #[derive(Debug, Clone, PartialEq)]
@@ -48,6 +51,8 @@ pub struct FrameParams {
     pub ao_enabled: bool,
     /// Per-pixel start offset jitter (reduces wood-grain artefacts).
     pub jitter: bool,
+    /// Draw the segment overlay (label map + segment colour table).
+    pub segments: bool,
 }
 
 impl FrameParams {
@@ -80,7 +85,20 @@ impl FrameParams {
             ao_scale: ao_scale.unwrap_or(Vec3::ONE),
             ao_enabled: settings.ambient_occlusion && ao_scale.is_some(),
             jitter: true,
+            segments: false,
         }
+    }
+
+    /// Enables or disables the segment overlay. Empty-space skipping is
+    /// turned off while segments are shown, because the brick occupancy
+    /// only describes intensities and would skip labelled voxels.
+    #[must_use]
+    pub fn with_segments(mut self, segments: bool) -> Self {
+        self.segments = segments;
+        if segments {
+            self.brick_size = 0;
+        }
+        self
     }
 
     /// Packs the parameters for the GPU.
@@ -105,6 +123,7 @@ impl FrameParams {
             bricks_jitter: self.brick_grid.extend(f32::from(u8::from(self.jitter))).to_array(),
             ao_scale: self.ao_scale.extend(RenderSettings::REFERENCE_STEP).to_array(),
             viewport: viewport.to_array(),
+            segments: [f32::from(u8::from(self.segments)), SEGMENT_AMBIENT, 0.0, 0.0],
             planes,
         }
     }
@@ -155,6 +174,8 @@ pub struct VolumeUniforms {
     pub ao_scale: [f32; 4],
     /// Viewport x, y, width, height in pixels.
     pub viewport: [f32; 4],
+    /// x: segment overlay enabled, y: ambient term of segment shading.
+    pub segments: [f32; 4],
     /// Clip half-spaces `(n, offset)`.
     pub planes: [[f32; 4]; MAX_HALF_SPACES],
 }
@@ -197,6 +218,8 @@ pub struct SliceParams {
     pub nearest: bool,
     /// Background colour.
     pub background: [f32; 4],
+    /// Draw the segment overlay (fill + outline).
+    pub segments: bool,
 }
 
 /// GPU uniform block of the slice shader.
@@ -207,7 +230,7 @@ pub struct SliceUniforms {
     pub rect: [f32; 4],
     /// Window lo, hi, slice position, axis id.
     pub window: [f32; 4],
-    /// Nearest flag and padding.
+    /// Nearest flag, segment overlay flag, padding.
     pub options: [f32; 4],
     /// Background colour.
     pub background: [f32; 4],
@@ -219,7 +242,7 @@ impl SliceParams {
         SliceUniforms {
             rect: [self.rect.0.x, self.rect.0.y, self.rect.1.x, self.rect.1.y],
             window: [self.window.0, self.window.1, self.position, self.axis as f32],
-            options: [f32::from(u8::from(self.nearest)), 0.0, 0.0, 0.0],
+            options: [f32::from(u8::from(self.nearest)), f32::from(u8::from(self.segments)), 0.0, 0.0],
             background: self.background,
         }
     }
@@ -238,8 +261,8 @@ mod tests {
 
     #[test]
     fn uniform_layout_is_stable() {
-        // 4x4 matrix + 12 vec4 + 8 planes = 16 + 48 + 32 floats
-        assert_eq!(std::mem::size_of::<VolumeUniforms>(), (16 + 48 + 32) * 4);
+        // 4x4 matrix + 13 vec4 + 8 planes = 16 + 52 + 32 floats
+        assert_eq!(std::mem::size_of::<VolumeUniforms>(), (16 + 52 + 32) * 4);
         assert_eq!(std::mem::size_of::<SliceUniforms>(), 64);
     }
 
@@ -264,6 +287,17 @@ mod tests {
         assert_eq!(u.color_high[3], 0.0);
         assert_eq!(u.surf_lit[3], 0.0);
         assert_eq!(u.eye_step[3], s.step_size());
+        assert_eq!(u.segments[0], 0.0);
+        let p = p.with_segments(false);
+        assert_eq!(p.brick_size, 0);
+        let mut s = RenderSettings::default();
+        s.empty_space_skipping = true;
+        let p = FrameParams::new(&vol(), &OrbitCamera::default(), &s, &ClipSettings::default(), Vec2::ONE, 8, None);
+        assert_eq!(p.brick_size, 8);
+        assert_eq!(p.clone().with_segments(false).brick_size, 8);
+        let p = p.with_segments(true);
+        assert_eq!(p.brick_size, 0);
+        assert_eq!(p.uniforms(Vec4::ONE).segments[0], 1.0);
     }
 
     #[test]

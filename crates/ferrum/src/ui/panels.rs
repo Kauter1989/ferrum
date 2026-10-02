@@ -1,22 +1,27 @@
-//! Right-hand settings panel with three tabs: image (window, slices,
-//! annotations, filters), 3D (technique, transfer function, clipping,
-//! eraser) and details (series information).
+//! Right-hand settings panel with three tabs: image (window, slices, in the
+//! 2D view the annotation list, and segments), 3D (technique, transfer
+//! function, clipping, eraser, segments) and details (series information).
 
 use egui::{RichText, Slider};
 use egui_phosphor::light as icon;
-use ferrum_app::{FilterKind, ViewMode, Viewer};
+use std::collections::HashMap;
+
+use ferrum_app::{ViewMode, Viewer};
 use ferrum_domain::{
-    ClipBox, CtPreset, RenderMode, SliceAxis, TissueThresholds, TransferFunction, WindowLevel, WindowPreset,
+    AnnotationId, ClipBox, CtPreset, RenderMode, SliceAxis, SliceKey, TissueThresholds, TransferFunction, WindowLevel,
+    WindowPreset,
 };
 
+use super::ai_panel::{self, AiPanelState};
+use super::segments_panel::{self, SegmentsPanelState};
 use super::tf_editor::{self, TfEditorState};
-use super::theme::{OVERLAY, TEXT, TEXT_DIM};
-use super::widgets::{chip, icon_slider, section_title, segmented, slider_row};
+use super::theme::{ACCENT, OVERLAY, TEXT, TEXT_DIM};
+use super::widgets::{chip, icon_slider, section_title, segmented, slider_row, tool_button};
 
 /// Tab of the settings panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PanelTab {
-    /// Window/level, slices, annotations and filters.
+    /// Window/level, slices and annotations.
     #[default]
     Image,
     /// Volume rendering parameters.
@@ -38,23 +43,27 @@ impl PanelTab {
 }
 
 /// Persistent UI-only state of the panel.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PanelState {
     /// Transfer function editor state.
     pub tf_editor: TfEditorState,
-    /// Sigma of the Gaussian filter.
-    pub gaussian_sigma: f32,
     /// Selected tab.
     pub tab: PanelTab,
     /// View mode seen on the previous frame; switching to 2D or 3D selects
     /// the matching tab.
     last_mode: Option<ViewMode>,
-}
-
-impl Default for PanelState {
-    fn default() -> Self {
-        Self { tf_editor: TfEditorState::default(), gaussian_sigma: 1.0, tab: PanelTab::default(), last_mode: None }
-    }
+    /// Annotation names being edited (kept while the field has focus, so
+    /// the text may be empty temporarily).
+    name_edits: HashMap<AnnotationId, String>,
+    /// Set when the user asks to export annotations; the application
+    /// handles it (file dialog) and resets the flag.
+    pub export_annotations: bool,
+    /// State of the "Segments" section.
+    pub segments: SegmentsPanelState,
+    /// State of the "AI segmentation" section.
+    pub ai: AiPanelState,
+    /// State of the "Review" section.
+    pub review: super::review_panel::ReviewPanelState,
 }
 
 fn collapsible(ui: &mut egui::Ui, id: &str, icon_str: &str, title: &str, open: bool, body: impl FnOnce(&mut egui::Ui)) {
@@ -117,26 +126,19 @@ fn image_settings(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelState
         if viewer.view_mode == ViewMode::Mpr { SliceAxis::ALL.to_vec() } else { vec![viewer.slices.axis] };
     for axis in axes {
         let n = axis.slice_count(&volume);
-        let mut idx = viewer.slices.index(axis);
+        // slice numbers are shown one-based everywhere in the UI
+        let mut number = viewer.slices.index(axis) + 1;
         ui.horizontal(|ui| {
             let (dot, _) = ui.allocate_exact_size(egui::vec2(8.0, 16.0), egui::Sense::hover());
             ui.painter().circle_filled(dot.center(), 4.0, super::slice_view::axis_color(axis));
             ui.label(RichText::new(axis.label()).color(TEXT_DIM));
-            if ui.add(Slider::new(&mut idx, 0..=n.saturating_sub(1))).changed() {
-                viewer.set_slice_index(axis, idx);
+            if ui.add(Slider::new(&mut number, 1..=n.max(1))).changed() {
+                viewer.set_slice_index(axis, number.saturating_sub(1));
             }
         });
     }
     ui.checkbox(&mut viewer.slices.nearest, "Nearest-neighbour sampling");
 
-    section_title(ui, icon::RULER, "Annotations");
-    let n = viewer.annotations().len();
-    ui.horizontal(|ui| {
-        ui.label(RichText::new(format!("{n} on all slices")).color(TEXT_DIM));
-        if ui.add_enabled(n > 0, egui::Button::new(format!("{} Clear all", icon::TRASH))).clicked() {
-            viewer.clear_annotations();
-        }
-    });
     if let Some(p) = viewer.probe {
         ui.label(
             RichText::new(format!(
@@ -151,20 +153,146 @@ fn image_settings(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelState
             .color(OVERLAY),
         );
     }
+    if viewer.view_mode == ViewMode::Slice2d {
+        annotation_list(ui, viewer, state);
+    }
+    segments_section(ui, viewer, state);
+}
 
-    ui.add_space(4.0);
-    collapsible(ui, "filters", icon::FUNNEL, "Filters", false, |ui| {
-        let busy = viewer.is_computing();
-        ui.horizontal(|ui| {
-            ui.add(Slider::new(&mut state.gaussian_sigma, 0.5..=3.0).text("σ"));
-            if ui.add_enabled(!busy, egui::Button::new("Smooth")).clicked() {
-                viewer.apply_filter(FilterKind::Gaussian(state.gaussian_sigma));
-            }
+/// Collapsible segment list and AI tools, shown in the image and volume
+/// tabs. The AI section is always visible; its tools need an engine.
+fn segments_section(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelState) {
+    ui.add_space(6.0);
+    collapsible(ui, "ai", icon::MAGIC_WAND, "AI segmentation", true, |ui| {
+        ai_panel::show(ui, viewer, &mut state.ai);
+    });
+    collapsible(ui, "segments", icon::POLYGON, "Segments", true, |ui| {
+        let by = super::review_panel::reviewer(&state.review).map(str::to_owned);
+        segments_panel::show(ui, viewer, &mut state.segments, by.as_deref());
+    });
+    if super::review_panel::relevant(viewer) {
+        collapsible(ui, "review", icon::CLIPBOARD_TEXT, "Review", true, |ui| {
+            super::review_panel::show(ui, viewer, &mut state.review);
         });
-        if ui.add_enabled(!busy, egui::Button::new("Sobel edges")).clicked() {
-            viewer.apply_filter(FilterKind::Sobel);
+    }
+}
+
+/// Annotations of all slices: editable names, value, plane and slice.
+/// Clicking a row (or its arrow) shows the annotation's slice.
+fn annotation_list(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelState) {
+    section_title(ui, icon::RULER, "Annotations");
+    let n = viewer.annotations().len();
+    ui.horizontal(|ui| {
+        if ui.add_enabled(n > 0, egui::Button::new(format!("{} Export JSON", icon::DOWNLOAD_SIMPLE))).clicked() {
+            state.export_annotations = true;
+        }
+        if ui.add_enabled(n > 0, egui::Button::new(format!("{} Clear all", icon::TRASH))).clicked() {
+            viewer.clear_annotations();
+            state.name_edits.clear();
         }
     });
+    if n == 0 {
+        ui.label(RichText::new("Draw with the measurement tools; annotations appear here.").size(12.0).color(TEXT_DIM));
+        return;
+    }
+    let current = SliceKey::new(viewer.slices.axis, viewer.slices.index(viewer.slices.axis));
+    let rows: Vec<AnnotationRow> = viewer
+        .annotations()
+        .iter()
+        .map(|(id, key, a, name)| AnnotationRow {
+            id,
+            key,
+            name: name.to_string(),
+            summary: format!("{} · {}", a.kind(), a.label()),
+            provenance: viewer.annotations().provenance(id).cloned().unwrap_or_default(),
+        })
+        .collect();
+    for row in rows {
+        match annotation_row(ui, &row, row.key == current, state) {
+            RowAction::None => {}
+            RowAction::GoTo => {
+                viewer.go_to_annotation(row.id);
+            }
+            RowAction::Rename(name) => {
+                viewer.rename_annotation(row.id, &name);
+            }
+            RowAction::Delete => {
+                viewer.remove_annotation(row.id);
+                state.name_edits.remove(&row.id);
+            }
+            RowAction::Review(status) => {
+                let by = super::review_panel::reviewer(&state.review);
+                if let Err(e) = viewer.decide(ferrum_domain::ReviewItem::Annotation(row.id), status, by) {
+                    viewer.status.errors.push(e);
+                }
+            }
+        }
+    }
+}
+
+/// Snapshot of one annotation for the list (the viewer is borrowed
+/// mutably while rows are drawn).
+struct AnnotationRow {
+    id: AnnotationId,
+    key: SliceKey,
+    name: String,
+    summary: String,
+    provenance: ferrum_domain::Provenance,
+}
+
+/// What the user did on one row.
+enum RowAction {
+    None,
+    GoTo,
+    Rename(String),
+    Delete,
+    Review(ferrum_domain::ReviewStatus),
+}
+
+fn annotation_row(ui: &mut egui::Ui, row: &AnnotationRow, on_current_slice: bool, state: &mut PanelState) -> RowAction {
+    let mut action = RowAction::None;
+    let plane = row.key.slice_axis().map(|a| a.label()).unwrap_or("?");
+    let frame = egui::Frame::new()
+        .fill(if on_current_slice { super::theme::ACCENT_SOFT } else { super::theme::SURFACE })
+        .corner_radius(8)
+        .inner_margin(egui::Margin::symmetric(8, 6));
+    // the frame's margins plus the two buttons and their spacing
+    let inner_width = (ui.available_width() - 16.0).max(120.0);
+    frame.show(ui, |ui| {
+        ui.set_width(inner_width);
+        ui.horizontal(|ui| {
+            let buf = state.name_edits.entry(row.id).or_insert_with(|| row.name.clone());
+            let name_width = (inner_width - 2.0 * super::widgets::TOOL - 3.0 * ui.spacing().item_spacing.x).max(60.0);
+            let edit = ui.add(egui::TextEdit::singleline(buf).desired_width(name_width));
+            edit.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Annotation name"));
+            if edit.changed() && !buf.trim().is_empty() {
+                action = RowAction::Rename(buf.clone());
+            }
+            if !edit.has_focus() && !edit.changed() {
+                state.name_edits.remove(&row.id);
+            }
+            if tool_button(ui, icon::ARROW_SQUARE_OUT, &format!("Go to {}", row.name), false).clicked() {
+                action = RowAction::GoTo;
+            }
+            if tool_button(ui, icon::TRASH, &format!("Delete {}", row.name), false).clicked() {
+                action = RowAction::Delete;
+            }
+        });
+        let color = if on_current_slice { ACCENT } else { TEXT_DIM };
+        let info = ui.add(
+            egui::Label::new(
+                RichText::new(format!("{} · {plane} {}", row.summary, row.key.index + 1)).size(12.0).color(color),
+            )
+            .sense(egui::Sense::click()),
+        );
+        if info.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+            action = RowAction::GoTo;
+        }
+        if let Some(review) = super::segments_panel::provenance_line(ui, &row.provenance, &row.name) {
+            action = RowAction::Review(review);
+        }
+    });
+    action
 }
 
 fn volume_settings(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelState) {
@@ -279,6 +407,8 @@ fn volume_settings(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelStat
             }
         });
     });
+
+    segments_section(ui, viewer, state);
 
     collapsible(ui, "perf", icon::LIGHTNING, "Performance", false, |ui| {
         ui.checkbox(&mut viewer.volume.settings.empty_space_skipping, "Empty-space skipping");

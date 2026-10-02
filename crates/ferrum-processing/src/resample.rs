@@ -55,8 +55,11 @@ pub fn downsample(volume: &Volume, factors: UVec3) -> Result<Volume, VolumeError
             ((sum + n / 2) / n) as u16
         })
         .collect();
-    let spacing = volume.physical_size() / dst.as_vec3();
-    Volume::new(dst, spacing.max(Vec3::splat(f32::MIN_POSITIVE)), volume.range(), out)
+    let spacing = (volume.physical_size() / dst.as_vec3()).max(Vec3::splat(f32::MIN_POSITIVE));
+    // Voxel centres move with the coarser grid; the grid's outer corner stays put.
+    let mut geometry = volume.geometry();
+    geometry.origin += geometry.direction * ((spacing - volume.spacing()) * 0.5);
+    Ok(Volume::new(dst, spacing, volume.range(), out)?.with_geometry(geometry))
 }
 
 #[cfg(test)]
@@ -85,6 +88,8 @@ mod tests {
         // block 0: indices 0,1,4,5,8,9,12,13 -> mean 6.5*100
         assert_eq!(d.data()[0], 650);
         assert_eq!(d.physical_size(), v.physical_size());
+        // voxel centre of the coarse grid = centre of the averaged block
+        assert_eq!(d.voxel_to_patient(Vec3::ZERO), v.voxel_to_patient(Vec3::new(0.5, 0.5, 0.5)));
     }
 
     #[test]

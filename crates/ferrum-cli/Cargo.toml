@@ -1,0 +1,26 @@
+[package]
+name = "ferrum-cli"
+description = "Command line of the FERRUM agent skill: every command prints a ferrum-agent/1 JSON envelope."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "ferrum-cli"
+path = "src/main.rs"
+
+[dependencies]
+ferrum-agent.workspace = true
+serde_json.workspace = true
+clap.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+ferrum-domain.workspace = true
+ferrum-io.workspace = true
+glam.workspace = true
+
+[lints]
+workspace = true

@@ -1,4 +1,5 @@
-# Builds release archives of the ferrum binary and publishes them as a
+# Builds release archives (the ferrum viewer, the ferrum-cli agent tool,
+# the agent skill package and a plugin folder) and publishes them as a
 # GitHub release.
 #
 # Two ways to release:
@@ -8,6 +9,10 @@
 #   head together with the release.
 # A manual run with an empty `tag` is a dry run: archives are built and kept
 # as workflow artifacts, nothing is published.
+#
+# Before releasing, bump the version in Cargo.toml (workspace),
+# skills/plugin/plugin.json and CITATION.cff, add a CHANGELOG.md entry and
+# update the static release badge in README.md.
 
 name: Release
 
@@ -51,14 +56,20 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
       - name: Build
-        run: cargo build --release --locked -p ferrum --target ${{ matrix.target }}
+        run: cargo build --release --locked -p ferrum -p ferrum-cli --target ${{ matrix.target }}
       - name: Package (tar.gz)
         if: matrix.archive == 'tar.gz'
         shell: bash
         run: |
           name=ferrum-${TAG}-${{ matrix.target }}
-          mkdir "$name"
-          cp target/${{ matrix.target }}/release/ferrum README.md LICENSE "$name"/
+          bin=target/${{ matrix.target }}/release
+          mkdir -p "$name/skills" "$name/ferrum-plugin/.claude-plugin" "$name/ferrum-plugin/skills" "$name/ferrum-plugin/bin"
+          cp "$bin/ferrum" "$bin/ferrum-cli" README.md LICENSE-MIT LICENSE-APACHE "$name"/
+          cp -R skills/ferrum "$name/skills/"
+          cp -R skills/ferrum "$name/ferrum-plugin/skills/"
+          cp skills/plugin/plugin.json "$name/ferrum-plugin/.claude-plugin/plugin.json"
+          sed 's/__EXE__//' skills/plugin/mcp.json > "$name/ferrum-plugin/.mcp.json"
+          cp "$bin/ferrum-cli" "$name/ferrum-plugin/bin/"
           tar czf "$name.tar.gz" "$name"
           echo "ASSET=$name.tar.gz" >> "$GITHUB_ENV"
       - name: Package (zip)
@@ -66,8 +77,15 @@ jobs:
         shell: pwsh
         run: |
           $name = "ferrum-$env:TAG-${{ matrix.target }}"
-          New-Item -ItemType Directory $name | Out-Null
-          Copy-Item target/${{ matrix.target }}/release/ferrum.exe, README.md, LICENSE $name
+          $bin = "target/${{ matrix.target }}/release"
+          $plugin = "$name/ferrum-plugin"
+          New-Item -ItemType Directory $name, "$name/skills", "$plugin/.claude-plugin", "$plugin/skills", "$plugin/bin" -Force | Out-Null
+          Copy-Item "$bin/ferrum.exe", "$bin/ferrum-cli.exe", README.md, LICENSE-MIT, LICENSE-APACHE $name
+          Copy-Item -Recurse skills/ferrum "$name/skills/"
+          Copy-Item -Recurse skills/ferrum "$plugin/skills/"
+          Copy-Item skills/plugin/plugin.json "$plugin/.claude-plugin/plugin.json"
+          (Get-Content skills/plugin/mcp.json) -replace '__EXE__', '.exe' | Set-Content "$plugin/.mcp.json"
+          Copy-Item "$bin/ferrum-cli.exe" "$plugin/bin/"
           Compress-Archive -Path $name -DestinationPath "$name.zip"
           "ASSET=$name.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
       - uses: actions/upload-artifact@v4

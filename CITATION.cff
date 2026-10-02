@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: "If you use FERRUM in research, please cite it as below."
+title: "FERRUM: a visualisation core for volumetric medical images"
+type: software
+authors:
+  - family-names: Chukanov
+    given-names: Viacheslav
+    email: research@vchukanov.ru
+repository-code: "https://github.com/Kauter1989/ferrum"
+license:
+  - MIT
+  - Apache-2.0
+version: 0.2.0
+date-released: "2026-10-02"
+keywords:
+  - medical imaging
+  - volume rendering
+  - DICOM
+  - NIfTI
+  - Rust
+  - AI agents
+abstract: >-
+  FERRUM is a reusable visualisation core for volumetric medical images
+  (DICOM and NIfTI) written in Rust: a GPU desktop viewer with 2D, MPR and
+  3D volume rendering, measurements and segments; an open protocol for
+  out-of-process segmentation engines (ferrum-engine/1); and a headless
+  command line and MCP server that let AI agents use it as a skill
+  (ferrum-agent/1).

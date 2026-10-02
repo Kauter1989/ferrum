@@ -111,13 +111,22 @@ fn scenes() -> Vec<Scene> {
                 let key = SliceKey::new(SliceAxis::Axial, k);
                 let size = SliceAxis::Axial.plane_size_mm(&volume);
                 let p = |x: f32, y: f32| Vec2::new(x, y) * size;
-                v.add_annotation(key, Annotation::Distance { a: p(0.22, 0.52), b: p(0.46, 0.52) });
-                v.add_annotation(key, Annotation::Angle { a: p(0.62, 0.30), vertex: p(0.56, 0.45), b: p(0.74, 0.47) });
-                v.add_annotation(
+                let d = v.add_annotation(key, Annotation::Distance { a: p(0.22, 0.52), b: p(0.46, 0.52) });
+                v.rename_annotation(d, "Right lung width");
+                let a = v.add_annotation(
+                    key,
+                    Annotation::Angle { a: p(0.62, 0.30), vertex: p(0.56, 0.45), b: p(0.74, 0.47) },
+                );
+                v.rename_annotation(a, "Bronchial angle");
+                let area = v.add_annotation(
                     key,
                     Annotation::Polygon { points: vec![p(0.60, 0.55), p(0.72, 0.53), p(0.76, 0.66), p(0.64, 0.70)] },
                 );
+                v.rename_annotation(area, "Left lower lobe ROI");
                 v.add_annotation(key, Annotation::Text { pos: p(0.25, 0.40), text: "right lung".into() });
+                let other = SliceKey::new(SliceAxis::Axial, k.saturating_sub(40));
+                let n = v.add_annotation(other, Annotation::Distance { a: p(0.58, 0.40), b: p(0.63, 0.43) });
+                v.rename_annotation(n, "Nodule diameter");
             },
         },
     ]

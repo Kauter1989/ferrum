@@ -7,8 +7,9 @@ use std::sync::Arc;
 
 use ferrum_app::{FilterKind, GpuSink, GpuSyncState, InputKind, ToolKind, ToolOutcome, ViewMode, Viewer};
 use ferrum_domain::{
-    Dims3, LoadedSeries, ProgressSink, RenderMode, RepositoryError, Rgba8, SeriesDescriptor, SeriesMetadata, SliceAxis,
-    SliceKey, TransferFunction, Volume, VolumeRepository, VoxelMask, WindowLevel, WindowPreset,
+    Annotation, AnnotationSet, Dims3, LabelMap, LoadedSeries, ProgressSink, Provenance, RenderMode, RepositoryError,
+    ReviewStatus, Rgba8, SeriesDescriptor, SeriesMetadata, SliceAxis, SliceKey, StudyInfo, Timestamp, TransferFunction,
+    Volume, VolumeRepository, VoxelBox, VoxelMask, WindowLevel, WindowPreset,
 };
 use ferrum_processing::AmbientOcclusion;
 use glam::{UVec3, Vec2, Vec3};
@@ -73,6 +74,8 @@ impl VolumeRepository for FakeRepo {
                 description: s.description.clone(),
                 default_window: Some(WindowLevel::new(500.0, 1000.0)),
                 attributes: vec![],
+                study: StudyInfo { study_date: "20240428".into(), modality: "CT".into(), ..Default::default() },
+                source: PathBuf::from("/data/phantom"),
             },
         })
     }
@@ -103,6 +106,16 @@ impl GpuSink for RecordingSink {
     }
     fn upload_ambient_occlusion(&mut self, ao: Option<&AmbientOcclusion>) {
         self.log.push(if ao.is_some() { "ao".into() } else { "ao none".into() });
+    }
+    fn upload_labels(&mut self, labels: Option<&LabelMap>, dirty: Option<VoxelBox>) {
+        self.log.push(match (labels, dirty) {
+            (None, _) => "labels none".into(),
+            (Some(_), None) => "labels full".into(),
+            (Some(_), Some(b)) => format!("labels {:?}..{:?}", b.min.to_array(), b.max.to_array()),
+        });
+    }
+    fn upload_segment_colors(&mut self, lut: &[Rgba8; 256]) {
+        self.log.push(format!("segment colours {:?}", lut[1]));
     }
 }
 
@@ -162,7 +175,7 @@ fn gpu_sync_uploads_only_what_changed() {
     let mut sync = GpuSyncState::default();
     let mut sink = RecordingSink::default();
     v.sync_gpu(&mut sync, &mut sink);
-    assert_eq!(sink.take(), vec!["volume Dims3 { x: 24, y: 24, z: 20 }", "tf", "occupancy", "ao none"]);
+    assert_eq!(sink.take(), vec!["volume Dims3 { x: 24, y: 24, z: 20 }", "tf", "occupancy", "ao none", "labels none"]);
     v.sync_gpu(&mut sync, &mut sink);
     assert!(sink.take().is_empty());
 
@@ -290,9 +303,37 @@ fn text_annotation_flow() {
     let vp = Vec2::new(240.0, 240.0);
     v.slice_input(SliceAxis::Axial, InputKind::Press, Vec2::new(50.0, 50.0), vp);
     assert!(v.pending_text.is_some());
-    assert!(v.commit_text("note").is_some());
+    let id = v.commit_text("note").unwrap();
     assert!(v.pending_text.is_none());
     assert_eq!(v.annotations().len(), 1);
+    let p = v.annotations().provenance(id).unwrap();
+    assert_eq!((p.author.kind(), p.status), ("human", ReviewStatus::Confirmed));
+    assert!(p.created.is_some_and(|t| t.0 > 1_700_000_000), "drawn annotations carry their time");
+}
+
+#[test]
+fn proposed_annotations_are_reviewed_and_replaced() {
+    let mut v = loaded_viewer();
+    let key = SliceKey::new(SliceAxis::Axial, 2);
+    let drawn = v.add_annotation(key, Annotation::Distance { a: Vec2::ZERO, b: Vec2::X });
+    assert!(v.annotations().provenance(drawn).unwrap().created.is_some());
+    let proposed = v.add_annotation_with(
+        key,
+        Annotation::Distance { a: Vec2::ZERO, b: Vec2::Y },
+        Provenance::agent(Some("run-3".into()), Timestamp(1)),
+    );
+    assert_eq!(v.annotations().pending(), 1);
+    assert!(v.review_annotation(proposed, ReviewStatus::Confirmed, Some("dr.k")));
+    assert!(!v.review_annotation(999, ReviewStatus::Confirmed, None));
+    let p = v.annotations().provenance(proposed).unwrap();
+    assert_eq!((p.status, p.reviewed_by.as_deref(), p.author.kind()), (ReviewStatus::Confirmed, Some("dr.k"), "agent"));
+    let report = v.annotation_report().unwrap();
+    assert_eq!(report.annotations[1].provenance.status, ReviewStatus::Confirmed);
+
+    let mut loaded = AnnotationSet::default();
+    loaded.add(SliceKey::new(SliceAxis::Coronal, 1), Annotation::Text { pos: Vec2::ZERO, text: "x".into() });
+    v.set_annotations(loaded.clone());
+    assert_eq!(v.annotations(), &loaded);
 }
 
 #[test]
@@ -344,4 +385,130 @@ fn reloading_resets_view_state() {
     assert_eq!(v.slices.views[2].zoom, 1.0);
     assert!(v.annotation_preview().is_none());
     assert_eq!(v.volume.camera, ferrum_domain::OrbitCamera::default());
+}
+
+#[test]
+fn annotations_are_named_listed_navigated_and_reported() {
+    let mut v = loaded_viewer();
+    v.view_mode = ViewMode::Slice2d;
+    let a = v.add_annotation(SliceKey::new(SliceAxis::Coronal, 5), Annotation::Distance { a: Vec2::ZERO, b: Vec2::X });
+    let b = v.add_annotation(SliceKey::new(SliceAxis::Axial, 3), Annotation::Rect { a: Vec2::ZERO, b: Vec2::ONE });
+    assert!(v.rename_annotation(a, "Bronchus"));
+    assert_eq!(v.annotations().name(a), Some("Bronchus"));
+
+    assert!(v.go_to_annotation(a));
+    assert_eq!(v.slices.axis, SliceAxis::Coronal);
+    assert_eq!(v.slices.index(SliceAxis::Coronal), 5);
+    assert!(v.go_to_annotation(b));
+    assert_eq!((v.slices.axis, v.slices.index(SliceAxis::Axial)), (SliceAxis::Axial, 3));
+    assert!(!v.go_to_annotation(999));
+
+    let r = v.annotation_report().expect("dataset loaded");
+    assert_eq!(r.source, PathBuf::from("/data/phantom"));
+    assert_eq!(r.study.study_date, "20240428");
+    let names: Vec<_> = r.annotations.iter().map(|x| x.name.as_str()).collect();
+    assert_eq!(names, ["Bronchus", "Rectangle 2"]);
+
+    v.remove_annotation(b);
+    assert_eq!(v.annotations().len(), 1);
+}
+
+#[test]
+fn segments_are_created_edited_and_synced() {
+    let mut v = Viewer::new(FakeRepo::new(1));
+    assert_eq!(v.add_segment("x"), Err(ferrum_domain::SegmentationError::NoVolume));
+    assert!(v.import_label_map(LabelMap::new(Dims3::new(1, 1, 1))).is_err());
+    let mut v = loaded_viewer();
+    let mut sync = GpuSyncState::default();
+    let mut sink = RecordingSink::default();
+    v.sync_gpu(&mut sync, &mut sink);
+    sink.take();
+    assert!(v.segment_summaries().is_empty());
+    assert!(!v.segmentation().overlay_active());
+    assert!(!v.frame_params(Vec2::splat(64.0)).unwrap().segments);
+
+    let lesion = v.add_segment("Lesion").unwrap();
+    assert!(v.segmentation().overlay_active());
+    assert!(v.frame_params(Vec2::splat(64.0)).unwrap().segments);
+    assert!(v.slice_params(SliceAxis::Axial, (Vec2::ZERO, Vec2::splat(100.0)), 1.0).unwrap().segments);
+    v.sync_gpu(&mut sync, &mut sink);
+    assert_eq!(sink.take(), vec!["labels full".to_string(), "segment colours [230, 85, 75, 128]".into()]);
+
+    // a 2×2×1 mask in a planar box; only that box is re-uploaded
+    let bx = VoxelBox::new(UVec3::new(10, 10, 5), UVec3::new(12, 12, 6));
+    assert_eq!(v.apply_segment_mask(lesion, bx, &[1; 4], false), Ok(4));
+    v.sync_gpu(&mut sync, &mut sink);
+    assert_eq!(
+        sink.take(),
+        vec!["labels [10, 10, 5]..[12, 12, 6]".to_string(), "segment colours [230, 85, 75, 128]".into()]
+    );
+    let row = &v.segment_summaries()[0];
+    assert_eq!((row.voxels, row.volume_ml), (4, 0.004));
+    assert_eq!(row.segment.name, "Lesion");
+
+    assert!(v.rename_segment(lesion, "Nodule"));
+    assert!(!v.rename_segment(9, "x"));
+    v.set_segment_color(lesion, [1, 2, 3]).unwrap();
+    v.set_segment_opacity(lesion, 1.0).unwrap();
+    v.sync_gpu(&mut sync, &mut sink);
+    assert_eq!(sink.take(), vec!["segment colours [1, 2, 3, 255]".to_string()]);
+    v.set_segment_visible(lesion, false).unwrap();
+    assert!(!v.segmentation().overlay_active(), "no visible segment, nothing to draw");
+    v.set_segment_visible(lesion, true).unwrap();
+    v.set_segments_shown(false);
+    assert!(!v.segmentation().overlay_active());
+    v.set_segments_shown(true);
+
+    assert!(v.can_undo_segmentation());
+    assert!(v.undo_segmentation());
+    assert!(!v.undo_segmentation());
+    assert_eq!(v.segment_summaries()[0].voxels, 0);
+    assert!(v.remove_segment(lesion).is_ok());
+    assert!(v.remove_segment(lesion).is_err());
+}
+
+#[test]
+fn label_maps_are_imported_and_cleared() {
+    let mut v = loaded_viewer();
+    let dims = v.dataset().unwrap().volume.dims();
+    let mut sync = GpuSyncState::default();
+    let mut sink = RecordingSink::default();
+    v.sync_gpu(&mut sync, &mut sink);
+    sink.take();
+    let mut data = vec![0u8; dims.voxel_count()];
+    data[0] = 4;
+    data[1] = 7;
+    assert_eq!(
+        v.import_label_map(LabelMap::new(Dims3::new(2, 2, 2))).unwrap_err().to_string(),
+        format!("label map is Dims3 {{ x: 2, y: 2, z: 2 }}, the volume is {dims:?}")
+    );
+    assert_eq!(v.import_label_map(LabelMap::from_data(dims, data).unwrap()), Ok(2));
+    let names: Vec<_> = v.segment_summaries().into_iter().map(|r| r.segment.name).collect();
+    assert_eq!(names, vec!["Segment 4", "Segment 7"]);
+    v.sync_gpu(&mut sync, &mut sink);
+    assert_eq!(sink.take()[0], "labels full");
+
+    v.clear_segmentation();
+    v.sync_gpu(&mut sync, &mut sink);
+    assert_eq!(sink.take(), vec!["labels none".to_string()]);
+    assert!(v.segmentation().set().is_none());
+}
+
+#[test]
+fn picking_uses_the_segment_overlay() {
+    let mut v = loaded_viewer();
+    v.view_mode = ViewMode::Volume3d;
+    v.volume.settings.mode = RenderMode::Isosurface;
+    v.volume.settings.iso_threshold = 0.5;
+    let before = v.pick(Vec2::ZERO, 1.0).expect("sphere hit");
+    let dims = v.dataset().unwrap().volume.dims();
+    let label = v.add_segment("Shell").unwrap();
+    v.set_segment_opacity(label, 1.0).unwrap();
+    // a slab in front of the sphere along the default view direction (+z)
+    let bx = VoxelBox::new(UVec3::ZERO, UVec3::new(dims.x, dims.y, 3));
+    v.apply_segment_mask(label, bx, &vec![1; bx.voxel_count()], false).unwrap();
+    // the opaque slab stops the ray before the sphere: no surface hit to pick
+    assert!(v.pick(Vec2::ZERO, 1.0).is_none());
+    v.set_segments_shown(false);
+    assert_eq!(v.pick(Vec2::ZERO, 1.0), Some(before));
 }

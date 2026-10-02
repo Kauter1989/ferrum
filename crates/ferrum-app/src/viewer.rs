@@ -4,18 +4,27 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use ferrum_domain::{
-    Annotation, AnnotationId, AnnotationSet, ClipSettings, Dims3, EraserBrush, LoadedSeries, MaskHistory, OrbitCamera,
-    RenderMode, RenderSettings, Rgba8, SeriesDescriptor, SliceAxis, SliceKey, SliceView, TransferFunction, Volume,
-    VolumeRepository, VoxelMask, WindowLevel, WindowPreset,
+    Annotation, AnnotationId, AnnotationReport, AnnotationSet, ClipSettings, Dims3, EraserBrush, LabelMap,
+    LoadedSeries, MaskHistory, OrbitCamera, Provenance, RenderMode, RenderSettings, ReviewStatus, Rgba8,
+    SeriesDescriptor, SliceAxis, SliceKey, SliceView, Timestamp, TransferFunction, Volume, VolumeRepository, VoxelBox,
+    VoxelMask, WindowLevel, WindowPreset,
 };
 use ferrum_processing::AmbientOcclusion;
-use ferrum_render::cpu::{CpuRaycaster, CpuScene};
+use ferrum_render::cpu::{CpuRaycaster, CpuScene, SegmentLayer};
 use ferrum_render::{FrameParams, SliceParams};
 use glam::{UVec3, Vec2, Vec3};
 
 use crate::dataset::{Dataset, BRICK_SIZE};
 use crate::jobs::{FilterKind, JobEvent, JobQueue};
 use crate::tools::{InputKind, ProbeReading, SliceContext, ToolController, ToolInput, ToolKind, ToolOutcome};
+
+mod ai;
+mod review;
+mod segments;
+
+pub use ai::{AiState, AiStatus};
+pub use review::ReviewEntry;
+pub use segments::{SegmentSummary, SegmentationState};
 
 /// Layout of the main area.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -181,6 +190,10 @@ pub trait GpuSink {
     fn clear_mask(&mut self);
     /// Sets or clears the ambient occlusion volume.
     fn upload_ambient_occlusion(&mut self, ao: Option<&AmbientOcclusion>);
+    /// Uploads (part of) the segment label map; `None` removes it.
+    fn upload_labels(&mut self, labels: Option<&LabelMap>, dirty: Option<VoxelBox>);
+    /// Replaces the segment colour table (alpha = opacity, 0 = hidden).
+    fn upload_segment_colors(&mut self, lut: &[Rgba8; 256]);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -200,6 +213,8 @@ pub struct GpuSyncState {
     occupancy: Option<OccupancyKey>,
     mask: Option<(u64, Option<u64>)>,
     ao: Option<Option<(u64, u32)>>,
+    labels: Option<(u64, Option<u64>)>,
+    segment_colors: Option<(u64, Option<u64>)>,
 }
 
 /// The viewer application service.
@@ -218,6 +233,8 @@ pub struct Viewer {
     pub tool: ToolKind,
     tool_ctl: ToolController,
     annotations: AnnotationSet,
+    segments: SegmentationState,
+    ai: AiState,
     /// Latest probe reading.
     pub probe: Option<ProbeReading>,
     /// Status bar.
@@ -227,6 +244,8 @@ pub struct Viewer {
     pub series_choice: Option<Vec<SeriesDescriptor>>,
     /// Pending text annotation position (UI shows an input box).
     pub pending_text: Option<(SliceKey, Vec2)>,
+    workspace: Option<review::WorkspaceSession>,
+    pending_workspace: Option<Arc<dyn ferrum_domain::ResultStore>>,
 }
 
 impl Viewer {
@@ -243,10 +262,14 @@ impl Viewer {
             tool: ToolKind::default(),
             tool_ctl: ToolController::default(),
             annotations: AnnotationSet::default(),
+            segments: SegmentationState::default(),
+            ai: AiState::new(),
             probe: None,
             status: Status { message: "Open a DICOM folder or NIfTI file to start".into(), ..Status::default() },
             series_choice: None,
             pending_text: None,
+            workspace: None,
+            pending_workspace: None,
         }
     }
 
@@ -308,6 +331,8 @@ impl Viewer {
             VolumeViewState { settings, tf_revision: self.volume.tf_revision + 1, ..VolumeViewState::default() };
         self.volume.mask_generation = self.bump_revision();
         self.annotations.clear();
+        self.clear_segmentation();
+        self.reset_ai_session();
         self.tool_ctl.cancel();
         self.probe = None;
         self.status.message = format!(
@@ -321,6 +346,7 @@ impl Viewer {
             dataset.volume.spacing().z,
         );
         self.dataset = Some(dataset);
+        self.attach_workspace();
     }
 
     fn bump_revision(&mut self) -> u64 {
@@ -341,6 +367,7 @@ impl Viewer {
         for event in self.jobs.poll() {
             self.handle_event(event);
         }
+        self.poll_ai();
         self.request_ambient_occlusion();
     }
 
@@ -360,7 +387,12 @@ impl Viewer {
             }
             JobEvent::Scanned(Ok(mut series)) => {
                 self.status.progress = None;
-                if series.len() == 1 {
+                let opening_workspace = self.pending_workspace.is_some();
+                if let Some(s) = self.take_workspace_series(&mut series) {
+                    self.load_series(s);
+                } else if opening_workspace {
+                    self.status.message = "The workspace could not be opened".into();
+                } else if series.len() == 1 {
                     let s = series.remove(0);
                     self.load_series(s);
                 } else {
@@ -374,6 +406,7 @@ impl Viewer {
             }
             JobEvent::Scanned(Err(e)) | JobEvent::Loaded(Err(e)) => {
                 self.status.progress = None;
+                self.pending_workspace = None;
                 self.status.message = format!("Loading failed: {e}");
                 self.status.errors.push(e.to_string());
             }
@@ -464,9 +497,67 @@ impl Viewer {
         self.tool_ctl.cancel();
     }
 
-    /// Adds an annotation to a slice (e.g. imported or scripted).
+    /// Adds an annotation to a slice (e.g. imported or scripted), as drawn
+    /// by the user now.
     pub fn add_annotation(&mut self, key: SliceKey, annotation: Annotation) -> AnnotationId {
-        self.annotations.add(key, annotation)
+        self.annotations.add_with(key, annotation, Provenance::human(Timestamp::now()))
+    }
+
+    /// Adds an annotation with the given provenance (e.g. an agent's
+    /// proposal).
+    pub fn add_annotation_with(
+        &mut self,
+        key: SliceKey,
+        annotation: Annotation,
+        provenance: Provenance,
+    ) -> AnnotationId {
+        self.annotations.add_with(key, annotation, provenance)
+    }
+
+    /// Confirms, rejects or reopens an annotation (see
+    /// [`AnnotationSet::review`]); `by` names the reviewer. Returns `false`
+    /// if the annotation does not exist.
+    pub fn review_annotation(&mut self, id: AnnotationId, status: ReviewStatus, by: Option<&str>) -> bool {
+        self.annotations.review(id, status, by, Timestamp::now())
+    }
+
+    /// Replaces all annotations (e.g. loaded from a workspace), cancelling
+    /// any drawing in progress.
+    pub fn set_annotations(&mut self, annotations: AnnotationSet) {
+        self.annotations = annotations;
+        self.tool_ctl.cancel();
+    }
+
+    /// Renames an annotation (see [`AnnotationSet::rename`]).
+    pub fn rename_annotation(&mut self, id: AnnotationId, name: &str) -> bool {
+        self.annotations.rename(id, name)
+    }
+
+    /// Deletes one annotation.
+    pub fn remove_annotation(&mut self, id: AnnotationId) {
+        self.annotations.remove(id);
+        self.tool_ctl.cancel();
+    }
+
+    /// Shows the slice an annotation was drawn on: switches the 2D view to
+    /// its plane and slice. Returns `false` if the annotation is unknown.
+    pub fn go_to_annotation(&mut self, id: AnnotationId) -> bool {
+        let Some(key) = self.annotations.slice_of(id) else {
+            return false;
+        };
+        let Some(axis) = key.slice_axis() else {
+            return false;
+        };
+        self.slices.axis = axis;
+        self.set_slice_index(axis, key.index);
+        true
+    }
+
+    /// Report of all annotations with the study identification, ready for
+    /// export. `None` without a loaded dataset.
+    pub fn annotation_report(&self) -> Option<AnnotationReport> {
+        let d = self.dataset.as_ref()?;
+        Some(AnnotationReport::build(d.metadata.source.clone(), d.metadata.study.clone(), &d.volume, &self.annotations))
     }
 
     /// Removes all annotations.
@@ -498,11 +589,15 @@ impl Viewer {
             window: &mut self.slices.window,
             annotations: &mut self.annotations,
             tolerance_mm,
+            ai_positive: self.ai.positive,
         };
         let outcome = self.tool_ctl.handle(self.tool, ToolInput { kind, mm, screen }, &mut ctx);
         match &outcome {
             ToolOutcome::Probe(p) => self.probe = *p,
             ToolOutcome::RequestText(pos) => self.pending_text = Some((key, *pos)),
+            ToolOutcome::Prompt(p) => {
+                self.ai_prompt(p.clone());
+            }
             _ => {}
         }
         outcome
@@ -552,6 +647,7 @@ impl Viewer {
             axis: axis.id(),
             nearest: self.slices.nearest,
             background: [0.05, 0.05, 0.06, 1.0],
+            segments: self.segments.overlay_active(),
         })
     }
 
@@ -583,15 +679,18 @@ impl Viewer {
     pub fn frame_params(&self, size: Vec2) -> Option<FrameParams> {
         let d = self.dataset.as_ref()?;
         let ao = self.volume.ao.as_ref().filter(|(r, _, _)| *r == d.revision).map(|(_, _, a)| a.tex_scale);
-        Some(FrameParams::new(
-            &d.volume,
-            &self.volume.camera,
-            &self.volume.settings,
-            &self.volume.clip,
-            size,
-            BRICK_SIZE,
-            ao,
-        ))
+        Some(
+            FrameParams::new(
+                &d.volume,
+                &self.volume.camera,
+                &self.volume.settings,
+                &self.volume.clip,
+                size,
+                BRICK_SIZE,
+                ao,
+            )
+            .with_segments(self.segments.overlay_active()),
+        )
     }
 
     /// Eraser mask, if the eraser has been used.
@@ -610,12 +709,16 @@ impl Viewer {
         let d = self.dataset.as_ref()?;
         let mut params = self.frame_params(Vec2::new(aspect * 100.0, 100.0))?;
         params.jitter = false;
+        let seg_lut = self.segments.set().map(|s| s.lut());
+        let segments =
+            self.segments.set().zip(seg_lut.as_ref()).map(|(s, lut)| SegmentLayer { labels: s.labels(), lut });
         let scene = CpuScene {
             volume: &d.volume,
             mask: self.volume.mask.as_ref(),
             ao: None,
             lut: &self.volume.tf_lut,
             occupancy: None,
+            segments,
         };
         CpuRaycaster::new(scene, &params).pick(ndc)
     }
@@ -665,6 +768,7 @@ impl Viewer {
             sync.occupancy = None;
             sync.mask = None;
             sync.ao = None;
+            sync.labels = None;
         }
         if sync.tf != Some(self.volume.tf_revision) {
             sink.upload_transfer_function(&self.volume.tf_lut);
@@ -711,6 +815,36 @@ impl Viewer {
         if sync.ao != Some(ao_key) {
             sink.upload_ambient_occlusion(ao.map(|(_, _, a)| a.as_ref()));
             sync.ao = Some(ao_key);
+        }
+        self.sync_segments(sync, sink);
+    }
+
+    fn sync_segments(&mut self, sync: &mut GpuSyncState, sink: &mut dyn GpuSink) {
+        let generation = self.segments.generation;
+        let Some(set) = self.segments.set.as_mut() else {
+            if matches!(sync.labels, Some((_, Some(_))) | None) {
+                sink.upload_labels(None, None);
+            }
+            sync.labels = Some((generation, None));
+            sync.segment_colors = Some((generation, None));
+            return;
+        };
+        let revision = Some(set.revision());
+        let dirty = set.take_dirty();
+        match sync.labels {
+            Some((g, Some(r))) if g == generation => {
+                if Some(r) != revision {
+                    if let Some(bx) = dirty {
+                        sink.upload_labels(Some(set.labels()), Some(bx));
+                    }
+                }
+            }
+            _ => sink.upload_labels(Some(set.labels()), None),
+        }
+        sync.labels = Some((generation, revision));
+        if sync.segment_colors != Some((generation, revision)) {
+            sink.upload_segment_colors(&set.lut());
+            sync.segment_colors = Some((generation, revision));
         }
     }
 }

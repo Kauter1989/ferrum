@@ -1,8 +1,12 @@
 # Development plan
 
-This is the working plan for FERRUM. Each stage groups features
-as user stories with acceptance criteria. Status legend:
-✅ done · 🚧 in progress · 📋 planned.
+This is the working plan for FERRUM, a reusable visualisation core for
+medical imaging ([vision](docs/vision.md)). Stages 1–13 built the viewer.
+Stage 14 opens it to AI segmentation engines, and Stage 15 makes it an
+agent skill.
+
+Each stage groups features as user stories with acceptance criteria.
+Status legend: ✅ done · 🚧 in progress · 📋 planned.
 
 New stages are appended at the end. A finished stage is kept as a record
 of what was delivered and how it is verified.
@@ -15,6 +19,10 @@ Personas:
 - **Researcher**: works with NIfTI and public datasets and needs exports
   and reproducible renders.
 - **Developer**: maintains and extends the code base.
+- **Integrator**: builds FERRUM into a commercial or research product,
+  or connects a segmentation engine.
+- **Agent / harness developer**: lets AI agents use FERRUM as a skill in
+  a medical harness.
 
 ---
 
@@ -129,9 +137,57 @@ replaced by a docked workstation layout in calm navy tones.
 | 12.2 | As a **developer**, I want a complexity budget so that functions stay small and readable. | Clippy enforces cognitive complexity ≤ 25, ≤ 120 lines per function and nesting ≤ 6 (`clippy.toml`). Functions that exceeded it were split: the slice view, the start screen, the series picker and NIfTI reorientation. |
 | 12.3 | As a **maintainer**, I want the release to be cut without pushing tags so that it works from any environment. | `release.yml` accepts a manual run with a `tag` input, which creates the tag and the release (ADR 0006). |
 
+## Stage 13 — Annotation workflow ✅
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 13.1 | As a **radiologist**, I want to see all annotations of the study in one list so that I can review my findings. | In the 2D view, the *Image* tab lists every annotation with type, value, plane and slice number. The list is not shown in 3D/MPR. Each row can be deleted. |
+| 13.2 | As a **radiologist**, I want to jump to the slice of an annotation so that I can find it again instantly. | Each annotation stores its plane and slice. Clicking the row (or its arrow) switches the 2D view to that plane and slice. Rows on the current slice are highlighted. |
+| 13.3 | As a **radiologist**, I want to name annotations so that a measurement says what it measures. | Default names `"<Type> <n>"`, editable in the list. The name is shown on the image (`Name: value`), and empty names are rejected. |
+| 13.4 | As a **researcher**, I want to export annotations to JSON so that I can analyse them elsewhere and link them to the study. | `ferrum-annotations` v1 document with the source file or folder, DICOM study and series UIDs, date, time and descriptions, the volume grid, and for every annotation its name, type, plane, slice, value with unit, text, points in mm and in voxel coordinates. Covered by io, application and UI tests. |
+| 13.6 | As a **radiologist**, I want one slice numbering everywhere so that numbers never disagree. | Slice numbers are one-based in the slider, on the image, in the annotation list and in the export (`slice_number`; `slice_index` stays zero-based for tools). |
+| 13.5 | As a **clinician**, I want only clinically useful tools so that the interface stays focused. | Smoothing and edge filters are hidden from the UI: they changed the data irreversibly. The processing code stays available for future use. |
+
+## Stage 14 — Extensibility and AI segmentation (demo) ✅
+
+FERRUM stays a visualisation core with extension points
+([ADR 0007](docs/decisions/0007-extensibility-and-engine-protocol.md)).
+Segmentation engines run out of process and speak the
+[FERRUM Engine Protocol](docs/engine-protocol.md). There is no
+inference in Rust for now.
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 14.1 | As an **integrator**, I want a documented engine protocol so that I can plug any segmentation engine into FERRUM without changing its code. | `docs/engine-protocol.md` (`ferrum-engine/1`) and ADR 0007. ✅ |
+| 14.2 | As a **radiologist**, I want segments shown over the image and in 3D so that I can review a segmentation. | Volume geometry (origin, direction). `LabelMap`, segments with name, colour, visibility, opacity and volume in ml. 2D fill and outline and 3D rendering, with CPU-reference parity. NIfTI label-map import and export. ✅ |
+| 14.3 | As a **developer**, I want an engine port with a network client and a mock so that engines are swappable and testable without a GPU. | `SegmentationEngine` / `InteractiveSession` ports; `ferrum-engines` with `HttpEngine` and `MockEngine`; tests against the mock. ✅ Also a reference server and a conformance suite runnable against any engine URL. |
+| 14.4 | As a **radiologist**, I want AI tools in a collapsible panel that work only when an engine is connected so that I always know what is available. | *AI segmentation* section: connection status and URL, prompt tools (point ±, box, scribble, lasso), Accept, Reset and Undo. The tools are disabled with a hint when no engine is connected, and a *Research use only* badge appears when the engine reports it. ✅ Discard replaces Reset; undo is offered when the engine supports it. |
+| 14.5 | As a **researcher**, I want a reproducible nnInteractive demo so that I can try interactive AI segmentation on my own GPU machine. | `bridges/` (`ferrum-bridge nninteractive`, FastAPI) with Docker and `docs/ai-demo.md` covering requirements, start-up, SSH tunnel and a walkthrough on the demo CT. A protocol conformance test runs against the bridge. ✅ The CI runs it against the bridge with a model-free backend; the GPU walkthrough is manual. |
+| 14.6 | As an **integrator**, I want bridges for MONAI Label and TotalSegmentator so that automatic segmentation and active learning become available. | Automatic segmentation in FERRUM: jobs with progress and cancel, structure selection, one named segment per structure found; covered by the mock engine and the conformance suite. ✅ TotalSegmentator bridge (`ferrum-bridge totalsegmentator`, Docker, telemetry off, geometry-correct NIfTI) ✅; MONAI Label bridge (`ferrum-bridge monailabel`: DeepEdit/DeepGrow/SAM2 clicks, SAM2 boxes, segmentation models as jobs; tested against a fake MONAI Label server and the conformance suite) ✅ |
+
+---
+
+## Stage 15 — FERRUM as an agent skill ✅
+
+AI agents in a medical harness use FERRUM as a skill: a skill package and
+a headless tool, `ferrum-cli`, over the same use cases as the desktop
+app. Agents propose and clinicians confirm
+([ADR 0008](docs/decisions/0008-agent-skill.md),
+[specification](docs/agent-skill.md)).
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 15.1 | As an **integrator**, I want a documented skill design so that I can plan FERRUM into my agent harness. | ADR 0008 and `docs/agent-skill.md`: commands, envelope, workspace, privacy, review, evaluation. ✅ |
+| 15.2 | As a **clinician**, I want to know who created each annotation and segment and whether it was confirmed so that I never mistake a proposal for a finding. | `Provenance` (author human/agent/engine, status proposed/confirmed/rejected, time) in the domain. `ferrum-annotations` v2, segment metadata JSON, `ferrum-workspace` v1 read/write. ✅ Formats in [docs/workspace-format.md](docs/workspace-format.md): v1 annotations still read; sources hashed with SHA-256 (`source_changed`); atomic writes; audit log. AI results start as engine proposals, Accept confirms; the Segments and Annotations lists show the author with Confirm / Reject / Reopen. |
+| 15.3 | As an **agent developer**, I want a headless command line with JSON output so that a skill can drive FERRUM from scripts. | `ferrum-agent` + `ferrum-cli`: study, view (slice, MPR, montage, 3D with pixel mapping), probe, stats, profile, measure, annotate, segment (incl. threshold region growing), export. CPU renderer without a GPU. Operator configuration, audit log. Contract tests on phantoms and JSON Schema validation. ✅ ([docs/agent-cli.md](docs/agent-cli.md)): study scan/open/info; view slice, montage, MPR (PNG + per-tile pixel→voxel→patient mapping, labels, crosshair, segment outlines) and volume (CPU ray caster, six viewpoints; 3D pixels are deliberately not mapped to voxels, measurements come from slices); probe, stats (box, sphere, segment, area annotation), profile, measure distance/angle/area; annotate; segment threshold; review; export bundle (report, annotations, label map, SHA-256, unconfirmed items marked). Operator configuration (read roots, workspace root, pseudonymised UIDs, limits, harness review), audit log, JSON Schemas checked on every call, contract tests on phantoms with known answers. |
+| 15.4 | As a **harness developer**, I want an MCP server so that the tools plug into MCP-capable harnesses without glue code. | `ferrum-cli mcp` (stdio) serving the same commands; renders as image content; identical JSON to the CLI in a scripted session. ✅ JSON-RPC over stdio (2025-06-18, 2025-03-26, 2024-11-05), tools with input schemas and hints, envelope as text and structured content, PNG as image content, command errors as tool errors, safety instructions; series cached in memory (invalidated when sources change), annotations and segments re-read on every call. |
+| 15.5 | As a **harness developer**, I want an installable skill package so that agents know when and how to use FERRUM safely. | `skills/ferrum/` (`SKILL.md`, references, schemas) and a plugin manifest in the release archives. Evaluations on phantoms with known answers. A scan proves that outputs contain no identifiers. ✅ `skills/ferrum/` (SKILL.md, four reference pages, generated schemas kept in sync by a test), plugin folder in the release archives (manifest, MCP configuration, bundled `ferrum-cli`). Evaluations: five tasks with known answers on a phantom, `ferrum-cli eval tasks|phantoms|grade` (correct, unit, from tools, no diagnostic wording, review), reference solutions in the tests. Identifier scan over every envelope, render and export file of a full session on a CT with patient data. |
+| 15.6 | As a **clinician**, I want to review an agent's work in the viewer so that I can accept, edit or reject it. | *File → Open workspace*; review queue with author and status; decisions written to the workspace and the audit log. ✅ *Open workspace* (toolbar): source hashes checked, the workspace's series loaded, its annotations and segments attached. *Review* section: proposals with author, reviewer name, Confirm / Reject; decisions from the queue or the Annotations / Segments lists are logged and saved at once; *Save to workspace* for other edits. `ResultStore` port in the domain, `WorkspaceStore` in `ferrum-io`. |
+| 15.7 | As a **harness developer**, I want AI segmentation and standard exports in the skill so that results flow to PACS and reporting. | `segment interactive` / `segment auto` through `ferrum-engine/1` (after 14.3–14.5); DICOM SEG and SR (TID 1500) export. ✅ Engine commands: `engine info`, `segment interactive` (point and box prompts), `segment auto` (jobs with timeout) through `ferrum-engine/1`; engines allow-listed by the operator (loopback only without configuration), token from the environment, results proposed by the engine with `research_only`; tested against the reference server with the mock engine. DICOM export: `export bundle` with `formats: ["dicom"]` writes a binary Segmentation and a Comprehensive 3D SR (TID 1500: lengths and areas with 3D coordinates, segment volumes referencing the SEG), with review status in private codes, rejected items left out and patient data, dates and UIDs per the operator's privacy settings; validated with highdicom in CI. |
+
 ---
 
 ## Next stages 📋
 
-Future stages are added here as they are planned (e.g. "Stage 13 — …"),
+Future stages are added here as they are planned (e.g. "Stage 15 — …"),
 with user stories and acceptance criteria in the same format.

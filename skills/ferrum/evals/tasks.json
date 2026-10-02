@@ -1,0 +1,52 @@
+{
+  "format": "ferrum-skill-evals",
+  "version": 1,
+  "note": "Tasks with known answers on synthetic phantoms (ferrum-cli eval phantoms <dir>). Grade a transcript with ferrum-cli eval grade --task <id> <transcript.json>.",
+  "tasks": [
+    {
+      "id": "sphere_diameter",
+      "phantom": "sphere_cube",
+      "prompt": "Open the study and measure the diameter of the round object of intermediate brightness.",
+      "expected": [16.0],
+      "tolerance": 2.0,
+      "unit": "mm",
+      "proposes": false
+    },
+    {
+      "id": "sphere_volume",
+      "phantom": "sphere_cube",
+      "prompt": "Segment the round object of intermediate brightness and report its volume.",
+      "expected": [2.145],
+      "tolerance": 0.25,
+      "unit": "ml",
+      "proposes": true
+    },
+    {
+      "id": "cube_mean",
+      "phantom": "sphere_cube",
+      "prompt": "What is the mean voxel value inside the brightest object?",
+      "expected": [1000.0],
+      "tolerance": 5.0,
+      "unit": null,
+      "proposes": false
+    },
+    {
+      "id": "largest_slice",
+      "phantom": "sphere_cube",
+      "prompt": "On which axial slice number is the round object largest?",
+      "expected": [16.0],
+      "tolerance": 1.0,
+      "unit": "slice",
+      "proposes": false
+    },
+    {
+      "id": "cube_centre",
+      "phantom": "sphere_cube",
+      "prompt": "Give the centre of the brightest object in patient coordinates (LPS millimetres).",
+      "expected": [10.5, 10.5, 129.0],
+      "tolerance": 2.0,
+      "unit": "mm",
+      "proposes": false
+    }
+  ]
+}

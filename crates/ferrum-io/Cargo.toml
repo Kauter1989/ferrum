@@ -18,6 +18,8 @@ dicom-pixeldata.workspace = true
 dicom-dictionary-std.workspace = true
 dicom-core.workspace = true
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
+serde_json.workspace = true
+sha2.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
