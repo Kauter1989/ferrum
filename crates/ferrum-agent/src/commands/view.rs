@@ -1,5 +1,6 @@
 //! `view slice`: renders one slice to a PNG with a sidecar JSON that maps
 //! pixels to voxels and patient millimetres (`docs/agent-skill.md` §9).
+//! The building blocks here also serve the tiled renders in [`super::tiles`].
 //!
 //! Rendering runs on the CPU, needs no GPU, and samples the nearest voxel
 //! so that no value is invented between voxels.
@@ -21,9 +22,9 @@ use crate::study::Study;
 pub const DEFAULT_SIZE: u32 = 768;
 
 /// Affine map of `(x, y, 1)` to three coordinates (rows).
-type Affine = [[f64; 3]; 3];
+pub(super) type Affine = [[f64; 3]; 3];
 
-fn apply(m: &Affine, x: f64, y: f64) -> DVec3 {
+pub(super) fn apply(m: &Affine, x: f64, y: f64) -> DVec3 {
     DVec3::new(
         m[0][0] * x + m[0][1] * y + m[0][2],
         m[1][0] * x + m[1][1] * y + m[1][2],
@@ -32,17 +33,18 @@ fn apply(m: &Affine, x: f64, y: f64) -> DVec3 {
 }
 
 /// Geometry of one slice render.
-struct Layout {
-    plane: SliceAxis,
-    index: u32,
-    width: u32,
-    height: u32,
-    pixel_mm: f64,
-    to_voxel: Affine,
+pub(super) struct Layout {
+    pub(super) plane: SliceAxis,
+    pub(super) index: u32,
+    pub(super) width: u32,
+    pub(super) height: u32,
+    pub(super) pixel_mm: f64,
+    pub(super) to_voxel: Affine,
 }
 
 impl Layout {
-    fn new(v: &Volume, plane: SliceAxis, index: u32, size: u32) -> Self {
+    /// A slice of `plane` fitted into a square of `size` pixels.
+    pub(super) fn new(v: &Volume, plane: SliceAxis, index: u32, size: u32) -> Self {
         let size_mm = plane.plane_size_mm(v).as_dvec2();
         let pixel_mm = size_mm.max_element() / f64::from(size);
         let width = (size_mm.x / pixel_mm).round().max(1.0) as u32;
@@ -69,7 +71,7 @@ impl Layout {
         nearest_voxel(v, apply(&self.to_voxel, f64::from(x) + 0.5, f64::from(y) + 0.5))
     }
 
-    fn to_patient(&self, v: &Volume) -> Affine {
+    pub(super) fn to_patient(&self, v: &Volume) -> Affine {
         let o = voxel_to_patient(v, apply(&self.to_voxel, 0.0, 0.0));
         let dx = voxel_to_patient(v, apply(&self.to_voxel, 1.0, 0.0)) - o;
         let dy = voxel_to_patient(v, apply(&self.to_voxel, 0.0, 1.0)) - o;
@@ -81,7 +83,7 @@ impl Layout {
     }
 }
 
-fn window(study: &Study, p: &Params) -> Result<WindowLevel, AgentError> {
+pub(super) fn window(study: &Study, p: &Params) -> Result<WindowLevel, AgentError> {
     let range = study.volume.range();
     match p.get("window") {
         None => Ok(study.metadata.default_window.unwrap_or_else(|| WindowPreset::FullRange.window(range))),
@@ -130,7 +132,7 @@ fn next_render_id(dir: &Path) -> String {
 }
 
 /// Grey values with optional segment outlines.
-fn render_pixels(study: &Study, l: &Layout, w: WindowLevel, outlines: bool) -> Vec<u8> {
+pub(super) fn render_pixels(study: &Study, l: &Layout, w: WindowLevel, outlines: bool) -> Vec<u8> {
     let v = &study.volume;
     let (wd, ht) = (l.width as usize, l.height as usize);
     let mut voxels = Vec::with_capacity(wd * ht);
@@ -168,22 +170,44 @@ pub fn slice(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     let plane = parse_plane(p.req_str("plane")?)?;
     let index = slice_index(study, p, plane)?;
     let w = window(study, p)?;
-    let size = p.u64("size")?.map_or(DEFAULT_SIZE.min(max), |s| s.clamp(16, u64::from(max)) as u32);
+    let size = size_param(p, max, DEFAULT_SIZE)?;
+    let overlays = overlays(p)?;
+    let layout = Layout::new(&study.volume, plane, index, size);
+    let rgb = render_pixels(study, &layout, w, overlays.contains(&"segments"));
+    save_render(study, layout.width, layout.height, rgb, |id| sidecar(study, &layout, id, w, &overlays))
+}
+
+/// Size parameter: largest side in pixels, capped by the operator.
+pub(super) fn size_param(p: &Params, max: u32, default: u32) -> Result<u32, AgentError> {
+    Ok(p.u64("size")?.map_or(default.min(max), |s| s.clamp(16, u64::from(max)) as u32))
+}
+
+/// The `overlays` parameter (only `segments` exists).
+pub(super) fn overlays<'a>(p: &Params<'a>) -> Result<Vec<&'a str>, AgentError> {
     let overlays: Vec<&str> =
         p.list("overlays")?.map(|l| l.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
     if let Some(bad) = overlays.iter().find(|o| **o != "segments") {
         return Err(AgentError::bad_request(format!("unknown overlay {bad:?}")).hint("overlays: segments"));
     }
-    let layout = Layout::new(&study.volume, plane, index, size);
-    let rgb = render_pixels(study, &layout, w, overlays.contains(&"segments"));
+    Ok(overlays)
+}
+
+/// Writes `renders/<id>.png` and `<id>.json` (the sidecar built for the
+/// new id) and returns the sidecar with the file paths.
+pub(super) fn save_render(
+    study: &Study,
+    width: u32,
+    height: u32,
+    rgb: Vec<u8>,
+    sidecar: impl FnOnce(&str) -> Value,
+) -> Result<Output, AgentError> {
     let dir = study.renders_dir();
     std::fs::create_dir_all(&dir).map_err(|e| AgentError::internal(e.to_string()))?;
     let id = next_render_id(&dir);
     let png = dir.join(format!("{id}.png"));
-    let img = image::RgbImage::from_raw(layout.width, layout.height, rgb)
-        .ok_or_else(|| AgentError::internal("image size"))?;
+    let img = image::RgbImage::from_raw(width, height, rgb).ok_or_else(|| AgentError::internal("image size"))?;
     img.save_with_format(&png, image::ImageFormat::Png).map_err(|e| AgentError::internal(e.to_string()))?;
-    let sidecar = sidecar(study, &layout, &id, w, &overlays);
+    let sidecar = sidecar(&id);
     let json_path = dir.join(format!("{id}.json"));
     let text = serde_json::to_string_pretty(&sidecar).map_err(|e| AgentError::internal(e.to_string()))?;
     std::fs::write(&json_path, text).map_err(|e| AgentError::internal(e.to_string()))?;
@@ -197,24 +221,34 @@ fn path_text(p: &Path) -> String {
     p.to_string_lossy().into_owned()
 }
 
-fn sidecar(study: &Study, l: &Layout, id: &str, w: WindowLevel, overlays: &[&str]) -> Value {
+/// Note written into every sidecar.
+pub(super) const NOTE: &str =
+    "pixel centres lie at +0.5; maps take (x, y, 1). Take numbers from probe, stats and measure, not from the image.";
+
+/// Plane, slice and mapping of one slice image (a whole render or a tile).
+pub(super) fn slice_json(v: &Volume, l: &Layout) -> Value {
     let r = |m: Affine| m.map(|row| row.map(|x| (x * 1e4).round() / 1e4));
     let [left, right, top, bottom] = l.plane.edge_labels();
-    let v = &study.volume;
     json!({
-        "render": id,
-        "kind": "slice",
         "plane": l.plane.label().to_lowercase(),
         "slice_number": l.index + 1,
         "slice_index": l.index,
         "slice_count": l.plane.slice_count(v),
-        "window": { "center": w.center, "width": w.width },
         "size": [l.width, l.height],
         "pixel_mm": (l.pixel_mm * 1e4).round() / 1e4,
         "pixel_to_voxel": r(l.to_voxel),
         "pixel_to_patient_mm": r(l.to_patient(v)),
         "orientation": { "left": left, "right": right, "top": top, "bottom": bottom },
-        "overlays": overlays,
-        "note": "pixel centres lie at +0.5; maps take (x, y, 1). Take numbers from probe, stats and measure, not from the image.",
     })
+}
+
+fn sidecar(study: &Study, l: &Layout, id: &str, w: WindowLevel, overlays: &[&str]) -> Value {
+    let mut s = json!({ "render": id, "kind": "slice" });
+    if let (Some(o), Value::Object(m)) = (s.as_object_mut(), slice_json(&study.volume, l)) {
+        o.extend(m);
+    }
+    s["window"] = json!({ "center": w.center, "width": w.width });
+    s["overlays"] = json!(overlays);
+    s["note"] = json!(NOTE);
+    s
 }

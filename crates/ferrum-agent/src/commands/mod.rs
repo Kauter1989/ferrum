@@ -9,11 +9,14 @@ use crate::params::Params;
 use crate::study::{Study, VolumeCache};
 
 pub mod annotate;
+pub mod export;
 pub mod inspect;
 pub mod review;
 pub mod segment;
 pub mod study;
+pub mod tiles;
 pub mod view;
+pub mod volume;
 
 /// State of one command call.
 pub struct Ctx<'a> {
@@ -51,8 +54,12 @@ pub const COMMANDS: &[(&str, Command)] = &[
     ("study open", study::open),
     ("study info", study::info),
     ("view slice", view::slice),
+    ("view montage", tiles::montage),
+    ("view mpr", tiles::mpr),
+    ("view volume", volume::volume),
     ("probe", inspect::probe),
     ("stats", inspect::stats),
+    ("profile", inspect::profile),
     ("measure distance", inspect::measure_distance),
     ("measure angle", inspect::measure_angle),
     ("measure area", inspect::measure_area),
@@ -67,4 +74,5 @@ pub const COMMANDS: &[(&str, Command)] = &[
     ("review list", review::list),
     ("review confirm", review::confirm),
     ("review reject", review::reject),
+    ("export bundle", export::bundle),
 ];

@@ -72,9 +72,24 @@ pub enum Command {
         #[arg(long)]
         annotation: Option<u64>,
     },
+    /// Values along a line.
+    Profile {
+        #[command(flatten)]
+        ws: Ws,
+        /// Start point.
+        from: String,
+        /// End point.
+        to: String,
+        /// Number of samples.
+        #[arg(long)]
+        samples: Option<u64>,
+    },
     /// Measurements between points.
     #[command(subcommand)]
     Measure(Measure),
+    /// Report, annotations and segments for hand-off.
+    #[command(subcommand)]
+    Export(Export),
     /// Named annotations.
     #[command(subcommand)]
     Annotate(Annotate),
@@ -136,6 +151,74 @@ pub enum Study {
 /// `view …`.
 #[derive(Debug, Subcommand)]
 pub enum View {
+    /// Several slices of one plane as a labelled grid.
+    Montage {
+        #[command(flatten)]
+        ws: Ws,
+        /// axial, coronal or sagittal.
+        #[arg(long)]
+        plane: String,
+        /// First slice number.
+        #[arg(long)]
+        from: Option<u64>,
+        /// Last slice number.
+        #[arg(long)]
+        to: Option<u64>,
+        /// Every n-th slice.
+        #[arg(long)]
+        step: Option<u64>,
+        /// Tiles per row.
+        #[arg(long)]
+        columns: Option<u64>,
+        /// Window preset (lung, bone, …) or CENTER,WIDTH.
+        #[arg(long, allow_hyphen_values = true)]
+        window: Option<String>,
+        /// Largest side in pixels.
+        #[arg(long)]
+        size: Option<u64>,
+        /// Overlays (segments).
+        #[arg(long = "overlay")]
+        overlays: Vec<String>,
+    },
+    /// 3D render on the CPU from a standard viewpoint.
+    Volume {
+        #[command(flatten)]
+        ws: Ws,
+        /// mip (default), isosurface or transfer_function.
+        #[arg(long)]
+        mode: Option<String>,
+        /// Isosurface value (e.g. 300 HU for bone).
+        #[arg(long, allow_hyphen_values = true)]
+        threshold: Option<f64>,
+        /// soft_tissue_bone, lung_vessels or bone.
+        #[arg(long)]
+        preset: Option<String>,
+        /// anterior, posterior, left, right, superior or inferior.
+        #[arg(long)]
+        view: Option<String>,
+        /// Image side in pixels.
+        #[arg(long)]
+        size: Option<u64>,
+        /// Overlays (segments).
+        #[arg(long = "overlay")]
+        overlays: Vec<String>,
+    },
+    /// Axial, coronal and sagittal slices through a point.
+    Mpr {
+        #[command(flatten)]
+        ws: Ws,
+        /// The point.
+        at: String,
+        /// Window preset (lung, bone, …) or CENTER,WIDTH.
+        #[arg(long, allow_hyphen_values = true)]
+        window: Option<String>,
+        /// Largest side in pixels.
+        #[arg(long)]
+        size: Option<u64>,
+        /// Overlays (segments).
+        #[arg(long = "overlay")]
+        overlays: Vec<String>,
+    },
     /// Renders one slice to PNG + sidecar JSON.
     Slice {
         #[command(flatten)]
@@ -158,6 +241,16 @@ pub enum View {
         /// Overlays (segments).
         #[arg(long = "overlay")]
         overlays: Vec<String>,
+    },
+}
+
+/// `export …`.
+#[derive(Debug, Subcommand)]
+pub enum Export {
+    /// Writes export/ in the workspace with hashes.
+    Bundle {
+        #[command(flatten)]
+        ws: Ws,
     },
 }
 
@@ -371,6 +464,52 @@ impl Command {
                     ("overlays", (!overlays.is_empty()).then(|| json!(overlays))),
                 ],
             ),
+            Command::View(View::Montage { ws: w, plane, from, to, step, columns, window, size, overlays }) => call(
+                "view montage",
+                vec![
+                    ws(w),
+                    ("plane", Some(json!(plane))),
+                    ("from", some(*from)),
+                    ("to", some(*to)),
+                    ("step", some(*step)),
+                    ("columns", some(*columns)),
+                    ("window", window.as_deref().map(parse_window).transpose()?),
+                    ("size", some(*size)),
+                    ("overlays", (!overlays.is_empty()).then(|| json!(overlays))),
+                ],
+            ),
+            Command::View(View::Mpr { ws: w, at, window, size, overlays }) => call(
+                "view mpr",
+                vec![
+                    ws(w),
+                    ("at", Some(parse_point(at)?)),
+                    ("window", window.as_deref().map(parse_window).transpose()?),
+                    ("size", some(*size)),
+                    ("overlays", (!overlays.is_empty()).then(|| json!(overlays))),
+                ],
+            ),
+            Command::View(View::Volume { ws: w, mode, threshold, preset, view, size, overlays }) => call(
+                "view volume",
+                vec![
+                    ws(w),
+                    ("mode", some(mode.clone())),
+                    ("threshold", some(*threshold)),
+                    ("preset", some(preset.clone())),
+                    ("view", some(view.clone())),
+                    ("size", some(*size)),
+                    ("overlays", (!overlays.is_empty()).then(|| json!(overlays))),
+                ],
+            ),
+            Command::Profile { ws: w, from, to, samples } => call(
+                "profile",
+                vec![
+                    ws(w),
+                    ("from", Some(parse_point(from)?)),
+                    ("to", Some(parse_point(to)?)),
+                    ("samples", some(*samples)),
+                ],
+            ),
+            Command::Export(Export::Bundle { ws: w }) => call("export bundle", vec![ws(w)]),
             Command::Probe { ws: w, point } => call("probe", vec![ws(w), ("point", Some(parse_point(point)?))]),
             Command::Stats { ws: w, bx, sphere, radius_mm, segment, annotation } => {
                 let bx = bx.as_ref().map(|b| -> Result<Value, String> {

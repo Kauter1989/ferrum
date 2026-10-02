@@ -152,9 +152,9 @@ review by qualified people.
 | Automatic segmentation; TotalSegmentator bridge | ✅ |
 | MONAI Label bridge | ✅ |
 | Provenance on annotations and segments; workspace and result formats ([spec](workspace-format.md)) | ✅ |
-| Agent skill command line (`ferrum-cli`, [reference](agent-cli.md)) | ✅ first part |
+| Agent skill command line (`ferrum-cli`, [reference](agent-cli.md)) | ✅ |
 | Agent skill over MCP (`ferrum-cli mcp`) | ✅ |
-| Agent skill: MPR/3D renders, export bundle, skill package, review queue | 📋 Stage 15 |
+| Agent skill: skill package, review queue, engine commands | 📋 Stage 15 |
 | DICOM SEG and SR export | 📋 Stage 15 |
 
 The detailed plan with user stories is in [dev_plan.md](../dev_plan.md).

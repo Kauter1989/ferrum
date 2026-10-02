@@ -91,6 +91,74 @@ fn view_slice() -> (&'static str, Value) {
     )
 }
 
+fn window_param() -> Value {
+    json!({
+        "description": "window preset or explicit window (default: the series' own)",
+        "oneOf": [
+            { "type": "string", "enum": ["full_range", "brain", "soft_tissue", "lung", "bone"] },
+            obj(json!({ "center": number("window centre"), "width": number("window width") }), &["center", "width"]),
+        ],
+    })
+}
+
+fn overlays_param() -> Value {
+    json!({ "type": "array", "items": { "type": "string", "enum": ["segments"] }, "description": "drawn on top: segment outlines" })
+}
+
+type Described = (&'static str, Value);
+
+fn views() -> (Described, Described) {
+    let montage = (
+        "Renders several slices of one plane as a labelled grid (PNG + sidecar with a mapping per tile). Use it to find where something is, then view slice for detail.",
+        obj(
+            json!({
+                "workspace": workspace(),
+                "plane": plane(),
+                "from": integer(1, "first slice number (default 1)"),
+                "to": integer(1, "last slice number (default: the last)"),
+                "step": integer(1, "every n-th slice (default: at most 16 tiles)"),
+                "columns": integer(1, "tiles per row (default: a square grid)"),
+                "window": window_param(),
+                "size": integer(16, "largest image side in pixels (capped by the operator)"),
+                "overlays": overlays_param(),
+            }),
+            &["workspace", "plane"],
+        ),
+    );
+    let mpr = (
+        "Renders axial, coronal and sagittal slices through a point side by side, with a crosshair at the point (PNG + sidecar with a mapping per tile).",
+        obj(
+            json!({
+                "workspace": workspace(),
+                "at": point("the point the three planes pass through"),
+                "window": window_param(),
+                "size": integer(16, "largest image side in pixels (capped by the operator)"),
+                "overlays": overlays_param(),
+            }),
+            &["workspace", "at"],
+        ),
+    );
+    (montage, mpr)
+}
+
+fn volume_view() -> (&'static str, Value) {
+    (
+            "Renders the volume in 3D on the CPU from a standard viewpoint (PNG). Shows shape and context; its pixels do not map to voxels, so measure on slices.",
+            obj(
+                json!({
+                    "workspace": workspace(),
+                    "mode": { "type": "string", "enum": ["mip", "isosurface", "transfer_function"], "description": "maximum intensity projection (default), shaded isosurface at threshold, or a CT transfer-function preset" },
+                    "threshold": number("isosurface value, e.g. 300 for bone in HU"),
+                    "preset": { "type": "string", "enum": ["soft_tissue_bone", "lung_vessels", "bone"], "description": "CT transfer-function preset (mode transfer_function)" },
+                    "view": { "type": "string", "enum": ["anterior", "posterior", "left", "right", "superior", "inferior"], "description": "viewpoint (default anterior)" },
+                    "size": integer(16, "image side in pixels (default 512, capped by the operator)"),
+                    "overlays": overlays_param(),
+                }),
+                &["workspace"],
+            ),
+    )
+}
+
 fn stats() -> (&'static str, Value) {
     (
         "Statistics of the values in one region: voxels, volume in ml, mean, std, min, max, percentiles.",
@@ -126,6 +194,25 @@ pub fn command_schema(command: &str) -> Option<(&'static str, Value)> {
         ),
         "study info" => ("Describes the open study: size, spacing, patient geometry, value unit, window presets, annotation and segment counts.", ws_only()),
         "view slice" => view_slice(),
+        "view montage" => views().0,
+        "view mpr" => views().1,
+        "view volume" => volume_view(),
+        "profile" => (
+            "Values along a line between two points (nearest voxel at evenly spaced samples), with distances in mm.",
+            obj(
+                json!({
+                    "workspace": workspace(),
+                    "from": point("start"),
+                    "to": point("end"),
+                    "samples": { "type": "integer", "minimum": 2, "maximum": 2000, "description": "number of samples (default: one per smallest voxel spacing)" },
+                }),
+                &["workspace", "from", "to"],
+            ),
+        ),
+        "export bundle" => (
+            "Writes export/ in the workspace: report.json (study, measurements, segments with volumes; unconfirmed items marked), annotations.json, segments.nii.gz + segments.json, with SHA-256 of every file.",
+            ws_only(),
+        ),
         "probe" => (
             "Value of the voxel nearest to a point, with unit (HU for CT).",
             obj(json!({ "workspace": workspace(), "point": point("where to probe") }), &["workspace", "point"]),
@@ -238,6 +325,11 @@ pub fn validate(schema: &Value, value: &Value, path: &str) -> Result<(), String>
     if let (Some(min), Some(x)) = (schema["minimum"].as_f64(), value.as_f64()) {
         if x < min {
             return Err(format!("{path}: {x} is below the minimum {min}"));
+        }
+    }
+    if let (Some(max), Some(x)) = (schema["maximum"].as_f64(), value.as_f64()) {
+        if x > max {
+            return Err(format!("{path}: {x} is above the maximum {max}"));
         }
     }
     if let Some(pattern_ok) = schema["pattern"].as_str().map(|_| value.as_str().is_some_and(is_render_id)) {

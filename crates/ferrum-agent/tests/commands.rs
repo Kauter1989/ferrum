@@ -376,5 +376,154 @@ fn changed_sources_and_bad_calls_are_reported() {
     let env = f.run("study info", json!({}));
     assert_eq!(env["error"]["code"], "source_changed");
     assert!(env["error"]["hint"].as_str().is_some());
-    assert_eq!(Agent::commands().count(), 20);
+    assert_eq!(Agent::commands().count(), 25);
+}
+
+#[test]
+fn montage_and_mpr_tiles_map_back_to_voxels() {
+    let f = fixture(AgentConfig::default());
+    f.open();
+    let m = f.ok(
+        "view montage",
+        json!({ "plane": "axial", "from": 14, "to": 18, "step": 2, "window": "bone", "size": 300 }),
+    );
+    assert_eq!(m["slice_numbers"], json!([14, 16, 18]));
+    let tiles = m["tiles"].as_array().unwrap();
+    assert_eq!(tiles.len(), 3);
+    assert_eq!(tiles[1]["slice_number"], 16);
+    // a pixel in the second tile resolves through that tile's map
+    let (ox, oy) = (tiles[1]["origin"][0].as_f64().unwrap(), tiles[1]["origin"][1].as_f64().unwrap());
+    let px = tiles[1]["pixel_mm"].as_f64().unwrap();
+    let pixel = [ox + (30.5 / px), oy + (30.5 / px)];
+    let p = f.ok("probe", json!({ "point": { "render": m["render"], "pixel": pixel } }));
+    assert_eq!(p["voxel_index"], json!([30, 30, 15]));
+    close(&p["value"], 1000.0, 0.1);
+    // three tiles on a 2 × 2 grid: the bottom-right cell is empty
+    let (w, h) = (m["size"][0].as_f64().unwrap(), m["size"][1].as_f64().unwrap());
+    assert_eq!(
+        f.err("probe", json!({ "point": { "render": m["render"], "pixel": [w - 1.0, h - 1.0] } })),
+        "out_of_volume"
+    );
+    assert_eq!(f.err("view montage", json!({ "plane": "axial", "from": 20, "to": 10 })), "out_of_volume");
+    assert_eq!(f.err("view montage", json!({ "plane": "axial", "to": 31 })), "out_of_volume");
+    let all = f.ok("view montage", json!({ "plane": "coronal", "size": 200 }));
+    assert_eq!(all["slice_numbers"].as_array().unwrap().len(), 14, "40 slices at the default step of 3");
+
+    let mpr = f.ok("view mpr", json!({ "at": { "voxel": [14, 20, 15] }, "size": 300, "overlays": ["segments"] }));
+    let tiles = mpr["tiles"].as_array().unwrap();
+    let planes: Vec<_> =
+        tiles.iter().map(|t| (t["plane"].as_str().unwrap().to_owned(), t["slice_number"].as_u64().unwrap())).collect();
+    assert_eq!(planes, [("axial".to_owned(), 16), ("coronal".to_owned(), 21), ("sagittal".to_owned(), 15)]);
+    assert_eq!(mpr["point"]["voxel_index"], json!([14, 20, 15]));
+    let png = image::open(mpr["image"].as_str().unwrap()).unwrap().to_rgb8();
+    assert!(png.pixels().any(|p| p.0 == [255, 214, 10]), "crosshair and labels are drawn");
+    // the centre of the coronal tile's crosshair is the point again
+    let t = &tiles[1];
+    let m = &t["pixel_to_voxel"];
+    let x = (14.0 - m[0][2].as_f64().unwrap()) / m[0][0].as_f64().unwrap();
+    let y = (15.0 - m[2][2].as_f64().unwrap()) / m[2][1].as_f64().unwrap();
+    let pixel = [t["origin"][0].as_f64().unwrap() + x, y];
+    let p = f.ok("probe", json!({ "point": { "render": mpr["render"], "pixel": pixel } }));
+    assert_eq!(p["voxel_index"], json!([14, 20, 15]));
+}
+
+#[test]
+fn profile_crosses_the_sphere() {
+    let f = fixture(AgentConfig::default());
+    f.open();
+    let pr = f.ok("profile", json!({ "from": { "voxel": [0, 20, 15] }, "to": { "voxel": [39, 20, 15] } }));
+    let samples = pr["samples"].as_array().unwrap();
+    assert_eq!(samples.len(), 40, "one sample per millimetre");
+    close(&pr["length_mm"], 39.0, 1e-9);
+    close(&samples[14]["value"], 100.0, 0.1);
+    close(&samples[14]["distance_mm"], 14.0, 1e-9);
+    close(&pr["min"], -1000.0, 0.1);
+    close(&pr["max"], 100.0, 0.1);
+    // the sphere spans 17 samples (radius 8 mm around i = 14)
+    let inside = samples.iter().filter(|s| s["value"].as_f64().unwrap() > 0.0).count();
+    assert_eq!(inside, 17);
+    let few = f.ok("profile", json!({ "from": { "voxel": [0, 0, 0] }, "to": { "voxel": [0, 0, 29] }, "samples": 3 }));
+    assert_eq!(few["samples"][1]["voxel"], json!([0.0, 0.0, 14.5]));
+    assert_eq!(
+        f.err("profile", json!({ "from": { "voxel": [0, 0, 0] }, "to": { "voxel": [1, 0, 0] }, "samples": 1 })),
+        "bad_request"
+    );
+}
+
+#[test]
+fn export_bundle_marks_unconfirmed_items() {
+    let f = fixture(AgentConfig::default());
+    f.open();
+    let empty = f.ok("export bundle", json!({}));
+    assert_eq!(empty["files"].as_array().unwrap().len(), 1, "only the report");
+    f.ok("segment threshold", json!({ "seed": { "voxel": [14, 20, 15] }, "min": 50, "max": 150, "name": "Sphere" }));
+    f.ok("annotate add", json!({ "kind": "distance", "plane": "axial", "points": [{ "voxel": [6, 20, 15] }, { "voxel": [22, 20, 15] }] }));
+    let env = f.run("export bundle", json!({}));
+    assert!(env["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|w| w.as_str().unwrap().contains("2 item(s) are unconfirmed")));
+    let b = &env["data"];
+    assert_eq!(b["unconfirmed_items"], 2);
+    let names: Vec<String> = b["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| Path::new(f["path"].as_str().unwrap()).file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["report.json", "annotations.json", "segments.nii.gz", "segments.json"]);
+    for file in b["files"].as_array().unwrap() {
+        let (sha, bytes) = ferrum_io::sha256_file(Path::new(file["path"].as_str().unwrap())).unwrap();
+        assert_eq!((file["sha256"].as_str().unwrap(), file["bytes"].as_u64().unwrap()), (sha.as_str(), bytes));
+    }
+    let report: Value =
+        serde_json::from_str(&std::fs::read_to_string(Path::new(&f.ws).join("export/report.json")).unwrap()).unwrap();
+    assert_eq!(report["format"], "ferrum-report");
+    assert!(report["disclaimer"].as_str().unwrap().contains("not a medical device"));
+    assert_eq!(report["segments"][0]["confirmed"], false);
+    assert_eq!(report["measurements"][0]["confirmed"], false);
+    close(&report["measurements"][0]["value"], 16.0, 1e-3);
+    assert_eq!(report["study"]["dims"], json!([40, 40, 30]));
+    // the exported label map lies on the source grid
+    let labels = ferrum_io::read_label_nifti(&Path::new(&f.ws).join("export/segments.nii.gz"), &phantom()).unwrap();
+    assert!(labels.data().contains(&1));
+}
+
+#[test]
+fn volume_renders_from_standard_views() {
+    let f = fixture(AgentConfig::default());
+    f.open();
+    let iso = f.ok("view volume", json!({ "mode": "isosurface", "threshold": 500, "view": "anterior", "size": 96 }));
+    assert_eq!(
+        (iso["kind"].as_str(), iso["view"].as_str(), iso["size"].clone()),
+        (Some("volume"), Some("anterior"), json!([96, 96]))
+    );
+    let png = image::open(iso["image"].as_str().unwrap()).unwrap().to_rgb8();
+    let lit = png.pixels().filter(|p| p.0.iter().any(|c| *c > 40)).count();
+    // the 6 mm cube spans about 5 % of the 96 px frame
+    assert!(lit > 15, "the cube's surface is visible ({lit} pixels)");
+    // the sphere (100) lies below the threshold 500, the cube (1000) above: from the left the image differs
+    let left = f.ok("view volume", json!({ "mode": "isosurface", "threshold": 500, "view": "left", "size": 96 }));
+    assert_ne!(
+        std::fs::read(iso["image"].as_str().unwrap()).unwrap(),
+        std::fs::read(left["image"].as_str().unwrap()).unwrap()
+    );
+    let mip = f.ok("view volume", json!({ "view": "superior", "size": 64 }));
+    assert_eq!(mip["rendering"]["mode"], "mip");
+    f.ok("segment threshold", json!({ "seed": { "voxel": [14, 20, 15] }, "min": 50, "max": 150 }));
+    let env = f.run(
+        "view volume",
+        json!({ "mode": "transfer_function", "preset": "bone", "size": 64, "overlays": ["segments"] }),
+    );
+    assert_eq!(env["ok"], true);
+    assert!(
+        env["warnings"].as_array().unwrap().iter().any(|w| w.as_str().unwrap().contains("assume CT")),
+        "NIfTI has no modality"
+    );
+    assert_eq!(f.err("view volume", json!({ "mode": "isosurface" })), "bad_request");
+    assert_eq!(f.err("view volume", json!({ "mode": "xray" })), "bad_request");
+    assert_eq!(f.err("view volume", json!({ "view": "oblique" })), "bad_request");
+    // a 3D render has no pixel mapping: pointing into it is refused
+    assert_eq!(f.err("probe", json!({ "point": { "render": iso["render"], "pixel": [48, 48] } })), "bad_request");
 }

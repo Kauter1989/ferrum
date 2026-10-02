@@ -61,7 +61,7 @@ pub fn info(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
 
 /// What an agent needs to know about a study, without identifiers unless
 /// the operator allows them.
-fn describe(config: &AgentConfig, study: &Study) -> Output {
+pub(super) fn describe(config: &AgentConfig, study: &Study) -> Output {
     let v = &study.volume;
     let d = v.dims();
     let s = v.spacing();
