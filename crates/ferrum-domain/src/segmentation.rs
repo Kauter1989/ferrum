@@ -568,12 +568,100 @@ fn index_to_voxel(dims: Dims3, idx: usize) -> UVec3 {
     UVec3::new((idx % nx) as u32, ((idx / nx) % ny) as u32, (idx / (nx * ny)) as u32)
 }
 
+/// Region growing: the 6-connected region of unlabelled voxels of
+/// `labels` whose physical value lies in `[lo, hi]`, grown from `seed`.
+///
+/// Returns the region's bounding box and its mask over that box (`i`
+/// fastest, `1` inside), ready for [`SegmentationSet::apply_mask`].
+/// Returns `None` when the seed is outside the grid, labelled or outside
+/// the range, or once the region exceeds `max_voxels` (it leaked into
+/// neighbouring tissue).
+pub fn grow_region(
+    volume: &crate::volume::Volume,
+    labels: &SegmentationSet,
+    seed: UVec3,
+    lo: f32,
+    hi: f32,
+    max_voxels: u64,
+) -> Option<(VoxelBox, Vec<u8>)> {
+    let d = volume.dims();
+    if labels.dims() != d || !d.contains(i64::from(seed.x), i64::from(seed.y), i64::from(seed.z)) {
+        return None;
+    }
+    let accept = |i: u32, j: u32, k: u32| {
+        labels.labels().label(i, j, k) == Some(0) && volume.physical(i, j, k).is_some_and(|x| (lo..=hi).contains(&x))
+    };
+    if !accept(seed.x, seed.y, seed.z) {
+        return None;
+    }
+    let mut inside = vec![false; d.voxel_count()];
+    let mut queue = std::collections::VecDeque::from([seed]);
+    inside[d.index(seed.x, seed.y, seed.z)] = true;
+    let (mut lo_c, mut hi_c, mut count) = (seed, seed, 0u64);
+    while let Some(v) = queue.pop_front() {
+        count += 1;
+        if count > max_voxels {
+            return None;
+        }
+        lo_c = lo_c.min(v);
+        hi_c = hi_c.max(v);
+        let neighbours = [
+            v.x.checked_sub(1).map(|x| UVec3::new(x, v.y, v.z)),
+            (v.x + 1 < d.x).then(|| UVec3::new(v.x + 1, v.y, v.z)),
+            v.y.checked_sub(1).map(|y| UVec3::new(v.x, y, v.z)),
+            (v.y + 1 < d.y).then(|| UVec3::new(v.x, v.y + 1, v.z)),
+            v.z.checked_sub(1).map(|z| UVec3::new(v.x, v.y, z)),
+            (v.z + 1 < d.z).then(|| UVec3::new(v.x, v.y, v.z + 1)),
+        ];
+        for n in neighbours.into_iter().flatten() {
+            let idx = d.index(n.x, n.y, n.z);
+            if !inside[idx] && accept(n.x, n.y, n.z) {
+                inside[idx] = true;
+                queue.push_back(n);
+            }
+        }
+    }
+    let bx = VoxelBox::new(lo_c, hi_c + UVec3::ONE);
+    let mut mask = Vec::with_capacity(bx.voxel_count());
+    for k in bx.min.z..bx.max.z {
+        for j in bx.min.y..bx.max.y {
+            for i in bx.min.x..bx.max.x {
+                mask.push(u8::from(inside[d.index(i, j, k)]));
+            }
+        }
+    }
+    Some((bx, mask))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn dims() -> Dims3 {
         Dims3::new(4, 3, 2)
+    }
+
+    #[test]
+    fn region_growing_stays_in_range_and_out_of_segments() {
+        // 6 × 1 × 1 row: 10 10 50 10 10 10, voxel 4 already labelled
+        let d = Dims3::new(6, 1, 1);
+        let v = crate::volume::Volume::from_physical(d, Vec3::ONE, &[10.0, 10.0, 50.0, 10.0, 10.0, 10.0]).unwrap();
+        let mut set = SegmentationSet::new(d);
+        let taken = set.add_segment("taken").unwrap();
+        set.apply_mask(taken, VoxelBox::new(UVec3::new(4, 0, 0), UVec3::new(5, 1, 1)), &[1], false).unwrap();
+        let (bx, mask) = grow_region(&v, &set, UVec3::ZERO, 0.0, 20.0, u64::MAX).unwrap();
+        assert_eq!(
+            (bx, mask),
+            (VoxelBox::new(UVec3::ZERO, UVec3::new(2, 1, 1)), vec![1, 1]),
+            "stops at the bright voxel"
+        );
+        let (bx, mask) = grow_region(&v, &set, UVec3::ZERO, 0.0, 60.0, u64::MAX).unwrap();
+        assert_eq!((bx.max.x, mask.len()), (4, 4), "stops at the labelled voxel");
+        assert!(grow_region(&v, &set, UVec3::ZERO, 0.0, 60.0, 3).is_none(), "too large");
+        assert!(grow_region(&v, &set, UVec3::new(2, 0, 0), 0.0, 20.0, 10).is_none(), "seed out of range");
+        assert!(grow_region(&v, &set, UVec3::new(4, 0, 0), 0.0, 20.0, 10).is_none(), "seed labelled");
+        assert!(grow_region(&v, &set, UVec3::new(9, 0, 0), 0.0, 20.0, 10).is_none(), "seed outside");
+        assert!(grow_region(&v, &SegmentationSet::new(dims()), UVec3::ZERO, 0.0, 20.0, 10).is_none(), "other grid");
     }
 
     #[test]

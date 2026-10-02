@@ -39,9 +39,10 @@ them, so a proposal is never mistaken for a finding.
 | `reviewed` | when, or `null` |
 
 Rules:
-- Items drawn in the viewer are `human`, `confirmed`.
+- Items drawn in the viewer (including regions of the region tool) are
+  `human`, `confirmed`.
 - AI results start as `engine`, `proposed`:
-  - **Accept** in the *AI segmentation* panel confirms the current object;
+  - **Accept** under *Segmentation → AI engine* confirms the current object;
   - **Confirm**, **Reject** and **Reopen** in the *Segments* and
     *Annotations* lists review any item.
   - The author stays the engine after review.

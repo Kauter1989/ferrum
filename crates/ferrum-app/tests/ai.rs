@@ -90,10 +90,13 @@ fn tools_are_inactive_without_an_engine() {
     assert_eq!(*v.ai().status(), AiStatus::Disconnected);
     assert!(PromptKind::ALL.iter().all(|k| !v.ai().supports(*k)));
     assert!(!v.ai_prompt(Prompt::Point { positive: true, voxel: CENTRE }));
-    v.select_tool(ToolKind::AiPoint);
+    let reason = v.tool_availability(ToolKind::AiPoint).unwrap_err();
+    assert!(reason.contains("connect"), "{reason}");
+    assert!(!v.select_tool(ToolKind::AiPoint), "AI tools cannot be chosen without an engine");
+    assert_eq!((v.tool, v.status.message.as_str()), (ToolKind::Pan, reason.as_str()), "the reason is shown");
     let out = v.slice_input(SliceAxis::Axial, InputKind::Press, Vec2::splat(100.0), Vec2::splat(200.0));
-    assert!(matches!(out, ToolOutcome::Prompt(_)), "the tool still draws");
-    assert!(v.segmentation().set().is_none(), "but nothing is sent or created");
+    assert!(!matches!(out, ToolOutcome::Prompt(_)));
+    assert!(v.segmentation().set().is_none(), "nothing is sent or created");
     assert!(!v.ai_undo());
     v.ai_accept();
     v.ai_discard();

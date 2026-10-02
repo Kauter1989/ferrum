@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use egui_kittest::kittest::Queryable;
+use egui_kittest::kittest::{NodeT, Queryable};
 use egui_kittest::Harness;
 use ferrum::ViewerApp;
 use ferrum_app::{ToolKind, ViewMode};
@@ -68,7 +68,7 @@ fn switching_modes_and_tools_through_the_ui() {
         .with_size(egui::vec2(1200.0, 800.0))
         .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
     h.run();
-    assert_eq!(h.state().viewer.view_mode, ViewMode::Slice2d);
+    assert_eq!(h.state().viewer.view_mode(), ViewMode::Slice2d);
 
     h.get_by_label("Distance").click();
     h.run();
@@ -76,14 +76,14 @@ fn switching_modes_and_tools_through_the_ui() {
 
     h.get_by_label("3D").click();
     h.run();
-    assert_eq!(h.state().viewer.view_mode, ViewMode::Volume3d);
+    assert_eq!(h.state().viewer.view_mode(), ViewMode::Volume3d);
     h.get_by_label("Isosurface").click();
     h.run();
     assert_eq!(h.state().viewer.volume.settings.mode, RenderMode::Isosurface);
 
     h.get_by_label("MPR").click();
     h.run();
-    assert_eq!(h.state().viewer.view_mode, ViewMode::Mpr);
+    assert_eq!(h.state().viewer.view_mode(), ViewMode::Mpr);
 
     h.get_by_label("Settings panel").click();
     h.run();
@@ -94,6 +94,51 @@ fn switching_modes_and_tools_through_the_ui() {
     h.get_by_label("Info").click();
     h.run();
     h.get_by_label("Series information");
+}
+
+#[test]
+fn each_view_mode_offers_only_its_tools_and_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = loaded_app(dir.path(), None);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1400.0, 1000.0))
+        .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
+    h.run();
+
+    // 2D: slice tools, segmentation tools (AI ones disabled without an engine), image settings
+    for label in ["Distance", "Region", "Image", "Details"] {
+        h.get_by_label(label);
+    }
+    assert!(h.get_by_label("AI point").accesskit_node().is_disabled(), "AI tools wait for an engine");
+    assert!(!h.get_by_label("Region").accesskit_node().is_disabled(), "the region tool works right away");
+    assert!(h.query_by_label("Volume").is_none() && h.query_by_label("Rotate").is_none());
+    h.get_by_label_contains("Choose a segmentation tool");
+
+    // 3D: navigation and eraser; no slice or segmentation tools, no engine controls
+    h.get_by_label("3D").click();
+    h.run();
+    for label in ["Rotate", "Volume eraser", "Isosurface", "Details"] {
+        h.get_all_by_label(label).next().unwrap();
+    }
+    for label in ["Distance", "Region", "AI point", "Image", "Engine URL", "Tolerance ±"] {
+        assert!(h.query_by_label(label).is_none(), "{label} in 3D");
+    }
+    h.get_by_label_contains("Segment in 2D");
+    h.get_by_label("Volume eraser").click();
+    h.run();
+    assert!(h.state().viewer.volume.eraser_enabled);
+
+    // MPR: slice and segmentation tools plus both settings tabs; the eraser stays in 3D
+    h.get_by_label("MPR").click();
+    h.run();
+    assert!(!h.state().viewer.volume.eraser_enabled, "MPR's 3D cell must not erase unnoticed");
+    for label in ["Distance", "Region", "Image", "Volume", "Details"] {
+        h.get_by_label(label);
+    }
+    h.get_by_label("Volume").click();
+    h.run();
+    assert!(h.query_by_label("Volume eraser").is_none(), "no eraser outside 3D");
+    h.get_by_label("Opacity");
 }
 
 #[test]
@@ -109,7 +154,7 @@ fn annotation_list_navigates_to_the_slice_and_is_2d_only() {
         .with_size(egui::vec2(1200.0, 800.0))
         .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
     h.run();
-    assert_eq!(h.state().viewer.view_mode, ViewMode::Slice2d);
+    assert_eq!(h.state().viewer.view_mode(), ViewMode::Slice2d);
     assert!(h.query_by_label("Smooth").is_none(), "filters are hidden");
     h.get_by_label_contains("Export JSON");
 
@@ -149,10 +194,22 @@ fn segment_list_edits_segments_in_both_tabs() {
         .with_size(egui::vec2(1200.0, 1400.0))
         .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
     h.run();
-    h.get_by_label_contains(" Add").click();
+    // the built-in region tool in the toolbar creates a segment without an engine
+    h.get_by_label("Region").click();
+    h.run();
+    assert_eq!(h.state().viewer.tool, ToolKind::Region);
+    assert!(h.get_all_by_label("Tolerance ±").count() > 0, "the settings of the active tool are shown");
+    let viewer = &mut h.state_mut().viewer;
+    viewer.set_slice_index(SliceAxis::Axial, 20);
+    viewer.slice_input(
+        SliceAxis::Axial,
+        ferrum_app::InputKind::Press,
+        glam::Vec2::splat(100.0),
+        glam::Vec2::splat(200.0),
+    );
     h.run();
     assert_eq!(h.state().viewer.segment_summaries().len(), 1);
-    h.get_by_label("Delete Segment 1").click();
+    h.get_by_label("Delete Region 1").click();
     h.run();
     assert!(h.state().viewer.segment_summaries().is_empty());
 
@@ -166,10 +223,16 @@ fn segment_list_edits_segments_in_both_tabs() {
     h.get_by_label_contains("Undo edit").click();
     h.run();
     assert_eq!(h.state().viewer.segment_summaries()[0].voxels, 0);
-    h.get_by_label("Volume").click();
+    // the 3D view shows the segments but does not create them
+    h.get_by_label("3D").click();
     h.run();
     h.get_by_label("Opacity of Tumour");
     h.get_by_label("Colour of Tumour");
+    assert!(h.query_by_label("Region").is_none(), "no segmentation tools in 3D");
+    assert!(h.query_by_label("Engine URL").is_none());
+    h.get_by_label_contains("Segment in 2D").click();
+    h.run();
+    assert_eq!(h.state().viewer.view_mode(), ViewMode::Slice2d);
     app = loaded_app(dir.path(), None);
     assert!(app.viewer.segment_summaries().is_empty(), "a new study starts without segments");
 }
@@ -215,7 +278,7 @@ fn ai_tools_are_visible_but_disabled_until_an_engine_connects() {
     h.run();
     let target = h.state().viewer.ai().target().expect("target segment");
     assert!(h.state().viewer.segmentation().set().unwrap().voxel_count(target) > 1000);
-    h.get_by_label_contains("Accept").click();
+    h.get_by_label(&format!("{} Accept", egui_phosphor::light::CHECK)).click();
     h.step();
     h.state_mut().viewer.wait_ai_idle();
     h.run();
@@ -324,7 +387,7 @@ fn every_view_mode_renders_the_volume() {
         (ViewMode::Volume3d, RenderMode::TransferFunction),
         (ViewMode::Mpr, RenderMode::Isosurface),
     ] {
-        h.state_mut().viewer.view_mode = mode;
+        h.state_mut().viewer.set_view_mode(mode);
         h.state_mut().viewer.volume.settings.mode = render;
         h.run();
         let img = h.render().expect("render");
@@ -367,7 +430,7 @@ fn segments_are_drawn_in_2d_and_3d() {
         n
     };
     for mode in [ViewMode::Slice2d, ViewMode::Volume3d] {
-        h.state_mut().viewer.view_mode = mode;
+        h.state_mut().viewer.set_view_mode(mode);
         h.state_mut().viewer.volume.settings.mode = RenderMode::Isosurface;
         h.state_mut().viewer.set_segments_shown(true);
         h.run();

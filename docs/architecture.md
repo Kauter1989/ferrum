@@ -53,7 +53,7 @@ flowchart LR
 | `ferrum-io` | DICOM scan → series grouping → slice ordering → parallel decode; NIfTI read/write with reorientation to LPS; NIfTI label maps mapped onto the volume grid; `ferrum-annotations` v2 and `ferrum-segments` JSON (read and write); `ferrum-workspace` v1 directories with hashed sources and an audit log ([format](workspace-format.md)); DICOM SEG and Comprehensive 3D SR (TID 1500) export ([format](workspace-format.md#5-dicom-export)) | know about rendering or UI |
 | `ferrum-render` | `FrameParams` (pure), WGSL shaders, `VolumeRenderer` (feature `gpu`), `CpuRaycaster` | own application state |
 | `ferrum-engines` | `HttpEngine` (`ferrum-engine/1` client over HTTP), `MockEngine` (region growing, no model), reference protocol server and conformance suite | know about rendering or UI |
-| `ferrum-app` | `Viewer` facade, background `JobQueue`, `ToolController`, `GpuSink` port | depend on wgpu or egui |
+| `ferrum-app` | `Viewer` facade, background `JobQueue`, `ToolController`, `GpuSink` port; which tools each view mode offers (`tool_availability`, `set_view_mode`) and the segmentation workflow (`segmentation_step`, the region tool) | depend on wgpu or egui |
 | `ferrum` | panels, widgets, paint callbacks, dialogs; composition root | contain business logic |
 | `ferrum-agent` | agent skill (depends on `ferrum-domain`, `ferrum-io`, `ferrum-engines` and `ferrum-render` without its GPU feature) ([design](agent-skill.md), [CLI and MCP](agent-cli.md)): commands on JSON parameters with JSON Schemas, `ferrum-agent/1` envelope and error codes, operator configuration, workspace sessions with a series cache, CPU slice renders with pixel mapping, audit log, MCP server (stdio) | depend on wgpu, egui or `ferrum-app` state |
 | `ferrum-cli` | `ferrum-cli` binary: argument parsing to agent calls, exit codes | contain command logic |
@@ -67,7 +67,7 @@ FERRUM is a visualisation core meant to be extended
 | Extension | Port (in `ferrum-domain`) | Status |
 |---|---|---|
 | Data sources | `VolumeRepository` | implemented: DICOM, NIfTI |
-| Segmentation engines | `SegmentationEngine`, `InteractiveSession` | implemented: `ferrum-engines` with `HttpEngine`, `MockEngine` and a reference server; driven by the *AI segmentation* panel |
+| Segmentation engines | `SegmentationEngine`, `InteractiveSession` | implemented: `ferrum-engines` with `HttpEngine`, `MockEngine` and a reference server; driven by the *Segmentation* section and the AI tools of the toolbar |
 | Result stores | `ResultStore` | implemented: `ferrum-io::WorkspaceStore` (`ferrum-workspace` v1); the viewer opens a workspace, shows its review queue and writes decisions back |
 | Exporters | `Exporter` | planned as a port; today annotation JSON, NIfTI label maps and DICOM SEG/SR (`ferrum-io::dicom::export`) are called directly |
 
@@ -85,6 +85,16 @@ The AI panel runs the engine on a worker thread owned by `ferrum-app`
 - The presentation layer only creates the `HttpEngine` from the URL the
   user enters. 2D prompt tools convert drawing on a slice into planar
   prompts in `ferrum-app::prompts`.
+
+View modes decide what is offered (`ferrum-app::viewer::workflow`), and
+the application layer enforces it, so no view can work around the UI:
+- every tool acts on slices and works in the 2D and MPR views only;
+  `select_tool` refuses others and `tool_availability` gives the reason
+  the toolbar shows;
+- segments are never created from the 3D view: the region tool, AI
+  prompts and automatic runs are refused there;
+- the volume eraser works in the 3D view only and is switched off when
+  leaving it.
 
 FERRUM is also planned as an **agent skill**
 ([ADR 0008](decisions/0008-agent-skill.md), [specification](agent-skill.md)).
