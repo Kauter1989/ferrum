@@ -1,16 +1,18 @@
-//! "AI segmentation" section of the settings panel. It is always visible;
-//! its tools stay disabled until a `ferrum-engine/1` engine is connected.
+//! AI engine part of the "Segmentation" section: connection, Include /
+//! Exclude, the current object (Accept, Discard, Undo prompt) and automatic
+//! segmentation. The AI prompt tools are in the toolbar; they stay
+//! disabled until a `ferrum-engine/1` engine is connected.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use egui::{Color32, RichText};
 use egui_phosphor::light as icon;
-use ferrum_app::{AiStatus, ToolKind, Viewer};
+use ferrum_app::{AiStatus, Viewer};
 use ferrum_engines::{HttpConfig, HttpEngine};
 
 use super::theme::{ACCENT, DANGER, TEXT, TEXT_DIM};
-use super::widgets::{segmented, tool_button_enabled};
+use super::widgets::segmented;
 
 /// Engine URL used when `FERRUM_ENGINE_URL` is not set.
 pub const DEFAULT_ENGINE_URL: &str = "http://127.0.0.1:8765";
@@ -42,7 +44,7 @@ fn status_line(viewer: &Viewer) -> (Color32, String) {
     match ai.status() {
         AiStatus::Disconnected => (TEXT_DIM, "No engine connected".into()),
         AiStatus::Connecting => (ACCENT, format!("Connecting to {}…", ai.engine_label())),
-        AiStatus::Connected => (Color32::from_rgb(90, 190, 120), format!("{name} — draw a prompt to start")),
+        AiStatus::Connected => (Color32::from_rgb(90, 190, 120), format!("{name} — connected")),
         AiStatus::Uploading => (ACCENT, format!("{name} — uploading the volume…")),
         AiStatus::Ready => (Color32::from_rgb(90, 190, 120), format!("{name} — ready")),
         AiStatus::Working => (ACCENT, format!("{name} — segmenting…")),
@@ -92,16 +94,6 @@ fn tools(ui: &mut egui::Ui, viewer: &mut Viewer) {
     if let Some(i) = segmented(ui, &["Include", "Exclude"], Some(usize::from(!positive))) {
         viewer.set_ai_positive(i == 0);
     }
-    let has_data = viewer.dataset().is_some();
-    ui.horizontal(|ui| {
-        for t in ToolKind::AI {
-            let enabled = has_data && t.prompt_kind().is_some_and(|k| viewer.ai().supports(k));
-            let resp = tool_button_enabled(ui, crate::app::tool_icon(t), t.label(), viewer.tool == t, enabled);
-            if enabled && resp.on_hover_text(t.hint()).clicked() {
-                viewer.select_tool(t);
-            }
-        }
-    });
     let target = viewer.ai().target();
     let busy = viewer.ai().is_busy();
     ui.horizontal_wrapped(|ui| {
@@ -174,7 +166,7 @@ fn automatic(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut AiPanelState) {
 pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut AiPanelState) {
     connection(ui, viewer, state);
     ui.add_space(4.0);
-    let interactive = viewer.ai().info().is_none_or(|i| i.capabilities.interactive);
+    let interactive = viewer.ai().info().is_some_and(|i| i.capabilities.interactive);
     if interactive {
         tools(ui, viewer);
     }
@@ -185,13 +177,13 @@ pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut AiPanelState) {
     if !viewer.ai().status().is_connected() {
         ui.label(
             RichText::new(
-                "To enable these tools, connect a segmentation engine that speaks ferrum-engine/1 — for example \
-                 the nnInteractive bridge, or the mock engine: cargo run -p ferrum-engines --example mock_server",
+                "AI tools need a ferrum-engine/1 engine, e.g. an nnInteractive, TotalSegmentator or MONAI Label \
+                 bridge.",
             )
             .size(12.0)
             .color(TEXT_DIM),
         );
     } else if interactive {
-        ui.label(RichText::new("Prompts are drawn in the 2D views.").size(12.0).color(TEXT_DIM));
+        ui.label(RichText::new("Choose an AI tool in the toolbar and draw on a slice.").size(12.0).color(TEXT_DIM));
     }
 }

@@ -51,6 +51,9 @@ pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, axis: SliceAxis, state: &mut
     let img = draw_overlay(&painter, viewer, axis, rect, &volume, response.hovered());
     draw_edge_labels(&painter, axis, rect, img);
     draw_readouts(&painter, viewer, axis, rect, &volume);
+    if response.hovered() || viewer.view_mode() == ViewMode::Slice2d {
+        draw_segmentation_hint(&painter, viewer, rect);
+    }
     draw_scrubber(&painter, viewer, axis, rect, &volume, &scrub);
 }
 
@@ -124,7 +127,7 @@ fn handle_input(
     if response.double_clicked() {
         viewer.slice_input(axis, InputKind::DoubleClick, local(p), viewport);
     }
-    if response.secondary_clicked() && viewer.view_mode == ViewMode::Mpr {
+    if response.secondary_clicked() && viewer.view_mode() == ViewMode::Mpr {
         viewer.navigate_to(axis, local(p), viewport);
     }
 }
@@ -164,7 +167,7 @@ fn draw_overlay(
     }
     let (lo, hi) = view.image_rect(viewport, image_mm);
     let img = Rect::from_min_max(g2e(e2g(rect.min) + lo), g2e(e2g(rect.min) + hi));
-    if viewer.view_mode == ViewMode::Mpr {
+    if viewer.view_mode() == ViewMode::Mpr {
         for other in SliceAxis::ALL.into_iter().filter(|a| *a != axis) {
             let mut t = glam::Vec3::splat(0.5);
             t[other.normal_axis()] = other.slice_position(volume, viewer.slices.index(other));
@@ -219,7 +222,7 @@ fn draw_readouts(
     };
     let mut top = Vec::new();
     let description = viewer.dataset().map(|d| d.metadata.description.clone()).unwrap_or_default();
-    if !description.is_empty() && viewer.view_mode != ViewMode::Mpr {
+    if !description.is_empty() && viewer.view_mode() != ViewMode::Mpr {
         top.push((description, theme::OVERLAY));
     }
     top.push((axis.label().to_string(), axis_color(axis)));
@@ -242,6 +245,23 @@ fn draw_readouts(
         ],
         12.5,
     );
+}
+
+/// While a segmentation tool is active, a one-line reminder of the next
+/// step at the bottom of the view, where it covers the least anatomy.
+fn draw_segmentation_hint(painter: &egui::Painter, viewer: &Viewer, rect: Rect) {
+    if !viewer.tool.is_segmentation() {
+        return;
+    }
+    let Some(text) = super::segmentation_panel::short_step(viewer) else {
+        return;
+    };
+    let galley = painter.layout(text, FontId::proportional(12.0), theme::OVERLAY, (rect.width() - 260.0).max(140.0));
+    let pos = egui::pos2(rect.center().x - galley.size().x * 0.5, rect.max.y - 44.0 - galley.size().y);
+    let bg = Rect::from_min_size(pos - egui::vec2(10.0, 5.0), galley.size() + egui::vec2(20.0, 10.0));
+    painter.rect_filled(bg, 8.0, theme::BG.gamma_multiply(0.88));
+    painter.rect_stroke(bg, 8.0, Stroke::new(1.0, theme::ACCENT.gamma_multiply(0.7)), egui::StrokeKind::Inside);
+    painter.galley(pos, galley, theme::OVERLAY);
 }
 
 /// Slice scrubber along the right edge; dragging it selects the slice.

@@ -4,6 +4,44 @@ All notable changes to FERRUM. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions
 follow [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] — 2026-10-02
+
+A clear path to segmentation in the desktop app, and every tool offered
+only in the view modes where it works.
+
+### Added
+
+- **Region tool:** built-in segmentation without an engine. A click on a
+  slice fills the connected region whose values lie within ± a tolerance
+  of the clicked voxel (default a tenth of the window width); a size
+  limit refuses regions that leak into neighbouring tissue.
+- **Segment toolbar group** in the 2D and MPR views: the region tool and
+  the AI tools, which stay disabled until an engine is connected and say
+  why in their tooltip.
+- **Segmentation guide:** the *Segmentation* section shows the next step
+  (choose a tool, draw on a slice, check, accept), and the slice view
+  shows a one-line hint while a segmentation tool is active.
+
+### Changed
+
+- Settings panel tabs follow the view mode: *Image* in 2D, *Volume* in
+  3D, both in MPR. The *AI segmentation* section became *Segmentation*,
+  with the AI tools moved to the toolbar.
+- **Ctrl+Z** undoes what the current view edits: an eraser stroke in 3D,
+  the last segmentation edit or AI prompt in 2D and MPR.
+- Region growing lives in the domain layer and is shared by the desktop
+  app and the agent's `segment threshold`.
+
+### Fixed
+
+- Segmentation could be started from the 3D view (AI tools and automatic
+  runs in the *Volume* tab); segments are now created on slices only.
+- The volume eraser stayed active in the MPR view's 3D cell, without a
+  control showing it; it now works in the 3D view only.
+- **Ctrl+Z** in the 2D view undid invisible eraser strokes in 3D.
+- *Segments → Add* created an empty segment that nothing could fill; it
+  is removed.
+
 ## [0.2.0] — 2026-10-02
 
 FERRUM becomes a visualisation core with open interfaces for segmentation
@@ -50,5 +88,6 @@ frame, 2D slices and MPR, GPU volume rendering (tissue, isosurface, MIP,
 transfer functions) with a CPU reference renderer and parity tests,
 measurements, clipping, eraser and headless snapshots.
 
+[0.2.1]: https://github.com/Kauter1989/ferrum/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Kauter1989/ferrum/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Kauter1989/ferrum/releases/tag/v0.1.0

@@ -195,13 +195,15 @@ works the same way.
 
 1. **Open the study** in FERRUM (drag the folder or `.nii.gz` onto the
    window). Choose the **2D** view and the **Lung** window preset.
-2. **Connect.** In the settings panel (**Tab**), open *AI segmentation*.
+2. **Connect.** In the settings panel (**Tab**), open *Segmentation →
+   AI engine*.
    - Check the URL (`http://127.0.0.1:8765`, or `FERRUM_ENGINE_URL` when
      you start FERRUM) and press **Connect**.
    - The status shows *nnInteractive … cuda:0*, the licence, and the
      *Research use only* badge.
-3. **First prompt.** Select **AI point** with **Include** and click inside
-   the lesion on an axial slice.
+3. **First prompt.** Select **AI point** in the *Segment* group of the
+   toolbar, keep **Include** (in the panel) and click inside the lesion on
+   an axial slice.
    - The first prompt uploads the volume (a few seconds for 512×512×250)
      and the model computes its features.
    - The result appears as *AI segment 1*, in 2D and in 3D.

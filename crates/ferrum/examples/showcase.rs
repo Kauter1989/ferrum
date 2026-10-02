@@ -45,7 +45,7 @@ fn scenes() -> Vec<Scene> {
             name: "mpr",
             setup: |v| {
                 reset(v);
-                v.view_mode = ViewMode::Mpr;
+                v.set_view_mode(ViewMode::Mpr);
                 v.apply_window_preset(WindowPreset::Lung);
                 v.volume.settings.mode = RenderMode::TransferFunction;
                 ct_tf(v, CtPreset::SoftTissueBone);
@@ -55,7 +55,7 @@ fn scenes() -> Vec<Scene> {
             name: "volume_soft_tissue",
             setup: |v| {
                 reset(v);
-                v.view_mode = ViewMode::Volume3d;
+                v.set_view_mode(ViewMode::Volume3d);
                 v.volume.settings.mode = RenderMode::TransferFunction;
                 v.volume.settings.quality = 0.8;
                 ct_tf(v, CtPreset::SoftTissueBone);
@@ -65,7 +65,7 @@ fn scenes() -> Vec<Scene> {
             name: "volume_lung_vessels",
             setup: |v| {
                 reset(v);
-                v.view_mode = ViewMode::Volume3d;
+                v.set_view_mode(ViewMode::Volume3d);
                 v.volume.settings.mode = RenderMode::TransferFunction;
                 v.volume.settings.quality = 0.8;
                 ct_tf(v, CtPreset::LungVessels);
@@ -77,7 +77,7 @@ fn scenes() -> Vec<Scene> {
             name: "volume_bone",
             setup: |v| {
                 reset(v);
-                v.view_mode = ViewMode::Volume3d;
+                v.set_view_mode(ViewMode::Volume3d);
                 v.volume.settings.mode = RenderMode::Isosurface;
                 let r = v.dataset().unwrap().volume.range();
                 v.volume.settings.iso_threshold = r.normalize(300.0);
@@ -92,7 +92,7 @@ fn scenes() -> Vec<Scene> {
             name: "volume_mip",
             setup: |v| {
                 reset(v);
-                v.view_mode = ViewMode::Volume3d;
+                v.set_view_mode(ViewMode::Volume3d);
                 v.volume.settings.mode = RenderMode::Mip;
                 v.volume.settings.brightness = 0.55;
                 v.volume.settings.quality = 0.8;
@@ -102,7 +102,7 @@ fn scenes() -> Vec<Scene> {
             name: "slice_measurements",
             setup: |v| {
                 reset(v);
-                v.view_mode = ViewMode::Slice2d;
+                v.set_view_mode(ViewMode::Slice2d);
                 v.slices.axis = SliceAxis::Axial;
                 v.apply_window_preset(WindowPreset::Lung);
                 let volume = v.dataset().unwrap().volume.clone();

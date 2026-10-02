@@ -52,7 +52,7 @@ pub use repository::{
     VolumeRepository,
 };
 pub use review::{ResultStore, ReviewDecision, ReviewItem};
-pub use segmentation::{LabelEdit, LabelMap, Segment, SegmentationError, SegmentationSet, VoxelBox};
+pub use segmentation::{grow_region, LabelEdit, LabelMap, Segment, SegmentationError, SegmentationSet, VoxelBox};
 pub use slice::{SliceAxis, SliceImage, SliceView};
 pub use transfer::{ControlPoint, CtPreset, TransferFunction, TransferFunctionError};
 pub use volume::{Geometry, IntensityRange, Volume, VolumeError};

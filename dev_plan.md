@@ -191,3 +191,18 @@ app. Agents propose and clinicians confirm
 
 Future stages are added here as they are planned (e.g. "Stage 15 — …"),
 with user stories and acceptance criteria in the same format.
+
+## Stage 16 — Annotated datasets 📋
+
+FERRUM as a fast annotation tool for building labelled datasets: people
+draw and correct, engines propose, and the export holds only what a
+person reviewed. Review status doubles as label quality control: each
+label records which engine proposed it and who confirmed it.
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 16.1 | As an **annotator**, I want to confirm or reject all pending proposals at once so that an automatic segmentation with dozens of structures does not need one click per segment. | *Confirm all* in the Review section (optionally filtered by engine or kind); one audit-log entry per item and a single workspace save; a matching use case in `ferrum-app`. |
+| 16.2 | As a **researcher**, I want to export only confirmed items so that a dataset never contains unreviewed model output. | `SegmentationSet::confirmed_only` / `AnnotationSet::confirmed_only` in the domain; an *Only confirmed* option for the label-map and annotation exports in the desktop app; `only_confirmed` for `export bundle` (schema, CLI flag, docs, contract tests, identical CLI and MCP output). |
+| 16.3 | As an **annotator**, I want a manual correction of an engine's segment to be recorded so that the dataset shows which labels a person edited. | Defined behaviour (and tests) for the provenance of a segment edited with the eraser or brush: the author or status reflects the human edit. |
+| 16.4 | As a **dataset curator**, I want an annotation mode in which engine results count as confirmed so that review can happen in a separate QA step outside FERRUM. | Operator setting, off by default; exported provenance still names the engine. |
+| 16.5 | As an **annotator**, I want one obvious way to create a segment, offered only where it works, so that I do not get lost between view modes and panels. | Every tool and setting is offered only in the view modes where it acts (tools on slices: 2D and MPR; eraser: 3D; panel tabs per mode), enforced in `ferrum-app`; no segmentation from the 3D view; a *Segment* toolbar group with a built-in region tool that needs no engine and the AI tools (disabled with the reason until an engine connects); a step-by-step guide in the panel and in the view; no empty "Add segment". ✅ |

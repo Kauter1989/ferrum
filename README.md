@@ -3,7 +3,7 @@
 **FERRUM. An open, high-performance visualisation core for medical imaging — for people, applications and AI agents.**
 
 [![CI](https://github.com/Kauter1989/ferrum/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Kauter1989/ferrum/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/badge/release-v0.2.0-blue)](https://github.com/Kauter1989/ferrum/releases/latest)
+[![Release](https://img.shields.io/badge/release-v0.2.1-blue)](https://github.com/Kauter1989/ferrum/releases/latest)
 ![Coverage](https://img.shields.io/badge/line%20coverage-92.4%25-brightgreen)
 ![Rust](https://img.shields.io/badge/rust-stable-orange)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
@@ -50,8 +50,8 @@ skipping, isosurface refinement, local ambient occlusion; see
 
 | Metrics | |
 |---|---|
-| Code size | ≈ 24 800 lines of Rust in `src/` (including in-module unit tests), ≈ 4 800 lines of integration tests, benchmarks and examples, ≈ 600 lines of WGSL; engine bridges: ≈ 1 400 lines of Python plus ≈ 600 lines of tests |
-| Tests | 329 Rust tests: unit, property-based, data layer, shader validation, GPU-vs-CPU parity, engine-protocol conformance, agent commands on phantoms, CLI ↔ MCP equivalence, skill evaluations, identifier scan, DICOM SEG/SR export, application (incl. AI with a mock engine) and UI; 17 bridge tests (pytest); in CI also the conformance suite against the running bridge and highdicom validation of the exported DICOM |
+| Code size | ≈ 25 300 lines of Rust in `src/` (including in-module unit tests), ≈ 5 100 lines of integration tests, benchmarks and examples, ≈ 600 lines of WGSL; engine bridges: ≈ 1 400 lines of Python plus ≈ 600 lines of tests |
+| Tests | 335 Rust tests: unit, property-based, data layer, shader validation, GPU-vs-CPU parity, engine-protocol conformance, agent commands on phantoms, CLI ↔ MCP equivalence, skill evaluations, identifier scan, DICOM SEG/SR export, application (incl. AI with a mock engine) and UI; 17 bridge tests (pytest); in CI also the conformance suite against the running bridge and highdicom validation of the exported DICOM |
 | Test coverage | 92.4 % of lines, 89.6 % of functions (`cargo-llvm-cov`); CI fails below 87 % |
 | Complexity budget | per function: cognitive complexity ≤ 25, ≤ 120 lines, nesting ≤ 6 (enforced by clippy) |
 | Lints | rustfmt and clippy with warnings as errors; no `unsafe`, no `unwrap` outside tests |
@@ -92,8 +92,9 @@ FERRUM is a core, not a monolith. The principles, in short (full text:
    - A commercial engine plugs in through the same protocol.
    - A conformance suite lets any engine check itself.
    - There is no inference inside Rust.
-3. **AI assists and stays optional.** The AI tools are visible but
-   disabled until an engine is connected. Interactive AI segmentation
+3. **AI assists and stays optional.** The built-in region tool segments
+   without an engine. The AI tools are visible but disabled until an
+   engine is connected. Interactive AI segmentation
    starts as a documented nnInteractive demo. Engine licences are shown,
    with a *Research use only* badge where they apply.
 4. **Built for people and for agents.** As an
@@ -114,6 +115,7 @@ FERRUM is a core, not a monolith. The principles, in short (full text:
 | Viewer, annotations with JSON export, segments with 2D/3D overlay and NIfTI label maps | ✅ |
 | Engine port, `ferrum-engine/1` client, mock engine, reference server, conformance suite | ✅ |
 | AI segmentation panel (point, box, scribble, lasso; include/exclude; accept, discard, undo) | ✅ |
+| Segmentation workflow: *Segment* toolbar group, built-in region tool (no engine), step-by-step guide; tools and settings offered per view mode, no segmentation from 3D | ✅ |
 | nnInteractive bridge (FastAPI, Docker) and [demo guide](docs/ai-demo.md) | ✅ |
 | Automatic segmentation (jobs, progress, cancel, structure selection); TotalSegmentator bridge | ✅ |
 | MONAI Label bridge (DeepEdit / DeepGrow / SAM2 clicks, segmentation models) | ✅ |
@@ -222,43 +224,52 @@ undo and full restore.
 **Interface** — a calm, workstation-style layout in navy tones with a
 single blue accent:
 - a header with the open study, the 2D / 3D / MPR switch and file actions;
-- a toolbar with the tools of the current mode;
+- a toolbar with the tools of the current mode: on slices (2D, MPR) the
+  measurement tools and the *Segment* group; in 3D rotation, the eraser
+  and anatomical views;
 - a *Studies* sidebar with the current study and recently opened ones;
-- a settings panel (**Tab**) with *Image*, *Volume* and *Details* tabs;
+- a settings panel (**Tab**) whose tabs follow the view: *Image* in 2D,
+  *Volume* in 3D, both in MPR, and *Details* always;
 - a status bar.
 
 Views show quiet corner read-outs (plane, matrix, W/L, slice, zoom),
 patient-orientation edge labels (R/L, A/P, S/I), a slice scrubber, and an
 L/P/S orientation gizmo in 3D.
 
-**AI segmentation** — the collapsible *AI segmentation* section, in the
-*Image* and *Volume* tabs, is always visible.
-- **Without an engine** its tools are disabled, and a hint explains how
-  to connect one.
-- **Connecting:** enter the engine URL (default `http://127.0.0.1:8765`
-  or `FERRUM_ENGINE_URL`) and press **Connect**. The section then shows
-  the engine's name and device. A *Research use only* badge and the
-  licence notice appear when the engine reports them.
-- **Prompts** are drawn in the 2D views:
-  - *point*: click;
-  - *box*: drag;
-  - *scribble*: paint;
-  - *lasso*: outline.
+**Segmentation** — one path for every method, shown step by step in the
+*Segmentation* section of the *Image* tab and as a one-line hint in the
+view:
 
-  Each prompt either **includes** the area or **excludes** it.
-- **Results:** the volume is uploaded once in the background. Each
-  prompt refines the current object, which is shown live as the target
-  segment.
-- **Finishing an object:** **Accept** keeps the segment and starts the
-  next object, **Discard** removes it, and **Undo prompt** steps back
-  when the engine supports it.
-- **Automatic engines** (such as TotalSegmentator) add an *Automatic*
-  part to the section:
-  - choose structures from the engine's list (with a filter), or segment
-    all of them;
-  - follow the job's progress, or cancel it;
-  - every structure found becomes a named, coloured segment. Voxels that
-    already belong to a segment are kept.
+1. **Choose a tool** in the *Segment* group of the toolbar (2D and MPR
+   views):
+   - **Region** works without an engine: a click fills the connected
+     region whose values lie within ± a tolerance of the clicked voxel
+     (default a tenth of the window width). A size limit stops regions
+     that leak into neighbouring tissue.
+   - **AI point**, **AI box**, **AI scribble** and **AI lasso** need a
+     segmentation engine. Until one is connected they are disabled, and
+     their tooltip says why.
+2. **Draw on a slice.** A region becomes a new segment at once. AI
+   prompts refine the current object live; **Include** marks it,
+   **Exclude** removes parts.
+3. **Check the result** on the slices, and in 3D in the MPR view.
+4. **Keep it.** For AI objects, **Accept** keeps the segment and starts
+   the next object, **Discard** removes it, and **Undo prompt** steps
+   back. **Ctrl+Z** undoes the last segmentation edit.
+
+Segments are created on slices only: the 3D view shows them (and their
+list, for colour, visibility and opacity) but offers no segmentation
+tools, and points to the 2D view instead.
+
+**Engines** — connect one under *Segmentation → AI engine*: enter the URL
+(default `http://127.0.0.1:8765` or `FERRUM_ENGINE_URL`) and press
+**Connect**. The section shows the engine's name and device, its licence,
+and a *Research use only* badge when the engine reports one. The volume
+is uploaded once in the background. Automatic engines (such as
+TotalSegmentator) add an *Automatic* part: choose structures from the
+engine's list (with a filter) or segment all of them, follow the job's
+progress or cancel it. Every structure found becomes a named, coloured
+segment; voxels that already belong to a segment are kept.
 
 Engines speak [`ferrum-engine/1`](docs/engine-protocol.md). To try the
 tools without a GPU or a model, run the mock engine (region growing):

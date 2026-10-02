@@ -14,6 +14,37 @@ pub struct SegmentationState {
     pub(super) generation: u64,
     /// Draw segments in the 2D and 3D views.
     pub show: bool,
+    /// Settings of the region tool.
+    pub region: RegionSettings,
+    /// Regions created so far (for their default names).
+    regions: u32,
+}
+
+/// Settings of the region tool ([`ToolKind::Region`](crate::ToolKind::Region)):
+/// a click grows the connected region of values within `tolerance` of the
+/// clicked voxel.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RegionSettings {
+    /// Accepted distance from the seed value, in the volume's units (HU
+    /// for CT).
+    pub tolerance: f32,
+    /// Largest region in millilitres; a larger one has leaked into
+    /// neighbouring tissue and is not created.
+    pub max_ml: f32,
+}
+
+impl Default for RegionSettings {
+    fn default() -> Self {
+        Self { tolerance: 50.0, max_ml: 1000.0 }
+    }
+}
+
+impl RegionSettings {
+    /// Defaults for a display window: a tolerance of a tenth of its width,
+    /// so the region follows what looks alike on screen.
+    pub fn for_window(window: ferrum_domain::WindowLevel) -> Self {
+        Self { tolerance: (window.width * 0.1).max(f32::EPSILON), ..Self::default() }
+    }
 }
 
 impl SegmentationState {
@@ -169,8 +200,56 @@ impl Viewer {
         Ok(n)
     }
 
+    /// Settings of the region tool, for the UI to edit.
+    pub fn region_settings_mut(&mut self) -> &mut RegionSettings {
+        &mut self.segments.region
+    }
+
+    /// Grows a region from `seed` with the region settings and stores it
+    /// as a new segment drawn by the user. Returns its label, or a message
+    /// saying why nothing was created (seed inside a segment, region
+    /// larger than the limit, segmentation not possible in this view).
+    pub fn grow_region_at(&mut self, seed: glam::UVec3) -> Result<u8, String> {
+        self.can_segment()?;
+        let d = self.dataset.as_ref().ok_or("Open a study first")?;
+        let volume = d.volume.clone();
+        let value = volume.physical(seed.x, seed.y, seed.z).ok_or("The click is outside the volume")?;
+        if let Some(name) = self.segments.set.as_ref().and_then(|s| {
+            let label = s.labels().label(seed.x, seed.y, seed.z).filter(|l| *l != 0)?;
+            s.segment(label).map(|g| g.name.clone())
+        }) {
+            return Err(format!("This voxel already belongs to {name}"));
+        }
+        let RegionSettings { tolerance, max_ml } = self.segments.region;
+        let sp = volume.spacing();
+        let voxel_ml = f64::from(sp.x) * f64::from(sp.y) * f64::from(sp.z) / 1000.0;
+        let max_voxels = (f64::from(max_ml) / voxel_ml).floor().max(1.0) as u64;
+        let set = self.segmentation_mut().ok_or("Open a study first")?;
+        let (bx, mask) =
+            ferrum_domain::grow_region(&volume, set, seed, value - tolerance, value + tolerance, max_voxels)
+                .ok_or_else(|| {
+                    format!(
+                        "The region grows beyond {max_ml:.0} ml: lower the tolerance (now ±{tolerance:.0}) or click \
+                         further from the edge"
+                    )
+                })?;
+        self.segments.regions += 1;
+        let label = self.add_segment(&format!("Region {}", self.segments.regions)).map_err(|e| e.to_string())?;
+        let provenance = Provenance::human(Timestamp::now());
+        self.with_set(|s| {
+            s.set_provenance(label, provenance)?;
+            s.apply_mask(label, bx, &mask, false)
+        })
+        .map_err(|e| e.to_string())?;
+        let ml = self.segments.set.as_ref().map_or(0.0, |s| s.volume_ml(label, sp));
+        self.status.message =
+            format!("Region {}: {ml:.1} ml, values {value:.0} ± {tolerance:.0}", self.segments.regions);
+        Ok(label)
+    }
+
     /// Removes every segment.
     pub fn clear_segmentation(&mut self) {
+        self.segments.regions = 0;
         self.segments.set = None;
         self.segments.generation = self.bump_revision();
     }
