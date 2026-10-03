@@ -62,7 +62,7 @@ Written by *Export annotations* and into workspaces. Version 2 adds
 {
   "format": "ferrum-annotations",
   "version": 2,
-  "generator": "FERRUM 0.2.3",
+  "generator": "FERRUM 0.3.0",
   "source": { "name": "lung_053", "path": "/data/lung_053" },
   "study": { "study_instance_uid": "…", "series_instance_uid": "…", "modality": "CT", "…": "…" },
   "volume": { "dims": [512, 512, 252], "spacing_mm": [0.78, 0.78, 1.25], "frame": "LPS voxel grid: …" },
@@ -102,7 +102,7 @@ what NIfTI cannot hold.
 {
   "format": "ferrum-segments",
   "version": 1,
-  "generator": "FERRUM 0.2.3",
+  "generator": "FERRUM 0.3.0",
   "segments": [
     { "label": 1, "name": "liver", "color": [230, 85, 75], "visible": true, "opacity": 0.5,
       "voxels": 18234, "volume_ml": 412.7, "provenance": { "…": "…" } }
@@ -141,7 +141,7 @@ ws/ct1/
 {
   "format": "ferrum-workspace",
   "version": 1,
-  "generator": "FERRUM 0.2.3",
+  "generator": "FERRUM 0.3.0",
   "created": "2026-10-01T12:00:00Z",
   "source": {
     "path": "/data/incoming/series-17",
@@ -176,7 +176,7 @@ can refine the object later by replaying them
 ([agent-segmentation.md](agent-segmentation.md)).
 
 ```json
-{ "format": "ferrum-engine-inputs", "version": 1, "generator": "FERRUM 0.2.3",
+{ "format": "ferrum-engine-inputs", "version": 1, "generator": "FERRUM 0.3.0",
   "objects": [ { "label": 7, "created": "2026-10-03T10:00:00Z",
                  "engine": "http://127.0.0.1:8765", "engine_name": "nnInteractive", "engine_version": "2.6.0 (nnInteractive_v1.0)",
                  "roi": { "min": [180, 140, 60], "max": [330, 290, 120] }, "revision": 2, "seeds": 0,
