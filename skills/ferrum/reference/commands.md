@@ -11,13 +11,13 @@ underscores) and a `ferrum-cli` sub-command. The parameters are listed in
 | Command | Key parameters | Returns |
 |---|---|---|
 | `study scan` | `paths` | series: pseudonymised id, format, modality, dims, description |
-| `study open` | `workspace`, `path`, `series?` | dims, spacing, LPS origin and direction, value unit, slice counts, window presets |
+| `study open` | `workspace`, `path`, `series?`, `modality?` (for NIfTI, e.g. `CT`) | dims, spacing, LPS origin and direction, value unit, slice counts, window presets |
 | `study info` | `workspace` | the same, plus annotation and segment counts with pending reviews |
 
 ## Looking
 | Command | Key parameters | Returns |
 |---|---|---|
-| `view slice` | `plane`, `slice_number` or `at`, `window?`, `size?`, `overlays?` | PNG + sidecar with `pixel_to_voxel`, `pixel_to_patient_mm` |
+| `view slice` | `plane`, `slice_number` or `at`, `window?`, `size?`, `overlays?` (`segments`), `segment_style?` (`outline`, `fill`, `fill_outline`), `segment_opacity?` | PNG + sidecar with `pixel_to_voxel`, `pixel_to_patient_mm` |
 | `view montage` | `plane`, `from?`, `to?`, `step?`, `columns?`, `window?` | grid of labelled slices, one mapping per tile |
 | `view mpr` | `at`, `window?` | axial, coronal and sagittal through a point, crosshair |
 | `view volume` | `mode` (`mip`, `isosurface` + `threshold`, `transfer_function` + `preset`), `view` | 3D render; no pixel mapping |

@@ -98,12 +98,15 @@ pub struct WorkspaceManifest {
     pub created: Timestamp,
     /// The series.
     pub source: WorkspaceSource,
+    /// Modality declared for a source that carries none (NIfTI), e.g. `CT`;
+    /// `None` when the source's own modality applies.
+    pub modality: Option<String>,
 }
 
 impl WorkspaceManifest {
     fn to_json(&self) -> Value {
         let s = &self.source;
-        json!({
+        let mut v = json!({
             "format": WORKSPACE_FORMAT,
             "version": WORKSPACE_VERSION,
             "generator": self.generator,
@@ -116,7 +119,11 @@ impl WorkspaceManifest {
                     "path": f.path.to_string_lossy(), "size": f.size, "sha256": f.sha256,
                 })).collect::<Vec<_>>(),
             },
-        })
+        });
+        if let Some(m) = &self.modality {
+            v["modality"] = json!(m);
+        }
+        v
     }
 
     fn from_json(v: &Value) -> Result<Self, String> {
@@ -153,6 +160,7 @@ impl WorkspaceManifest {
                 format: text(s, "format").unwrap_or_default(),
                 files,
             },
+            modality: v["modality"].as_str().map(str::to_owned),
         })
     }
 }
@@ -238,11 +246,22 @@ impl Workspace {
                 format: series.format.clone(),
                 files,
             },
+            modality: None,
         };
         let text =
             serde_json::to_string_pretty(&manifest.to_json()).map_err(|e| IoError::invalid(root, e.to_string()))?;
         write_atomic(&manifest_path, text.as_bytes())?;
         Ok(Self { root: root_abs, manifest })
+    }
+
+    /// Declares the modality of a source that carries none (e.g. `CT` for a
+    /// NIfTI file), or clears it with `None`; saved in the manifest.
+    pub fn set_modality(&mut self, modality: Option<&str>) -> Result<(), IoError> {
+        self.manifest.modality = modality.map(str::to_owned);
+        let path = self.root.join(files::MANIFEST);
+        let text = serde_json::to_string_pretty(&self.manifest.to_json())
+            .map_err(|e| IoError::invalid(&path, e.to_string()))?;
+        write_atomic(&path, text.as_bytes())
     }
 
     /// Opens the workspace in `root`.
@@ -512,8 +531,13 @@ mod tests {
         assert_eq!(files[0].sha256, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
         assert_eq!(files[1].size, 100_000);
         assert!(ws.path(files::RENDERS).is_dir());
-        let opened = Workspace::open(&f.root).unwrap();
+        let mut opened = Workspace::open(&f.root).unwrap();
         assert_eq!(opened, ws);
+        assert_eq!(opened.manifest().modality, None);
+        opened.set_modality(Some("CT")).unwrap();
+        assert_eq!(Workspace::open(&f.root).unwrap().manifest().modality.as_deref(), Some("CT"));
+        opened.set_modality(None).unwrap();
+        assert_eq!(Workspace::open(&f.root).unwrap(), ws);
         assert_eq!(opened.manifest().source.file_paths()[1], f.source.join("sub/b.dcm"));
         opened.verify_sources().unwrap();
         assert!(matches!(Workspace::create(&f.root, &f.source, &f.series, "x"), Err(IoError::Invalid { .. })));

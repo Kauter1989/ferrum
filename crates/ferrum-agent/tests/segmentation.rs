@@ -514,3 +514,106 @@ fn lasso_seeds_do_not_count_against_the_prompt_limit() {
         "seeds cannot be undone"
     );
 }
+
+/// Pixels of a render whose colour is `c`.
+fn coloured(path: &str, c: [u8; 3]) -> usize {
+    let img = image::open(path).unwrap().to_rgb8();
+    img.pixels().filter(|p| p.0 == c).count()
+}
+
+#[test]
+fn slice_renders_draw_closed_outlines_or_translucent_fills() {
+    let f = Fixture::new();
+    let agent = f.agent();
+    ok(&agent, "study open", json!({ "workspace": f.ws, "path": f.src }));
+    // the 6 × 6 voxel cube, rendered 1:1 on axial slice 15
+    let t = ok(
+        &agent,
+        "segment threshold",
+        f.params(json!({ "seed": { "voxel": [30, 30, 14] }, "min": 500, "max": 2000, "agent": "a" })),
+    );
+    let c: [u8; 3] = serde_json::from_value(t["data"]["segment"]["color"].clone()).unwrap();
+    let render = |extra: Value| {
+        let mut p =
+            json!({ "plane": "axial", "slice_number": 15, "size": 40, "window": "bone", "overlays": ["segments"] });
+        p.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        ok(&agent, "view slice", f.params(p))
+    };
+    // outline (default): all four sides of the square, 20 pixels, the inside untouched
+    let outline = render(json!({}));
+    assert_eq!(outline["data"]["size"], json!([40, 40]));
+    assert_eq!(outline["data"]["segment_style"], "outline");
+    assert_eq!(coloured(outline["data"]["image"].as_str().unwrap(), c), 20, "a closed outline");
+    // enlarged 8 ×, the outline is 3 pixels wide: a 48 × 48 square minus its 42 × 42 inside
+    let big = render(json!({ "size": 320 }));
+    assert_eq!(coloured(big["data"]["image"].as_str().unwrap(), c), 48 * 48 - 42 * 42);
+    // fill at full opacity covers the 36 pixels; fill_outline at 0.4 keeps only the border in full colour
+    let fill = render(json!({ "segment_style": "fill", "segment_opacity": 1.0 }));
+    assert_eq!(coloured(fill["data"]["image"].as_str().unwrap(), c), 36);
+    let both = render(json!({ "segment_style": "fill_outline", "segment_opacity": 0.4 }));
+    assert_eq!(coloured(both["data"]["image"].as_str().unwrap(), c), 20);
+    assert_eq!(both["data"]["segment_opacity"].as_f64().map(|o| (o * 10.0).round()), Some(4.0));
+    let img = image::open(both["data"]["image"].as_str().unwrap()).unwrap().to_rgb8();
+    let plain = image::open(render(json!({ "overlays": [] }))["data"]["image"].as_str().unwrap()).unwrap().to_rgb8();
+    let inside: Vec<(u32, u32)> =
+        fill_pixels(&image::open(fill["data"]["image"].as_str().unwrap()).unwrap().to_rgb8(), c);
+    let blended = inside.iter().filter(|(x, y)| img.get_pixel(*x, *y).0 != c).count();
+    assert_eq!(blended, 16, "the inside is blended");
+    let (x, y) = inside.iter().find(|(x, y)| img.get_pixel(*x, *y).0 != c).copied().unwrap();
+    let expect = ferrum_domain::SegmentStyle::Fill.blend(plain.get_pixel(x, y).0, c, 0.4, false);
+    assert_eq!(img.get_pixel(x, y).0, expect);
+    // bad values are refused
+    assert_eq!(
+        code(
+            &agent,
+            "view slice",
+            f.params(
+                json!({ "plane": "axial", "slice_number": 15, "overlays": ["segments"], "segment_style": "glow" })
+            )
+        ),
+        "bad_request"
+    );
+    assert_eq!(
+        code(
+            &agent,
+            "view slice",
+            f.params(json!({ "plane": "axial", "slice_number": 15, "overlays": ["segments"], "segment_opacity": 1.5 }))
+        ),
+        "bad_request"
+    );
+    // montage and MPR take the same style
+    ok(
+        &agent,
+        "view montage",
+        f.params(json!({ "plane": "axial", "from": 14, "to": 16, "overlays": ["segments"], "segment_style": "fill" })),
+    );
+    ok(
+        &agent,
+        "view mpr",
+        f.params(json!({ "at": { "voxel": [30, 30, 14] }, "overlays": ["segments"], "segment_style": "fill_outline" })),
+    );
+}
+
+fn fill_pixels(img: &image::RgbImage, c: [u8; 3]) -> Vec<(u32, u32)> {
+    img.enumerate_pixels().filter(|(_, _, p)| p.0 == c).map(|(x, y, _)| (x, y)).collect()
+}
+
+#[test]
+fn nifti_studies_can_be_declared_ct() {
+    let f = Fixture::new();
+    let agent = f.agent();
+    let plain = ok(&agent, "study open", json!({ "workspace": f.ws, "path": f.src }));
+    assert_eq!((plain["data"]["modality"].as_str(), plain["data"]["value_unit"].as_str()), (Some(""), Some("")));
+    assert!(plain["warnings"].as_array().unwrap().iter().any(|w| w.as_str().unwrap().contains("no modality")));
+    let ct = ok(&agent, "study open", json!({ "workspace": f.ws, "path": f.src, "modality": "ct" }));
+    assert_eq!((ct["data"]["modality"].as_str(), ct["data"]["value_unit"].as_str()), (Some("CT"), Some("HU")));
+    assert_eq!(ct["data"]["modality_source"], "declared");
+    // kept in the workspace: later calls and probes use it
+    let probe = ok(&agent, "probe", f.params(json!({ "point": { "voxel": [30, 30, 14] } })));
+    assert_eq!(probe["data"]["unit"], "HU");
+    assert_eq!(ok(&agent, "study info", f.params(json!({})))["data"]["modality"], "CT");
+    assert_eq!(
+        code(&agent, "study open", json!({ "workspace": f.ws, "path": f.src, "modality": "C T" })),
+        "bad_request"
+    );
+}

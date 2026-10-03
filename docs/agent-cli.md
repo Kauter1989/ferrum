@@ -62,9 +62,9 @@ workspace paths are placed under the operator's `data.workspace_root`.
 | Command | What it does |
 |---|---|
 | `study scan <paths…>` | Lists series: pseudonymised id, format, modality, dims, description |
-| `study open -w W <path> [--series S]` | Creates or reuses the workspace W for a series (SHA-256 of every source file) and describes it |
+| `study open -w W <path> [--series S] [--modality M]` | Creates or reuses the workspace W for a series (SHA-256 of every source file) and describes it; `--modality` declares the modality of a source that carries none (NIfTI), e.g. `CT` for values in HU, and is kept in the workspace |
 | `study info -w W` | Dims, spacing, LPS origin and direction, value unit, slice counts, window presets, annotation and segment counts |
-| `view slice -w W --plane P (--slice-number N \| --at POINT) [--window lung\|C,W] [--size PX] [--overlay segments]` | Renders a slice to `renders/r-NNNN.png` with a sidecar JSON |
+| `view slice -w W --plane P (--slice-number N \| --at POINT) [--window lung\|C,W] [--size PX] [--overlay segments [--segment-style outline\|fill\|fill_outline] [--segment-opacity A]]` | Renders a slice to `renders/r-NNNN.png` with a sidecar JSON |
 | `view montage -w W --plane P [--from N] [--to N] [--step N] [--columns N] [--window …] [--size PX]` | Several slices of one plane as a grid; every tile labelled with its slice number (default: at most 16 tiles) |
 | `view mpr -w W POINT [--window …] [--size PX]` | Axial, coronal and sagittal slices through a point, with a crosshair |
 | `view volume -w W [--mode mip\|isosurface\|transfer_function] [--threshold V] [--preset soft_tissue_bone\|lung_vessels\|bone] [--view anterior\|…\|inferior] [--size PX]` | 3D render on the CPU from a standard viewpoint |
@@ -124,7 +124,16 @@ point`.
 - Take every number from `probe`, `stats` or `measure`, never from grey
   values.
 
-**Overlays:** `segments` draws segment outlines in their colours.
+**Overlays:** `segments` draws the segments in their colours:
+- `segment_style`: `outline` (default; a closed outline 1–3 pixels wide,
+  about a third of a voxel on screen; the
+  image stays visible inside), `fill` (translucent fill) or
+  `fill_outline` (both);
+- `segment_opacity` (0–1): the fill opacity for every segment; default
+  each segment's own opacity.
+
+`view montage` and `view mpr` take the same options; the sidecar records
+them.
 
 **Tiled renders.**
 - `view montage` and `view mpr` compose several slices into one image.
@@ -374,7 +383,8 @@ and accession numbers only with consent.
 ## Limits
 
 Note:
-- NIfTI files carry no modality, so their values have no unit. Treat
-  them as HU only if you know the file is CT.
+- NIfTI files carry no modality, so their values have no unit. If you
+  know the file is CT, open it with `--modality CT`; values are then
+  reported in HU (`modality_source: declared`).
 - The command line reloads the series for each call (a CT series in about
   0.3 s); the MCP server keeps it in memory.

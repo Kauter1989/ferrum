@@ -18,7 +18,8 @@ Parameters are checked against JSON Schemas (`ferrum-cli schema`).
    series that fits the task (modality, size, description). Ask if
    several fit.
 2. **Open it:** `study open` with a workspace name and the path (plus
-   `series` if needed). Read `study info`: modality, `value_unit`,
+   `series` if needed; for NIfTI known to be CT, `modality: CT`). Read
+   `study info`: modality, `value_unit`,
    spacing, slice counts, warnings.
 3. **Look:**
    - `view montage` to find where things are;

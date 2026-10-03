@@ -88,7 +88,9 @@ fn view_slice() -> (&'static str, Value) {
                         ],
                     },
                     "size": integer(16, "largest image side in pixels (capped by the operator)"),
-                    "overlays": { "type": "array", "items": { "type": "string", "enum": ["segments"] }, "description": "drawn on top: segment outlines" },
+                    "overlays": overlays_param(),
+                    "segment_style": segment_style_param(),
+                    "segment_opacity": segment_opacity_param(),
                 }),
                 &["workspace", "plane"],
             ),
@@ -106,7 +108,15 @@ fn window_param() -> Value {
 }
 
 fn overlays_param() -> Value {
-    json!({ "type": "array", "items": { "type": "string", "enum": ["segments"] }, "description": "drawn on top: segment outlines" })
+    json!({ "type": "array", "items": { "type": "string", "enum": ["segments"] }, "description": "drawn on top: segments (see segment_style)" })
+}
+
+fn segment_style_param() -> Value {
+    json!({ "type": "string", "enum": ["outline", "fill", "fill_outline"], "description": "with overlays [segments]: outline (default), translucent fill, or both" })
+}
+
+fn segment_opacity_param() -> Value {
+    json!({ "type": "number", "minimum": 0, "maximum": 1, "description": "fill opacity for every segment (default: each segment's own opacity)" })
 }
 
 type Described = (&'static str, Value);
@@ -125,6 +135,8 @@ fn views() -> (Described, Described) {
                 "window": window_param(),
                 "size": integer(16, "largest image side in pixels (capped by the operator)"),
                 "overlays": overlays_param(),
+                "segment_style": segment_style_param(),
+                "segment_opacity": segment_opacity_param(),
             }),
             &["workspace", "plane"],
         ),
@@ -138,6 +150,8 @@ fn views() -> (Described, Described) {
                 "window": window_param(),
                 "size": integer(16, "largest image side in pixels (capped by the operator)"),
                 "overlays": overlays_param(),
+                "segment_style": segment_style_param(),
+                "segment_opacity": segment_opacity_param(),
             }),
             &["workspace", "at"],
         ),
@@ -307,9 +321,9 @@ pub fn command_schema(command: &str) -> Option<(&'static str, Value)> {
             obj(json!({ "paths": { "type": "array", "items": text("a DICOM folder or file, or a NIfTI file"), "minItems": 1 } }), &["paths"]),
         ),
         "study open" => (
-            "Opens a series into a workspace (created if needed; the source files are hashed) and describes it.",
+            "Opens a series into a workspace (created if needed; the source files are hashed) and describes it. NIfTI files carry no modality: give modality (e.g. CT) so values are taken as Hounsfield units.",
             obj(
-                json!({ "workspace": workspace(), "path": text("DICOM folder or NIfTI file"), "series": text("series from study scan, when the source holds several") }),
+                json!({ "workspace": workspace(), "path": text("DICOM folder or NIfTI file"), "series": text("series from study scan, when the source holds several"), "modality": text("modality of a source that carries none (NIfTI), e.g. CT; saved in the workspace") }),
                 &["workspace", "path"],
             ),
         ),

@@ -20,7 +20,7 @@
     }
   },
   "study open": {
-    "description": "Opens a series into a workspace (created if needed; the source files are hashed) and describes it.",
+    "description": "Opens a series into a workspace (created if needed; the source files are hashed) and describes it. NIfTI files carry no modality: give modality (e.g. CT) so values are taken as Hounsfield units.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -35,6 +35,10 @@
         "series": {
           "type": "string",
           "description": "series from study scan, when the source holds several"
+        },
+        "modality": {
+          "type": "string",
+          "description": "modality of a source that carries none (NIfTI), e.g. CT; saved in the workspace"
         }
       },
       "required": [
@@ -194,7 +198,22 @@
               "segments"
             ]
           },
-          "description": "drawn on top: segment outlines"
+          "description": "drawn on top: segments (see segment_style)"
+        },
+        "segment_style": {
+          "type": "string",
+          "enum": [
+            "outline",
+            "fill",
+            "fill_outline"
+          ],
+          "description": "with overlays [segments]: outline (default), translucent fill, or both"
+        },
+        "segment_opacity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "fill opacity for every segment (default: each segment's own opacity)"
         }
       },
       "required": [
@@ -288,7 +307,22 @@
               "segments"
             ]
           },
-          "description": "drawn on top: segment outlines"
+          "description": "drawn on top: segments (see segment_style)"
+        },
+        "segment_style": {
+          "type": "string",
+          "enum": [
+            "outline",
+            "fill",
+            "fill_outline"
+          ],
+          "description": "with overlays [segments]: outline (default), translucent fill, or both"
+        },
+        "segment_opacity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "fill opacity for every segment (default: each segment's own opacity)"
         }
       },
       "required": [
@@ -418,7 +452,22 @@
               "segments"
             ]
           },
-          "description": "drawn on top: segment outlines"
+          "description": "drawn on top: segments (see segment_style)"
+        },
+        "segment_style": {
+          "type": "string",
+          "enum": [
+            "outline",
+            "fill",
+            "fill_outline"
+          ],
+          "description": "with overlays [segments]: outline (default), translucent fill, or both"
+        },
+        "segment_opacity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "fill opacity for every segment (default: each segment's own opacity)"
         }
       },
       "required": [
@@ -484,7 +533,7 @@
               "segments"
             ]
           },
-          "description": "drawn on top: segment outlines"
+          "description": "drawn on top: segments (see segment_style)"
         }
       },
       "required": [

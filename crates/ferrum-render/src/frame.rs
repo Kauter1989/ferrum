@@ -218,8 +218,13 @@ pub struct SliceParams {
     pub nearest: bool,
     /// Background colour.
     pub background: [f32; 4],
-    /// Draw the segment overlay (fill + outline).
+    /// Draw the segment overlay.
     pub segments: bool,
+    /// How segments are drawn: outline, fill or both.
+    pub segment_style: ferrum_domain::SegmentStyle,
+    /// Fill opacity at display, multiplied with each segment's opacity
+    /// (`[0, 1]`).
+    pub fill_opacity: f32,
 }
 
 /// GPU uniform block of the slice shader.
@@ -230,7 +235,7 @@ pub struct SliceUniforms {
     pub rect: [f32; 4],
     /// Window lo, hi, slice position, axis id.
     pub window: [f32; 4],
-    /// Nearest flag, segment overlay flag, padding.
+    /// Nearest flag, segment overlay flag, segment style id, fill opacity.
     pub options: [f32; 4],
     /// Background colour.
     pub background: [f32; 4],
@@ -242,7 +247,12 @@ impl SliceParams {
         SliceUniforms {
             rect: [self.rect.0.x, self.rect.0.y, self.rect.1.x, self.rect.1.y],
             window: [self.window.0, self.window.1, self.position, self.axis as f32],
-            options: [f32::from(u8::from(self.nearest)), f32::from(u8::from(self.segments)), 0.0, 0.0],
+            options: [
+                f32::from(u8::from(self.nearest)),
+                f32::from(u8::from(self.segments)),
+                self.segment_style.id() as f32,
+                self.fill_opacity.clamp(0.0, 1.0),
+            ],
             background: self.background,
         }
     }

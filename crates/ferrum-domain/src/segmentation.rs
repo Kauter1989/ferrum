@@ -219,6 +219,81 @@ pub fn palette_color(label: u8) -> [u8; 3] {
 /// Default overlay opacity of new segments.
 pub const DEFAULT_OPACITY: f32 = 0.5;
 
+/// How segments are drawn over a slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum SegmentStyle {
+    /// A one-pixel outline in full colour; the image stays visible inside.
+    Outline,
+    /// A translucent fill (segment opacity × the display's fill opacity).
+    Fill,
+    /// Fill with an outline.
+    #[default]
+    FillAndOutline,
+}
+
+impl SegmentStyle {
+    /// All styles, in display order.
+    pub const ALL: [SegmentStyle; 3] = [SegmentStyle::Outline, SegmentStyle::Fill, SegmentStyle::FillAndOutline];
+
+    /// Wire name: `outline`, `fill` or `fill_outline`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SegmentStyle::Outline => "outline",
+            SegmentStyle::Fill => "fill",
+            SegmentStyle::FillAndOutline => "fill_outline",
+        }
+    }
+
+    /// Inverse of [`SegmentStyle::as_str`].
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|x| x.as_str() == s)
+    }
+
+    /// Short label for the UI.
+    pub fn label(self) -> &'static str {
+        match self {
+            SegmentStyle::Outline => "Outline",
+            SegmentStyle::Fill => "Fill",
+            SegmentStyle::FillAndOutline => "Both",
+        }
+    }
+
+    /// Id passed to the slice shader (`0` outline, `1` fill, `2` both).
+    pub fn id(self) -> u32 {
+        match self {
+            SegmentStyle::Outline => 0,
+            SegmentStyle::Fill => 1,
+            SegmentStyle::FillAndOutline => 2,
+        }
+    }
+
+    /// The style draws a fill.
+    pub fn fills(self) -> bool {
+        self != SegmentStyle::Outline
+    }
+
+    /// The style draws an outline.
+    pub fn outlines(self) -> bool {
+        self != SegmentStyle::Fill
+    }
+
+    /// Colour of one pixel of segment colour `color` over `grey`: the
+    /// outline in full colour on edge pixels, else the fill blended with
+    /// `alpha` (segment opacity × fill opacity), else `grey`. Mirrors the
+    /// slice shader (`slice.wgsl`).
+    pub fn blend(self, grey: [u8; 3], color: [u8; 3], alpha: f32, edge: bool) -> [u8; 3] {
+        if edge && self.outlines() {
+            return color;
+        }
+        if !self.fills() {
+            return grey;
+        }
+        let a = alpha.clamp(0.0, 1.0);
+        let mix = |g: u8, c: u8| (f32::from(g) + (f32::from(c) - f32::from(g)) * a).round() as u8;
+        [mix(grey[0], color[0]), mix(grey[1], color[1]), mix(grey[2], color[2])]
+    }
+}
+
 /// Voxels changed by one edit, sufficient to undo it.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct LabelEdit {
@@ -639,6 +714,25 @@ mod tests {
 
     fn dims() -> Dims3 {
         Dims3::new(4, 3, 2)
+    }
+
+    #[test]
+    fn segment_styles_blend_like_the_shader() {
+        for st in SegmentStyle::ALL {
+            assert_eq!(SegmentStyle::parse(st.as_str()), Some(st));
+            assert!(!st.label().is_empty());
+        }
+        assert_eq!(SegmentStyle::parse("glow"), None);
+        assert_eq!(SegmentStyle::default(), SegmentStyle::FillAndOutline);
+        let (g, c) = ([100, 100, 100], [200, 0, 50]);
+        assert_eq!(SegmentStyle::Outline.blend(g, c, 0.5, true), c);
+        assert_eq!(SegmentStyle::Outline.blend(g, c, 0.5, false), g);
+        assert_eq!(SegmentStyle::Fill.blend(g, c, 0.5, true), [150, 50, 75], "fill only: edges are filled too");
+        assert_eq!(SegmentStyle::FillAndOutline.blend(g, c, 0.5, false), [150, 50, 75]);
+        assert_eq!(SegmentStyle::FillAndOutline.blend(g, c, 0.5, true), c);
+        assert_eq!(SegmentStyle::Fill.blend(g, c, 0.0, false), g);
+        assert_eq!(SegmentStyle::Fill.blend(g, c, 2.0, false), c);
+        assert_eq!(SegmentStyle::ALL.map(SegmentStyle::id), [0, 1, 2]);
     }
 
     #[test]

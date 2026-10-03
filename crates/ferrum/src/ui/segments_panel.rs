@@ -11,7 +11,7 @@ use ferrum_app::{SegmentSummary, Viewer};
 use ferrum_domain::{Author, Provenance, ReviewStatus};
 
 use super::theme::{DANGER, SURFACE, TEXT_DIM, WARN};
-use super::widgets::tool_button;
+use super::widgets::{segmented, tool_button};
 
 /// UI-only state of the section.
 #[derive(Debug, Clone, Default)]
@@ -72,6 +72,7 @@ pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut SegmentsPanelSta
     if ui.checkbox(&mut show, "Show segments").changed() {
         viewer.set_segments_shown(show);
     }
+    display_controls(ui, viewer);
     for row in rows {
         let label = row.segment.label;
         let result = match segment_row(ui, &row, state) {
@@ -197,4 +198,26 @@ pub fn provenance_line(ui: &mut egui::Ui, p: &Provenance, name: &str) -> Option<
         }
     });
     decision
+}
+
+/// How segments are drawn on slices: outline, fill or both, and the fill
+/// opacity (applied on top of each segment's own opacity).
+fn display_controls(ui: &mut egui::Ui, viewer: &mut Viewer) {
+    use ferrum_domain::SegmentStyle;
+    let state = viewer.segmentation();
+    let (style, mut opacity) = (state.style, state.fill_opacity);
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("On slices").size(12.0).color(TEXT_DIM));
+        let labels = SegmentStyle::ALL.map(SegmentStyle::label);
+        let current = SegmentStyle::ALL.iter().position(|s| *s == style);
+        if let Some(i) = segmented(ui, &labels, current) {
+            viewer.set_segment_style(SegmentStyle::ALL[i]);
+        }
+    });
+    let slider = Slider::new(&mut opacity, 0.0..=1.0)
+        .custom_formatter(|v, _| format!("{:.0} %", v * 100.0))
+        .text("Fill opacity");
+    if ui.add_enabled(style.fills(), slider).on_hover_text("Multiplies each segment's opacity on slices").changed() {
+        viewer.set_segment_fill_opacity(opacity);
+    }
 }

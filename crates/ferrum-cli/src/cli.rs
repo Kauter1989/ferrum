@@ -28,6 +28,23 @@ pub struct Ws {
     pub workspace: String,
 }
 
+/// How segments are drawn with `--overlay segments`.
+#[derive(Debug, Args)]
+pub struct SegmentDisplay {
+    /// outline (default), fill or fill_outline.
+    #[arg(long)]
+    pub segment_style: Option<String>,
+    /// Fill opacity for every segment, 0–1 (default: each segment's own).
+    #[arg(long)]
+    pub segment_opacity: Option<f64>,
+}
+
+impl SegmentDisplay {
+    fn fields(&self) -> [(&'static str, Option<Value>); 2] {
+        [("segment_style", some(self.segment_style.clone())), ("segment_opacity", some(self.segment_opacity))]
+    }
+}
+
 /// Agent id recorded in the provenance of created items.
 #[derive(Debug, Args)]
 pub struct AgentId {
@@ -146,6 +163,9 @@ pub enum Study {
         /// Series (from study scan) when the source holds several.
         #[arg(long)]
         series: Option<String>,
+        /// Modality of a source that carries none (NIfTI), e.g. CT.
+        #[arg(long)]
+        modality: Option<String>,
     },
     /// Describes the open study.
     Info {
@@ -185,6 +205,8 @@ pub enum View {
         /// Overlays (segments).
         #[arg(long = "overlay")]
         overlays: Vec<String>,
+        #[command(flatten)]
+        display: SegmentDisplay,
     },
     /// 3D render on the CPU from a standard viewpoint.
     Volume {
@@ -224,6 +246,8 @@ pub enum View {
         /// Overlays (segments).
         #[arg(long = "overlay")]
         overlays: Vec<String>,
+        #[command(flatten)]
+        display: SegmentDisplay,
     },
     /// Renders one slice to PNG + sidecar JSON.
     Slice {
@@ -247,6 +271,8 @@ pub enum View {
         /// Overlays (segments).
         #[arg(long = "overlay")]
         overlays: Vec<String>,
+        #[command(flatten)]
+        display: SegmentDisplay,
     },
 }
 
@@ -634,9 +660,15 @@ impl Command {
         Ok(match self {
             Command::Study(s) => match s {
                 Study::Scan { paths } => call("study scan", vec![("paths", Some(json!(paths)))]),
-                Study::Open { ws: w, path, series } => {
-                    call("study open", vec![ws(w), ("path", Some(json!(path))), ("series", some(series.clone()))])
-                }
+                Study::Open { ws: w, path, series, modality } => call(
+                    "study open",
+                    vec![
+                        ws(w),
+                        ("path", Some(json!(path))),
+                        ("series", some(series.clone())),
+                        ("modality", some(modality.clone())),
+                    ],
+                ),
                 Study::Info { ws: w } => call("study info", vec![ws(w)]),
             },
             Command::View(v) => view_call(v)?,
@@ -720,9 +752,9 @@ impl Command {
 fn view_call(v: &View) -> Result<(String, Value), String> {
     let call = |name: &str, fields: Vec<(&str, Option<Value>)>| (name.to_owned(), object(fields));
     Ok(match v {
-        View::Slice { ws: w, plane, slice_number, at, window, size, overlays } => call(
+        View::Slice { ws: w, plane, slice_number, at, window, size, overlays, display } => call(
             "view slice",
-            vec![
+            [
                 ws(w),
                 ("plane", Some(json!(plane))),
                 ("slice_number", some(*slice_number)),
@@ -730,11 +762,14 @@ fn view_call(v: &View) -> Result<(String, Value), String> {
                 ("window", window.as_deref().map(parse_window).transpose()?),
                 ("size", some(*size)),
                 ("overlays", (!overlays.is_empty()).then(|| json!(overlays))),
-            ],
+            ]
+            .into_iter()
+            .chain(display.fields())
+            .collect(),
         ),
-        View::Montage { ws: w, plane, from, to, step, columns, window, size, overlays } => call(
+        View::Montage { ws: w, plane, from, to, step, columns, window, size, overlays, display } => call(
             "view montage",
-            vec![
+            [
                 ws(w),
                 ("plane", Some(json!(plane))),
                 ("from", some(*from)),
@@ -744,17 +779,23 @@ fn view_call(v: &View) -> Result<(String, Value), String> {
                 ("window", window.as_deref().map(parse_window).transpose()?),
                 ("size", some(*size)),
                 ("overlays", (!overlays.is_empty()).then(|| json!(overlays))),
-            ],
+            ]
+            .into_iter()
+            .chain(display.fields())
+            .collect(),
         ),
-        View::Mpr { ws: w, at, window, size, overlays } => call(
+        View::Mpr { ws: w, at, window, size, overlays, display } => call(
             "view mpr",
-            vec![
+            [
                 ws(w),
                 ("at", Some(parse_point(at)?)),
                 ("window", window.as_deref().map(parse_window).transpose()?),
                 ("size", some(*size)),
                 ("overlays", (!overlays.is_empty()).then(|| json!(overlays))),
-            ],
+            ]
+            .into_iter()
+            .chain(display.fields())
+            .collect(),
         ),
         View::Volume { ws: w, mode, threshold, preset, view, size, overlays } => call(
             "view volume",
@@ -956,7 +997,12 @@ mod tests {
             "-600,1500",
             "--overlay",
             "segments",
+            "--segment-style",
+            "fill",
+            "--segment-opacity",
+            "0.3",
         ]);
+        assert_eq!((p["segment_style"].as_str(), p["segment_opacity"].as_f64()), (Some("fill"), Some(0.3)));
         assert_eq!(
             (name.as_str(), &p["window"]["center"], &p["overlays"][0]),
             ("view slice", &json!(-600.0), &json!("segments"))

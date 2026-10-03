@@ -220,6 +220,24 @@ fn segment_list_edits_segments_in_both_tabs() {
     assert!(!h.state().viewer.segmentation().set().unwrap().segment(label).unwrap().visible);
     h.get_by_label("Show Tumour").click();
     h.run();
+    // slices show the segments as an outline, a fill or both; the fill opacity applies to fills only
+    use ferrum_domain::SegmentStyle;
+    assert_eq!(h.state().viewer.segmentation().style, SegmentStyle::FillAndOutline);
+    h.get_by_label("Outline").click();
+    h.run();
+    assert_eq!(h.state().viewer.segmentation().style, SegmentStyle::Outline);
+    assert!(h.get_all_by_label_contains("Fill opacity").any(|n| n.accesskit_node().is_disabled()));
+    h.get_by_label("Fill").click();
+    h.run();
+    assert_eq!(h.state().viewer.segmentation().style, SegmentStyle::Fill);
+    assert!(h.get_all_by_label_contains("Fill opacity").all(|n| !n.accesskit_node().is_disabled()));
+    h.state_mut().viewer.set_segment_fill_opacity(0.25);
+    h.run();
+    let params =
+        h.state().viewer.slice_params(SliceAxis::Axial, (glam::Vec2::ZERO, glam::Vec2::splat(400.0)), 1.0).unwrap();
+    assert_eq!((params.segment_style, params.fill_opacity), (SegmentStyle::Fill, 0.25));
+    h.get_by_label("Both").click();
+    h.run();
     h.get_by_label_contains("Undo edit").click();
     h.run();
     assert_eq!(h.state().viewer.segment_summaries()[0].voxels, 0);
@@ -299,7 +317,7 @@ fn automatic_segmentation_runs_from_the_panel() {
             .unwrap();
     app.panel.ai.url = server.url();
     let mut h = Harness::builder()
-        .with_size(egui::vec2(1200.0, 1400.0))
+        .with_size(egui::vec2(1200.0, 1800.0))
         .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
     h.run();
     h.get_by_label_contains("Connect").click();

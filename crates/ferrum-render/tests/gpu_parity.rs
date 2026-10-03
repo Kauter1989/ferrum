@@ -336,6 +336,8 @@ fn slice_overlay_fills_and_outlines_segments() {
         nearest: true,
         background: [0.0, 0.0, 0.0, 1.0],
         segments: true,
+        segment_style: ferrum_domain::SegmentStyle::FillAndOutline,
+        fill_opacity: 1.0,
     };
     let on = renderer.render_slice_image(&ctx.device, &ctx.queue, &params, UVec2::new(w, h)).unwrap();
     let off = renderer
@@ -355,6 +357,32 @@ fn slice_overlay_fills_and_outlines_segments() {
     assert_eq!(px(&on, 4 * 4, fj)[..3], [230, 60, 50]);
     // outside every segment nothing changes
     assert_eq!(px(&on, 1, 1), px(&off, 1, 1));
+    // the same pixels in the other styles, as SegmentStyle::blend describes them
+    let mut style = |segment_style, fill_opacity| {
+        renderer
+            .render_slice_image(
+                &ctx.device,
+                &ctx.queue,
+                &SliceParams { segment_style, fill_opacity, ..params },
+                UVec2::new(w, h),
+            )
+            .unwrap()
+    };
+    let outline = style(ferrum_domain::SegmentStyle::Outline, 1.0);
+    assert_eq!(px(&outline, fi, fj), px(&off, fi, fj), "outline only: the inside shows the image");
+    assert_eq!(px(&outline, 4 * 4, fj)[..3], [230, 60, 50]);
+    let fill = style(ferrum_domain::SegmentStyle::Fill, 0.5);
+    let edge_grey = px(&off, 4 * 4, fj);
+    let half = ferrum_domain::SegmentStyle::Fill.blend(
+        [edge_grey[0], edge_grey[1], edge_grey[2]],
+        [230, 60, 50],
+        a * 0.5,
+        true,
+    );
+    let got = px(&fill, 4 * 4, fj);
+    for (g, e) in got.iter().zip(half) {
+        assert!((i32::from(*g) - i32::from(e)).abs() <= 2, "fill at the edge: {got:?} vs {half:?}");
+    }
     renderer.update_labels(&ctx.device, &ctx.queue, None, None);
 }
 
@@ -381,6 +409,8 @@ fn slice_rendering_matches_domain_extraction() {
             nearest: true,
             background: [0.0, 0.0, 0.0, 1.0],
             segments: false,
+            segment_style: ferrum_domain::SegmentStyle::FillAndOutline,
+            fill_opacity: 1.0,
         };
         let out = renderer.render_slice_image(&ctx.device, &ctx.queue, &params, UVec2::new(w, h)).unwrap();
         let mut worst = 0i32;

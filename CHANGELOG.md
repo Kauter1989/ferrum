@@ -37,9 +37,20 @@ TotalSegmentator and MONAI Label on one GPU
   cancel ends the job); nnInteractive frees the image when a session
   closes and offers `--deterministic`; `bridges/compose.yml` with
   profiles for one GPU and a MONAI Label bridge image.
+- Segment display on slices: outline, translucent fill or both, with a
+  fill opacity set at display time — in the desktop app (*Segments → On
+  slices*, *Fill opacity*) and in agent renders (`segment_style`,
+  `segment_opacity`).
+- `study open --modality CT` declares the modality of a NIfTI study, so
+  its values are taken as Hounsfield units; kept in the workspace.
 - Skill: `reference/segmentation.md`, engine evaluations with
   `ferrum-cli eval engine`; `scripts/benchmark_engines.py` for time and
   GPU memory per scenario.
+
+### Fixed
+
+- Agent renders drew segment outlines only on the right and lower edges
+  of a segment; outlines are now closed on all sides.
 
 ## [0.2.3] — 2026-10-02
 
