@@ -83,6 +83,13 @@ runs, in CI order:
 5. with `--coverage`, `make coverage-ci` (floor in the `Makefile`).
 
 Notes:
+- **Hooks catch some of this before you do** (`CLAUDE.md`, *Hooks*):
+  - `rustfmt` runs after each edit;
+  - the push is blocked on fmt, a stale schema or a missing visual
+    check;
+  - commits on `develop`/`main` and data files are blocked.
+
+  The hooks do not run clippy or the tests: `preflight.sh` does.
 - **Clippy traps seen before:**
   - `is_multiple_of`;
   - `needless_range_loop`;

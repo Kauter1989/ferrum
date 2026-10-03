@@ -25,6 +25,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time
 
 DIMS = (64, 48, 9)            # i, j, k
 RECT = (14, 10, 34, 22)       # i0, j0, i1, j1 (exclusive): 20 x 12 voxels
@@ -169,8 +170,27 @@ def main() -> int:
         for e in errors:
             print(f"  {e}")
         return 1
-    print("\nall overlay checks passed" if Image else "\nnothing checked")
+    if Image is None:
+        print("\nnothing checked")
+        return 0
+    record_pass()
+    print("\nall overlay checks passed (marker written for the pre-push hook)")
     return 0
+
+
+def record_pass() -> None:
+    """Write the marker the pre-push hook (E2) compares with the render sources."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    hooks = os.path.join(here, "..", "..", "hooks", "ferrum_hooks.py")
+    root = os.path.abspath(os.path.join(here, "..", "..", ".."))
+    if not os.path.exists(hooks):
+        return
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("ferrum_hooks", hooks)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    with open(os.path.join(mod.state_dir(root), "visual-check.json"), "w", encoding="utf-8") as f:
+        json.dump({"hash": mod.visual_hash(root), "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}, f)
 
 
 if __name__ == "__main__":

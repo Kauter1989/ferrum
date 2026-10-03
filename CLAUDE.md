@@ -106,6 +106,29 @@ wasted rounds, each with the guard that now catches it. The skills in
 `develop` and `main` change only through merged PRs. Pushing a feature
 branch is fine. Merging needs the user's word, in every mode.
 
+### Hooks
+
+Hooks in `.claude/settings.json` (`.claude/hooks/ferrum_hooks.py`, tests
+in `test_hooks.py`) enforce the mechanical rules. Skills cover what needs
+judgement.
+
+| Hook | When | Effect |
+|---|---|---|
+| A | commit, merge or rebase on `develop`/`main`; a push to them (`--all`, `HEAD:main`, …) | blocked |
+| B | a commit with volume or DICOM files, or binaries > 1 MiB outside `docs/images/` | blocked |
+| C | a rewrite of a merged ADR | blocked; appending an amendment is fine |
+| D | merging a PR, the release workflow, pushing tags | asks the user |
+| E | a push that fails `cargo fmt --check` or has a stale `commands.json` | blocked |
+| E | a push after a slice/overlay rendering change without a fresh `phantom_render.py` pass | blocked (L1) |
+| F | an edited `.rs` file | `rustfmt` |
+| G | an edited file in the change matrix | a reminder of what else must change |
+| H | session start | fresh `origin/develop`, branch status, lesson titles, environment |
+| I | context compaction | logged to `.claude/state/compactions.log` for `ferrum-size` |
+
+`FERRUM_SKIP_PREPUSH=1 git push …` skips only E, and only in an
+emergency. Run `python3 .claude/hooks/test_hooks.py` after changing a
+hook.
+
 ## Conventions
 
 - Keep functions within the complexity budget in `clippy.toml` (cognitive

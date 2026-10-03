@@ -81,7 +81,10 @@ Then:
 
 Append a row to the *Log* of `calibration.md`:
 - estimated class and lines, actual lines and files (`history.sh 1`);
-- context compactions, CI rounds and bugs found after the merge.
+- context compactions: count the lines for the branch in
+  `.claude/state/compactions.log` (hook I writes them), plus those in
+  any other session that worked on it;
+- CI rounds and bugs found after the merge.
 
 Lower a budget by one step when two PRs in a row of that class needed a
 compaction or let a bug through. Raise it only after five clean PRs at

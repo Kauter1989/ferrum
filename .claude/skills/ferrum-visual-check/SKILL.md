@@ -29,7 +29,10 @@ python3 .claude/skills/ferrum-visual-check/phantom_render.py --out <scratch>/vis
 - **Proof that it can fail:** with the old two-neighbour `on_edge`, it
   reports `left side has 1 of 12 pixels — outline not closed`.
 
-Exit code 0 means every check passed. On failure, fix the code, not the
+Exit code 0 means every check passed, and the script then writes
+`.claude/state/visual-check.json`. The pre-push hook (E) blocks a push
+that changed `slice.wgsl`, `view.rs`, `tiles.rs` or `segmentation.rs`
+after the last passing run. On failure, fix the code, not the
 thresholds.
 
 ## 2. Look at the renders yourself

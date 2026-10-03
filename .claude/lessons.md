@@ -257,3 +257,23 @@ that says so instead of editing the old one.
   (L11).
 - **Keep:** reproduce with the current branch first, then decide whether
   the bug is in the code or in the environment.
+
+### W6 — Mechanical rules moved into hooks (2026-10, workflow)
+
+- **What:** Hooks enforce the rules a script can check:
+  - protected branches (L2);
+  - no data commits;
+  - append-only ADRs;
+  - asking before a merge or release;
+  - fmt and schema freshness before a push;
+  - a fresh phantom check for slice/overlay changes (L1);
+  - rustfmt after edits;
+  - matrix reminders (L1, L7, L8, L9, L10);
+  - the session-start status (L3, L15);
+  - the compaction log (L16).
+
+  The tests are in `.claude/hooks/test_hooks.py`.
+- **Outcome:** A live `git push --dry-run origin develop` was blocked
+  in the session that installed the hooks.
+- **Keep:** When a lesson's rule is mechanical, add a hook and a test
+  for it. Leave judgement to the skills.
