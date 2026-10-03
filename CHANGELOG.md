@@ -4,6 +4,57 @@ All notable changes to FERRUM. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions
 follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+Stage 17: agent segmentation scenarios with nnInteractive,
+TotalSegmentator and MONAI Label on one GPU
+([design](docs/agent-segmentation.md)).
+
+### Added
+
+- Agent: refine an engine object with further prompts (`segment
+  interactive --segment L --append`, `--undo`), its prompts kept in the
+  workspace (`engine_inputs.json`) and replayed; `--from-segment` redoes
+  an agent segment seeded with lassos from its mask; lasso and scribble
+  prompts as points on one slice.
+- Agent: only a region around the prompts is uploaded to interactive
+  engines (`--roi`, `--whole-volume`); GPU groups run engines that share a
+  card one at a time; `engine list`; `segment auto --name-prefix`;
+  `--modality` for NIfTI; MCP progress notifications for automatic jobs
+  and engine sessions kept between MCP calls.
+- Agent: `segment shape` (extent, slices, axial long and short axis,
+  laterality), `segment components` (with `--split`), `segment compare`
+  (Dice, HD95, also across workspaces), `segment edit` (keep largest,
+  fill holes, restrict to a box, remove small parts), `stats` of a
+  segment within a box, and quality checks on every engine result.
+- Provenance `requested_by`: agents may change engine segments they asked
+  for; a change sets them back to proposed.
+- Operator settings `gpu_groups`, `max_prompts_per_object`,
+  `roi_margin_mm`, `allow_research_only`.
+- Engine protocol: `capabilities.deterministic`, checked by a replay round
+  of the conformance suite.
+- Bridges: TotalSegmentator jobs in a child process (memory freed,
+  cancel ends the job); nnInteractive frees the image when a session
+  closes and offers `--deterministic`; `bridges/compose.yml` with
+  profiles for one GPU and a MONAI Label bridge image.
+- Segment display on slices: outline, translucent fill or both, with a
+  fill opacity set at display time — in the desktop app (*Segments → On
+  slices*, *Fill opacity*) and in agent renders (`segment_style`,
+  `segment_opacity`).
+- `study open --modality CT` declares the modality of a NIfTI study, so
+  its values are taken as Hounsfield units; kept in the workspace.
+- Skill: `reference/segmentation.md`, engine evaluations with
+  `ferrum-cli eval engine`; `scripts/benchmark_engines.py` for time and
+  GPU memory per scenario; measured on an RTX 3080 12 GB
+  (docs/agent-segmentation.md §2).
+- `docs/segmentation-scenarios.md`: the segmentation scenarios S0–S8 as
+  a step-by-step playbook with commands, linked from the README.
+
+### Fixed
+
+- Agent renders drew segment outlines only on the right and lower edges
+  of a segment; outlines are now closed on all sides.
+
 ## [0.2.3] — 2026-10-02
 
 ### Fixed

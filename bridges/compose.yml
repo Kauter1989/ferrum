@@ -1,0 +1,133 @@
+# All bridges on one GPU, e.g. a 12 GB RTX 3080 Ti (docs/agent-segmentation.md §2).
+#
+#   docker compose --profile interactive up --build   # nnInteractive            → :8765
+#   docker compose --profile automatic up --build     # TotalSegmentator total   → :8766, sub-task → :8768
+#   docker compose --profile mixed up --build         # TotalSegmentator --fast  → :8766, sub-task → :8768,
+#                                                     # MONAI Label radiology    → :8767
+#   docker compose --profile sequential up --build    # everything; FERRUM runs one engine at a time
+#
+# nnInteractive and the full TotalSegmentator model need about 10 GB each, so
+# they share the card only in turn. Put the engines into one GPU group of the
+# agent's operator configuration (ferrum-agent.toml):
+#
+#   [network]
+#   engines = ["http://127.0.0.1:8765", "http://127.0.0.1:8766", "http://127.0.0.1:8767", "http://127.0.0.1:8768"]
+#   gpu_groups = { gpu0 = ["http://127.0.0.1:8765", "http://127.0.0.1:8766", "http://127.0.0.1:8767", "http://127.0.0.1:8768"] }
+#
+# Between jobs the bridges give their GPU memory back: nnInteractive drops the
+# image when its session closes, TotalSegmentator runs every job in a child
+# process. Weights are downloaded on first start into the volumes below; they
+# are never part of the images. Ports are published on 127.0.0.1 only.
+
+x-gpu: &gpu
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: 1
+            capabilities: [gpu]
+
+services:
+  nninteractive:
+    <<: *gpu
+    profiles: [interactive, sequential]
+    build:
+      context: .
+      dockerfile: nninteractive/Dockerfile
+    image: ferrum-nninteractive:latest
+    # deterministic kernels: the agent's replayed prompts give identical masks
+    command: ["--deterministic"]
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - nninteractive-models:/models
+    environment:
+      FERRUM_ENGINE_TOKEN: ${FERRUM_ENGINE_TOKEN:-}
+      NNINTERACTIVE_DEVICE: ${NNINTERACTIVE_DEVICE:-cuda:0}
+    restart: unless-stopped
+
+  totalsegmentator:
+    <<: *gpu
+    profiles: [automatic, sequential]
+    build:
+      context: .
+      dockerfile: totalsegmentator/Dockerfile
+    image: ferrum-totalsegmentator:latest
+    command: ["--task", "${TOTALSEG_TASK:-total}"]
+    ports:
+      - "127.0.0.1:8766:8765"
+    volumes:
+      - totalsegmentator-weights:/weights
+    environment: &totalseg-env
+      FERRUM_ENGINE_TOKEN: ${FERRUM_ENGINE_TOKEN:-}
+      TOTALSEG_DEVICE: ${TOTALSEG_DEVICE:-gpu}
+      TOTALSEG_LICENSE: ${TOTALSEG_LICENSE:-}
+    restart: unless-stopped
+
+  totalsegmentator-fast:
+    <<: *gpu
+    profiles: [mixed]
+    image: ferrum-totalsegmentator:latest
+    build:
+      context: .
+      dockerfile: totalsegmentator/Dockerfile
+    command: ["--task", "${TOTALSEG_TASK:-total}", "--fast"]
+    ports:
+      - "127.0.0.1:8766:8765"
+    volumes:
+      - totalsegmentator-weights:/weights
+    environment: *totalseg-env
+    restart: unless-stopped
+
+  totalsegmentator-subtask:
+    <<: *gpu
+    profiles: [automatic, mixed, sequential]
+    image: ferrum-totalsegmentator:latest
+    build:
+      context: .
+      dockerfile: totalsegmentator/Dockerfile
+    # a second task, e.g. lung_nodules, pleural_pericard_effusion, liver_vessels
+    command: ["--task", "${TOTALSEG_SUBTASK:-lung_nodules}"]
+    ports:
+      - "127.0.0.1:8768:8765"
+    volumes:
+      - totalsegmentator-weights:/weights
+    environment: *totalseg-env
+    restart: unless-stopped
+
+  monailabel-server:
+    <<: *gpu
+    profiles: [mixed, sequential]
+    image: projectmonai/monailabel:${MONAI_LABEL_VERSION:-latest}
+    # the radiology app with DeepEdit and the multi-organ segmentation model; downloaded once into /apps
+    command:
+      - sh
+      - -c
+      - >-
+        [ -d /apps/radiology ] || monailabel apps --download --name radiology --output /apps;
+        mkdir -p /datastore;
+        monailabel start_server --app /apps/radiology --studies /datastore
+        --conf models ${MONAI_LABEL_MODELS:-deepedit,segmentation} --port 8000
+    volumes:
+      - monailabel-apps:/apps
+    restart: unless-stopped
+
+  monailabel:
+    profiles: [mixed, sequential]
+    build:
+      context: .
+      dockerfile: monailabel/Dockerfile
+    image: ferrum-monailabel:latest
+    command: ["--server", "http://monailabel-server:8000"]
+    depends_on: [monailabel-server]
+    ports:
+      - "127.0.0.1:8767:8765"
+    environment:
+      FERRUM_ENGINE_TOKEN: ${FERRUM_ENGINE_TOKEN:-}
+    restart: unless-stopped
+
+volumes:
+  nninteractive-models:
+  totalsegmentator-weights:
+  monailabel-apps:

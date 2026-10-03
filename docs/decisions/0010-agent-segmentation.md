@@ -1,6 +1,6 @@
 # ADR 0010 — Agent segmentation scenarios with engines
 
-- **Status:** Proposed
+- **Status:** Accepted (see the amendment)
 - **Date:** 2026-10-03
 
 ## Context
@@ -55,3 +55,21 @@ The scenarios and command details are in
   `deterministic`. The conformance suite gains a replay test.
 - The command line pays a volume upload per interactive call; the ROI
   keeps that small. Long-running agents should use MCP.
+
+## Amendment — 2026-10-03, implementation
+
+- **Status:** Accepted (implemented in Stage 17).
+- Decision 5 was not needed: the mask analysis is pure computation on
+  label maps and lives in `ferrum-domain` (`analysis.rs`) next to the
+  region growing it extends, so `ferrum-agent` keeps its dependencies
+  and the layering note in CLAUDE.md does not change.
+- The GPU-group lock is an advisory file lock in the temporary folder,
+  shared by every process of the machine.
+- The prompt histories live in a workspace file of their own
+  (`engine_inputs.json`, `ferrum-engine-inputs` v1) rather than in
+  `segments.json`, so the viewer's segment format is unchanged.
+- The MCP server does not keep sessions of engines in a GPU group open
+  between calls, so an idle session never holds memory another engine of
+  the group needs.
+- A `roi` check was added: an object reaching an inner face of the
+  uploaded region may be cut off.

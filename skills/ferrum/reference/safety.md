@@ -20,7 +20,11 @@
   *Open workspace* shows a review queue with the author of each item.
   Their decisions go to the workspace and its audit log.
 - **Protected items:** you may change or delete only items created by
-  agents. Items drawn by people or proposed by engines are protected.
+  agents, and engine segments made at an agent's request
+  (`provenance.requested_by`), until a person confirms them. Items drawn
+  by people, engine results nobody asked for through the agent, and
+  confirmed items are protected. Refining a segment
+  sets it back to *proposed*.
 - **Harness review:** `review confirm` and `review reject` work only if
   the operator allows harness review. They always name the person who
   decided (`by`), and every decision goes to the audit log.

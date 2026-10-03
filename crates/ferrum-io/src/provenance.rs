@@ -10,19 +10,40 @@ use serde_json::{json, Value};
 
 /// JSON object of `p`.
 pub fn provenance_json(p: &Provenance) -> Value {
-    let author = match &p.author {
+    let mut v = json!({
+        "author": author_json(&p.author),
+        "status": p.status.as_str(),
+        "created": p.created.map(Timestamp::to_rfc3339),
+        "reviewed_by": p.reviewed_by,
+        "reviewed": p.reviewed.map(Timestamp::to_rfc3339),
+    });
+    if let Some(by) = &p.requested_by {
+        v["requested_by"] = author_json(by);
+    }
+    v
+}
+
+fn author_json(a: &Author) -> Value {
+    match a {
         Author::Human => json!({ "kind": "human" }),
         Author::Agent { id } => json!({ "kind": "agent", "id": id }),
         Author::Engine { name, version, research_only } => {
             json!({ "kind": "engine", "name": name, "version": version, "research_only": research_only })
         }
-    };
-    json!({
-        "author": author,
-        "status": p.status.as_str(),
-        "created": p.created.map(Timestamp::to_rfc3339),
-        "reviewed_by": p.reviewed_by,
-        "reviewed": p.reviewed.map(Timestamp::to_rfc3339),
+    }
+}
+
+fn author_from_json(a: &Value) -> Result<Author, String> {
+    let text = |key: &str| a.get(key).and_then(Value::as_str).map(str::to_owned);
+    Ok(match a.get("kind").and_then(Value::as_str) {
+        None | Some("human") => Author::Human,
+        Some("agent") => Author::Agent { id: text("id") },
+        Some("engine") => Author::Engine {
+            name: text("name").ok_or("provenance.author.name is missing")?,
+            version: text("version").unwrap_or_default(),
+            research_only: a.get("research_only").and_then(Value::as_bool).unwrap_or(false),
+        },
+        Some(other) => return Err(format!("unknown provenance author kind {other:?}")),
     })
 }
 
@@ -42,16 +63,10 @@ pub fn provenance_from_json(v: &Value) -> Result<Provenance, String> {
             .map(Some)
             .ok_or_else(|| format!("provenance.{key}: expected an RFC 3339 time, got {t}")),
     };
-    let a = v.get("author").unwrap_or(&Value::Null);
-    let author = match a.get("kind").and_then(Value::as_str) {
-        None | Some("human") => Author::Human,
-        Some("agent") => Author::Agent { id: text(a, "id") },
-        Some("engine") => Author::Engine {
-            name: text(a, "name").ok_or("provenance.author.name is missing")?,
-            version: text(a, "version").unwrap_or_default(),
-            research_only: a.get("research_only").and_then(Value::as_bool).unwrap_or(false),
-        },
-        Some(other) => return Err(format!("unknown provenance author kind {other:?}")),
+    let author = author_from_json(v.get("author").unwrap_or(&Value::Null))?;
+    let requested_by = match v.get("requested_by") {
+        None | Some(Value::Null) => None,
+        Some(a) => Some(author_from_json(a)?),
     };
     let status = match v.get("status").and_then(Value::as_str) {
         None => ReviewStatus::default(),
@@ -63,6 +78,7 @@ pub fn provenance_from_json(v: &Value) -> Result<Provenance, String> {
         created: time("created")?,
         reviewed_by: text(v, "reviewed_by"),
         reviewed: time("reviewed")?,
+        requested_by,
     })
 }
 
@@ -79,9 +95,12 @@ mod tests {
             Provenance::agent(Some("run-1".into()), Timestamp(5)),
             Provenance::agent(None, Timestamp(5)),
             reviewed,
+            Provenance::engine("nnInteractive", "2.6", true, Timestamp(9))
+                .requested_by(Author::Agent { id: Some("run-2".into()) }),
         ] {
             assert_eq!(provenance_from_json(&provenance_json(&p)), Ok(p));
         }
+        assert!(provenance_json(&Provenance::default()).get("requested_by").is_none(), "written only when set");
         let v = provenance_json(&Provenance::engine("E", "1", true, Timestamp(0)));
         assert_eq!(v["author"]["kind"], "engine");
         assert_eq!(v["status"], "proposed");
@@ -98,6 +117,7 @@ mod tests {
             json!({ "status": "maybe" }),
             json!({ "created": "yesterday" }),
             json!({ "reviewed": 5 }),
+            json!({ "requested_by": { "kind": "robot" } }),
         ] {
             assert!(provenance_from_json(&bad).is_err(), "{bad}");
         }

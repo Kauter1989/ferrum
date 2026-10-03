@@ -4,9 +4,12 @@ This document designs how an AI agent segments images with FERRUM and the
 engines that already connect to it through
 [`ferrum-engine/1`](engine-protocol.md): nnInteractive, TotalSegmentator
 and MONAI Label. The reference machine is a workstation with an **NVIDIA
-RTX 3080 Ti (12 GB VRAM, Ampere)**. Status: **design**; the decisions are
-in [ADR 0010](decisions/0010-agent-segmentation.md), the work is Stage 17
-in [dev_plan.md](../dev_plan.md).
+RTX 3080 / 3080 Ti (12 GB VRAM, Ampere)**; the measurements in §2 come
+from a 12 GB RTX 3080. Status: **implemented** (Stage 17 in
+[dev_plan.md](../dev_plan.md));
+the decisions are in [ADR 0010](decisions/0010-agent-segmentation.md),
+the command reference in [agent-cli.md](agent-cli.md#segmentation-engines),
+the step-by-step playbook in [segmentation-scenarios.md](segmentation-scenarios.md).
 
 It builds on:
 - the agent skill ([agent-skill.md](agent-skill.md)) and its commands
@@ -38,14 +41,13 @@ Not usable through the current protocol, so out of scope here:
 - MONAI Label infer types other than the three above (VISTA3D needs a
   bridge extension; see §9).
 
-### What the agent can do today
+### What the agent could do before Stage 17
 
-| Command | Today | Gap for the scenarios |
+| Command | Before | Gap for the scenarios (closed by Stage 17) |
 |---|---|---|
 | `engine info [--engine URL]` | capabilities, labels, licence | none |
 | `segment interactive [--engine URL] [--name N] PROMPT…` | point ± and box prompts in one call; uploads the **whole volume**; every call creates a **new segment** proposed by the engine | no refinement of an existing object; no ROI (VRAM, upload time); no scribble/lasso; the prompts are not stored |
 | `segment auto [--engine URL] [--label L]…` | one job, waits up to `engine_job_timeout_s`; one segment per structure found | no name prefix (two engines give two `liver`s); no progress over MCP |
-| `stats` | `segment` and `box` together: the segment restricted to the box |
 | `segment rename/delete` | agent segments only | the agent cannot clean up engine segments it requested (failed attempts, cross-check sets) |
 | `stats --segment`, `view … --overlay segments` | values and outlines | no shape, components or agreement measures; no automatic checks |
 
@@ -53,9 +55,9 @@ Constraints of the data model that shape the scenarios:
 - one `u8` label map per workspace: at most 255 segments, and **a voxel
   belongs to one segment only**;
 - engine results never overwrite voxels of existing segments; the
-  overlap is lost silently today (it should be reported, §4).
+  overlap is reported by the `overlap` check (§4).
 
-## 2. GPU budget on an RTX 3080 Ti
+## 2. GPU budget on a 12 GB RTX 3080 / 3080 Ti
 
 | Workload | VRAM (from the engines' guidance) | Fits next to |
 |---|---|---|
@@ -65,9 +67,42 @@ Constraints of the data model that shape the scenarios:
 | MONAI Label radiology models (SegResNet/UNet, DeepEdit) | a few GB each, loaded lazily | TotalSegmentator `--fast` |
 | FERRUM desktop (wgpu volume + label textures) | volume size × 2 B + labels, e.g. ~0.4 GB for 512×512×600 | everything; `ferrum-cli` renders on the CPU and needs none |
 
-The numbers are guidance, not measurements on this card. Stage 17
-includes a benchmark that records VRAM peaks and times on the reference
-machine into this table.
+The numbers above are the engines' guidance. Measured (17.6) with
+`scripts/benchmark_engines.py` on an **RTX 3080 12 GB** (driver 610.74,
+Windows 10 + WSL 2 Ubuntu 22.04), CT of MSD Task09 `spleen_10`
+(512 × 512 × 55, 0.98 × 0.98 × 5 mm, declared CT with
+`study open --modality CT`). GPU memory is sampled with `nvidia-smi` every
+0.2 s, so peaks are approximate; the baseline (~2.3 GB) is the desktop and
+the nnInteractive bridge with its weights loaded:
+
+| Step | Time | GPU memory: baseline → peak | Region sent | Result |
+|---|---|---|---|---|
+| `study open` | 0.2 s | 2.3 → 2.3 GB | — | — |
+| `segment auto`, TotalSegmentator `total`, `--label spleen liver` | 45 s | 2.3 → 4.5 GB | whole series | 2 segments |
+| `segment auto`, the same, 4 labels (spleen, kidneys, liver) | 52 s | not sampled | whole series | 4 segments, Dice spleen 0.954 vs ground truth |
+| `segment interactive`, one point (ROI) | 0.9–1.2 s | 2.3 → 7.7 GB | 0.2–0.4 M voxels | 247–270 ml, Dice 0.937 vs ground truth |
+| refinement (replay + 1 prompt) | 0.8–1.1 s | 2.3 → 7.7 GB | the same ROI | stability 0.976–0.980 |
+| `segment interactive`, one point (whole volume) | 1.2 s | 2.3 → 7.7 GB | 14.4 M voxels | 30 ml (under-segmented) |
+| `segment shape` / `compare` / `stats` / renders (CPU) | 0.2–0.5 s | no GPU | — | — |
+
+What the measurement shows:
+
+- Both engines fit the 12 GB card with room to spare, but only in turn:
+  nnInteractive takes ~5.4 GB over the baseline, TotalSegmentator ~2.2 GB
+  for two organs; with the desktop app on top, the GPU group rule (1)
+  stays.
+- The TotalSegmentator child process returns its memory after each job
+  (the next step starts from the baseline again), as rule 2 intends.
+- nnInteractive's peak hardly depends on the uploaded size (it works on
+  patches around the prompts), so the ROI (rule 3) saves upload time
+  rather than memory on a series of this size. On this series it also
+  gave the right object: the same point on the whole volume gave a 30 ml
+  fragment of the spleen; the `roi` check and the scenarios keep the ROI
+  the default.
+- A value range taken from the spleen's own 5th–95th percentiles leaks
+  into the liver and stomach in `segment threshold`; the `max_ml` limit
+  stops it (`limit`), and the agent narrows the range or uses
+  nnInteractive instead (S5).
 
 **Rules for 12 GB:**
 
@@ -134,8 +169,8 @@ flowchart LR
     X --> H["Clinician review<br/>desktop app"]
 ```
 
-Command lines below use today's syntax where it exists; options marked
-**(new)** are proposed in §5.
+Command lines use the syntax of [agent-cli.md](agent-cli.md); options
+marked **(new)** came with Stage 17 (§5).
 
 ### S0 — Engine preflight and choice
 
@@ -220,8 +255,8 @@ axial slice 87" or a point in mm.
 5. Export; flag *research use only*; the prompts used are in the
    segment's provenance.
 
-**3080 Ti:** with the ROI the session stays far below 12 GB; each prompt
-takes about a second or two after the first one.
+**12 GB card:** measured ~5.4 GB over the baseline for the nnInteractive
+session and about a second per prompt, refinements included (§2).
 
 ### S3 — Detect, then refine ("find and measure all lung nodules")
 
@@ -231,7 +266,7 @@ nnInteractive (boundaries). Profile `sequential`.
 1. S0; check a chest CT with thin slices (≤ 2.5 mm, else warn that small
    nodules are missed).
 2. `segment auto --engine <lung_nodules bridge> --name-prefix candidate/`.
-3. `segment components --segment L --min-ml 0.01 --split` **(new)**: one
+3. `segment components -w W L --min-ml 0.01 --split` **(new)**: one
    proposed segment per connected component, with centroid, box and
    volume, sorted by volume.
 4. For each candidate (at most `max_candidates`, default 20; the rest are
@@ -268,14 +303,19 @@ As S1, with these rules:
 found wrong in one region.
 
 1. Locate the error on renders with outlines (`view slice --overlay segments`).
-2. `segment interactive --from-segment L` **(new)**: the command seeds the
-   object with **lasso prompts made from the segment's mask** on its
-   largest axial, coronal and sagittal slices, then applies the agent's
-   include/exclude points. The result is a new segment (a person's
-   segment is never changed); the old one stays for the reviewer, who
-   rejects one of them.
-3. `segment compare` before/after: change in ml and Dice; the summary
-   says what changed and where.
+2. For a segment the agent made or asked an engine for:
+   `segment interactive --from-segment L` **(new)** seeds the object with
+   **lasso prompts made from the segment's mask** on its largest axial,
+   coronal and sagittal slices, applies the agent's include/exclude
+   points, and writes the engine's result into the same segment (now an
+   engine proposal, status *proposed*). Engine objects made by
+   `segment interactive` are refined directly (`--segment L --append`).
+3. Before the change, copy the segment into a second workspace on the
+   same series (or keep its `segment shape`), then `segment compare`
+   before/after: change in ml and Dice; the summary says what changed
+   and where.
+4. A person's segment is never changed (`forbidden`): the agent
+   describes the error with location and measurements instead.
 
 ### S6 — Follow-up comparison
 
@@ -328,19 +368,24 @@ mention every failed check in its answer.
 |---|---|---|---|
 | `empty` | voxel count > 0 | — | reports "the engine found nothing" |
 | `size` | volume within `min_ml`/`max_ml` of the call | none | refines (S2) or reports |
-| `components` | 26-connected components; share of the largest | largest ≥ 90 % | uses `segment edit --keep-largest` only for organs, never for lesions |
+| `components` | 26-connected components; share of the largest | largest ≥ 90 % | uses `segment edit --op keep_largest` only for organs, never for lesions |
 | `border` | the mask touches the volume border | — | reports "cut off by the field of view; lower bound" |
 | `laterality` | `_left`/`_right` in the name vs. the centroid's side of the body midline | — | reports it, never renames |
 | `overlap` | voxels the engine marked that another segment owns | > 1 % of the result | reports both segments |
+| `roi` | the mask reaches an inner face of the region sent to the engine | — | repeats with a larger `roi` or `whole_volume` |
 | `stability` | Dice between the last two revisions of an interactive object | ≥ 0.95 | reports "not converged" |
-| `research_only` | the engine's flag | — | labels the result in every output |
+
+`checks.failed` lists the failed checks. `checks.research_only` carries
+the engine's flag; it is not a failure, but every envelope warns about it
+and the agent labels the result in its answer.
 
 The vision model is an extra signal for leaks and misses. It never
 replaces a check, and numbers never come from it.
 
 ## 5. Changes to FERRUM
 
-All changes are additive to `ferrum-agent/1` and `ferrum-workspace` v1.
+All changes are additive to `ferrum-agent/1`, `ferrum-engine/1` and
+`ferrum-workspace` v1.
 
 ### 5.1 Operator configuration
 
@@ -350,15 +395,15 @@ engines = ["http://127.0.0.1:8765", "http://127.0.0.1:8766", "http://127.0.0.1:8
 gpu_groups = { rtx3080ti = ["http://127.0.0.1:8765", "http://127.0.0.1:8766"] }   # (new) one call at a time
 
 [limits]
-engine_job_timeout_s = 900
+engine_job_timeout_s = 900            # also the longest wait for a GPU group
 max_prompts_per_object = 8            # (new)
 roi_margin_mm = 48                    # (new)
 allow_research_only = true            # (new) false: research-only engines are `forbidden`
 ```
 
-- The allow-list stays as it is; `gpu_groups` serialises calls with a
-  lock file per group in the workspace root, so separate CLI processes
-  and the MCP server respect it too.
+- The allow-list stays as it is. `gpu_groups` serialises engine calls
+  with an advisory lock file per group in the temporary folder, so
+  separate CLI processes and the MCP server respect it too.
 - `allow_research_only = false` restricts agents to engines whose licence
   allows the site's use.
 
@@ -366,67 +411,68 @@ allow_research_only = true            # (new) false: research-only engines are `
 
 | Command | Change |
 |---|---|
-| `engine list` (new) | every allowed engine: reachable, name, version, modes, `research_only`, GPU group |
-| `segment interactive` | `segment` + `append` refine an object the agent requested; `roi` (box) or the default ROI; `from_segment` (lasso seeds); `scribble`/`lasso` prompts when the engine takes them; `modality`; result with `revision` and `checks` |
-| `segment auto` | `name_prefix`; `modality`; `checks` per segment; MCP progress notifications while the job runs |
-| `segment components` (new) | connected components of a segment: centroid, box, ml; `split` makes one proposed segment each |
-| `segment shape` (new) | ml; extent per axis in mm; slice ranges; largest slice per plane; longest axial diameter and its perpendicular with endpoints; border; components; laterality |
-| `segment compare` (new) | Dice, Jaccard, volume difference, HD95 in mm, centroid distance; the second segment may be in another workspace of the same series |
-| `segment edit` (new) | `keep_largest`, `fill_holes`, `restrict_to_box`, `subtract` on a segment the agent created or requested; ml before and after |
-| `segment rename/delete` | also segments whose engine run the agent requested (`requested_by`), still never a person's |
+| `engine list` (new) | every allowed engine: reachable, name, version, modes, `deterministic`, `research_only`, GPU group |
+| `segment interactive` | `segment` + `append`/`undo` refine an object; `roi`, `whole_volume` or the default ROI; `from_segment` (lasso seeds); `scribble`/`lasso` prompts (points on one slice); `min_ml`/`max_ml`; `modality`; `agent`; result with `revision`, `roi` and `checks` |
+| `segment auto` | `name_prefix`; `modality`; `agent`; `checks` per segment; MCP progress notifications while the job runs |
+| `segment components` (new) | 26-connected components: centroid, box, ml; `split` makes a segment of every further component of at least `min_ml` |
+| `segment shape` (new) | ml; extent per axis in mm; slice ranges; largest slice per plane; longest axial diameter and its perpendicular with end points; border; components; laterality |
+| `segment compare` (new) | Dice, Jaccard, volumes and difference, HD95 and Hausdorff in mm, centroid distance; the second segment may be in another workspace of the same series (`b_workspace`) |
+| `segment edit` (new) | `keep_largest`, `fill_holes`, `restrict_to_box`, `remove_small` on a segment the agent created or requested; ml before and after |
+| `stats` | `segment` together with `box`: the part of the segment inside the box |
+| `segment rename/delete` | also engine segments the agent requested (`requested_by`), never a person's |
 
-Prompts keep today's syntax (`+POINT`, `-POINT`, `±box:POINT:POINT`), so
-the agent points at renders. A box whose corners fall on different
-slices is a `bad_request` when the engine takes planar boxes only.
+Errors keep the existing codes: a busy engine or a GPU group in use is
+`engine_unavailable` with a hint to wait; too many prompts is `limit`; a
+prompt outside an explicit `roi` is `out_of_volume`.
 
 ### 5.3 State: the prompt history is the session
 
 `ferrum-cli` starts a new process per call; the MCP server lives for the
-whole agent session. Both must give identical JSON.
+whole agent session. Both give identical results.
 
-- The **prompts of an interactive object are stored in the workspace**,
-  with the segment: engine URL and version, ROI, prompts in voxel
-  coordinates, revision.
-- `segment interactive --segment L --append …` adds to the stored list;
-  without `--append` the list is replaced. The command line opens a
-  session, uploads the ROI, replays the list, writes the segment and
-  closes the session.
-- The MCP server keeps the engine session as a **cache**, keyed by
-  workspace, engine, segment and ROI; when the stored list is a prefix of
-  the new one it sends only the new prompts. A changed source, ROI or
-  engine version drops the cache.
-- Undo is replaying the list without its last prompt.
-- nnInteractive and the MONAI Label bridge answer a replayed list with
-  the same mask; a conformance test checks replay. Engines that cannot
-  guarantee it report `deterministic: false` in `info` (an additive
-  protocol field), and FERRUM then warns that CLI and MCP results may
-  differ.
+- The **prompts of an interactive object are stored in the workspace**
+  (`engine_inputs.json`): engine URL and version, ROI, prompts in voxel
+  coordinates, revision, number of lasso seeds.
+- `segment interactive --segment L --append …` adds to the stored list,
+  `--undo` drops its last prompt, otherwise the list is replaced. The
+  command line opens a session, uploads the ROI, replays the list,
+  writes the segment and closes the session.
+- The MCP server keeps up to four engine sessions as a **cache**, keyed
+  by workspace, source hash, engine and version, segment and ROI; when
+  the cached prompts are a prefix of the new list it sends only the new
+  ones. Sessions of engines in a GPU group are closed after each call,
+  so an idle session never holds memory another engine needs.
+- Engines report `capabilities.deterministic` (default `true`); the
+  conformance suite replays prompts on a second session and requires
+  the same mask. The nnInteractive bridge reports `true` only with
+  `--deterministic`, the MONAI Label bridge `false`; FERRUM then warns
+  that replayed results may differ.
 
 ### 5.4 Workspace and provenance
 
-`segments.json` gains, per engine segment, additive fields:
+- Provenance gains `requested_by` (written only when set):
 
-```json
-{ "label": 7, "name": "Lesion 1",
-  "provenance": { "author": { "kind": "engine", "name": "nnInteractive", "version": "2.6.0 (nnInteractive_v1.0)", "research_only": true },
-                  "requested_by": { "kind": "agent", "id": "harness-42" }, "status": "proposed" },
-  "engine_input": { "engine": "http://127.0.0.1:8765", "roi": { "min": [180, 140, 60], "max": [330, 290, 120] }, "revision": 4,
-                    "prompts": [ { "type": "point", "positive": true, "voxel": [251, 198, 87] },
-                                 { "type": "point", "positive": false, "voxel": [262, 230, 88] } ] },
-  "checks": { "components": 1, "border": false, "stability": 0.97 } }
-```
+  ```json
+  { "author": { "kind": "engine", "name": "nnInteractive", "version": "2.6.0 (nnInteractive_v1.0)", "research_only": true },
+    "requested_by": { "kind": "agent", "id": "harness-42" }, "status": "proposed", "created": "…" }
+  ```
 
-- `author` stays the engine: it made the mask. `requested_by` records the
+  `author` stays the engine: it made the mask. `requested_by` records the
   agent, which may then rename, refine, edit or delete the segment.
-- `export bundle` repeats engine, version, task and `research_only` per
-  segment (DICOM SEG already marks the algorithm as automatic).
+  Changing a segment sets it back to *proposed*.
+- `engine_inputs.json` (`ferrum-engine-inputs` v1, see
+  [workspace-format.md](workspace-format.md)) holds the prompt histories.
+  An entry belongs to the segment with the same label and creation time.
+- Checks are part of the command results, not of the workspace.
 
 ### 5.5 Layering
 
-`ferrum-agent` already depends on `ferrum-engines`. It gains
-`ferrum-processing` for components, morphology and distance measures,
-which brings no GPU or UI code; CLAUDE.md's layering note is updated with
-it ([ADR 0010](decisions/0010-agent-segmentation.md)).
+The mask analysis (components, shape, distance transform, Hausdorff
+distance, hole filling) is pure computation on label maps and lives in
+`ferrum-domain` (`analysis.rs`), next to the region growing it extends.
+`ferrum-agent` therefore needs no new dependency; the planned dependency
+on `ferrum-processing` was not needed ([ADR 0010](decisions/0010-agent-segmentation.md),
+amendment).
 
 ## 6. Skill guidance (additions to `SKILL.md`)
 
@@ -449,41 +495,45 @@ S0–S3 and S5 as step lists; `SKILL.md` gains a short section:
 
 ## 7. Testing and evaluation
 
-- **Contract tests** (no GPU): every new parameter and command against
-  FERRUM's mock engine through the reference server; phantoms generated
-  at run time (spheres, a two-lobed object for leaks, an object touching
-  the border, left/right pairs); JSON Schemas regenerated; identical JSON
-  from CLI and MCP, including replayed prompt histories; the identifier
-  scan over all outputs.
-- **Conformance:** replay determinism and the `busy`/`Retry-After` path
-  in `crates/ferrum-engines/tests/conformance.rs`.
-- **Bridge tests:** TotalSegmentator jobs in a child process and the
-  nnInteractive idle release, with the fake backend.
-- **Skill evaluations on phantoms** (`skills/ferrum/evals`, mock engine
-  started by `ferrum-cli eval`): "segment the round object with the
-  engine and report its volume", "find all bright objects and measure
-  them" (S3), "remove the leak into the neighbouring object" (S2.3);
-  graded on numbers, units, handling of failed checks, wording and
-  research flags.
+- **Contract tests** (no GPU, `crates/ferrum-agent/tests/segmentation.rs`):
+  every new parameter and command against FERRUM's mock engine through
+  the reference server, on the generated phantom: refinement, undo and
+  replay; ROI sizes and the `roi` check; lassos, scribbles and seeds;
+  shape, components, split, compare across workspaces, edits; checks of
+  automatic results and their overlap; operator limits (prompts,
+  research-only engines, protected segments); GPU groups; the MCP session
+  cache with the same results as the command line; progress
+  notifications.
+- **Domain tests:** components, hole filling, shape of a box with known
+  axes, Dice and Hausdorff of shifted balls, the exact distance transform.
+- **Conformance:** a replay round for engines that report
+  `deterministic` (`crates/ferrum-engines/tests/conformance.rs`).
+- **Bridge tests:** TotalSegmentator jobs in a spawned child process,
+  cancellation that ends the process, a failing child; nnInteractive
+  releasing the image; `deterministic` in `info`.
+- **Skill evaluations** (`skills/ferrum/evals`): three engine tasks
+  (volume by prompts, axial long axis, automatic segmentation) with the
+  mock engine (`ferrum-cli eval engine`); the grader also checks that the
+  required commands were used.
 - **GPU evaluations** (manual, on the reference machine; never in CI; no
-  data committed): public de-identified datasets with ground truth
-  supplied locally, e.g. the Medical Segmentation Decathlon *Lung*,
-  *Liver* and *Spleen* tasks and the TotalSegmentator dataset. The ground
-  truth is imported into a second workspace and compared with
-  `segment compare`; Dice, volume error, prompts used, time and VRAM
-  peak are recorded.
+  data committed): `scripts/benchmark_engines.py` records time and peak
+  GPU memory per scenario step; public de-identified datasets with
+  ground truth supplied locally (e.g. the Medical Segmentation Decathlon
+  *Lung*, *Liver* and *Spleen* tasks, the TotalSegmentator dataset) are
+  compared with `segment compare` against the ground truth imported into
+  a second workspace.
 
-## 8. Implementation plan (Stage 17)
+## 8. Implementation (Stage 17)
 
-| # | Work | Done when |
+| # | Work | State |
 |---|---|---|
-| 17.1 | Refinement and state: `segment`/`append` on `segment interactive`, stored prompt history, MCP session cache, `requested_by` and the agent's right to clean up | contract tests against the mock; CLI = MCP; docs and schemas |
-| 17.2 | ROI uploads and `gpu_groups`; `engine list`; `name_prefix`, `modality`, MCP job progress | tests with the mock; agent-cli.md |
-| 17.3 | Mask analysis: `segment shape`, `components`, `compare`, `edit`, and `checks` on every engine result | phantom tests with known answers |
-| 17.4 | Bridges: TotalSegmentator jobs in a child process; nnInteractive idle release; `deterministic` in `info`; compose profiles for one 12 GB card | bridge tests; conformance |
-| 17.5 | Skill: segmentation reference page and `SKILL.md` section; evaluations with the mock engine | evaluations pass |
-| 17.6 | Benchmark on an RTX 3080 Ti: VRAM peak and time per engine and scenario, recorded in §2 | table filled in |
-| 17.7 | `from_segment` lasso seeds and scribble/lasso prompts in the agent | phantom test of S5 |
+| 17.1 | Refinement and state: `segment`/`append`/`undo`, stored prompt history, MCP session cache, `requested_by` and the agent's right to clean up | ✅ |
+| 17.2 | ROI uploads and `gpu_groups`; `engine list`; `name_prefix`, `modality`, MCP job progress | ✅ |
+| 17.3 | Mask analysis: `segment shape`, `components`, `compare`, `edit`, `stats` on a segment within a box, and `checks` on every engine result | ✅ |
+| 17.4 | Bridges: TotalSegmentator jobs in a child process; nnInteractive frees the image when a session closes; `deterministic` in `info` and a replay round in the conformance suite; compose profiles for one 12 GB card | ✅ |
+| 17.5 | Skill: `reference/segmentation.md` and a `SKILL.md` section; engine evaluations with the mock engine | ✅ |
+| 17.6 | Benchmark on a 12 GB card: VRAM peak and time per engine and scenario, recorded in §2 | ✅ RTX 3080 12 GB (`scripts/benchmark_engines.py`) |
+| 17.7 | `from_segment` lasso seeds and scribble/lasso prompts in the agent | ✅ |
 
 ## 9. Open questions and later work
 

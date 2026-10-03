@@ -83,6 +83,29 @@ fn conformance(base: &str, token: Option<String>) {
         automatic_round(session.as_mut(), &info, &volume);
     }
     drop(session);
+    if caps.interactive && caps.deterministic && info.supports(PromptKind::Point) {
+        replay_round(&engine, &volume);
+    }
+}
+
+/// Engines that report `deterministic` (the default) give the same mask
+/// when the same prompts are replayed on a new session: FERRUM's agent
+/// refines objects that way (`docs/agent-segmentation.md` §5.3).
+fn replay_round(engine: &HttpEngine, volume: &Volume) {
+    let prompts = [
+        Prompt::Point { positive: true, voxel: UVec3::new(20, 20, 12) },
+        Prompt::Point { positive: true, voxel: UVec3::new(22, 20, 13) },
+    ];
+    let run = || {
+        let mut s = engine.open_session(volume, "CT").expect("session + upload");
+        for p in &prompts {
+            s.prompt(p).expect("prompt");
+        }
+        s.mask(VoxelBox::full(volume.dims())).expect("mask")
+    };
+    let (first, second) = (run(), run());
+    assert!(first.contains(&1));
+    assert!(first == second, "replayed prompts must give the same mask, or info must report deterministic: false");
 }
 
 /// Errors before and without a volume, and the endpoints an engine lacks.

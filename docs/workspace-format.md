@@ -37,6 +37,7 @@ them, so a proposal is never mistaken for a finding.
 | `created` | RFC 3339 UTC time, or `null` if unknown |
 | `reviewed_by` | who confirmed or rejected the item, or `null` (the viewer does not ask for a name) |
 | `reviewed` | when, or `null` |
+| `requested_by` | optional: who asked the author for the item, e.g. `{ "kind": "agent", "id": "run-1" }` for an engine segment the agent asked for; written only when set |
 
 Rules:
 - Items drawn in the viewer (including regions of the region tool) are
@@ -48,6 +49,9 @@ Rules:
   - The author stays the engine after review.
 - A missing or `null` provenance means `human`, `confirmed`, which is
   what files written before provenance existed describe.
+- Agents may change their own items and engine segments they requested
+  (`requested_by.kind = agent`) until a person confirms them; a change
+  sets the item back to `proposed`.
 
 ## 2. `ferrum-annotations` v2
 
@@ -128,6 +132,7 @@ ws/ct1/
 ├── annotations.json  # ferrum-annotations v2 (absent when there are none)
 ├── segments.nii.gz   # label map on the volume grid, with the patient geometry
 ├── segments.json     # ferrum-segments v1
+├── engine_inputs.json  # ferrum-engine-inputs v1 (absent when there are none)
 ├── renders/          # images written by the agent interface
 └── audit.jsonl       # one JSON object per line
 ```
@@ -147,6 +152,10 @@ ws/ct1/
 }
 ```
 
+**Modality:** the manifest may hold `"modality": "CT"`: the modality
+declared for a source that carries none (NIfTI) by `study open
+--modality`. A DICOM series keeps its own.
+
 **Sources:**
 - Source files are referenced and hashed (SHA-256), never copied or
   modified.
@@ -160,6 +169,30 @@ ws/ct1/
 - Files are replaced atomically: written as `.partial-<name>` next to the
   target, then renamed.
 - Saving an empty annotation set or segmentation removes its files.
+
+**Engine inputs:** `engine_inputs.json` (`ferrum-engine-inputs` v1)
+keeps the prompts behind each interactive engine segment, so the agent
+can refine the object later by replaying them
+([agent-segmentation.md](agent-segmentation.md)).
+
+```json
+{ "format": "ferrum-engine-inputs", "version": 1, "generator": "FERRUM 0.2.3",
+  "objects": [ { "label": 7, "created": "2026-10-03T10:00:00Z",
+                 "engine": "http://127.0.0.1:8765", "engine_name": "nnInteractive", "engine_version": "2.6.0 (nnInteractive_v1.0)",
+                 "roi": { "min": [180, 140, 60], "max": [330, 290, 120] }, "revision": 2, "seeds": 0,
+                 "prompts": [ { "type": "point", "positive": true, "voxel": [251, 198, 87] },
+                              { "type": "box", "positive": false, "min": [200, 150, 87], "max": [300, 260, 88] },
+                              { "type": "lasso", "positive": true, "min": [210, 160, 87], "max": [290, 250, 88], "runs": [0, 12, 80, 9] } ] } ] }
+```
+
+- Coordinates are voxels of the full grid; boxes are half-open.
+- Scribble and lasso masks are `runs`: (start, length) pairs of the inside
+  voxels of their box, `i` fastest.
+- `roi` is the region uploaded to the engine; `seeds` counts leading
+  lasso prompts derived from an earlier mask.
+- An entry belongs to the segment with the same `label` and provenance
+  `created` time; entries of deleted or replaced segments are ignored and
+  dropped on the next save.
 
 **Audit log:** `audit.jsonl` is append-only.
 - Each line is a JSON object; a `time` field (RFC 3339) is added first

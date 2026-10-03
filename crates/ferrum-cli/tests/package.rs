@@ -43,7 +43,7 @@ fn references_name_every_command() {
     }
     let skill = std::fs::read_to_string(root().join("skills/ferrum/SKILL.md")).unwrap();
     assert!(skill.starts_with("---\nname: ferrum-imaging\ndescription: "), "SKILL.md front matter");
-    for page in ["commands", "coordinates", "outputs", "safety"] {
+    for page in ["commands", "coordinates", "outputs", "safety", "segmentation"] {
         assert!(skill.contains(&format!("reference/{page}.md")));
         assert!(root().join(format!("skills/ferrum/reference/{page}.md")).exists());
     }
@@ -66,7 +66,9 @@ fn eval_commands() {
     let dir = tempfile::tempdir().unwrap();
     let (code, out) = cli(&["eval", "tasks"]);
     assert_eq!(code, 0);
-    assert_eq!(serde_json::from_str::<Value>(&out).unwrap()["tasks"].as_array().unwrap().len(), 5);
+    let tasks = serde_json::from_str::<Value>(&out).unwrap()["tasks"].as_array().unwrap().clone();
+    assert_eq!(tasks.len(), 8);
+    assert_eq!(tasks.iter().filter(|t| t["engine"] == true).count(), 3);
     let (code, out) = cli(&["eval", "phantoms", dir.path().to_str().unwrap()]);
     assert_eq!(code, 0, "{out}");
     assert!(dir.path().join("sphere_cube.nii.gz").exists());
@@ -78,4 +80,25 @@ fn eval_commands() {
     assert_eq!(code, 1);
     assert_eq!(serde_json::from_str::<Value>(&out).unwrap()["from_tools"], false);
     assert_eq!(cli(&["eval", "grade", "--task", "nope", t.to_str().unwrap()]).0, 2);
+}
+
+#[test]
+fn eval_engine_serves_the_mock_engine() {
+    use std::io::{BufRead, Read, Write};
+    let mut child = Command::new(env!("CARGO_BIN_EXE_ferrum-cli"))
+        .args(["eval", "engine", "127.0.0.1:0"])
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut line = String::new();
+    std::io::BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
+    let url = serde_json::from_str::<Value>(&line).unwrap()["engine"].as_str().unwrap().to_owned();
+    let addr = url.trim_start_matches("http://");
+    let mut s = std::net::TcpStream::connect(addr).unwrap();
+    write!(s, "GET /v1/info HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n").unwrap();
+    let mut reply = String::new();
+    s.read_to_string(&mut reply).unwrap();
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(reply.contains("ferrum-engine/1") && reply.contains("mock"), "{reply}");
 }

@@ -2,18 +2,22 @@
 //! import, mask edits (used by segmentation engines) and undo.
 
 use ferrum_domain::{
-    LabelMap, Provenance, ReviewStatus, Segment, SegmentationError, SegmentationSet, Timestamp, VoxelBox,
+    LabelMap, Provenance, ReviewStatus, Segment, SegmentStyle, SegmentationError, SegmentationSet, Timestamp, VoxelBox,
 };
 
 use super::Viewer;
 
 /// Segmentation of the loaded dataset.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct SegmentationState {
     pub(super) set: Option<SegmentationSet>,
     pub(super) generation: u64,
     /// Draw segments in the 2D and 3D views.
     pub show: bool,
+    /// How segments are drawn on slices.
+    pub style: SegmentStyle,
+    /// Fill opacity on slices, multiplied with each segment's opacity.
+    pub fill_opacity: f32,
     /// Settings of the region tool.
     pub region: RegionSettings,
     /// Regions created so far (for their default names).
@@ -44,6 +48,20 @@ impl RegionSettings {
     /// so the region follows what looks alike on screen.
     pub fn for_window(window: ferrum_domain::WindowLevel) -> Self {
         Self { tolerance: (window.width * 0.1).max(f32::EPSILON), ..Self::default() }
+    }
+}
+
+impl Default for SegmentationState {
+    fn default() -> Self {
+        Self {
+            set: None,
+            generation: 0,
+            show: false,
+            style: SegmentStyle::default(),
+            fill_opacity: 1.0,
+            region: RegionSettings::default(),
+            regions: 0,
+        }
     }
 }
 
@@ -79,6 +97,17 @@ impl Viewer {
     /// Shows or hides the segment overlay.
     pub fn set_segments_shown(&mut self, show: bool) {
         self.segments.show = show;
+    }
+
+    /// Chooses how segments are drawn on slices.
+    pub fn set_segment_style(&mut self, style: SegmentStyle) {
+        self.segments.style = style;
+    }
+
+    /// Sets the fill opacity on slices (`[0, 1]`, multiplied with each
+    /// segment's opacity).
+    pub fn set_segment_fill_opacity(&mut self, opacity: f32) {
+        self.segments.fill_opacity = if opacity.is_finite() { opacity.clamp(0.0, 1.0) } else { 1.0 };
     }
 
     /// Segment list with voxel counts and volumes.

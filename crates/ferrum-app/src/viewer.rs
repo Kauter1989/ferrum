@@ -650,6 +650,8 @@ impl Viewer {
             nearest: self.slices.nearest,
             background: [0.05, 0.05, 0.06, 1.0],
             segments: self.segments.overlay_active(),
+            segment_style: self.segments.style,
+            fill_opacity: self.segments.fill_opacity,
         })
     }
 

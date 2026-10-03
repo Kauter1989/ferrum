@@ -7,6 +7,7 @@
 //! ├── annotations.json  # ferrum-annotations v2
 //! ├── segments.nii.gz   # label map on the volume grid
 //! ├── segments.json     # ferrum-segments v1: names, colours, provenance
+//! ├── engine_inputs.json  # ferrum-engine-inputs v1: prompts behind engine segments
 //! ├── renders/          # images written by the agent interface
 //! └── audit.jsonl       # one JSON object per line
 //! ```
@@ -28,6 +29,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::annotations::{read_annotations, write_annotation_report};
+use crate::engine_inputs::{read_engine_inputs, write_engine_inputs, EngineInput};
 use crate::error::IoError;
 use crate::nifti::{read_label_nifti, write_label_nifti};
 use crate::segments::{read_segments, write_segments};
@@ -47,6 +49,8 @@ pub mod files {
     pub const SEGMENTS_NIFTI: &str = "segments.nii.gz";
     /// Segment metadata (`ferrum-segments` v1).
     pub const SEGMENTS_JSON: &str = "segments.json";
+    /// Prompts behind interactive engine segments (`ferrum-engine-inputs` v1).
+    pub const ENGINE_INPUTS: &str = "engine_inputs.json";
     /// Directory of rendered images.
     pub const RENDERS: &str = "renders";
     /// Audit log (JSON lines).
@@ -94,12 +98,15 @@ pub struct WorkspaceManifest {
     pub created: Timestamp,
     /// The series.
     pub source: WorkspaceSource,
+    /// Modality declared for a source that carries none (NIfTI), e.g. `CT`;
+    /// `None` when the source's own modality applies.
+    pub modality: Option<String>,
 }
 
 impl WorkspaceManifest {
     fn to_json(&self) -> Value {
         let s = &self.source;
-        json!({
+        let mut v = json!({
             "format": WORKSPACE_FORMAT,
             "version": WORKSPACE_VERSION,
             "generator": self.generator,
@@ -112,7 +119,11 @@ impl WorkspaceManifest {
                     "path": f.path.to_string_lossy(), "size": f.size, "sha256": f.sha256,
                 })).collect::<Vec<_>>(),
             },
-        })
+        });
+        if let Some(m) = &self.modality {
+            v["modality"] = json!(m);
+        }
+        v
     }
 
     fn from_json(v: &Value) -> Result<Self, String> {
@@ -149,6 +160,7 @@ impl WorkspaceManifest {
                 format: text(s, "format").unwrap_or_default(),
                 files,
             },
+            modality: v["modality"].as_str().map(str::to_owned),
         })
     }
 }
@@ -234,11 +246,22 @@ impl Workspace {
                 format: series.format.clone(),
                 files,
             },
+            modality: None,
         };
         let text =
             serde_json::to_string_pretty(&manifest.to_json()).map_err(|e| IoError::invalid(root, e.to_string()))?;
         write_atomic(&manifest_path, text.as_bytes())?;
         Ok(Self { root: root_abs, manifest })
+    }
+
+    /// Declares the modality of a source that carries none (e.g. `CT` for a
+    /// NIfTI file), or clears it with `None`; saved in the manifest.
+    pub fn set_modality(&mut self, modality: Option<&str>) -> Result<(), IoError> {
+        self.manifest.modality = modality.map(str::to_owned);
+        let path = self.root.join(files::MANIFEST);
+        let text = serde_json::to_string_pretty(&self.manifest.to_json())
+            .map_err(|e| IoError::invalid(&path, e.to_string()))?;
+        write_atomic(&path, text.as_bytes())
     }
 
     /// Opens the workspace in `root`.
@@ -330,6 +353,28 @@ impl Workspace {
         let labels = read_label_nifti(&nifti, volume)?;
         let segments = if meta.exists() { read_segments(&meta)? } else { Vec::new() };
         Ok(Some(SegmentationSet::from_labels(labels, segments)))
+    }
+
+    /// Saves the prompts behind interactive engine segments; an empty list
+    /// removes the file.
+    pub fn save_engine_inputs(&self, inputs: &[EngineInput], generator: &str) -> Result<(), IoError> {
+        let path = self.path(files::ENGINE_INPUTS);
+        if inputs.is_empty() {
+            return remove_if_exists(&path);
+        }
+        let tmp = partial_path(&path);
+        write_engine_inputs(inputs, generator, &tmp)?;
+        std::fs::rename(&tmp, &path).map_err(|e| IoError::os(&path, e))
+    }
+
+    /// Loads the prompts behind interactive engine segments (empty if none
+    /// were saved).
+    pub fn load_engine_inputs(&self) -> Result<Vec<EngineInput>, IoError> {
+        let path = self.path(files::ENGINE_INPUTS);
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        read_engine_inputs(&path)
     }
 
     /// Appends one entry to the audit log; a `time` field is added if
@@ -486,8 +531,13 @@ mod tests {
         assert_eq!(files[0].sha256, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
         assert_eq!(files[1].size, 100_000);
         assert!(ws.path(files::RENDERS).is_dir());
-        let opened = Workspace::open(&f.root).unwrap();
+        let mut opened = Workspace::open(&f.root).unwrap();
         assert_eq!(opened, ws);
+        assert_eq!(opened.manifest().modality, None);
+        opened.set_modality(Some("CT")).unwrap();
+        assert_eq!(Workspace::open(&f.root).unwrap().manifest().modality.as_deref(), Some("CT"));
+        opened.set_modality(None).unwrap();
+        assert_eq!(Workspace::open(&f.root).unwrap(), ws);
         assert_eq!(opened.manifest().source.file_paths()[1], f.source.join("sub/b.dcm"));
         opened.verify_sources().unwrap();
         assert!(matches!(Workspace::create(&f.root, &f.source, &f.series, "x"), Err(IoError::Invalid { .. })));
@@ -505,6 +555,29 @@ mod tests {
         );
         std::fs::remove_file(&f.series.sources[0]).unwrap();
         assert!(matches!(opened.verify_sources(), Err(IoError::SourceChanged { .. })));
+    }
+
+    #[test]
+    fn engine_inputs_are_saved_and_removed() {
+        use ferrum_domain::{Prompt, VoxelBox};
+        let f = fixture();
+        let ws = Workspace::create(&f.root, &f.source, &f.series, "FERRUM test").unwrap();
+        assert!(ws.load_engine_inputs().unwrap().is_empty());
+        let input = EngineInput {
+            label: 2,
+            created: Some(Timestamp(5)),
+            engine: "http://127.0.0.1:8765".into(),
+            engine_name: "mock".into(),
+            engine_version: "1".into(),
+            roi: VoxelBox::new(glam::UVec3::ZERO, glam::UVec3::splat(2)),
+            revision: 1,
+            seeds: 0,
+            prompts: vec![Prompt::Point { positive: true, voxel: glam::UVec3::ONE }],
+        };
+        ws.save_engine_inputs(std::slice::from_ref(&input), "t").unwrap();
+        assert_eq!(ws.load_engine_inputs().unwrap(), vec![input]);
+        ws.save_engine_inputs(&[], "t").unwrap();
+        assert!(!ws.path(files::ENGINE_INPUTS).exists());
     }
 
     #[test]

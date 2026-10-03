@@ -3,13 +3,14 @@
 //! grader.
 #![allow(missing_docs, clippy::unwrap_used, clippy::expect_used)]
 
-use ferrum_agent::evals::{grade, tasks, write_phantoms};
+use ferrum_agent::evals::{grade, serve_mock_engine, tasks, write_phantoms};
 use ferrum_agent::Agent;
 use serde_json::{json, Value};
 
 struct Run {
     agent: Agent,
     ws: String,
+    engine: String,
     calls: Vec<Value>,
 }
 
@@ -70,6 +71,35 @@ fn solve(id: &str, run: &mut Run) -> String {
             let mm = &p["patient_mm"];
             format!("The centre lies at ({}, {}, {}) mm (LPS).", mm[0], mm[1], mm[2])
         }
+        "engine_sphere_volume" => {
+            let s = run.call(
+                "segment interactive",
+                json!({ "engine": run.engine, "name": "Sphere", "prompts": [{ "type": "point", "point": v(14.0, 20.0, 15.0) }] }),
+            );
+            format!(
+                "Volume {} ml, segmented by the engine from one point in the object. The segment is an engine proposal: please review it in FERRUM.",
+                s["segment"]["volume_ml"]
+            )
+        }
+        "engine_long_axis" => {
+            let s = run.call(
+                "segment interactive",
+                json!({ "engine": run.engine, "prompts": [{ "type": "point", "point": v(14.0, 20.0, 15.0) }] }),
+            );
+            let shape = run.call("segment shape", json!({ "segment": s["segment"]["label"] }));
+            format!(
+                "The longest axial diameter is {} mm on axial slice {} (between voxel centres, ± {} mm). The segment is a proposal for review.",
+                shape["shape"]["long_axis"]["mm"], shape["shape"]["axes_slice_number"], shape["shape"]["uncertainty_mm"]
+            )
+        }
+        "engine_auto_bright" => {
+            let a = run.call("segment auto", json!({ "engine": run.engine }));
+            let bright = a["segments"].as_array().unwrap().iter().find(|s| s["name"] == "bright").unwrap().clone();
+            format!(
+                "The brightest structure has {} ml (segment of the automatic engine). The segments are proposals: please review them.",
+                bright["volume_ml"]
+            )
+        }
         other => panic!("no reference solution for {other}"),
     }
 }
@@ -78,11 +108,13 @@ fn solve(id: &str, run: &mut Run) -> String {
 fn every_task_has_a_passing_reference_solution() {
     let dir = tempfile::tempdir().unwrap();
     let phantoms = write_phantoms(&dir.path().join("phantoms")).unwrap();
+    let engine = serve_mock_engine("127.0.0.1:0").unwrap();
     for task in tasks().unwrap() {
         let src = phantoms.iter().find(|p| p.to_string_lossy().contains(&task.phantom)).unwrap();
         let mut run = Run {
             agent: Agent::default(),
             ws: dir.path().join("ws").join(&task.id).to_string_lossy().into_owned(),
+            engine: engine.url(),
             calls: Vec::new(),
         };
         run.call("study open", json!({ "path": src }));
