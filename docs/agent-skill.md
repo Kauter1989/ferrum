@@ -171,6 +171,9 @@ The command groups mirror the `Viewer` facade. Every command takes
 | `export bundle` | Everything for hand-off | formats (`ferrum`: JSON, NIfTI; `dicom`: SEG, SR TID 1500) | file paths + hashes |
 | `review open` | Open the workspace in the desktop app | — | — |
 
+The segmentation scenarios with engines, further segment commands and
+quality checks are designed in [agent-segmentation.md](agent-segmentation.md).
+
 ### Points
 
 Commands accept a point in any of three forms, and every output gives

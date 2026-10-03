@@ -206,3 +206,22 @@ label records which engine proposed it and who confirmed it.
 | 16.3 | As an **annotator**, I want a manual correction of an engine's segment to be recorded so that the dataset shows which labels a person edited. | Defined behaviour (and tests) for the provenance of a segment edited with the eraser or brush: the author or status reflects the human edit. |
 | 16.4 | As a **dataset curator**, I want an annotation mode in which engine results count as confirmed so that review can happen in a separate QA step outside FERRUM. | Operator setting, off by default; exported provenance still names the engine. |
 | 16.5 | As an **annotator**, I want one obvious way to create a segment, offered only where it works, so that I do not get lost between view modes and panels. | Every tool and setting is offered only in the view modes where it acts (tools on slices: 2D and MPR; eraser: 3D; panel tabs per mode), enforced in `ferrum-app`; no segmentation from the 3D view; a *Segment* toolbar group with a built-in region tool that needs no engine and the AI tools (disabled with the reason until an engine connects); a step-by-step guide in the panel and in the view; no empty "Add segment". ✅ |
+
+## Stage 17 — Agent segmentation scenarios 📋
+
+An AI agent segments with the engines that already connect to FERRUM
+(nnInteractive, TotalSegmentator, MONAI Label) in reviewed, repeatable
+scenarios — organ volumetry, lesions by prompts, detect-then-refine,
+corrections, follow-up, dataset pre-labelling — on a single 12 GB GPU
+(RTX 3080 Ti). Design: [docs/agent-segmentation.md](docs/agent-segmentation.md)
+([ADR 0010](docs/decisions/0010-agent-segmentation.md), proposed).
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 17.1 | As an **agent developer**, I want to refine an engine segment with further prompts so that an agent can correct a leak or a miss instead of starting again. | `segment interactive` with `segment` and `append`; the prompt history stored with the segment and replayed by the command line, cached by the MCP server (identical JSON); `requested_by` lets the agent rename, refine and delete engine segments it requested, never a person's. |
+| 17.2 | As an **operator**, I want engine calls sized for one 12 GB GPU so that nnInteractive and TotalSegmentator share the card without running out of memory. | ROI uploads for interactive sessions (default: prompts' box + 48 mm); `network.gpu_groups` serialises calls across processes; `engine list`; `name_prefix` and `modality` for engine commands; job progress over MCP. |
+| 17.3 | As a **clinician**, I want every engine result checked by fixed rules so that an agent cannot hide a leak, a cut-off organ or a left/right mix-up. | `segment shape`, `components`, `compare`, `edit`; `stats` on a segment within a box; `checks` (empty, size, components, border, laterality, overlap, stability, research flag) on every engine result, with warnings; phantom tests with known answers. |
+| 17.4 | As an **operator**, I want the bridges to free GPU memory when idle so that engines can take turns on one card. | TotalSegmentator jobs in a child process; nnInteractive drops its image when the last session closes; `deterministic` in `info` and a replay test in the conformance suite; compose profiles `interactive`, `automatic`, `mixed`. |
+| 17.5 | As a **harness developer**, I want the skill to teach the segmentation scenarios so that agents use engines safely. | `skills/ferrum/reference/segmentation.md` and a `SKILL.md` section; evaluations with the mock engine (segment and measure, find all objects, remove a leak). |
+| 17.6 | As an **operator**, I want measured VRAM and times on an RTX 3080 Ti so that I can plan the hardware. | Benchmark per engine and scenario; the table in the design filled in. |
+| 17.7 | As an **agent developer**, I want to correct an existing segment with an engine so that imported or proposed labels can be fixed. | `from_segment` (lasso seeds from the mask) and scribble/lasso prompts in the agent; phantom test. |
