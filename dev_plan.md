@@ -187,6 +187,92 @@ app. Agents propose and clinicians confirm
 
 ---
 
+## Stage 16 — Segmentation post-processing: quantitative profiles 📋
+
+Quantitative description of a segment: geometry, shape and HU
+intensity. The user picks a **profile**, not individual metrics; a result
+always carries the profile name, its version and every preprocessing
+parameter, so numbers are comparable and reproducible. Values come from
+voxels; agents and engines propose, people confirm (unconfirmed segments
+are marked in the output, as in the export bundle).
+
+Design decisions (to be recorded in a new ADR before Phase 1):
+
+- Computation lives in a new pure crate `ferrum-radiomics` (depends only on
+  `ferrum-domain`; no I/O, GPU or UI). `ferrum-processing` is not used
+  because `ferrum-agent` may not depend on it. Adding `ferrum-radiomics` to
+  the allowed `ferrum-agent` dependencies updates CLAUDE.md and
+  `docs/architecture.md`.
+- Use case `Viewer::segment_metrics` in `ferrum-app`; the desktop panel,
+  `ferrum-cli` / MCP command and embedding apps are thin adapters. CLI and
+  MCP give identical JSON (schema in `schema.rs`, `docs/agent-cli.md`,
+  contract tests).
+- Naming and definitions follow IBSI feature families
+  (`shape`, `intensity`, `histogram`, `ivh`, later `texture_*`); each
+  feature has a stable id and is tested on analytic phantoms (sphere,
+  box, ellipsoid) and, from Phase 4, the IBSI digital phantom.
+- Profiles: `quick`, `clinical`, `radiomics-ibsi` (Phase 4+). Raw values are
+  always returned; composite indices (if any) are a separate versioned
+  block.
+- Scope of the first release: CT (HU). MR / PET normalisation is out of
+  scope.
+
+### Phase 1 — Profile framework and basic metrics (`quick`)
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 16.1 | As a **developer**, I want a profile and feature registry so that new metrics plug in without touching adapters. | `ferrum-radiomics` crate: `Feature` id and version, `Profile`, `MetricsResult` (profile, version, preprocessing parameters, per-feature value and unit). ADR written. Layering and docs updated. |
+| 16.2 | As a **radiologist**, I want volume, bounding box, centre of mass and maximum diameters of a segment so that I can size a finding. | Volume (mm³, mL), voxel count, AABB (mm), centre of mass in LPS, maximum 3D and axial diameter, axis extents. Anisotropic spacing handled; analytic phantoms with known answers. |
+| 16.3 | As a **radiologist**, I want first-order HU statistics so that I can characterise density. | mean, std, median, min, max, p5–p95, range, IQR (extends the existing `stats`; both give the same numbers). |
+| 16.4 | As a **user**, I want the `quick` profile in the UI, CLI and MCP. | Segments panel shows a metrics card; `ferrum-cli metrics`, MCP tool, JSON Schema, contract tests; CLI == MCP JSON. Disabled-state and empty-segment cases tested. |
+
+### Phase 2 — Shape and morphology (`clinical`, part 1)
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 16.5 | As a **radiologist**, I want surface area and compactness / sphericity measures so that I can judge shape. | Mesh-based surface area (marching cubes, anisotropic spacing), surface-to-volume ratio, compactness 1 / 2, sphericity, spherical disproportion. Sphere / cube phantoms within stated tolerance. |
+| 16.6 | As a **radiologist**, I want PCA-based axes, elongation and flatness. | Principal axes lengths, elongation, flatness, orientation; ellipsoid phantom. |
+| 16.7 | As a **radiologist**, I want convex-hull measures and solidity. | Hull volume and area, solidity, convexity; box and L-shape phantoms. |
+| 16.8 | As a **QA reviewer**, I want connectivity checks so that I notice broken or holey segments. | Component count and largest-component volume, holes / cavities, Euler number. Warnings in the result (not silent fixes). |
+
+### Phase 3 — HU distribution (`clinical`, part 2)
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 16.9 | As a **radiologist**, I want shape-of-distribution measures. | Skewness, kurtosis, energy, RMS, MAD / rMAD, entropy, uniformity on a fixed-bin-width histogram (bin width is a recorded parameter). |
+| 16.10 | As a **radiologist**, I want intensity-volume histogram metrics. | V10 / V90, I10 / I90 and the IVH curve; known-distribution tests. |
+| 16.11 | As a **radiologist**, I want the share of voxels in HU ranges. | Configurable ranges (defaults: fat, soft tissue, calcification); fractions sum to 1 within the segment; ranges recorded in the result. |
+| 16.12 | As a **user**, I want the `clinical` profile everywhere. | UI card (grouped, units, tooltips with definitions), CLI / MCP, schema, docs, contract tests. |
+
+### Phase 4 — Reproducible radiomics (`radiomics-ibsi`, preprocessing)
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 16.13 | As a **researcher**, I want explicit preprocessing so that results compare across centres. | Isotropic resampling (voxel size parameter), HU re-segmentation range, outlier exclusion; all parameters stored in the result and hashed. |
+| 16.14 | As a **researcher**, I want IBSI conformance checks. | Digital phantom in tests (generated at run time, no data committed); reference values per feature with tolerance; conformance table in `docs/`. |
+| 16.15 | As a **researcher**, I want to know how stable a metric is against boundary changes. | Optional erosion / dilation perturbation reports per-feature spread. |
+
+### Phase 5 — Texture features (`radiomics-ibsi`, part 2)
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 16.16 | As a **researcher**, I want GLCM and GLRLM features. | 13-direction 3D matrices, IBSI aggregation methods selectable and recorded; phantom reference values. |
+| 16.17 | As a **researcher**, I want GLSZM, GLDM and NGTDM features. | Same conformance approach. Performance within the complexity budget (clippy.toml) and benchmarked. |
+| 16.18 | As a **researcher**, I want optional filters (LoG, wavelet). | Filter parameters recorded; off by default; conformance where IBSI defines references. |
+
+### Phase 6 — Comparison and change over time
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 16.19 | As a **clinician**, I want to compare two segmentations so that I can check an agent or engine against a person. | Dice, IoU, Hausdorff (95 %), mean surface distance, volume difference; identical shapes give 1 / 0; shown next to review controls. |
+| 16.20 | As a **clinician**, I want change of a segment between studies. | Volume and HU change, with both studies' provenance and registration state stated; no automatic registration claimed. |
+| 16.21 | As an **integrator**, I want metrics in exports. | Export bundle includes the metrics result with profile, version and parameters; SR (TID 1500) mapping tracked with 15.7. |
+
+Open items: composite indices (irregularity, homogeneity, density) are not
+planned; add only with a documented, versioned formula after Phase 3.
+
+---
+
 ## Next stages 📋
 
 Future stages are added here as they are planned (e.g. "Stage 15 — …"),
