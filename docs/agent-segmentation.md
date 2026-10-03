@@ -4,8 +4,9 @@ This document designs how an AI agent segments images with FERRUM and the
 engines that already connect to it through
 [`ferrum-engine/1`](engine-protocol.md): nnInteractive, TotalSegmentator
 and MONAI Label. The reference machine is a workstation with an **NVIDIA
-RTX 3080 Ti (12 GB VRAM, Ampere)**. Status: **implemented** (Stage 17 in
-[dev_plan.md](../dev_plan.md)) except the measured GPU table (§2, 17.6);
+RTX 3080 / 3080 Ti (12 GB VRAM, Ampere)**; the measurements in §2 come
+from a 12 GB RTX 3080. Status: **implemented** (Stage 17 in
+[dev_plan.md](../dev_plan.md));
 the decisions are in [ADR 0010](decisions/0010-agent-segmentation.md),
 the command reference in [agent-cli.md](agent-cli.md#segmentation-engines).
 
@@ -55,7 +56,7 @@ Constraints of the data model that shape the scenarios:
 - engine results never overwrite voxels of existing segments; the
   overlap is reported by the `overlap` check (§4).
 
-## 2. GPU budget on an RTX 3080 Ti
+## 2. GPU budget on a 12 GB RTX 3080 / 3080 Ti
 
 | Workload | VRAM (from the engines' guidance) | Fits next to |
 |---|---|---|
@@ -65,9 +66,42 @@ Constraints of the data model that shape the scenarios:
 | MONAI Label radiology models (SegResNet/UNet, DeepEdit) | a few GB each, loaded lazily | TotalSegmentator `--fast` |
 | FERRUM desktop (wgpu volume + label textures) | volume size × 2 B + labels, e.g. ~0.4 GB for 512×512×600 | everything; `ferrum-cli` renders on the CPU and needs none |
 
-The numbers are guidance, not measurements on this card. Stage 17
-includes a benchmark that records VRAM peaks and times on the reference
-machine into this table.
+The numbers above are the engines' guidance. Measured (17.6) with
+`scripts/benchmark_engines.py` on an **RTX 3080 12 GB** (driver 610.74,
+Windows 10 + WSL 2 Ubuntu 22.04), CT of MSD Task09 `spleen_10`
+(512 × 512 × 55, 0.98 × 0.98 × 5 mm, declared CT with
+`study open --modality CT`). GPU memory is sampled with `nvidia-smi` every
+0.2 s, so peaks are approximate; the baseline (~2.3 GB) is the desktop and
+the nnInteractive bridge with its weights loaded:
+
+| Step | Time | GPU memory: baseline → peak | Region sent | Result |
+|---|---|---|---|---|
+| `study open` | 0.2 s | 2.3 → 2.3 GB | — | — |
+| `segment auto`, TotalSegmentator `total`, `--label spleen liver` | 45 s | 2.3 → 4.5 GB | whole series | 2 segments |
+| `segment auto`, the same, 4 labels (spleen, kidneys, liver) | 52 s | not sampled | whole series | 4 segments, Dice spleen 0.954 vs ground truth |
+| `segment interactive`, one point (ROI) | 0.9–1.2 s | 2.3 → 7.7 GB | 0.2–0.4 M voxels | 247–270 ml, Dice 0.937 vs ground truth |
+| refinement (replay + 1 prompt) | 0.8–1.1 s | 2.3 → 7.7 GB | the same ROI | stability 0.976–0.980 |
+| `segment interactive`, one point (whole volume) | 1.2 s | 2.3 → 7.7 GB | 14.4 M voxels | 30 ml (under-segmented) |
+| `segment shape` / `compare` / `stats` / renders (CPU) | 0.2–0.5 s | no GPU | — | — |
+
+What the measurement shows:
+
+- Both engines fit the 12 GB card with room to spare, but only in turn:
+  nnInteractive takes ~5.4 GB over the baseline, TotalSegmentator ~2.2 GB
+  for two organs; with the desktop app on top, the GPU group rule (1)
+  stays.
+- The TotalSegmentator child process returns its memory after each job
+  (the next step starts from the baseline again), as rule 2 intends.
+- nnInteractive's peak hardly depends on the uploaded size (it works on
+  patches around the prompts), so the ROI (rule 3) saves upload time
+  rather than memory on a series of this size. On this series it also
+  gave the right object: the same point on the whole volume gave a 30 ml
+  fragment of the spleen; the `roi` check and the scenarios keep the ROI
+  the default.
+- A value range taken from the spleen's own 5th–95th percentiles leaks
+  into the liver and stomach in `segment threshold`; the `max_ml` limit
+  stops it (`limit`), and the agent narrows the range or uses
+  nnInteractive instead (S5).
 
 **Rules for 12 GB:**
 
@@ -220,8 +254,8 @@ axial slice 87" or a point in mm.
 5. Export; flag *research use only*; the prompts used are in the
    segment's provenance.
 
-**3080 Ti:** with the ROI the session stays far below 12 GB; each prompt
-takes about a second or two after the first one.
+**12 GB card:** measured ~5.4 GB over the baseline for the nnInteractive
+session and about a second per prompt, refinements included (§2).
 
 ### S3 — Detect, then refine ("find and measure all lung nodules")
 
@@ -497,7 +531,7 @@ S0–S3 and S5 as step lists; `SKILL.md` gains a short section:
 | 17.3 | Mask analysis: `segment shape`, `components`, `compare`, `edit`, `stats` on a segment within a box, and `checks` on every engine result | ✅ |
 | 17.4 | Bridges: TotalSegmentator jobs in a child process; nnInteractive frees the image when a session closes; `deterministic` in `info` and a replay round in the conformance suite; compose profiles for one 12 GB card | ✅ |
 | 17.5 | Skill: `reference/segmentation.md` and a `SKILL.md` section; engine evaluations with the mock engine | ✅ |
-| 17.6 | Benchmark on an RTX 3080 Ti: VRAM peak and time per engine and scenario, recorded in §2 | script ready (`scripts/benchmark_engines.py`); measurement on the card pending |
+| 17.6 | Benchmark on a 12 GB card: VRAM peak and time per engine and scenario, recorded in §2 | ✅ RTX 3080 12 GB (`scripts/benchmark_engines.py`) |
 | 17.7 | `from_segment` lasso seeds and scribble/lasso prompts in the agent | ✅ |
 
 ## 9. Open questions and later work

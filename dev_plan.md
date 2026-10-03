@@ -207,13 +207,13 @@ label records which engine proposed it and who confirmed it.
 | 16.4 | As a **dataset curator**, I want an annotation mode in which engine results count as confirmed so that review can happen in a separate QA step outside FERRUM. | Operator setting, off by default; exported provenance still names the engine. |
 | 16.5 | As an **annotator**, I want one obvious way to create a segment, offered only where it works, so that I do not get lost between view modes and panels. | Every tool and setting is offered only in the view modes where it acts (tools on slices: 2D and MPR; eraser: 3D; panel tabs per mode), enforced in `ferrum-app`; no segmentation from the 3D view; a *Segment* toolbar group with a built-in region tool that needs no engine and the AI tools (disabled with the reason until an engine connects); a step-by-step guide in the panel and in the view; no empty "Add segment". ✅ |
 
-## Stage 17 — Agent segmentation scenarios ✅ (17.6: measurement pending)
+## Stage 17 — Agent segmentation scenarios ✅
 
 An AI agent segments with the engines that already connect to FERRUM
 (nnInteractive, TotalSegmentator, MONAI Label) in reviewed, repeatable
 scenarios — organ volumetry, lesions by prompts, detect-then-refine,
 corrections, follow-up, dataset pre-labelling — on a single 12 GB GPU
-(RTX 3080 Ti). Design: [docs/agent-segmentation.md](docs/agent-segmentation.md)
+(RTX 3080 / 3080 Ti). Design: [docs/agent-segmentation.md](docs/agent-segmentation.md)
 ([ADR 0010](docs/decisions/0010-agent-segmentation.md)).
 
 | # | User story | Acceptance criteria |
@@ -223,5 +223,5 @@ corrections, follow-up, dataset pre-labelling — on a single 12 GB GPU
 | 17.3 | As a **clinician**, I want every engine result checked by fixed rules so that an agent cannot hide a leak, a cut-off organ or a left/right mix-up. | `segment shape`, `components`, `compare`, `edit`; `stats` on a segment within a box; `checks` (empty, size, components, border, laterality, overlap, stability, research flag) on every engine result, with warnings; phantom tests with known answers. ✅ analysis in `ferrum-domain` (`analysis.rs`: components, shape with axial long/short axis, exact distance transform, HD95). |
 | 17.4 | As an **operator**, I want the bridges to free GPU memory when idle so that engines can take turns on one card. | TotalSegmentator jobs in a child process; nnInteractive drops its image when the last session closes; `deterministic` in `info` and a replay test in the conformance suite; compose profiles `interactive`, `automatic`, `mixed`. ✅ bridge and conformance tests; `bridges/compose.yml`. |
 | 17.5 | As a **harness developer**, I want the skill to teach the segmentation scenarios so that agents use engines safely. | `skills/ferrum/reference/segmentation.md` and a `SKILL.md` section; evaluations with the mock engine (segment and measure, find all objects, remove a leak). ✅ three engine tasks; `ferrum-cli eval engine` serves the mock engine; the grader checks required commands. |
-| 17.6 | As an **operator**, I want measured VRAM and times on an RTX 3080 Ti so that I can plan the hardware. | Benchmark per engine and scenario; the table in the design filled in. Script `scripts/benchmark_engines.py` ✅; measurement on the card pending. |
+| 17.6 | As an **operator**, I want measured VRAM and times on a 12 GB card so that I can plan the hardware. | Benchmark per engine and scenario; the table in the design filled in. ✅ `scripts/benchmark_engines.py`; measured on an RTX 3080 12 GB (WSL 2): nnInteractive ~1 s per prompt, ~5.4 GB; TotalSegmentator 45–52 s, ~2.2 GB for two organs. |
 | 17.7 | As an **agent developer**, I want to correct an existing segment with an engine so that imported or proposed labels can be fixed. | `from_segment` (lasso seeds from the mask) and scribble/lasso prompts in the agent; phantom test. ✅ lassos and scribbles as points on one slice; seeds do not count against the prompt limit. |

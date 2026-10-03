@@ -45,7 +45,8 @@ TotalSegmentator and MONAI Label on one GPU
   its values are taken as Hounsfield units; kept in the workspace.
 - Skill: `reference/segmentation.md`, engine evaluations with
   `ferrum-cli eval engine`; `scripts/benchmark_engines.py` for time and
-  GPU memory per scenario.
+  GPU memory per scenario; measured on an RTX 3080 12 GB
+  (docs/agent-segmentation.md §2).
 
 ### Fixed
 
