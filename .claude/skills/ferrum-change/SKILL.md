@@ -1,12 +1,17 @@
 ---
 name: ferrum-change
-description: Workflow for any code or docs change in FERRUM — a feature, a stage item, a bug fix, a refactor. Use when starting work on FERRUM, before writing code, and before pushing or opening a PR. Covers branching from a fresh develop, the "what else must change" matrix (schemas, docs, contract tests, render parity), local checks that mirror CI, and the PR flow. Reads and updates the lessons log.
+description: Implement and deliver phases of the FERRUM workflow (ferrum-workflow) — branching from a fresh develop, the "what else must change" matrix (schemas, docs, contract tests, render parity), tests that can fail and cite their criteria, local checks that mirror CI (preflight.sh), and the PR flow. Use for every code or docs change, from a one-line fix to one PR of a stage; small changes use it alone.
 ---
 
 # Changing FERRUM
 
 Follow the steps in order. Each step names the lesson it comes from
 (`.claude/lessons.md`, L = failure, W = what worked).
+
+This is phase 7 (implement) and phase 9 (deliver) of `ferrum-workflow`.
+For a stage or a feature, the spec, plan, size and tasks come first
+(`ferrum-specify`, `ferrum-plan`, `ferrum-size`, `ferrum-analyze`). A
+small change starts here.
 
 ## 1. Start
 
@@ -61,6 +66,9 @@ DICOM tags only via `dicom_dictionary_std::tags`.
 - **Safety cases first** (L7): the `forbidden` and `limit` paths.
 - **Break the code on purpose once** to see the new test fail. Then
   restore it.
+- **Cite the criterion** the test verifies with a comment on the test:
+  `// covers 18.2-b` (`# covers …` in Python). `ferrum-analyze` reads
+  these comments.
 
 ## 4. Check locally — the same as CI
 
@@ -112,13 +120,19 @@ did not.
    the session requires.
 2. Push the feature branch: `git push -u origin <branch>`. Pushing a
    feature branch is allowed. Never push to `develop` or `main` (L2).
-3. Open a PR into `develop` when the user wants one. Then watch CI and
-   reviews, and drive the PR to green.
+3. Open a PR into `develop`:
+   - gated mode: when the user wants one;
+   - autonomous mode: as the end of the work.
+
+   The body holds the analyze report, the verification table
+   (`ferrum-verify`) and, in autonomous mode, the *Assumptions*. Then
+   watch CI and reviews, and drive the PR to green.
 4. Merge only when the user says so. Use a merge commit, as in the
    repo's history.
 
-## 8. Record
+## 8. Record (retro)
 
-When the work produced a bug, a wasted CI or test round, or an approach
-that clearly paid off, add an entry with skill `ferrum-lessons` in the
-same branch.
+- When the work produced a bug, a wasted CI or test round, or an
+  approach that clearly paid off, add an entry with skill
+  `ferrum-lessons` in the same branch.
+- After the merge, append the sizing row (`ferrum-size` §5).

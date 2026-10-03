@@ -70,23 +70,41 @@ make coverage                                # coverage report; CI floor in Make
 cargo run --release -- <path>                 # the app is the default member
 ```
 
-## Workflow skills and lessons
+## Workflow, skills and lessons
 
-Read `.claude/lessons.md` before a change: it records past bugs and
-wasted rounds, each with the guard that now catches it. Project skills
-in `.claude/skills/`:
+Start every task with the skill `ferrum-workflow`, adapted from Spec
+Kit.
+- **Phases:** specify → clarify → plan → size → tasks → analyze →
+  implement → verify → deliver → retro.
+- **Tracks:** stage, feature or small.
+- **Modes:**
+  - *gated*: G1 spec, G2 design, G3 merge;
+  - *autonomous*, for features: only G3.
 
-- `ferrum-change`: every change, from branching to PR.
-  `preflight.sh` runs the CI checks locally.
-- `ferrum-visual-check`: anything that draws pixels.
-  `phantom_render.py` checks closed outlines and fills at 1:1 and 8×.
-- `ferrum-field-test`: test scripts for the user's GPU machine, and
-  reading their results.
-- `ferrum-release`: version bump, `develop` → `main`, `release.yml`.
-- `ferrum-lessons`: add a failure or success to the log, with a guard.
+Specs live in `dev_plan.md` with criterion IDs `[N.k-x]`, and tests cite
+them (`// covers N.k-x`). Designs live in `docs/<topic>.md`, and
+decisions in ADRs.
+
+Read `.claude/lessons.md` before a change. It records past bugs and
+wasted rounds, each with the guard that now catches it. The skills in
+`.claude/skills/`:
+
+| Skill | Purpose |
+|---|---|
+| `ferrum-workflow` | entry point: track, mode, phases, gates |
+| `ferrum-specify` | spec and clarification |
+| `ferrum-plan` | design, constitution check, validation plan, tasks |
+| `ferrum-size` | size against the model; PR split; `calibration.md` |
+| `ferrum-analyze` | criterion coverage (`analyze.py`), consistency |
+| `ferrum-change` | implement and deliver; `preflight.sh` runs CI locally |
+| `ferrum-verify` | verification table: test, visual, field |
+| `ferrum-visual-check` | anything that draws pixels (`phantom_render.py`) |
+| `ferrum-field-test` | scripts for the user's GPU machine and their results |
+| `ferrum-release` | version bump, `develop` → `main`, `release.yml` |
+| `ferrum-lessons` | failures and successes, each with a guard; retro |
 
 `develop` and `main` change only through merged PRs. Pushing a feature
-branch is fine; merging needs the user's word.
+branch is fine. Merging needs the user's word, in every mode.
 
 ## Conventions
 

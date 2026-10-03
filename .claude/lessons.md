@@ -200,6 +200,21 @@ that says so instead of editing the old one.
   `target/llvm-cov-target` and `target/release` if they are not
   needed; check `du -sh target`.
 
+### L16 — A whole stage in one 7 000-line PR (2026-10, Stage 17, #39)
+
+- **Symptom:** PR #39 changed 75 files and 7 000 lines.
+  - The session needed a context compaction.
+  - The PR was too large to review.
+  - The only field test came after all the code, so its findings (L1,
+    L10) landed as late fix commits.
+- **Root cause:** Nothing sized the stage before implementation. The
+  task table (17.1–17.7) existed but was not mapped to PRs.
+- **Rule:** Size every stage against the model's budget before coding,
+  and split it into M/L PRs, each with its own field test where
+  relevant.
+- **Guard:** skill `ferrum-size` (budgets and the log in
+  `calibration.md`), gate G2 of `ferrum-workflow`.
+
 ## What worked
 
 ### W1 — Field test on the user's GPU with a throw-away script (2026-10, Stage 17)

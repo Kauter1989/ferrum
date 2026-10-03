@@ -67,6 +67,17 @@ so.
 - **Keep identifiers and data out.** No patient data and no
   machine-specific paths beyond what is needed.
 
+## Retro (phase 10 of `ferrum-workflow`)
+
+After a stage, or a PR that had trouble, go through these questions:
+- What did the field test, a reviewer or CI find that our tests did
+  not? Each answer is an L entry with a guard.
+- Which skill step was missing, wrong or skipped? Fix the skill and cite
+  the entry.
+- Did the size estimate hold? Record a calibration row
+  (`ferrum-size` §5).
+- What worked well enough to repeat? Each answer is a W entry.
+
 ## Committing
 
 The entry goes in the same branch as the fix and is reviewed with it. If
