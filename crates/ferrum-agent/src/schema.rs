@@ -88,7 +88,9 @@ fn view_slice() -> (&'static str, Value) {
                         ],
                     },
                     "size": integer(16, "largest image side in pixels (capped by the operator)"),
-                    "overlays": { "type": "array", "items": { "type": "string", "enum": ["segments"] }, "description": "drawn on top: segment outlines" },
+                    "overlays": overlays_param(),
+                    "segment_style": segment_style_param(),
+                    "segment_opacity": segment_opacity_param(),
                 }),
                 &["workspace", "plane"],
             ),
@@ -106,7 +108,15 @@ fn window_param() -> Value {
 }
 
 fn overlays_param() -> Value {
-    json!({ "type": "array", "items": { "type": "string", "enum": ["segments"] }, "description": "drawn on top: segment outlines" })
+    json!({ "type": "array", "items": { "type": "string", "enum": ["segments"] }, "description": "drawn on top: segments (see segment_style)" })
+}
+
+fn segment_style_param() -> Value {
+    json!({ "type": "string", "enum": ["outline", "fill", "fill_outline"], "description": "with overlays [segments]: outline (default), translucent fill, or both" })
+}
+
+fn segment_opacity_param() -> Value {
+    json!({ "type": "number", "minimum": 0, "maximum": 1, "description": "fill opacity for every segment (default: each segment's own opacity)" })
 }
 
 type Described = (&'static str, Value);
@@ -125,6 +135,8 @@ fn views() -> (Described, Described) {
                 "window": window_param(),
                 "size": integer(16, "largest image side in pixels (capped by the operator)"),
                 "overlays": overlays_param(),
+                "segment_style": segment_style_param(),
+                "segment_opacity": segment_opacity_param(),
             }),
             &["workspace", "plane"],
         ),
@@ -138,6 +150,8 @@ fn views() -> (Described, Described) {
                 "window": window_param(),
                 "size": integer(16, "largest image side in pixels (capped by the operator)"),
                 "overlays": overlays_param(),
+                "segment_style": segment_style_param(),
+                "segment_opacity": segment_opacity_param(),
             }),
             &["workspace", "at"],
         ),
@@ -165,7 +179,7 @@ fn volume_view() -> (&'static str, Value) {
 
 fn stats() -> (&'static str, Value) {
     (
-        "Statistics of the values in one region: voxels, volume in ml, mean, std, min, max, percentiles.",
+        "Statistics of the values in one region: voxels, volume in ml, mean, std, min, max, percentiles. A segment together with a box gives the part of the segment inside the box (e.g. a slab of slices).",
         obj(
             json!({
                 "workspace": workspace(),
@@ -186,35 +200,52 @@ fn engine_schema(command: &str) -> Option<(&'static str, Value)> {
             "Capabilities, labels and licence of a segmentation engine (ferrum-engine/1). Engines marked research_only are for research use only.",
             obj(json!({ "engine": engine_param() }), &[]),
         ),
+        "engine list" => (
+            "Every engine the operator allows: whether it answers, name, version, modes, research_only and GPU group.",
+            obj(json!({}), &[]),
+        ),
         "segment interactive" => (
-            "Prompts an interactive engine with points and boxes; the object becomes a new segment proposed by the engine.",
+            "Prompts an interactive engine (points, boxes, scribbles, lassos). A new object becomes a segment proposed by the engine; segment refines an object made earlier (append adds to its stored prompts, undo drops the last); from_segment redoes a segment you made, seeded with lassos from its mask. Only a region around the prompts is uploaded. The result carries quality checks.",
             obj(
                 json!({
                     "workspace": workspace(),
                     "engine": engine_param(),
                     "prompts": {
                         "type": "array",
-                        "minItems": 1,
                         "description": "applied in order",
                         "items": {
                             "oneOf": [
                                 obj(json!({ "type": { "type": "string", "enum": ["point"] }, "point": point("a voxel of (positive) or outside (negative) the object"), "positive": { "type": "boolean" } }), &["type", "point"]),
                                 obj(json!({ "type": { "type": "string", "enum": ["box"] }, "min": point("one corner"), "max": point("the opposite corner"), "positive": { "type": "boolean" } }), &["type", "min", "max"]),
+                                obj(json!({ "type": { "type": "string", "enum": ["scribble", "lasso"] }, "points": points(2, "points on one slice: a stroke (scribble) or the outline of a region (lasso, at least 3)"), "plane": plane(), "positive": { "type": "boolean" } }), &["type", "points"]),
                             ],
                         },
                     },
                     "name": text("segment name"),
+                    "segment": integer(1, "refine this segment (made by segment interactive)"),
+                    "append": { "type": "boolean", "description": "with segment: add the prompts to the stored ones (default: replace them)" },
+                    "undo": { "type": "boolean", "description": "with segment: drop the last stored prompt and recompute" },
+                    "from_segment": integer(1, "redo this segment (one you made or asked an engine for) with the engine, seeded with lassos from its mask"),
+                    "roi": corners(),
+                    "whole_volume": { "type": "boolean", "description": "upload the whole volume instead of a region around the prompts" },
+                    "min_ml": number("smallest plausible volume (checks.size)"),
+                    "max_ml": number("largest plausible volume (checks.size)"),
+                    "modality": text("modality sent to the engine (default: the study's; NIfTI has none)"),
+                    "agent": agent(),
                 }),
-                &["workspace", "prompts"],
+                &["workspace"],
             ),
         ),
         "segment auto" => (
-            "Runs an automatic engine (e.g. TotalSegmentator) on the study; each structure found becomes a segment proposed by the engine. Existing segments are kept.",
+            "Runs an automatic engine (e.g. TotalSegmentator) on the study; each structure found becomes a segment proposed by the engine, with quality checks. Existing segments are kept.",
             obj(
                 json!({
                     "workspace": workspace(),
                     "engine": engine_param(),
                     "labels": { "type": "array", "items": { "type": "string" }, "description": "structures to segment (default: all; see engine info)" },
+                    "name_prefix": text("put before every segment name, e.g. monai/ for a second engine"),
+                    "modality": text("modality sent to the engine (default: the study's; NIfTI has none)"),
+                    "agent": agent(),
                 }),
                 &["workspace"],
             ),
@@ -223,9 +254,62 @@ fn engine_schema(command: &str) -> Option<(&'static str, Value)> {
     })
 }
 
+fn corners() -> Value {
+    obj(json!({ "min": point("one corner"), "max": point("the opposite corner") }), &["min", "max"])
+}
+
+/// Schemas of the mask-analysis commands.
+fn mask_schema(command: &str) -> Option<(&'static str, Value)> {
+    let label = || integer(1, "segment label");
+    Some(match command {
+        "segment shape" => (
+            "Shape of a segment from its voxels: volume, extent in mm, slice ranges and largest slices, axial long and short axis with end points, border contact, components and, for segments named left or right, the side it lies on. Measure segments with this, never from images.",
+            obj(json!({ "workspace": workspace(), "segment": label() }), &["workspace", "segment"]),
+        ),
+        "segment components" => (
+            "Connected components (26-connected) of a segment, largest first, with centroid, box and volume. With split, every further component of at least min_ml becomes a new segment; the largest stays.",
+            obj(
+                json!({
+                    "workspace": workspace(),
+                    "segment": label(),
+                    "min_ml": number("smallest component to split off (default: all)"),
+                    "split": { "type": "boolean", "description": "make segments of the components (only segments you created or asked an engine for)" },
+                }),
+                &["workspace", "segment"],
+            ),
+        ),
+        "segment compare" => (
+            "Agreement of two segments: Dice, Jaccard, volumes and their difference, HD95 and Hausdorff distance in mm, centroid distance. b may be in another workspace of the same series (b_workspace).",
+            obj(
+                json!({
+                    "workspace": workspace(),
+                    "a": label(),
+                    "b": label(),
+                    "b_workspace": text("workspace of segment b, opened on the same series (default: this one)"),
+                }),
+                &["workspace", "a", "b"],
+            ),
+        ),
+        "segment edit" => (
+            "Deterministic clean-up of a segment you created or asked an engine for: keep_largest (largest component), fill_holes (enclosed background), restrict_to_box, remove_small (components below min_ml).",
+            obj(
+                json!({
+                    "workspace": workspace(),
+                    "segment": label(),
+                    "op": { "type": "string", "enum": ["keep_largest", "fill_holes", "restrict_to_box", "remove_small"] },
+                    "box": corners(),
+                    "min_ml": number("remove_small: smallest component to keep"),
+                }),
+                &["workspace", "segment", "op"],
+            ),
+        ),
+        _ => return None,
+    })
+}
+
 /// Description and parameter schema of `command`, or `None` if unknown.
 pub fn command_schema(command: &str) -> Option<(&'static str, Value)> {
-    if let Some(s) = engine_schema(command) {
+    if let Some(s) = engine_schema(command).or_else(|| mask_schema(command)) {
         return Some(s);
     }
     let measure = |n: usize, what: &'static str| {
@@ -237,9 +321,9 @@ pub fn command_schema(command: &str) -> Option<(&'static str, Value)> {
             obj(json!({ "paths": { "type": "array", "items": text("a DICOM folder or file, or a NIfTI file"), "minItems": 1 } }), &["paths"]),
         ),
         "study open" => (
-            "Opens a series into a workspace (created if needed; the source files are hashed) and describes it.",
+            "Opens a series into a workspace (created if needed; the source files are hashed) and describes it. NIfTI files carry no modality: give modality (e.g. CT) so values are taken as Hounsfield units.",
             obj(
-                json!({ "workspace": workspace(), "path": text("DICOM folder or NIfTI file"), "series": text("series from study scan, when the source holds several") }),
+                json!({ "workspace": workspace(), "path": text("DICOM folder or NIfTI file"), "series": text("series from study scan, when the source holds several"), "modality": text("modality of a source that carries none (NIfTI), e.g. CT; saved in the workspace") }),
                 &["workspace", "path"],
             ),
         ),

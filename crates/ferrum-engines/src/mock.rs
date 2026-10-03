@@ -60,6 +60,7 @@ impl MockEngine {
                 prompts: PromptKind::ALL.to_vec(),
                 planar_boxes_only: false,
                 undo: true,
+                deterministic: true,
             },
             modalities: Vec::new(),
             labels: vec![

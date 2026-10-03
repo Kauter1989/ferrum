@@ -4,7 +4,7 @@
 struct SliceUniforms {
     rect: vec4<f32>,       // image rect min.xy, max.xy in target pixels
     window: vec4<f32>,     // window lo, hi (normalised), slice position, axis id
-    options: vec4<f32>,    // x: nearest sampling, y: segment overlay
+    options: vec4<f32>,    // x: nearest sampling, y: segment overlay, z: style (0 outline, 1 fill, 2 both), w: fill opacity
     background: vec4<f32>,
 };
 
@@ -47,8 +47,9 @@ fn label_at_pixel(frag: vec2<f32>, axis: u32) -> u32 {
     return label_at(slice_tex(uv, S.window.z, axis));
 }
 
-// Segment fill (colour blended with its opacity) and a one-pixel outline in
-// full colour where the label changes between neighbouring screen pixels.
+// Segment fill (colour blended with its opacity × the fill opacity) and/or a
+// one-pixel outline in full colour where the label changes between
+// neighbouring screen pixels. Mirrors ferrum_domain::SegmentStyle::blend.
 fn overlay(grey: vec3<f32>, frag: vec2<f32>, t: vec3<f32>, axis: u32) -> vec3<f32> {
     let lbl = label_at(t);
     if (lbl == 0u) {
@@ -62,10 +63,14 @@ fn overlay(grey: vec3<f32>, frag: vec2<f32>, t: vec3<f32>, axis: u32) -> vec3<f3
         || label_at_pixel(frag - vec2<f32>(1.0, 0.0), axis) != lbl
         || label_at_pixel(frag + vec2<f32>(0.0, 1.0), axis) != lbl
         || label_at_pixel(frag - vec2<f32>(0.0, 1.0), axis) != lbl;
-    if (edge) {
+    let style = u32(S.options.z + 0.5);
+    if (edge && style != 1u) {
         return c.rgb;
     }
-    return mix(grey, c.rgb, c.a);
+    if (style == 0u) {
+        return grey;
+    }
+    return mix(grey, c.rgb, clamp(c.a * S.options.w, 0.0, 1.0));
 }
 
 @fragment

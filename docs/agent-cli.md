@@ -7,8 +7,9 @@ way a careful person works with FERRUM:
 - take numbers from probes, statistics and measurements;
 - leave annotations and segments for a clinician to review.
 
-The design is in [agent-skill.md](agent-skill.md). This page is the
-reference for what is implemented (Stage 15.3, first part).
+The design is in [agent-skill.md](agent-skill.md); segmentation with
+engines in [agent-segmentation.md](agent-segmentation.md). This page is
+the reference for what is implemented (Stages 15 and 17).
 
 ```bash
 cargo build --release -p ferrum-cli        # target/release/ferrum-cli
@@ -24,7 +25,7 @@ Every command prints one JSON envelope on stdout:
 
 ```json
 { "api": "ferrum-agent/1", "ok": true, "data": { … }, "warnings": [ … ],
-  "provenance": { "ferrum": "FERRUM 0.2.3", "command": "probe", "params": { … },
+  "provenance": { "ferrum": "FERRUM 0.3.0", "command": "probe", "params": { … },
                   "source_sha256": "…", "renderer": "cpu", "time": "2026-10-01T12:00:00Z" } }
 ```
 
@@ -61,30 +62,36 @@ workspace paths are placed under the operator's `data.workspace_root`.
 | Command | What it does |
 |---|---|
 | `study scan <paths…>` | Lists series: pseudonymised id, format, modality, dims, description |
-| `study open -w W <path> [--series S]` | Creates or reuses the workspace W for a series (SHA-256 of every source file) and describes it |
+| `study open -w W <path> [--series S] [--modality M]` | Creates or reuses the workspace W for a series (SHA-256 of every source file) and describes it; `--modality` declares the modality of a source that carries none (NIfTI), e.g. `CT` for values in HU, and is kept in the workspace |
 | `study info -w W` | Dims, spacing, LPS origin and direction, value unit, slice counts, window presets, annotation and segment counts |
-| `view slice -w W --plane P (--slice-number N \| --at POINT) [--window lung\|C,W] [--size PX] [--overlay segments]` | Renders a slice to `renders/r-NNNN.png` with a sidecar JSON |
+| `view slice -w W --plane P (--slice-number N \| --at POINT) [--window lung\|C,W] [--size PX] [--overlay segments [--segment-style outline\|fill\|fill_outline] [--segment-opacity A]]` | Renders a slice to `renders/r-NNNN.png` with a sidecar JSON |
 | `view montage -w W --plane P [--from N] [--to N] [--step N] [--columns N] [--window …] [--size PX]` | Several slices of one plane as a grid; every tile labelled with its slice number (default: at most 16 tiles) |
 | `view mpr -w W POINT [--window …] [--size PX]` | Axial, coronal and sagittal slices through a point, with a crosshair |
 | `view volume -w W [--mode mip\|isosurface\|transfer_function] [--threshold V] [--preset soft_tissue_bone\|lung_vessels\|bone] [--view anterior\|…\|inferior] [--size PX]` | 3D render on the CPU from a standard viewpoint |
 | `probe -w W POINT` | Value of the nearest voxel, with unit (HU for CT) |
-| `stats -w W (--box A B \| --sphere C --radius-mm R \| --segment L \| --annotation ID)` | Voxels, volume in ml, mean, std, min, max, percentiles |
+| `stats -w W (--box A B \| --sphere C --radius-mm R \| --segment L [--box A B] \| --annotation ID)` | Voxels, volume in ml, mean, std, min, max, percentiles; a segment with a box gives the part of the segment inside the box (e.g. a slab of slices) |
 | `profile -w W FROM TO [--samples N]` | Values along a line with distances in mm (default: one sample per smallest voxel spacing) |
 | `measure distance\|angle\|area -w W POINT…` | Value, unit, method and points; distances also give an uncertainty of one voxel spacing |
 | `annotate add -w W --kind K --plane P [--name N] [--text T] [--agent ID] POINT…` | Distance, angle, area, rectangle or text on one slice, proposed by the agent |
 | `annotate list\|rename\|delete -w W …` | Annotations with provenance; agents rename or delete only their own |
 | `segment list -w W` | Segments with voxel count, ml and provenance |
 | `segment threshold -w W --seed POINT --min V --max V [--max-ml ML] [--name N] [--agent ID]` | 6-connected region growing from a seed within a value range, as a proposed segment; existing segments are kept |
-| `segment rename\|delete -w W …` | Only segments the agent created |
-| `engine info [--engine URL]` | Capabilities, labels, `research_only` and licence of a `ferrum-engine/1` engine |
-| `segment interactive -w W [--engine URL] [--name N] PROMPT…` | Prompts an interactive engine: `+POINT` / `-POINT` (include / exclude) or `±box:POINT:POINT`; the object becomes a segment proposed by the engine |
-| `segment auto -w W [--engine URL] [--label NAME]…` | Runs an automatic engine (e.g. TotalSegmentator); every structure found becomes a segment proposed by the engine; existing segments keep their voxels |
+| `segment rename\|delete -w W …` | Only segments the agent created or asked an engine for |
+| `segment shape -w W L` | Shape from the voxels: ml, extent in mm, slice ranges and largest slices, axial long and short axis with end points, border contact, components, laterality (for names with *left*/*right*) |
+| `segment components -w W L [--min-ml ML] [--split]` | 26-connected components, largest first, with centroid, box and ml; `--split` makes a segment of each further component of at least `--min-ml` |
+| `segment compare -w W A B [--b-workspace W2]` | Dice, Jaccard, volumes and difference, HD95 and Hausdorff distance in mm, centroid distance; B may be in another workspace of the same series |
+| `segment edit -w W L --op keep_largest\|fill_holes\|restrict_to_box\|remove_small [--box A B] [--min-ml ML]` | Deterministic clean-up of a segment the agent created or asked an engine for |
+| `engine list` | Every allowed engine: reachable, name, version, modes, `deterministic`, `research_only`, GPU group |
+| `engine info [--engine URL]` | Capabilities, labels, `deterministic`, `research_only` and licence of a `ferrum-engine/1` engine |
+| `segment interactive -w W [--engine URL] [--name N] [--agent ID] [--segment L [--append \| --undo]] [--from-segment L] [--roi A B \| --whole-volume] [--min-ml ML] [--max-ml ML] [--modality M] PROMPT…` | Prompts an interactive engine ([below](#segmentation-engines)): `+POINT` / `-POINT`, `±box:POINT:POINT`, `±lasso:P1;P2;P3`, `±scribble:P1;P2`. A new object becomes a segment proposed by the engine; `--segment` refines one made earlier |
+| `segment auto -w W [--engine URL] [--label NAME]… [--name-prefix P] [--modality M] [--agent ID]` | Runs an automatic engine (e.g. TotalSegmentator); every structure found becomes a segment proposed by the engine, with checks; existing segments keep their voxels |
 | `review list -w W` | Proposed annotations and segments |
 | `export bundle -w W [--format ferrum\|dicom]…` | `export/` in the workspace, each file with SHA-256: `report.json` and, by format, `annotations.json` + `segments.nii.gz` + `segments.json` (`ferrum`, default) or `segmentation.dcm` (DICOM SEG) + `measurements.dcm` (SR, TID 1500) (`dicom`); unconfirmed items are marked in every file, rejected ones left out of DICOM ([format](workspace-format.md#5-dicom-export)) |
 | `review confirm\|reject -w W (--annotation ID \| --segment L) --by NAME` | Only if the operator allows harness review |
 | `run "<command>" --params '<json>'` | Any command with JSON parameters: the same call the MCP server makes |
 | `commands` | The command names |
 | `schema ["<command>"]` | JSON Schema of a command's parameters (or of all commands) |
+| `eval tasks\|phantoms\|grade\|engine` | Skill evaluations ([below](#skill-package-and-evaluations)); `eval engine [ADDR]` serves FERRUM's mock engine |
 | `mcp [--workspace-root DIR]` | Serves every command as an MCP tool over stdio ([below](#mcp-server)) |
 
 **Parameter checks:** every call is checked against its JSON Schema
@@ -117,7 +124,16 @@ point`.
 - Take every number from `probe`, `stats` or `measure`, never from grey
   values.
 
-**Overlays:** `segments` draws segment outlines in their colours.
+**Overlays:** `segments` draws the segments in their colours:
+- `segment_style`: `outline` (default; a closed outline 1–3 pixels wide,
+  about a third of a voxel on screen; the
+  image stays visible inside), `fill` (translucent fill) or
+  `fill_outline` (both);
+- `segment_opacity` (0–1): the fill opacity for every segment; default
+  each segment's own opacity.
+
+`view montage` and `view mpr` take the same options; the sidecar records
+them.
 
 **Tiled renders.**
 - `view montage` and `view mpr` compose several slices into one image.
@@ -148,8 +164,12 @@ Everything created through `ferrum-cli` is **proposed**:
 - `author: agent`, with the `--agent` id if one is given;
 - shown in the desktop app with **Confirm / Reject**.
 
-Agents may change or delete only items that agents created. Items drawn
-by people or proposed by engines are protected (`forbidden`).
+Agents may change or delete only items that agents created, and engine
+segments made at an agent's request (`provenance.requested_by`), until
+a person confirms them. Items drawn by people, engine results nobody
+asked for through the agent, and confirmed segments are protected
+(`forbidden`). Changing a segment sets it back to
+*proposed*.
 
 A harness may confirm or reject items only when the operator sets
 `review.allow_harness_confirmation = true`. It must name the person
@@ -160,7 +180,8 @@ A harness may confirm or reject items only when the operator sets
 **Workspace:**
 - The workspace (`ferrum-workspace` v1, see
   [workspace-format.md](workspace-format.md)) holds the results:
-  annotations, segments, renders and `audit.jsonl`.
+  annotations, segments, renders, `audit.jsonl` and, for engine
+  segments, the prompts behind them (`engine_inputs.json`).
 - Every call reloads the series and first verifies the source hashes. A
   changed source fails with `source_changed`.
 
@@ -186,12 +207,16 @@ pseudonymise_uids = true              # UIDs and series ids become salted hashes
 salt = "site-secret"
 
 [network]
-engines = ["http://127.0.0.1:8765"]   # segmentation engines the agent may use
+engines = ["http://127.0.0.1:8765", "http://127.0.0.1:8766"]   # segmentation engines the agent may use
+gpu_groups = { gpu0 = ["http://127.0.0.1:8765", "http://127.0.0.1:8766"] }  # engines sharing a GPU: one call at a time
 
 [limits]
 max_render_px = 1024
 max_voxels = 600_000_000
-engine_job_timeout_s = 900
+engine_job_timeout_s = 900            # also the longest wait for a GPU group
+max_prompts_per_object = 8            # interactive prompts per object
+roi_margin_mm = 48                    # region around the prompts sent to interactive engines
+allow_research_only = true            # false: research-only engines are forbidden
 
 [review]
 allow_harness_confirmation = false
@@ -246,9 +271,12 @@ and through MCP and checks that both give identical JSON.
 
 ## Segmentation engines
 
-`engine info`, `segment interactive` and `segment auto` reach engines over
-the [FERRUM Engine Protocol](engine-protocol.md): FERRUM's mock engine, or
-the nnInteractive, TotalSegmentator and MONAI Label bridges.
+`engine list`, `engine info`, `segment interactive` and `segment auto`
+reach engines over the [FERRUM Engine Protocol](engine-protocol.md):
+FERRUM's mock engine, or the nnInteractive, TotalSegmentator and MONAI
+Label bridges. The scenarios they serve, step by step, are in
+[segmentation-scenarios.md](segmentation-scenarios.md) (design:
+[agent-segmentation.md](agent-segmentation.md)).
 
 **Which engines:**
 - The operator lists the allowed URLs in `[network] engines`. The first
@@ -256,18 +284,60 @@ the nnInteractive, TotalSegmentator and MONAI Label bridges.
 - Without a configuration file, only loopback URLs (`127.0.0.1`,
   `localhost`, `[::1]`) are allowed. Any other URL is `forbidden`.
 - `FERRUM_ENGINE_URL` supplies a default when none is listed.
+- With `limits.allow_research_only = false`, engines that report
+  `research_only` are `forbidden` for segmentation (`engine info` still
+  works).
+
+**One GPU, several engines:**
+- `network.gpu_groups` names engines that share a GPU. FERRUM runs one
+  engine call of a group at a time, across processes (a lock file per
+  group in the temporary folder), waiting up to `engine_job_timeout_s`.
+- On a 12 GB card, nnInteractive and the full TotalSegmentator model fit
+  only in turn; the bridges free their GPU memory between calls
+  ([ai-demo.md](ai-demo.md#one-gpu-for-all-engines)).
+
+**Interactive objects:**
+- The prompts of every object are stored in the workspace
+  (`engine_inputs.json`, [format](workspace-format.md)). `--segment L`
+  refines that object: `--append` adds prompts to the stored ones,
+  `--undo` drops the last one, otherwise the new prompts replace them.
+  Each call replays the prompts on a fresh engine session and writes the
+  result into the same segment, as a new `revision`.
+- `--from-segment L` redoes a segment the agent made (e.g. by threshold)
+  with the engine, seeded with one lasso per plane from its mask.
+- Only a **region of interest** is uploaded: the prompts' bounding box
+  plus `roi_margin_mm`, or `--roi`, or `--whole-volume`. An object that
+  reaches an inner face of the region fails the `roi` check.
+- Lassos and scribbles are points on one slice (`lasso:P1;P2;P3`): the
+  lasso is filled, the scribble is a one-voxel stroke.
+- At most `max_prompts_per_object` prompts per object (lasso seeds of
+  `--from-segment` not counted); then the call fails with `limit`.
+
+**Checks:** every engine result carries `checks` (`failed` lists the
+failed ones) and a warning per failure: `empty`, `size` (`--min-ml`,
+`--max-ml`), `components` (largest part < 90 %), `border` (touches the
+volume edge), `roi`, `laterality`, `overlap` (voxels kept by other
+segments), `stability` (Dice to the previous revision < 0.95).
 
 **Privacy and limits:**
 - The token comes from `FERRUM_ENGINE_TOKEN`, never from a file or a
   parameter.
 - Engines receive voxels, geometry and the modality, never identifiers.
+  NIfTI has no modality: give `--modality`.
 - An automatic job may run up to `limits.engine_job_timeout_s` seconds
   (default 900). After that it is cancelled and reported as `limit`.
 
 **Results:**
 - Results are segments proposed by the engine: author `engine` (name,
-  version, `research_only`), status `proposed`.
-- Envelopes warn when the engine is for research use only.
+  version, `research_only`), `requested_by` the agent, status `proposed`.
+- Envelopes warn when the engine is for research use only, and when it
+  does not guarantee identical results on replay (`deterministic: false`).
+
+**MCP:** the server keeps the engine session of an interactive object
+open (up to four), so a refinement sends only the new prompts; results
+equal those of the command line. Sessions of engines in a GPU group are
+closed after each call. With a `progressToken`, automatic jobs send
+`notifications/progress`.
 
 ## Skill package and evaluations
 
@@ -283,7 +353,9 @@ configuration and the bundled binary.
 
 **Evaluations** (`skills/ferrum/evals/`) are tasks with known answers on
 a synthetic phantom, e.g. "measure the diameter of the round object" or
-"on which axial slice is it largest".
+"on which axial slice is it largest". Tasks marked `engine` need a
+segmentation engine: `ferrum-cli eval engine` serves FERRUM's mock
+engine.
 
 | Command | What it does |
 |---|---|
@@ -297,7 +369,8 @@ The grader checks that the answer:
 - states the unit;
 - takes its numbers from tool results;
 - makes no diagnostic claims;
-- asks for review when proposals were created.
+- asks for review when proposals were created;
+- used the commands the task requires (e.g. `segment interactive`).
 
 The test suite holds a reference solution for every task.
 
@@ -310,11 +383,9 @@ and accession numbers only with consent.
 
 ## Limits
 
-These are planned:
-- DICOM SEG and SR export (15.7).
-
-Also note:
-- NIfTI files carry no modality, so their values have no unit. Treat
-  them as HU only if you know the file is CT.
+Note:
+- NIfTI files carry no modality, so their values have no unit. If you
+  know the file is CT, open it with `--modality CT`; values are then
+  reported in HU (`modality_source: declared`).
 - The command line reloads the series for each call (a CT series in about
   0.3 s); the MCP server keeps it in memory.

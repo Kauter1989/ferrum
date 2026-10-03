@@ -5,6 +5,16 @@ of the network are kept on the GPU; the bridge serves one FERRUM session at
 a time (a new session replaces the previous one), which is what an
 interactive single-user demo needs.
 
+GPU memory: when a FERRUM session closes, the image and the target buffer
+are dropped and PyTorch's cache is emptied, so only the weights stay on
+the card and another engine on the same GPU (e.g. TotalSegmentator on a
+12 GB card) can run in between.
+
+Replay: FERRUM's agent refines objects by replaying their prompts on a new
+session. GPU kernels may differ in the last bits between runs, which can
+flip voxels at the object's edge; ``--deterministic`` selects deterministic
+kernels (slightly slower) and reports ``deterministic: true``.
+
 The nnInteractive code is Apache-2.0; the model weights are distributed
 separately under their own licence (CC BY-NC-SA 4.0 for the official
 checkpoints), reported to FERRUM, which then marks results *Research use
@@ -27,9 +37,10 @@ def _research_only(license_text: str) -> bool:
 
 
 class NnInteractiveSession(BackendSession):
-    def __init__(self, session, target):
+    def __init__(self, session, target, release=None):
         self.s = session
         self.target = target
+        self.release = release
 
     @staticmethod
     def _box(b) -> Optional[ZyxBox]:
@@ -68,6 +79,8 @@ class NnInteractiveSession(BackendSession):
 
     def close(self):
         self.s.reset_interactions()
+        if self.release is not None:
+            self.release()
 
 
 class NnInteractiveBackend(Backend):
@@ -81,6 +94,7 @@ class NnInteractiveBackend(Backend):
         model_id: Optional[str] = None,
         model_dir: Optional[str] = None,
         torch_compile: bool = False,
+        deterministic: bool = False,
     ):
         import torch
         from nnInteractive.inference.inference_session import nnInteractiveInferenceSession
@@ -93,6 +107,11 @@ class NnInteractiveBackend(Backend):
         self.model = model_id or os.path.basename(os.path.normpath(model_dir))
         self.torch = torch
         self.device = torch.device(device)
+        self.deterministic = deterministic
+        if deterministic:
+            torch.backends.cudnn.benchmark = False
+            torch.backends.cudnn.deterministic = True
+            torch.use_deterministic_algorithms(True, warn_only=True)
         self.session = nnInteractiveInferenceSession(
             device=self.device,
             use_torch_compile=torch_compile,
@@ -135,6 +154,7 @@ class NnInteractiveBackend(Backend):
             "prompts": self.prompts,
             "planar_boxes_only": self.planar_only,
             "undo": bool(getattr(self.session, "supports_undo", False)),
+            "deterministic": self.deterministic,
             "modalities": [],
             "research_only": _research_only(self.license),
             "license": f"Model weights: {self.license}" if self.license else "Model weights: licence unknown",
@@ -146,4 +166,20 @@ class NnInteractiveBackend(Backend):
         self.session.set_image(volume[None], {"spacing": list(spacing)[::-1]})  # [z, y, x]
         target = self.torch.zeros(volume.shape, dtype=self.torch.uint8)
         self.session.set_target_buffer(target)
-        return NnInteractiveSession(self.session, target)
+        return NnInteractiveSession(self.session, target, release=self.release)
+
+    #: Image state of ``nnInteractiveInferenceSession`` dropped by :meth:`release`
+    #: when the session has no ``_reset_session`` of its own.
+    IMAGE_STATE = ("original_image", "preprocessed_image", "preprocessed_props", "target_buffer", "interactions")
+
+    def release(self) -> None:
+        """Frees the GPU memory of the closed session's image; the weights stay."""
+        reset = getattr(self.session, "_reset_session", None)
+        if callable(reset):
+            reset()
+        else:
+            for name in self.IMAGE_STATE:
+                if hasattr(self.session, name):
+                    setattr(self.session, name, None)
+        if self.device.type == "cuda":
+            self.torch.cuda.empty_cache()

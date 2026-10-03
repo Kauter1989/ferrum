@@ -28,6 +28,7 @@ pub mod mcp;
 pub mod params;
 pub mod points;
 pub mod schema;
+pub mod sessions;
 pub mod study;
 
 pub use agent::Agent;

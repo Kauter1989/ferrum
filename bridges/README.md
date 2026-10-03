@@ -10,21 +10,26 @@ engine. **Set-up and walkthroughs: [docs/ai-demo.md](../docs/ai-demo.md).**
 |---|---|---|---|---|
 | [nnInteractive](https://github.com/MIC-DKFZ/nnInteractive) | interactive (point, box, scribble, lasso, undo) | `ferrum-bridge nninteractive` | [`nninteractive/`](nninteractive) | code Apache-2.0, weights **CC BY-NC-SA 4.0** (research use only) |
 | [TotalSegmentator](https://github.com/wasserth/TotalSegmentator) | automatic (117 CT structures, other tasks) | `ferrum-bridge totalsegmentator --task total` | [`totalsegmentator/`](totalsegmentator) | Apache-2.0; some tasks need a licence (free for non-commercial use) |
-| [MONAI Label](https://github.com/Project-MONAI/MONAILabel) | interactive (DeepEdit, DeepGrow, SAM2 clicks; SAM2 boxes) and automatic (segmentation models) | `ferrum-bridge monailabel --server http://127.0.0.1:8000` | — (no GPU in the bridge; MONAI Label runs the models) | MONAI Label Apache-2.0; each model has its own weight licence |
+| [MONAI Label](https://github.com/Project-MONAI/MONAILabel) | interactive (DeepEdit, DeepGrow, SAM2 clicks; SAM2 boxes) and automatic (segmentation models) | `ferrum-bridge monailabel --server http://127.0.0.1:8000` | [`monailabel/`](monailabel) via `compose.yml` (no GPU in the bridge; MONAI Label runs the models) | MONAI Label Apache-2.0; each model has its own weight licence |
 | fake | both, without a model | `ferrum-bridge fake` | | MIT |
 
 ```bash
 pip install ".[nninteractive]"      # or ".[totalsegmentator]", ".[monailabel]"
 ferrum-bridge --port 8765 nninteractive
 cd totalsegmentator && docker compose up --build    # GPU, published on 127.0.0.1:8766
+docker compose --profile sequential up --build      # every bridge on one GPU (compose.yml)
 ```
+
+`compose.yml` runs the bridges on one GPU (e.g. a 12 GB RTX 3080 Ti) with
+the profiles `interactive`, `automatic`, `mixed` and `sequential`; see
+[One GPU for all engines](../docs/ai-demo.md#one-gpu-for-all-engines).
 
 | Part | Role |
 |---|---|
 | `ferrum_bridges/protocol.py` | protocol server (FastAPI): sessions, prompts, jobs, errors; engine independent |
 | `ferrum_bridges/backends.py` | backend interface, job runner and the model-free fake |
-| `ferrum_bridges/nninteractive.py` | nnInteractive 2.6 adapter |
-| `ferrum_bridges/totalsegmentator.py` | TotalSegmentator 2.18 adapter (geometry → NIfTI affine, telemetry off) |
+| `ferrum_bridges/nninteractive.py` | nnInteractive 2.6 adapter (frees the image when a session closes; `--deterministic`) |
+| `ferrum_bridges/totalsegmentator.py` | TotalSegmentator 2.18 adapter (geometry → NIfTI affine, telemetry off, one child process per job) |
 | `ferrum_bridges/monailabel.py` | MONAI Label 0.8 client adapter (sessions, `/infer` with the click history) |
 
 Tests: `pip install ".[test]" && pytest`, then FERRUM's conformance suite

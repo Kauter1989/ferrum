@@ -1,7 +1,7 @@
 {
   "format": "ferrum-skill-evals",
   "version": 1,
-  "note": "Tasks with known answers on synthetic phantoms (ferrum-cli eval phantoms <dir>). Grade a transcript with ferrum-cli eval grade --task <id> <transcript.json>.",
+  "note": "Tasks with known answers on synthetic phantoms (ferrum-cli eval phantoms <dir>). Tasks with engine: true need a segmentation engine: serve FERRUM's mock engine with ferrum-cli eval engine. Grade a transcript with ferrum-cli eval grade --task <id> <transcript.json>.",
   "tasks": [
     {
       "id": "sphere_diameter",
@@ -47,6 +47,39 @@
       "tolerance": 2.0,
       "unit": "mm",
       "proposes": false
+    },
+    {
+      "id": "engine_sphere_volume",
+      "phantom": "sphere_cube",
+      "prompt": "Segment the round object of intermediate brightness with the segmentation engine and report its volume.",
+      "expected": [2.145],
+      "tolerance": 0.25,
+      "unit": "ml",
+      "proposes": true,
+      "engine": true,
+      "requires": ["segment interactive"]
+    },
+    {
+      "id": "engine_long_axis",
+      "phantom": "sphere_cube",
+      "prompt": "Segment the round object with the segmentation engine and report its longest diameter on an axial slice.",
+      "expected": [16.0],
+      "tolerance": 1.0,
+      "unit": "mm",
+      "proposes": true,
+      "engine": true,
+      "requires": ["segment interactive", "segment shape"]
+    },
+    {
+      "id": "engine_auto_bright",
+      "phantom": "sphere_cube",
+      "prompt": "Segment every structure automatically with the segmentation engine and report the volume of the brightest one.",
+      "expected": [0.432],
+      "tolerance": 0.01,
+      "unit": "ml",
+      "proposes": true,
+      "engine": true,
+      "requires": ["segment auto"]
     }
   ]
 }

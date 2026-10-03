@@ -17,11 +17,20 @@ no server except for the one-time weight download.
 Licences: TotalSegmentator's code is Apache-2.0. Some tasks need a licence
 (free for non-commercial use); those are reported to FERRUM as
 *Research use only*.
+
+GPU memory: each job runs in a child process (``spawn``), so all of its
+GPU memory returns to the driver when the job ends and another engine on
+the same card (e.g. nnInteractive on a 12 GB GPU) can run next; cancelling
+a job terminates the process at once. ``--in-process`` keeps the old
+behaviour (faster start, the memory stays in PyTorch's cache).
 """
 
 from __future__ import annotations
 
+import multiprocessing
 import os
+import tempfile
+import time
 from typing import Optional
 
 import numpy as np
@@ -64,7 +73,9 @@ class TotalSegmentatorSession(BackendSession):
 
             progress(0.1, f"TotalSegmentator {self.backend.task}{' (fast)' if self.backend.fast else ''}")
             image = nib.Nifti1Image(self.volume.transpose(2, 1, 0).astype(np.float32), self.affine)
-            seg = self.backend.run(image, roi_subset)
+            seg = self.backend.run_job(image, roi_subset, progress)
+            if seg is None:  # cancelled
+                return None
             data = np.asanyarray(seg.dataobj).astype(np.uint16).transpose(2, 1, 0)
             if data.shape != self.volume.shape:
                 raise RuntimeError(f"result shape {data.shape} differs from the volume {self.volume.shape}")
@@ -90,8 +101,17 @@ class TotalSegmentatorBackend(Backend):
     """TotalSegmentator on one GPU (or CPU, slowly); one job at a time."""
 
     max_sessions = 2
+    #: Jobs run in a child process (set by ``__init__``; stubs that skip it run in process).
+    isolate = False
 
-    def __init__(self, task: str = "total", device: str = "gpu", fast: bool = False, license_number: Optional[str] = None):
+    def __init__(
+        self,
+        task: str = "total",
+        device: str = "gpu",
+        fast: bool = False,
+        license_number: Optional[str] = None,
+        isolate: bool = True,
+    ):
         from totalsegmentator.config import set_config_key, setup_totalseg
         from totalsegmentator.registry import get_task_classes, requires_license, task_modality
 
@@ -104,13 +124,11 @@ class TotalSegmentatorBackend(Backend):
         self.classes = {int(k): str(v) for k, v in get_task_classes(task).items()}
         self.licensed = requires_license(task)
         self.modality = task_modality(task)
+        self.isolate = isolate
 
-    def run(self, image, roi_subset):
-        from totalsegmentator.python_api import totalsegmentator
-
-        return totalsegmentator(
-            image,
-            None,
+    def options(self, roi_subset) -> dict:
+        """Keyword arguments of ``totalsegmentator()`` besides input and output."""
+        return dict(
             ml=True,
             task=self.task,
             fast=self.fast,
@@ -120,6 +138,18 @@ class TotalSegmentatorBackend(Backend):
             quiet=True,
             skip_saving=True,
         )
+
+    def run(self, image, roi_subset):
+        from totalsegmentator.python_api import totalsegmentator
+
+        return totalsegmentator(image, None, **self.options(roi_subset))
+
+    def run_job(self, image, roi_subset, progress):
+        """Runs a job (in a child process unless ``isolate`` is off); ``None``
+        if it was cancelled."""
+        if not self.isolate:
+            return self.run(image, roi_subset)
+        return run_in_child(self.options(roi_subset), image, progress, f"TotalSegmentator {self.task}")
 
     def info(self) -> dict:
         try:
@@ -151,3 +181,40 @@ class TotalSegmentatorBackend(Backend):
         origin = origin or (0.0, 0.0, 0.0)
         direction = direction or ((1, 0, 0), (0, 1, 0), (0, 0, 1))
         return TotalSegmentatorSession(self, volume, spacing, origin, direction)
+
+
+def _child(options: dict, image_path: str, out_path: str) -> None:
+    """Child process of one job: TotalSegmentator on a NIfTI file, the label
+    array saved as ``.npy``."""
+    import nibabel as nib
+    from totalsegmentator.config import set_config_key
+    from totalsegmentator.python_api import totalsegmentator
+
+    set_config_key("send_usage_stats", False)
+    seg = totalsegmentator(nib.load(image_path), None, **options)
+    np.save(out_path, np.asanyarray(seg.dataobj).astype(np.uint16))
+
+
+def run_in_child(options: dict, image, progress, what: str, poll_s: float = 0.25):
+    """Runs :func:`_child` in a spawned process, reporting the elapsed time;
+    terminates it when ``progress`` reports a cancellation and returns
+    ``None`` then."""
+    import nibabel as nib
+
+    ctx = multiprocessing.get_context("spawn")
+    with tempfile.TemporaryDirectory(prefix="ferrum-totalseg-") as tmp:
+        src, out = os.path.join(tmp, "image.nii.gz"), os.path.join(tmp, "labels.npy")
+        nib.save(image, src)
+        proc = ctx.Process(target=_child, args=(options, src, out), name="totalsegmentator-job")
+        proc.start()
+        start = time.monotonic()
+        while proc.exitcode is None:
+            proc.join(poll_s)
+            if proc.exitcode is None and not progress(0.1, f"{what}: running ({time.monotonic() - start:.0f} s)"):
+                proc.terminate()
+                proc.join(10)
+                return None
+        if proc.exitcode != 0 or not os.path.exists(out):
+            raise RuntimeError(f"{what} failed in its process (exit code {proc.exitcode}); see the bridge log")
+        data = np.load(out)
+    return nib.Nifti1Image(data, image.affine)

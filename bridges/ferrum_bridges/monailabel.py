@@ -240,6 +240,8 @@ class MonaiLabelBackend(Backend):
             "prompts": prompts,
             "planar_boxes_only": False,
             "undo": bool(self.model),
+            # inference runs on the MONAI Label server, whose GPU kernels the bridge cannot pin down
+            "deterministic": False,
             "automatic": bool(self.auto_model),
             "labels": [{"value": v, "name": k} for k, v in sorted(auto.items(), key=lambda kv: kv[1])],
             "modalities": [],

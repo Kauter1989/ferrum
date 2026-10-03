@@ -53,6 +53,11 @@ impl McpServer {
         self.cache.len()
     }
 
+    /// Engine sessions currently kept open.
+    pub fn cached_engine_sessions(&self) -> usize {
+        self.cache.engines.len()
+    }
+
     /// Serves until `input` ends. Each line is one JSON-RPC message.
     pub fn serve(&mut self, input: impl BufRead, mut output: impl Write) -> std::io::Result<()> {
         for line in input.lines() {
@@ -61,7 +66,14 @@ impl McpServer {
                 continue;
             }
             let reply = match serde_json::from_str::<Value>(&line) {
-                Ok(msg) => self.handle(&msg),
+                Ok(msg) => {
+                    let mut notify = |n: Value| {
+                        // progress is best effort: a closed pipe ends the loop at the reply
+                        let _ = writeln!(output, "{n}");
+                        let _ = output.flush();
+                    };
+                    self.handle_with(&msg, &mut notify)
+                }
                 Err(e) => Some(error(Value::Null, -32700, &format!("parse error: {e}"))),
             };
             if let Some(r) = reply {
@@ -74,6 +86,13 @@ impl McpServer {
 
     /// Answers one message; notifications get no answer.
     pub fn handle(&mut self, msg: &Value) -> Option<Value> {
+        self.handle_with(msg, &mut |_| {})
+    }
+
+    /// Like [`McpServer::handle`]; while a tool runs, progress
+    /// notifications (`notifications/progress`, when the call carries a
+    /// `progressToken`) go to `notify`.
+    pub fn handle_with(&mut self, msg: &Value, notify: &mut dyn FnMut(Value)) -> Option<Value> {
         let id = msg.get("id").cloned();
         let method = msg["method"].as_str().unwrap_or_default();
         let Some(id) = id else {
@@ -99,18 +118,30 @@ impl McpServer {
             }
             "ping" => result(id, json!({})),
             "tools/list" => result(id, json!({ "tools": tools() })),
-            "tools/call" => self.call(id, params),
+            "tools/call" => self.call(id, params, notify),
             other => error(id, -32601, &format!("method not found: {other}")),
         })
     }
 
-    fn call(&mut self, id: Value, params: &Value) -> Value {
+    fn call(&mut self, id: Value, params: &Value, notify: &mut dyn FnMut(Value)) -> Value {
         let name = params["name"].as_str().unwrap_or_default();
         let Some(command) = command_of(name) else {
             return error(id, -32602, &format!("unknown tool {name:?}"));
         };
         let args = params.get("arguments").cloned().filter(|a| !a.is_null()).unwrap_or_else(|| json!({}));
-        let envelope = self.agent.run_cached(&mut self.cache, command, &args);
+        let envelope = match params["_meta"].get("progressToken").cloned() {
+            Some(token) => {
+                let mut progress = |p: f64, message: &str| {
+                    notify(json!({
+                        "jsonrpc": "2.0",
+                        "method": "notifications/progress",
+                        "params": { "progressToken": token, "progress": p.clamp(0.0, 1.0), "total": 1.0, "message": message },
+                    }));
+                };
+                self.agent.run_with_progress(&mut self.cache, &mut progress, command, &args)
+            }
+            None => self.agent.run_cached(&mut self.cache, command, &args),
+        };
         let ok = envelope["ok"] == true;
         let text = serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| envelope.to_string());
         let mut content = vec![json!({ "type": "text", "text": text })];
@@ -149,6 +180,8 @@ pub fn tools() -> Vec<Value> {
                     | "segment auto"
                     | "segment rename"
                     | "segment delete"
+                    | "segment components"
+                    | "segment edit"
                     | "review confirm"
                     | "review reject"
             );

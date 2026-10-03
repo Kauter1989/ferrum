@@ -8,7 +8,7 @@ use glam::DVec3;
 use serde_json::{json, Value};
 
 use super::inspect::point;
-use super::view::{overlays, render_pixels, save_render, size_param, slice_json, window, Layout, NOTE};
+use super::view::{render_pixels, save_render, segment_overlay, size_param, slice_json, window, Layout, NOTE};
 use super::Ctx;
 use crate::envelope::{AgentError, ErrorCode, Output};
 use crate::params::Params;
@@ -139,7 +139,7 @@ pub fn montage(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     let size = size_param(p, max, 1024)?;
     let tile = ((size - GAP * (columns.max(rows) - 1)) / columns.max(rows)).max(16);
     let w = window(study, p)?;
-    let outlines = overlays(p)?.contains(&"segments");
+    let overlay = segment_overlay(p)?;
     let layouts: Vec<Layout> = indices.iter().map(|i| Layout::new(&study.volume, plane, *i, tile)).collect();
     let (tw, th) = (layouts[0].width, layouts[0].height);
     let tiles: Vec<Tile> = layouts
@@ -152,7 +152,7 @@ pub fn montage(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
         .collect();
     let mut canvas = Canvas::new(columns * (tw + GAP) - GAP, rows * (th + GAP) - GAP);
     for t in &tiles {
-        let rgb = render_pixels(study, &t.layout, w, outlines);
+        let rgb = render_pixels(study, &t.layout, w, overlay);
         canvas.blit(t.origin[0], t.origin[1], tw, th, &rgb);
         canvas.label(t.origin[0] + 2, t.origin[1] + 2, &(t.layout.index + 1).to_string());
     }
@@ -204,7 +204,7 @@ pub fn mpr(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     let size = size_param(p, max, 1024)?;
     let tile = ((size - 2 * GAP) / 3).max(16);
     let w = window(study, p)?;
-    let outlines = overlays(p)?.contains(&"segments");
+    let overlay = segment_overlay(p)?;
     let v = &study.volume;
     let idx = nearest_voxel(v, at);
     let mut x = 0;
@@ -218,7 +218,7 @@ pub fn mpr(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     let height = tiles.iter().map(|t| t.layout.height).max().unwrap_or(16);
     let mut canvas = Canvas::new(x - GAP, height);
     for (t, letter) in tiles.iter().zip(["A", "C", "S"]) {
-        let rgb = render_pixels(study, &t.layout, w, outlines);
+        let rgb = render_pixels(study, &t.layout, w, overlay);
         canvas.blit(t.origin[0], t.origin[1], t.layout.width, t.layout.height, &rgb);
         crosshair(&mut canvas, v, t, at);
         canvas.label(t.origin[0] + 2, t.origin[1] + 2, &format!("{letter}{}", t.layout.index + 1));

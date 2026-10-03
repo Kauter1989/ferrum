@@ -48,14 +48,14 @@ flowchart LR
 
 | Crate | Responsibility | Must not |
 |---|---|---|
-| `ferrum-domain` | `Volume` with its patient `Geometry`, `WindowLevel`, `TransferFunction`, `RenderSettings`, `ClipSettings`, `OrbitCamera`, slice geometry, annotations, `VoxelMask`, `LabelMap` / `SegmentationSet`, `Provenance` (author, review status) on annotations and segments; the `VolumeRepository` port | do I/O, know GPUs or UI |
+| `ferrum-domain` | `Volume` with its patient `Geometry`, `WindowLevel`, `TransferFunction`, `RenderSettings`, `ClipSettings`, `OrbitCamera`, slice geometry, annotations, `VoxelMask`, `LabelMap` / `SegmentationSet`, `Provenance` (author, review status, requester) on annotations and segments, mask analysis (components, shape, agreement); the `VolumeRepository` port | do I/O, know GPUs or UI |
 | `ferrum-processing` | histogram, min/max bricks, ambient occlusion, filters, resampling (rayon) | own application state |
 | `ferrum-io` | DICOM scan → series grouping → slice ordering → parallel decode; NIfTI read/write with reorientation to LPS; NIfTI label maps mapped onto the volume grid; `ferrum-annotations` v2 and `ferrum-segments` JSON (read and write); `ferrum-workspace` v1 directories with hashed sources and an audit log ([format](workspace-format.md)); DICOM SEG and Comprehensive 3D SR (TID 1500) export ([format](workspace-format.md#5-dicom-export)) | know about rendering or UI |
 | `ferrum-render` | `FrameParams` (pure), WGSL shaders, `VolumeRenderer` (feature `gpu`), `CpuRaycaster` | own application state |
 | `ferrum-engines` | `HttpEngine` (`ferrum-engine/1` client over HTTP), `MockEngine` (region growing, no model), reference protocol server and conformance suite | know about rendering or UI |
 | `ferrum-app` | `Viewer` facade, background `JobQueue`, `ToolController`, `GpuSink` port; which tools each view mode offers (`tool_availability`, `set_view_mode`) and the segmentation workflow (`segmentation_step`, the region tool) | depend on wgpu or egui |
 | `ferrum` | panels, widgets, paint callbacks, dialogs; composition root | contain business logic |
-| `ferrum-agent` | agent skill (depends on `ferrum-domain`, `ferrum-io`, `ferrum-engines` and `ferrum-render` without its GPU feature) ([design](agent-skill.md), [CLI and MCP](agent-cli.md)): commands on JSON parameters with JSON Schemas, `ferrum-agent/1` envelope and error codes, operator configuration, workspace sessions with a series cache, CPU slice renders with pixel mapping, audit log, MCP server (stdio) | depend on wgpu, egui or `ferrum-app` state |
+| `ferrum-agent` | agent skill (depends on `ferrum-domain`, `ferrum-io`, `ferrum-engines` and `ferrum-render` without its GPU feature) ([design](agent-skill.md), [CLI and MCP](agent-cli.md), [segmentation](agent-segmentation.md)): commands on JSON parameters with JSON Schemas, `ferrum-agent/1` envelope and error codes, operator configuration, workspace sessions with a series cache, CPU slice renders with pixel mapping, audit log, MCP server (stdio); engine objects refined from stored prompts, GPU groups, engine sessions cached for MCP, quality checks | depend on wgpu, egui or `ferrum-app` state |
 | `ferrum-cli` | `ferrum-cli` binary: argument parsing to agent calls, exit codes | contain command logic |
 
 

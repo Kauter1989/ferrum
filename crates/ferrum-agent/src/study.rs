@@ -62,6 +62,8 @@ pub fn scan(paths: &[PathBuf]) -> Result<Vec<SeriesDescriptor>, AgentError> {
 #[derive(Debug, Default)]
 pub struct VolumeCache {
     entries: HashMap<PathBuf, CachedSeries>,
+    /// Engine sessions of interactive objects (see [`crate::sessions`]).
+    pub engines: crate::sessions::EngineSessions,
 }
 
 #[derive(Debug, Clone)]
@@ -179,6 +181,12 @@ impl Study {
         volume: Arc<Volume>,
         metadata: Arc<SeriesMetadata>,
     ) -> Result<Self, AgentError> {
+        let metadata = match &workspace.manifest().modality {
+            Some(m) if metadata.modality.is_empty() => {
+                Arc::new(SeriesMetadata { modality: m.clone(), ..(*metadata).clone() })
+            }
+            _ => metadata,
+        };
         let d = volume.dims();
         let annotations = workspace.load_annotations([d.x, d.y, d.z])?.unwrap_or_default();
         let segments = workspace.load_segments(&volume)?.unwrap_or_else(|| SegmentationSet::new(d));
@@ -215,6 +223,35 @@ impl Study {
     /// Folder of renders.
     pub fn renders_dir(&self) -> PathBuf {
         self.workspace.path(ferrum_io::workspace::files::RENDERS)
+    }
+
+    /// Declares the modality of a source that carries none (NIfTI) and
+    /// saves it in the workspace. A source with its own modality keeps it:
+    /// declaring another one is a `bad_request`.
+    pub fn declare_modality(&mut self, modality: &str) -> Result<(), AgentError> {
+        let m = modality.trim().to_ascii_uppercase();
+        if m.is_empty() || m.len() > 16 || !m.bytes().all(|b| b.is_ascii_alphanumeric()) {
+            return Err(AgentError::bad_request(format!("modality {modality:?} is not a DICOM modality code"))
+                .hint("e.g. CT, MR, PT"));
+        }
+        let declared = self.workspace.manifest().modality.is_some();
+        if !declared && !self.metadata.modality.is_empty() {
+            if self.metadata.modality.eq_ignore_ascii_case(&m) {
+                return Ok(());
+            }
+            return Err(AgentError::bad_request(format!(
+                "the series carries the modality {}; it cannot be declared {m}",
+                self.metadata.modality
+            )));
+        }
+        self.workspace.set_modality(Some(&m))?;
+        self.metadata = Arc::new(SeriesMetadata { modality: m, ..(*self.metadata).clone() });
+        Ok(())
+    }
+
+    /// `true` if the modality was declared rather than read from the source.
+    pub fn modality_declared(&self) -> bool {
+        self.workspace.manifest().modality.is_some()
     }
 
     /// Unit of the voxel values: `HU` for CT, empty otherwise.
