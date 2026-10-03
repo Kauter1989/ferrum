@@ -126,6 +126,7 @@ FERRUM is a core, not a monolith. The principles, in short (full text:
 | Agent skill package ([`skills/ferrum`](skills/ferrum)): `SKILL.md`, references, schemas, plugin folder in the releases; evaluations with known answers (`ferrum-cli eval`); identifier scan | ✅ |
 | Review in the desktop app: *Open workspace*, review queue with author and status, decisions saved to the workspace and its audit log | ✅ |
 | Agent skill with segmentation engines: `engine info`, `segment interactive`, `segment auto` (allow-listed engines, results proposed by the engine) | ✅ |
+| Agent segmentation scenarios on one GPU ([design](docs/agent-segmentation.md)): refinement from stored prompts, regions of interest, lassos and scribbles, shape/components/compare/edit, quality checks, GPU groups, bridges that free GPU memory, compose profiles | ✅ (GPU benchmark pending) |
 | DICOM export for PACS: binary Segmentation and Comprehensive 3D SR (TID 1500) with lengths, areas and segment volumes; review status marked, identifiers per operator consent; validated with highdicom ([format](docs/workspace-format.md#5-dicom-export)) | ✅ |
 
 > FERRUM is research and engineering software, not a certified medical

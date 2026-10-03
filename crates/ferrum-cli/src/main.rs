@@ -44,6 +44,7 @@ fn main() -> ExitCode {
         }
         "schema" => return print_schema(params["command"].as_str()),
         "eval tasks" | "eval phantoms" | "eval grade" => return eval(&command, &params),
+        "eval engine" => return eval_engine(params["addr"].as_str().unwrap_or("127.0.0.1:8765")),
         "mcp" => {
             if let Some(root) = params["workspace_root"].as_str() {
                 match &config.workspace_root {
@@ -82,7 +83,7 @@ fn eval(command: &str, params: &Value) -> ExitCode {
         let tasks = evals::tasks().map_err(|e| e.to_string())?;
         match command {
             "eval tasks" => Ok((
-                json!({ "tasks": tasks.iter().map(|t| json!({ "id": t.id, "phantom": t.phantom, "prompt": t.prompt })).collect::<Vec<_>>() }),
+                json!({ "tasks": tasks.iter().map(|t| json!({ "id": t.id, "phantom": t.phantom, "prompt": t.prompt, "engine": t.engine })).collect::<Vec<_>>() }),
                 true,
             )),
             "eval phantoms" => {
@@ -116,6 +117,22 @@ fn eval(command: &str, params: &Value) -> ExitCode {
         Err(e) => {
             eprintln!("error: {e}");
             ExitCode::from(2)
+        }
+    }
+}
+
+/// `eval engine`: serves the mock engine until the process is stopped.
+fn eval_engine(addr: &str) -> ExitCode {
+    match ferrum_agent::evals::serve_mock_engine(addr) {
+        Ok(server) => {
+            println!("{}", json!({ "engine": server.url(), "note": "FERRUM mock engine; stop with Ctrl-C" }));
+            loop {
+                std::thread::park();
+            }
+        }
+        Err(e) => {
+            eprintln!("error: {}", e.message);
+            ExitCode::from(1)
         }
     }
 }

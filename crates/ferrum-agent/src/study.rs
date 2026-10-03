@@ -62,6 +62,8 @@ pub fn scan(paths: &[PathBuf]) -> Result<Vec<SeriesDescriptor>, AgentError> {
 #[derive(Debug, Default)]
 pub struct VolumeCache {
     entries: HashMap<PathBuf, CachedSeries>,
+    /// Engine sessions of interactive objects (see [`crate::sessions`]).
+    pub engines: crate::sessions::EngineSessions,
 }
 
 #[derive(Debug, Clone)]

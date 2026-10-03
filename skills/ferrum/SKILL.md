@@ -1,6 +1,6 @@
 ---
 name: ferrum-imaging
-description: View and measure CT, MR and other volumetric medical images (DICOM or NIfTI) with FERRUM — render slices, montages, MPR and 3D, read values (Hounsfield units for CT), measure distances, angles, areas and volumes, segment structures by threshold, and export results for clinical review. Use when a task needs to look at or quantify a medical image. Not for diagnosis.
+description: View and measure CT, MR and other volumetric medical images (DICOM or NIfTI) with FERRUM — render slices, montages, MPR and 3D, read values (Hounsfield units for CT), measure distances, angles, areas and volumes, segment structures by threshold or with AI engines (nnInteractive, TotalSegmentator, MONAI Label), and export results for clinical review. Use when a task needs to look at or quantify a medical image. Not for diagnosis.
 ---
 
 # FERRUM imaging skill
@@ -31,9 +31,14 @@ Parameters are checked against JSON Schemas (`ferrum-cli schema`).
    - point at what you saw with `{"render": "r-0003", "pixel": [x, y]}`;
    - use `probe`, `stats`, `profile`, `measure distance|angle|area` and
      `segment threshold` (probe the seed first, set `max_ml`).
-5. **Record:** name what you create (`annotate add` with `name`,
+5. **Segment with engines** when the task needs organs or lesions:
+   preflight with `engine list` / `engine info`, then `segment auto` or
+   `segment interactive`; refine the same segment (`segment`, `append`),
+   read `checks`, and measure with `segment shape`. Follow
+   `reference/segmentation.md`.
+6. **Record:** name what you create (`annotate add` with `name`,
    `segment threshold` with `name`).
-6. **Hand over:** `export bundle`, then `review list`. End your answer
+7. **Hand over:** `export bundle`, then `review list`. End your answer
    with the items that need a person's review and the workspace path. A
    clinician reviews them in the FERRUM desktop app (*Open workspace* →
    *Review*).
@@ -50,6 +55,10 @@ Parameters are checked against JSON Schemas (`ferrum-cli schema`).
 - Everything you create is *proposed* until a clinician confirms it. Say
   so.
 - Results from engines marked `research_only` are for research use only.
+- Never prompt an engine for something you have not seen on a render.
+  Mention every failed check of an engine result; at most 8 prompts per
+  object, then report "not converged". Engines that disagree: report
+  both values.
 - If the data looks wrong, stop and say so. Examples: wrong modality for
   the task, a region that is not covered, strongly anisotropic voxels.
 - Patient identifiers are withheld by design. Never try to obtain them.
@@ -65,4 +74,5 @@ Parameters are checked against JSON Schemas (`ferrum-cli schema`).
 - `reference/outputs.md`: envelopes, render sidecars, workspace and
   export files.
 - `reference/safety.md`: privacy, provenance, review, operator settings.
+- `reference/segmentation.md`: engine workflows, quality checks, limits.
 - `schemas/commands.json`: JSON Schemas of all parameters.

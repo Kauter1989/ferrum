@@ -35,17 +35,35 @@ impl Agent {
     /// `ferrum-agent/1` envelope. Never panics on bad input. Every call
     /// loads the series from its source (command line).
     pub fn run(&self, command: &str, params: &Value) -> Value {
-        self.execute(None, command, params)
+        self.execute(None, None, command, params)
     }
 
     /// Like [`Agent::run`], but keeps loaded series in `cache` between
     /// calls (long-running servers such as MCP).
     pub fn run_cached(&self, cache: &mut VolumeCache, command: &str, params: &Value) -> Value {
-        self.execute(Some(cache), command, params)
+        self.execute(Some(cache), None, command, params)
     }
 
-    fn execute(&self, cache: Option<&mut VolumeCache>, command: &str, params: &Value) -> Value {
-        let mut ctx = Ctx { config: &self.config, study: None, cache };
+    /// Like [`Agent::run_cached`], reporting the progress of long commands
+    /// (automatic engine jobs) to `progress` as `(0..=1, message)`.
+    pub fn run_with_progress(
+        &self,
+        cache: &mut VolumeCache,
+        progress: &mut dyn FnMut(f64, &str),
+        command: &str,
+        params: &Value,
+    ) -> Value {
+        self.execute(Some(cache), Some(progress), command, params)
+    }
+
+    fn execute<'a>(
+        &'a self,
+        cache: Option<&'a mut VolumeCache>,
+        progress: Option<&'a mut crate::commands::ProgressFn<'a>>,
+        command: &str,
+        params: &Value,
+    ) -> Value {
+        let mut ctx = Ctx { config: &self.config, study: None, cache, progress };
         let result = self.dispatch(&mut ctx, command, params);
         let envelope = match &result {
             Ok(out) => {

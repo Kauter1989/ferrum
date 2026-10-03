@@ -191,6 +191,10 @@ pub struct Provenance {
     pub reviewed_by: Option<String>,
     /// When the item was confirmed or rejected.
     pub reviewed: Option<Timestamp>,
+    /// Who asked for the item when its author is a tool: e.g. the agent
+    /// that ran the engine which made a segment. `None` for items made
+    /// directly by their author.
+    pub requested_by: Option<Author>,
 }
 
 impl Provenance {
@@ -211,7 +215,14 @@ impl Provenance {
     }
 
     fn proposal(author: Author, created: Timestamp) -> Self {
-        Self { author, status: ReviewStatus::Proposed, created: Some(created), reviewed_by: None, reviewed: None }
+        Self {
+            author,
+            status: ReviewStatus::Proposed,
+            created: Some(created),
+            reviewed_by: None,
+            reviewed: None,
+            requested_by: None,
+        }
     }
 
     /// Records a review decision by `by` at `at`. A decision of
@@ -227,6 +238,18 @@ impl Provenance {
         }
     }
 
+    /// The same provenance, recording that `by` asked for the item.
+    #[must_use]
+    pub fn requested_by(mut self, by: Author) -> Self {
+        self.requested_by = Some(by);
+        self
+    }
+
+    /// `true` if an agent made the item or asked the tool that made it.
+    pub fn is_agent_work(&self) -> bool {
+        matches!(self.author, Author::Agent { .. }) || matches!(self.requested_by, Some(Author::Agent { .. }))
+    }
+
     /// `true` while the item waits for review.
     pub fn is_pending(&self) -> bool {
         self.status == ReviewStatus::Proposed
@@ -236,6 +259,16 @@ impl Provenance {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_work_includes_requested_tools() {
+        let engine = Provenance::engine("E", "1", false, Timestamp(1));
+        assert!(!engine.is_agent_work());
+        assert!(engine.clone().requested_by(Author::Agent { id: None }).is_agent_work());
+        assert!(!engine.requested_by(Author::Human).is_agent_work());
+        assert!(Provenance::agent(None, Timestamp(1)).is_agent_work());
+        assert!(!Provenance::default().is_agent_work());
+    }
 
     #[test]
     fn rfc3339_round_trip() {

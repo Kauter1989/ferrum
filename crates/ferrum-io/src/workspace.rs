@@ -7,6 +7,7 @@
 //! ├── annotations.json  # ferrum-annotations v2
 //! ├── segments.nii.gz   # label map on the volume grid
 //! ├── segments.json     # ferrum-segments v1: names, colours, provenance
+//! ├── engine_inputs.json  # ferrum-engine-inputs v1: prompts behind engine segments
 //! ├── renders/          # images written by the agent interface
 //! └── audit.jsonl       # one JSON object per line
 //! ```
@@ -28,6 +29,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::annotations::{read_annotations, write_annotation_report};
+use crate::engine_inputs::{read_engine_inputs, write_engine_inputs, EngineInput};
 use crate::error::IoError;
 use crate::nifti::{read_label_nifti, write_label_nifti};
 use crate::segments::{read_segments, write_segments};
@@ -47,6 +49,8 @@ pub mod files {
     pub const SEGMENTS_NIFTI: &str = "segments.nii.gz";
     /// Segment metadata (`ferrum-segments` v1).
     pub const SEGMENTS_JSON: &str = "segments.json";
+    /// Prompts behind interactive engine segments (`ferrum-engine-inputs` v1).
+    pub const ENGINE_INPUTS: &str = "engine_inputs.json";
     /// Directory of rendered images.
     pub const RENDERS: &str = "renders";
     /// Audit log (JSON lines).
@@ -332,6 +336,28 @@ impl Workspace {
         Ok(Some(SegmentationSet::from_labels(labels, segments)))
     }
 
+    /// Saves the prompts behind interactive engine segments; an empty list
+    /// removes the file.
+    pub fn save_engine_inputs(&self, inputs: &[EngineInput], generator: &str) -> Result<(), IoError> {
+        let path = self.path(files::ENGINE_INPUTS);
+        if inputs.is_empty() {
+            return remove_if_exists(&path);
+        }
+        let tmp = partial_path(&path);
+        write_engine_inputs(inputs, generator, &tmp)?;
+        std::fs::rename(&tmp, &path).map_err(|e| IoError::os(&path, e))
+    }
+
+    /// Loads the prompts behind interactive engine segments (empty if none
+    /// were saved).
+    pub fn load_engine_inputs(&self) -> Result<Vec<EngineInput>, IoError> {
+        let path = self.path(files::ENGINE_INPUTS);
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        read_engine_inputs(&path)
+    }
+
     /// Appends one entry to the audit log; a `time` field is added if
     /// missing. `entry` must be a JSON object.
     pub fn append_audit(&self, entry: Value) -> Result<(), IoError> {
@@ -505,6 +531,29 @@ mod tests {
         );
         std::fs::remove_file(&f.series.sources[0]).unwrap();
         assert!(matches!(opened.verify_sources(), Err(IoError::SourceChanged { .. })));
+    }
+
+    #[test]
+    fn engine_inputs_are_saved_and_removed() {
+        use ferrum_domain::{Prompt, VoxelBox};
+        let f = fixture();
+        let ws = Workspace::create(&f.root, &f.source, &f.series, "FERRUM test").unwrap();
+        assert!(ws.load_engine_inputs().unwrap().is_empty());
+        let input = EngineInput {
+            label: 2,
+            created: Some(Timestamp(5)),
+            engine: "http://127.0.0.1:8765".into(),
+            engine_name: "mock".into(),
+            engine_version: "1".into(),
+            roi: VoxelBox::new(glam::UVec3::ZERO, glam::UVec3::splat(2)),
+            revision: 1,
+            seeds: 0,
+            prompts: vec![Prompt::Point { positive: true, voxel: glam::UVec3::ONE }],
+        };
+        ws.save_engine_inputs(std::slice::from_ref(&input), "t").unwrap();
+        assert_eq!(ws.load_engine_inputs().unwrap(), vec![input]);
+        ws.save_engine_inputs(&[], "t").unwrap();
+        assert!(!ws.path(files::ENGINE_INPUTS).exists());
     }
 
     #[test]

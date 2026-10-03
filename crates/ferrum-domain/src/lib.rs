@@ -16,6 +16,7 @@
 //!   its longest *physical* side has length 1 (`p = (u - 0.5) * extent`).
 //!   See [`volume::Volume::model_extent`].
 
+pub mod analysis;
 pub mod annotation;
 pub mod camera;
 pub mod clip;
@@ -34,6 +35,7 @@ pub mod transfer;
 pub mod volume;
 pub mod window;
 
+pub use analysis::{Agreement, Component, Diameter, LargestSlice, MaskRegion, Shape};
 pub use annotation::{Annotation, AnnotationId, AnnotationSet, SliceKey};
 pub use camera::{OrbitCamera, ViewPreset};
 pub use clip::{ClipBox, ClipPlane, ClipSettings};

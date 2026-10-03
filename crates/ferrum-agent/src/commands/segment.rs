@@ -1,7 +1,7 @@
 //! `segment list|threshold|rename|delete`: segments saved in the
 //! workspace (label map + `ferrum-segments` sidecar).
 
-use ferrum_domain::{grow_region, Author};
+use ferrum_domain::grow_region;
 use ferrum_io::provenance::provenance_json;
 use serde_json::{json, Value};
 
@@ -75,15 +75,27 @@ pub fn threshold(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     Ok(Output::new(data))
 }
 
-fn own_segment(study: &Study, p: &Params) -> Result<u8, AgentError> {
-    let label = p.u64("label")?.ok_or_else(|| AgentError::bad_request("label is required"))?;
-    let seg = u8::try_from(label).ok().and_then(|l| study.segments.segment(l));
-    let seg = seg.ok_or_else(|| AgentError::not_found(format!("unknown segment {label}")).hint("see segment list"))?;
-    if !matches!(seg.provenance.author, Author::Agent { .. }) {
+/// Checks that the agent may change segment `label`: one it created, or
+/// one an engine made at an agent's request, as long as no person has
+/// confirmed it. Segments of people, engine results nobody asked for
+/// through the agent, and confirmed segments are `forbidden`.
+pub fn changeable_segment(study: &Study, label: u8) -> Result<u8, AgentError> {
+    let seg = study
+        .segments
+        .segment(label)
+        .ok_or_else(|| AgentError::not_found(format!("unknown segment {label}")).hint("see segment list"))?;
+    if seg.provenance.is_agent_work() && seg.provenance.status == ferrum_domain::ReviewStatus::Confirmed {
+        return Err(AgentError::new(
+            ErrorCode::Forbidden,
+            format!("segment {label} was confirmed by a person; agents do not change confirmed segments"),
+        )
+        .hint("ask the person to reopen it in the desktop app, or work on a new segment"));
+    }
+    if !seg.provenance.is_agent_work() {
         return Err(AgentError::new(
             ErrorCode::Forbidden,
             format!(
-                "segment {label} was created by a {}; agents may change only their own segments",
+                "segment {label} was created by a {}; agents may change only segments they created or asked an engine for",
                 seg.provenance.author.kind()
             ),
         ));
@@ -91,7 +103,14 @@ fn own_segment(study: &Study, p: &Params) -> Result<u8, AgentError> {
     Ok(seg.label)
 }
 
-/// `segment rename`: renames a segment the agent created.
+fn own_segment(study: &Study, p: &Params) -> Result<u8, AgentError> {
+    let label = p.u64("label")?.ok_or_else(|| AgentError::bad_request("label is required"))?;
+    let label = u8::try_from(label)
+        .map_err(|_| AgentError::not_found(format!("unknown segment {label}")).hint("see segment list"))?;
+    changeable_segment(study, label)
+}
+
+/// `segment rename`: renames a segment the agent created or requested.
 pub fn rename(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     let study = ctx.study(p)?;
     let label = own_segment(study, p)?;
@@ -102,7 +121,7 @@ pub fn rename(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     Ok(Output::new(json!({ "segment": segment_json(study, label) })))
 }
 
-/// `segment delete`: deletes a segment the agent created.
+/// `segment delete`: deletes a segment the agent created or requested.
 pub fn delete(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     let study = ctx.study(p)?;
     let label = own_segment(study, p)?;

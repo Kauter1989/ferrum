@@ -123,6 +123,7 @@ class Engine:
                 "prompts": b.get("prompts", []),
                 "planar_boxes_only": b.get("planar_boxes_only", False),
                 "undo": b.get("undo", False),
+                "deterministic": b.get("deterministic", True),
             },
             "modalities": b.get("modalities", []),
             "labels": b.get("labels", []),

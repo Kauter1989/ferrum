@@ -116,12 +116,16 @@ class JobRunner:
         threading.Thread(target=run, name=f"job-{job}", daemon=True).start()
         return job
 
-    def _progress(self, job: str, progress: float, message: Optional[str]) -> None:
+    def _progress(self, job: str, progress: float, message: Optional[str]) -> bool:
+        """Records progress; returns ``False`` once the job was cancelled, so
+        long work can stop early."""
         with self.lock:
-            if self.jobs[job]["state"] == "running":
-                self.jobs[job]["progress"] = max(0.0, min(1.0, progress))
-                if message:
-                    self.jobs[job]["message"] = message
+            if self.jobs[job]["state"] != "running":
+                return False
+            self.jobs[job]["progress"] = max(0.0, min(1.0, progress))
+            if message:
+                self.jobs[job]["message"] = message
+            return True
 
     def status(self, job: str) -> dict:
         with self.lock:
