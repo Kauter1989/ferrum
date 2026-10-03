@@ -70,6 +70,24 @@ make coverage                                # coverage report; CI floor in Make
 cargo run --release -- <path>                 # the app is the default member
 ```
 
+## Workflow skills and lessons
+
+Read `.claude/lessons.md` before a change: it records past bugs and
+wasted rounds, each with the guard that now catches it. Project skills
+in `.claude/skills/`:
+
+- `ferrum-change`: every change, from branching to PR.
+  `preflight.sh` runs the CI checks locally.
+- `ferrum-visual-check`: anything that draws pixels.
+  `phantom_render.py` checks closed outlines and fills at 1:1 and 8×.
+- `ferrum-field-test`: test scripts for the user's GPU machine, and
+  reading their results.
+- `ferrum-release`: version bump, `develop` → `main`, `release.yml`.
+- `ferrum-lessons`: add a failure or success to the log, with a guard.
+
+`develop` and `main` change only through merged PRs. Pushing a feature
+branch is fine; merging needs the user's word.
+
 ## Conventions
 
 - Keep functions within the complexity budget in `clippy.toml` (cognitive
