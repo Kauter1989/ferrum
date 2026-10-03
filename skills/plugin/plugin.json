@@ -1,6 +1,6 @@
 {
   "name": "ferrum",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "description": "FERRUM medical imaging for agents: view, measure and segment CT/MR studies (DICOM, NIfTI) with clinicians in control. Not a medical device.",
   "author": { "name": "Viacheslav Chukanov", "email": "research@vchukanov.ru" },
   "homepage": "https://github.com/Kauter1989/ferrum",

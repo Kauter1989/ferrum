@@ -6,9 +6,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-10-03
+
 Stage 17: agent segmentation scenarios with nnInteractive,
 TotalSegmentator and MONAI Label on one GPU
-([design](docs/agent-segmentation.md)).
+([scenarios](docs/segmentation-scenarios.md), [design](docs/agent-segmentation.md)).
 
 ### Added
 
@@ -158,6 +160,7 @@ frame, 2D slices and MPR, GPU volume rendering (tissue, isosurface, MIP,
 transfer functions) with a CPU reference renderer and parity tests,
 measurements, clipping, eraser and headless snapshots.
 
+[0.3.0]: https://github.com/Kauter1989/ferrum/compare/v0.2.3...v0.3.0
 [0.2.3]: https://github.com/Kauter1989/ferrum/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/Kauter1989/ferrum/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/Kauter1989/ferrum/compare/v0.2.0...v0.2.1
