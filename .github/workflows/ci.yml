@@ -35,6 +35,15 @@ jobs:
       - name: Release build
         run: cargo build --release
 
+  licenses:
+    # Every dependency's licence must fit "MIT OR Apache-2.0" (deny.toml).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check licenses
+
   coverage:
     runs-on: ubuntu-latest
     steps:
@@ -93,3 +102,11 @@ jobs:
         env:
           FERRUM_ENGINE_URL: http://127.0.0.1:8765
         run: cargo test -p ferrum-engines --test conformance
+      - name: DICOM SEG and SR export, validated with highdicom
+        working-directory: .
+        env:
+          FERRUM_DICOM_EXPORT_DIR: ${{ runner.temp }}/dicom-export
+        run: |
+          pip install highdicom
+          cargo test -p ferrum-io --test dicom_export
+          python scripts/validate_dicom_export.py "$FERRUM_DICOM_EXPORT_DIR"

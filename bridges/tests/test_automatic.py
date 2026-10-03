@@ -195,3 +195,68 @@ def test_totalsegmentator_shape_mismatch_fails_the_job():
     assert status["state"] == "failed" and "differs" in status["message"]
     with pytest.raises(ValueError):
         s.label_map()
+
+
+FAKE_TOTALSEGMENTATOR = """
+import time
+import numpy as np
+import nibabel as nib
+
+
+def totalsegmentator(image, output, **options):
+    if options["task"] == "slow":
+        time.sleep(60)
+    data = np.asanyarray(image.dataobj)
+    return nib.Nifti1Image(np.where(data > 0, 5, 0).astype(np.uint8), image.affine)
+"""
+
+
+@pytest.fixture
+def fake_totalsegmentator(tmp_path, monkeypatch):
+    """A ``totalsegmentator`` package the spawned job process can import."""
+    pkg = tmp_path / "totalsegmentator"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "python_api.py").write_text(FAKE_TOTALSEGMENTATOR)
+    (pkg / "config.py").write_text("def set_config_key(key, value):\n    pass\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+
+def test_jobs_run_in_a_child_process(fake_totalsegmentator):
+    backend = StubTotalSegmentator()
+    backend.isolate = True
+    s = TotalSegmentatorSession(backend, volume().astype(np.float32), (1, 1, 2), (0, 0, 0), ((1, 0, 0), (0, 1, 0), (0, 0, 1)))
+    status = s.runner.wait(s.start_job(["liver"]), timeout=60)
+    assert status["state"] == "done", status
+    assert np.array_equal(s.label_map() == 5, volume() > 0)
+    assert backend.calls == [], "the model ran in the child, not in the bridge"
+
+
+def test_cancelling_a_job_ends_its_process(fake_totalsegmentator):
+    import threading
+
+    backend = StubTotalSegmentator("slow")
+    backend.isolate = True
+    s = TotalSegmentatorSession(backend, volume().astype(np.float32), (1, 1, 2), (0, 0, 0), ((1, 0, 0), (0, 1, 0), (0, 0, 1)))
+    job = s.start_job(None)
+    for _ in range(200):
+        if "running (" in s.runner.status(job)["message"]:
+            break
+        time.sleep(0.05)
+    s.cancel_job(job)
+    assert s.runner.status(job)["state"] == "cancelled"
+    for _ in range(200):
+        if not any(t.name == f"job-{job}" for t in threading.enumerate()):
+            break
+        time.sleep(0.05)
+    assert not any(t.name == f"job-{job}" for t in threading.enumerate()), "the job stopped with its process"
+    assert s.runner.result is None
+
+
+def test_a_failing_child_fails_the_job(fake_totalsegmentator, tmp_path):
+    (tmp_path / "totalsegmentator" / "python_api.py").write_text("def totalsegmentator(*a, **k):\n    raise SystemExit(3)\n")
+    backend = StubTotalSegmentator()
+    backend.isolate = True
+    s = TotalSegmentatorSession(backend, volume().astype(np.float32), (1, 1, 2), (0, 0, 0), ((1, 0, 0), (0, 1, 0), (0, 0, 1)))
+    status = s.runner.wait(s.start_job(None), timeout=60)
+    assert status["state"] == "failed" and "exit code 3" in status["message"]

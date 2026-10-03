@@ -19,10 +19,14 @@ use crate::jobs::{FilterKind, JobEvent, JobQueue};
 use crate::tools::{InputKind, ProbeReading, SliceContext, ToolController, ToolInput, ToolKind, ToolOutcome};
 
 mod ai;
+mod review;
 mod segments;
+mod workflow;
 
 pub use ai::{AiState, AiStatus};
-pub use segments::{SegmentSummary, SegmentationState};
+pub use review::ReviewEntry;
+pub use segments::{RegionSettings, SegmentSummary, SegmentationState};
+pub use workflow::SegmentationStep;
 
 /// Layout of the main area.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -221,8 +225,8 @@ pub struct Viewer {
     jobs: JobQueue,
     dataset: Option<Dataset>,
     next_revision: u64,
-    /// Active layout.
-    pub view_mode: ViewMode,
+    /// Active layout (see [`Viewer::set_view_mode`]).
+    view_mode: ViewMode,
     /// 2D state.
     pub slices: SliceState,
     /// 3D state.
@@ -242,6 +246,8 @@ pub struct Viewer {
     pub series_choice: Option<Vec<SeriesDescriptor>>,
     /// Pending text annotation position (UI shows an input box).
     pub pending_text: Option<(SliceKey, Vec2)>,
+    workspace: Option<review::WorkspaceSession>,
+    pending_workspace: Option<Arc<dyn ferrum_domain::ResultStore>>,
 }
 
 impl Viewer {
@@ -264,6 +270,8 @@ impl Viewer {
             status: Status { message: "Open a DICOM folder or NIfTI file to start".into(), ..Status::default() },
             series_choice: None,
             pending_text: None,
+            workspace: None,
+            pending_workspace: None,
         }
     }
 
@@ -326,6 +334,7 @@ impl Viewer {
         self.volume.mask_generation = self.bump_revision();
         self.annotations.clear();
         self.clear_segmentation();
+        self.segments.region = RegionSettings::for_window(self.slices.window);
         self.reset_ai_session();
         self.tool_ctl.cancel();
         self.probe = None;
@@ -340,6 +349,7 @@ impl Viewer {
             dataset.volume.spacing().z,
         );
         self.dataset = Some(dataset);
+        self.attach_workspace();
     }
 
     fn bump_revision(&mut self) -> u64 {
@@ -380,7 +390,12 @@ impl Viewer {
             }
             JobEvent::Scanned(Ok(mut series)) => {
                 self.status.progress = None;
-                if series.len() == 1 {
+                let opening_workspace = self.pending_workspace.is_some();
+                if let Some(s) = self.take_workspace_series(&mut series) {
+                    self.load_series(s);
+                } else if opening_workspace {
+                    self.status.message = "The workspace could not be opened".into();
+                } else if series.len() == 1 {
                     let s = series.remove(0);
                     self.load_series(s);
                 } else {
@@ -394,6 +409,7 @@ impl Viewer {
             }
             JobEvent::Scanned(Err(e)) | JobEvent::Loaded(Err(e)) => {
                 self.status.progress = None;
+                self.pending_workspace = None;
                 self.status.message = format!("Loading failed: {e}");
                 self.status.errors.push(e.to_string());
             }
@@ -476,12 +492,6 @@ impl Viewer {
     /// Annotation currently being drawn.
     pub fn annotation_preview(&self) -> Option<Annotation> {
         self.tool_ctl.preview(self.tool)
-    }
-
-    /// Selects a 2D tool (cancelling any drawing in progress).
-    pub fn select_tool(&mut self, tool: ToolKind) {
-        self.tool = tool;
-        self.tool_ctl.cancel();
     }
 
     /// Adds an annotation to a slice (e.g. imported or scripted), as drawn
@@ -585,6 +595,11 @@ impl Viewer {
             ToolOutcome::Prompt(p) => {
                 self.ai_prompt(p.clone());
             }
+            ToolOutcome::Seed(voxel) => {
+                if let Err(e) = self.grow_region_at(*voxel) {
+                    self.status.message = e;
+                }
+            }
             _ => {}
         }
         outcome
@@ -635,6 +650,8 @@ impl Viewer {
             nearest: self.slices.nearest,
             background: [0.05, 0.05, 0.06, 1.0],
             segments: self.segments.overlay_active(),
+            segment_style: self.segments.style,
+            fill_opacity: self.segments.fill_opacity,
         })
     }
 
@@ -711,8 +728,12 @@ impl Viewer {
     }
 
     /// Erases material under `ndc` with the current brush. Returns `true`
-    /// if anything was removed.
+    /// if anything was removed. Only the 3D view erases; in other layouts
+    /// nothing happens.
     pub fn erase_at(&mut self, ndc: Vec2, aspect: f32) -> bool {
+        if self.view_mode != ViewMode::Volume3d {
+            return false;
+        }
         let Some(hit) = self.pick(ndc, aspect) else {
             return false;
         };

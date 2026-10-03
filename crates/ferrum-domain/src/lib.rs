@@ -16,6 +16,7 @@
 //!   its longest *physical* side has length 1 (`p = (u - 0.5) * extent`).
 //!   See [`volume::Volume::model_extent`].
 
+pub mod analysis;
 pub mod annotation;
 pub mod camera;
 pub mod clip;
@@ -27,12 +28,14 @@ pub mod provenance;
 pub mod render_settings;
 pub mod report;
 pub mod repository;
+pub mod review;
 pub mod segmentation;
 pub mod slice;
 pub mod transfer;
 pub mod volume;
 pub mod window;
 
+pub use analysis::{Agreement, Component, Diameter, LargestSlice, MaskRegion, Shape};
 pub use annotation::{Annotation, AnnotationId, AnnotationSet, SliceKey};
 pub use camera::{OrbitCamera, ViewPreset};
 pub use clip::{ClipBox, ClipPlane, ClipSettings};
@@ -50,7 +53,10 @@ pub use repository::{
     CancelFlag, LoadedSeries, NoProgress, ProgressSink, RepositoryError, SeriesDescriptor, SeriesMetadata, StudyInfo,
     VolumeRepository,
 };
-pub use segmentation::{LabelEdit, LabelMap, Segment, SegmentationError, SegmentationSet, VoxelBox};
+pub use review::{ResultStore, ReviewDecision, ReviewItem};
+pub use segmentation::{
+    grow_region, LabelEdit, LabelMap, Segment, SegmentStyle, SegmentationError, SegmentationSet, VoxelBox,
+};
 pub use slice::{SliceAxis, SliceImage, SliceView};
 pub use transfer::{ControlPoint, CtPreset, TransferFunction, TransferFunctionError};
 pub use volume::{Geometry, IntensityRange, Volume, VolumeError};

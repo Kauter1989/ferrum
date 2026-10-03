@@ -84,7 +84,8 @@ skills/ferrum/
 │   ├── coordinates.md        # voxel, slice number, patient mm, pixel mapping
 │   ├── outputs.md            # JSON formats and links to the schemas
 │   └── safety.md             # PHI, clinical safety, provenance
-└── schemas/                  # JSON Schemas generated from ferrum-agent types
+├── schemas/commands.json     # JSON Schemas (ferrum-cli schema; a test keeps them in sync)
+└── evals/                    # tasks with known answers; ferrum-cli eval grades transcripts
 ```
 
 - `SKILL.md` is short. The reference pages are loaded only when the agent
@@ -139,7 +140,7 @@ ws/ct1/
   (implemented in Stage 15.2).
 - If a source file changes (its hash differs), commands fail with
   `source_changed`.
-- The desktop app opens a workspace (*File → Open workspace*) and shows
+- The desktop app opens a workspace (*Open workspace* in the toolbar) and shows
   the review queue (§10).
 
 ## 7. Commands (v1)
@@ -167,8 +168,11 @@ The command groups mirror the `Viewer` facade. Every command takes
 | `engine info` | Connected engine capabilities | — | `info` from the engine protocol, `research_only` |
 | `segment interactive` | Prompt an interactive engine | segment, prompts (point ±, box, scribble, lasso) | changed box, ml, revision |
 | `segment auto` | Automatic engine job | labels | job id, then segments |
-| `export bundle` | Everything for hand-off | formats (JSON, NIfTI; later DICOM SEG/SR) | file paths + hashes |
+| `export bundle` | Everything for hand-off | formats (`ferrum`: JSON, NIfTI; `dicom`: SEG, SR TID 1500) | file paths + hashes |
 | `review open` | Open the workspace in the desktop app | — | — |
+
+The segmentation scenarios with engines, further segment commands and
+quality checks are designed in [agent-segmentation.md](agent-segmentation.md).
 
 ### Points
 
@@ -198,7 +202,7 @@ all three:
   "data": { "value": -812.4, "unit": "HU", "voxel": [251, 198, 156], "patient_mm": [-42.1, 10.5, -130.0] },
   "warnings": [],
   "provenance": {
-    "ferrum": "0.2.0",
+    "ferrum": "0.2.1",
     "command": "probe",
     "params": { "point": { "voxel": [251, 198, 156] } },
     "source_sha256": "9f2c…",
@@ -272,7 +276,7 @@ Every render writes a PNG and a sidecar JSON:
   - `reviewed_by` and `reviewed` (time), once confirmed or rejected.
 - Everything created through `ferrum-cli` is `proposed`.
 - The desktop app shows proposed items in a **review queue** with their
-  author. The clinician accepts, edits or rejects each item, and the
+  author (*Open workspace*, implemented in Stage 15.6). The clinician accepts, edits or rejects each item, and the
   decision is written back to the workspace and the audit log.
 - A harness may confirm items itself only through
   `review confirm --by <name>` and only if the operator configuration
@@ -365,15 +369,16 @@ allow_harness_confirmation = false
 | `skills/ferrum` (new) | `SKILL.md`, reference pages, schemas, plugin manifest |
 
 The layering stays as it is. `ferrum-agent` depends on `ferrum-domain`,
-`ferrum-io` and `ferrum-render` without its GPU feature: it needs no
+`ferrum-io`, `ferrum-engines` (engine commands) and `ferrum-render` without
+its GPU feature: it needs no
 interactive state from `ferrum-app`, renders slices directly and 3D views
 with the CPU reference ray caster. `ferrum-cli` only parses arguments. The implemented
 commands are listed in [agent-cli.md](agent-cli.md).
 
 ## Appendix A — draft `SKILL.md`
 
-This draft becomes `skills/ferrum/SKILL.md` when `ferrum-cli` ships. Its
-commands are not implemented yet.
+The shipped skill is [`skills/ferrum/SKILL.md`](../skills/ferrum/SKILL.md)
+(Stage 15.5); this draft is kept as the design record.
 
 ````markdown
 ---

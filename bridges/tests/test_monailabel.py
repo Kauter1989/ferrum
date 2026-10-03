@@ -170,6 +170,7 @@ def test_sam2_boxes_and_model_choice():
     server, backend, client = bridge(model="sam2", auto_model="")
     caps = client.get("/v1/info").json()["capabilities"]
     assert (caps["prompts"], caps["automatic"]) == (["point", "box"], False)
+    assert caps["deterministic"] is False, "inference runs on the MONAI Label server"
     sid = open_session(client)
     r = client.post(f"/v1/sessions/{sid}/prompts", json={"type": "box", "min": [12, 4, 3], "max": [19, 13, 10]}).json()
     assert server.state.requests[-1][3]["roi"] == [12, 4, 19, 13, 3, 10], "roi = x0, y0, x1, y1, z0, z1"

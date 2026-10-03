@@ -219,6 +219,81 @@ pub fn palette_color(label: u8) -> [u8; 3] {
 /// Default overlay opacity of new segments.
 pub const DEFAULT_OPACITY: f32 = 0.5;
 
+/// How segments are drawn over a slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum SegmentStyle {
+    /// A one-pixel outline in full colour; the image stays visible inside.
+    Outline,
+    /// A translucent fill (segment opacity × the display's fill opacity).
+    Fill,
+    /// Fill with an outline.
+    #[default]
+    FillAndOutline,
+}
+
+impl SegmentStyle {
+    /// All styles, in display order.
+    pub const ALL: [SegmentStyle; 3] = [SegmentStyle::Outline, SegmentStyle::Fill, SegmentStyle::FillAndOutline];
+
+    /// Wire name: `outline`, `fill` or `fill_outline`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SegmentStyle::Outline => "outline",
+            SegmentStyle::Fill => "fill",
+            SegmentStyle::FillAndOutline => "fill_outline",
+        }
+    }
+
+    /// Inverse of [`SegmentStyle::as_str`].
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|x| x.as_str() == s)
+    }
+
+    /// Short label for the UI.
+    pub fn label(self) -> &'static str {
+        match self {
+            SegmentStyle::Outline => "Outline",
+            SegmentStyle::Fill => "Fill",
+            SegmentStyle::FillAndOutline => "Both",
+        }
+    }
+
+    /// Id passed to the slice shader (`0` outline, `1` fill, `2` both).
+    pub fn id(self) -> u32 {
+        match self {
+            SegmentStyle::Outline => 0,
+            SegmentStyle::Fill => 1,
+            SegmentStyle::FillAndOutline => 2,
+        }
+    }
+
+    /// The style draws a fill.
+    pub fn fills(self) -> bool {
+        self != SegmentStyle::Outline
+    }
+
+    /// The style draws an outline.
+    pub fn outlines(self) -> bool {
+        self != SegmentStyle::Fill
+    }
+
+    /// Colour of one pixel of segment colour `color` over `grey`: the
+    /// outline in full colour on edge pixels, else the fill blended with
+    /// `alpha` (segment opacity × fill opacity), else `grey`. Mirrors the
+    /// slice shader (`slice.wgsl`).
+    pub fn blend(self, grey: [u8; 3], color: [u8; 3], alpha: f32, edge: bool) -> [u8; 3] {
+        if edge && self.outlines() {
+            return color;
+        }
+        if !self.fills() {
+            return grey;
+        }
+        let a = alpha.clamp(0.0, 1.0);
+        let mix = |g: u8, c: u8| (f32::from(g) + (f32::from(c) - f32::from(g)) * a).round() as u8;
+        [mix(grey[0], color[0]), mix(grey[1], color[1]), mix(grey[2], color[2])]
+    }
+}
+
 /// Voxels changed by one edit, sufficient to undo it.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct LabelEdit {
@@ -568,12 +643,119 @@ fn index_to_voxel(dims: Dims3, idx: usize) -> UVec3 {
     UVec3::new((idx % nx) as u32, ((idx / nx) % ny) as u32, (idx / (nx * ny)) as u32)
 }
 
+/// Region growing: the 6-connected region of unlabelled voxels of
+/// `labels` whose physical value lies in `[lo, hi]`, grown from `seed`.
+///
+/// Returns the region's bounding box and its mask over that box (`i`
+/// fastest, `1` inside), ready for [`SegmentationSet::apply_mask`].
+/// Returns `None` when the seed is outside the grid, labelled or outside
+/// the range, or once the region exceeds `max_voxels` (it leaked into
+/// neighbouring tissue).
+pub fn grow_region(
+    volume: &crate::volume::Volume,
+    labels: &SegmentationSet,
+    seed: UVec3,
+    lo: f32,
+    hi: f32,
+    max_voxels: u64,
+) -> Option<(VoxelBox, Vec<u8>)> {
+    let d = volume.dims();
+    if labels.dims() != d || !d.contains(i64::from(seed.x), i64::from(seed.y), i64::from(seed.z)) {
+        return None;
+    }
+    let accept = |i: u32, j: u32, k: u32| {
+        labels.labels().label(i, j, k) == Some(0) && volume.physical(i, j, k).is_some_and(|x| (lo..=hi).contains(&x))
+    };
+    if !accept(seed.x, seed.y, seed.z) {
+        return None;
+    }
+    let mut inside = vec![false; d.voxel_count()];
+    let mut queue = std::collections::VecDeque::from([seed]);
+    inside[d.index(seed.x, seed.y, seed.z)] = true;
+    let (mut lo_c, mut hi_c, mut count) = (seed, seed, 0u64);
+    while let Some(v) = queue.pop_front() {
+        count += 1;
+        if count > max_voxels {
+            return None;
+        }
+        lo_c = lo_c.min(v);
+        hi_c = hi_c.max(v);
+        let neighbours = [
+            v.x.checked_sub(1).map(|x| UVec3::new(x, v.y, v.z)),
+            (v.x + 1 < d.x).then(|| UVec3::new(v.x + 1, v.y, v.z)),
+            v.y.checked_sub(1).map(|y| UVec3::new(v.x, y, v.z)),
+            (v.y + 1 < d.y).then(|| UVec3::new(v.x, v.y + 1, v.z)),
+            v.z.checked_sub(1).map(|z| UVec3::new(v.x, v.y, z)),
+            (v.z + 1 < d.z).then(|| UVec3::new(v.x, v.y, v.z + 1)),
+        ];
+        for n in neighbours.into_iter().flatten() {
+            let idx = d.index(n.x, n.y, n.z);
+            if !inside[idx] && accept(n.x, n.y, n.z) {
+                inside[idx] = true;
+                queue.push_back(n);
+            }
+        }
+    }
+    let bx = VoxelBox::new(lo_c, hi_c + UVec3::ONE);
+    let mut mask = Vec::with_capacity(bx.voxel_count());
+    for k in bx.min.z..bx.max.z {
+        for j in bx.min.y..bx.max.y {
+            for i in bx.min.x..bx.max.x {
+                mask.push(u8::from(inside[d.index(i, j, k)]));
+            }
+        }
+    }
+    Some((bx, mask))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn dims() -> Dims3 {
         Dims3::new(4, 3, 2)
+    }
+
+    #[test]
+    fn segment_styles_blend_like_the_shader() {
+        for st in SegmentStyle::ALL {
+            assert_eq!(SegmentStyle::parse(st.as_str()), Some(st));
+            assert!(!st.label().is_empty());
+        }
+        assert_eq!(SegmentStyle::parse("glow"), None);
+        assert_eq!(SegmentStyle::default(), SegmentStyle::FillAndOutline);
+        let (g, c) = ([100, 100, 100], [200, 0, 50]);
+        assert_eq!(SegmentStyle::Outline.blend(g, c, 0.5, true), c);
+        assert_eq!(SegmentStyle::Outline.blend(g, c, 0.5, false), g);
+        assert_eq!(SegmentStyle::Fill.blend(g, c, 0.5, true), [150, 50, 75], "fill only: edges are filled too");
+        assert_eq!(SegmentStyle::FillAndOutline.blend(g, c, 0.5, false), [150, 50, 75]);
+        assert_eq!(SegmentStyle::FillAndOutline.blend(g, c, 0.5, true), c);
+        assert_eq!(SegmentStyle::Fill.blend(g, c, 0.0, false), g);
+        assert_eq!(SegmentStyle::Fill.blend(g, c, 2.0, false), c);
+        assert_eq!(SegmentStyle::ALL.map(SegmentStyle::id), [0, 1, 2]);
+    }
+
+    #[test]
+    fn region_growing_stays_in_range_and_out_of_segments() {
+        // 6 × 1 × 1 row: 10 10 50 10 10 10, voxel 4 already labelled
+        let d = Dims3::new(6, 1, 1);
+        let v = crate::volume::Volume::from_physical(d, Vec3::ONE, &[10.0, 10.0, 50.0, 10.0, 10.0, 10.0]).unwrap();
+        let mut set = SegmentationSet::new(d);
+        let taken = set.add_segment("taken").unwrap();
+        set.apply_mask(taken, VoxelBox::new(UVec3::new(4, 0, 0), UVec3::new(5, 1, 1)), &[1], false).unwrap();
+        let (bx, mask) = grow_region(&v, &set, UVec3::ZERO, 0.0, 20.0, u64::MAX).unwrap();
+        assert_eq!(
+            (bx, mask),
+            (VoxelBox::new(UVec3::ZERO, UVec3::new(2, 1, 1)), vec![1, 1]),
+            "stops at the bright voxel"
+        );
+        let (bx, mask) = grow_region(&v, &set, UVec3::ZERO, 0.0, 60.0, u64::MAX).unwrap();
+        assert_eq!((bx.max.x, mask.len()), (4, 4), "stops at the labelled voxel");
+        assert!(grow_region(&v, &set, UVec3::ZERO, 0.0, 60.0, 3).is_none(), "too large");
+        assert!(grow_region(&v, &set, UVec3::new(2, 0, 0), 0.0, 20.0, 10).is_none(), "seed out of range");
+        assert!(grow_region(&v, &set, UVec3::new(4, 0, 0), 0.0, 20.0, 10).is_none(), "seed labelled");
+        assert!(grow_region(&v, &set, UVec3::new(9, 0, 0), 0.0, 20.0, 10).is_none(), "seed outside");
+        assert!(grow_region(&v, &SegmentationSet::new(dims()), UVec3::ZERO, 0.0, 20.0, 10).is_none(), "other grid");
     }
 
     #[test]

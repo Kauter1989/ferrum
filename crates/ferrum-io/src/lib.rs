@@ -11,6 +11,7 @@
 
 pub mod annotations;
 pub mod dicom;
+pub mod engine_inputs;
 pub mod error;
 pub mod files;
 pub mod nifti;
@@ -24,10 +25,11 @@ use ferrum_domain::{LoadedSeries, ProgressSink, RepositoryError, SeriesDescripto
 
 pub use annotations::{annotation_report_json, annotations_from_json, read_annotations, write_annotation_report};
 pub use dicom::DicomRepository;
+pub use engine_inputs::EngineInput;
 pub use error::IoError;
 pub use nifti::{read_label_nifti, read_nifti, write_label_nifti, write_nifti, NiftiRepository};
 pub use segments::{read_segments, segments_from_json, segments_json, write_segments};
-pub use workspace::{sha256_file, SourceFile, Workspace, WorkspaceManifest, WorkspaceSource};
+pub use workspace::{sha256_file, SourceFile, Workspace, WorkspaceManifest, WorkspaceSource, WorkspaceStore};
 
 /// Repository that dispatches to every supported format.
 pub struct CompositeRepository {

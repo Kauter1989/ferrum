@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ferrum_bridges.backends import FakeBackend, diff_box, grow
-from ferrum_bridges.nninteractive import NnInteractiveSession, _research_only
+from ferrum_bridges.nninteractive import NnInteractiveBackend, NnInteractiveSession, _research_only
 from ferrum_bridges.protocol import create_app
 
 DIMS = [20, 16, 12]  # nx, ny, nz
@@ -48,6 +48,7 @@ def test_info(client):
     assert info["protocol"] == "ferrum-engine/1"
     assert info["capabilities"]["interactive"] is True
     assert set(info["capabilities"]["prompts"]) == {"point", "box", "scribble", "lasso"}
+    assert info["capabilities"]["deterministic"] is True, "omitted by the backend: deterministic"
 
 
 def test_point_mask_undo_reset_delete(client):
@@ -212,3 +213,39 @@ def test_nninteractive_adapter():
     s.reset()
     s.close()
     assert stub.calls[-2:] == [("reset",), ("reset",)]
+
+
+def test_nninteractive_frees_the_image_when_a_session_closes():
+    released = []
+    s = NnInteractiveSession(StubSession(), np.zeros((1, 1, 1), np.uint8), release=lambda: released.append(1))
+    s.close()
+    assert released == [1]
+
+    class Torch:  # records cache clears
+        cleared = 0
+
+        class cuda:  # noqa: N801 - mirrors torch.cuda
+            @staticmethod
+            def empty_cache():
+                Torch.cleared += 1
+
+    class Device:
+        type = "cuda"
+
+    class WithReset:
+        reset = 0
+
+        def _reset_session(self):
+            self.reset += 1
+
+    class Plain:
+        original_image = preprocessed_image = target_buffer = "tensor"
+
+    backend = NnInteractiveBackend.__new__(NnInteractiveBackend)  # skip loading a model
+    backend.torch, backend.device = Torch, Device()
+    backend.session = WithReset()
+    backend.release()
+    assert (backend.session.reset, Torch.cleared) == (1, 1)
+    backend.session = Plain()
+    backend.release()
+    assert (backend.session.original_image, backend.session.target_buffer, Torch.cleared) == (None, None, 2)

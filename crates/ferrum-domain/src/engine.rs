@@ -49,7 +49,7 @@ impl PromptKind {
 }
 
 /// What an engine can do.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EngineCapabilities {
     /// Supports interactive sessions.
     pub interactive: bool,
@@ -61,6 +61,23 @@ pub struct EngineCapabilities {
     pub planar_boxes_only: bool,
     /// Supports server-side undo.
     pub undo: bool,
+    /// Replaying the same prompts on a new session gives the same mask
+    /// (the protocol's `deterministic`, `true` when an engine omits it).
+    pub deterministic: bool,
+}
+
+impl Default for EngineCapabilities {
+    /// No capabilities; deterministic.
+    fn default() -> Self {
+        Self {
+            interactive: false,
+            automatic: false,
+            prompts: Vec::new(),
+            planar_boxes_only: false,
+            undo: false,
+            deterministic: true,
+        }
+    }
 }
 
 /// A label an automatic engine can produce.

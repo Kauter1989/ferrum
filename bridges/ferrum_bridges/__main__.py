@@ -34,6 +34,8 @@ def _parser() -> argparse.ArgumentParser:
     nni.add_argument("--model-dir", default=os.environ.get("NNINTERACTIVE_MODEL_FOLDER"),
                      help="use an already downloaded model folder instead of downloading")
     nni.add_argument("--torch-compile", action="store_true", help="faster predictions after a slow first one")
+    nni.add_argument("--deterministic", action="store_true",
+                     help="deterministic GPU kernels: replayed prompts give identical masks (slightly slower)")
 
     ts = sub.add_parser("totalsegmentator", help="TotalSegmentator: automatic segmentation of CT/MR structures")
     ts.add_argument("--task", default=os.environ.get("TOTALSEG_TASK", "total"),
@@ -42,6 +44,9 @@ def _parser() -> argparse.ArgumentParser:
     ts.add_argument("--fast", action="store_true", help="3 mm model: faster and lighter, less precise")
     ts.add_argument("--license-number", default=os.environ.get("TOTALSEG_LICENSE"),
                     help="licence number for tasks that need one")
+    ts.add_argument("--in-process", action="store_true",
+                    help="run jobs in the bridge process (default: a child process per job, which returns "
+                         "all GPU memory when the job ends and can be cancelled at once)")
 
     ml = sub.add_parser("monailabel", help="MONAI Label: serve a running MONAI Label server's models")
     ml.add_argument("--server", default=os.environ.get("MONAI_LABEL_URL", "http://127.0.0.1:8000"),
@@ -65,11 +70,12 @@ def build_backend(args):
     if args.engine == "nninteractive":
         from .nninteractive import NnInteractiveBackend
 
-        return NnInteractiveBackend(args.device, args.model_id, args.model_dir, args.torch_compile)
+        return NnInteractiveBackend(args.device, args.model_id, args.model_dir, args.torch_compile, args.deterministic)
     if args.engine == "totalsegmentator":
         from .totalsegmentator import TotalSegmentatorBackend
 
-        return TotalSegmentatorBackend(args.task, args.device, args.fast, args.license_number)
+        return TotalSegmentatorBackend(args.task, args.device, args.fast, args.license_number,
+                                       isolate=not args.in_process)
     if args.engine == "monailabel":
         from .monailabel import MonaiLabelBackend
 

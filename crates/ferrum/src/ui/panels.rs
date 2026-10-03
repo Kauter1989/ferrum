@@ -1,6 +1,12 @@
-//! Right-hand settings panel with three tabs: image (window, slices, in the
-//! 2D view the annotation list, and segments), 3D (technique, transfer
-//! function, clipping, eraser, segments) and details (series information).
+//! Right-hand settings panel. Its tabs follow the view mode, so only
+//! settings that affect what is on screen are offered:
+//!
+//! - **Image** (2D, MPR): window, slices, annotations (2D) and
+//!   segmentation — the guide, the region tool, the AI engine and the
+//!   segment list;
+//! - **Volume** (3D, MPR): technique, transfer function, clipping, the
+//!   eraser (3D) and the segment list for display;
+//! - **Details** (always): series information.
 
 use egui::{RichText, Slider};
 use egui_phosphor::light as icon;
@@ -12,7 +18,8 @@ use ferrum_domain::{
     WindowPreset,
 };
 
-use super::ai_panel::{self, AiPanelState};
+use super::ai_panel::AiPanelState;
+use super::segmentation_panel;
 use super::segments_panel::{self, SegmentsPanelState};
 use super::tf_editor::{self, TfEditorState};
 use super::theme::{ACCENT, OVERLAY, TEXT, TEXT_DIM};
@@ -31,7 +38,14 @@ pub enum PanelTab {
 }
 
 impl PanelTab {
-    const ALL: [PanelTab; 3] = [PanelTab::Image, PanelTab::Volume, PanelTab::Details];
+    /// Tabs offered in `mode`.
+    fn for_mode(mode: ViewMode) -> &'static [PanelTab] {
+        match mode {
+            ViewMode::Slice2d => &[PanelTab::Image, PanelTab::Details],
+            ViewMode::Volume3d => &[PanelTab::Volume, PanelTab::Details],
+            ViewMode::Mpr => &[PanelTab::Image, PanelTab::Volume, PanelTab::Details],
+        }
+    }
 
     fn label(self) -> &'static str {
         match self {
@@ -62,6 +76,8 @@ pub struct PanelState {
     pub segments: SegmentsPanelState,
     /// State of the "AI segmentation" section.
     pub ai: AiPanelState,
+    /// State of the "Review" section.
+    pub review: super::review_panel::ReviewPanelState,
 }
 
 fn collapsible(ui: &mut egui::Ui, id: &str, icon_str: &str, title: &str, open: bool, body: impl FnOnce(&mut egui::Ui)) {
@@ -74,18 +90,22 @@ pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelState) {
     if viewer.dataset().is_none() {
         return;
     }
-    if state.last_mode != Some(viewer.view_mode) {
-        match viewer.view_mode {
+    let tabs = PanelTab::for_mode(viewer.view_mode());
+    if state.last_mode != Some(viewer.view_mode()) {
+        match viewer.view_mode() {
             ViewMode::Slice2d => state.tab = PanelTab::Image,
             ViewMode::Volume3d => state.tab = PanelTab::Volume,
             ViewMode::Mpr => {}
         }
-        state.last_mode = Some(viewer.view_mode);
+        state.last_mode = Some(viewer.view_mode());
     }
-    let labels = PanelTab::ALL.map(PanelTab::label);
-    let selected = PanelTab::ALL.iter().position(|t| *t == state.tab);
+    if !tabs.contains(&state.tab) {
+        state.tab = tabs[0];
+    }
+    let labels: Vec<&str> = tabs.iter().map(|t| t.label()).collect();
+    let selected = tabs.iter().position(|t| *t == state.tab);
     if let Some(i) = segmented(ui, &labels, selected) {
-        state.tab = PanelTab::ALL[i];
+        state.tab = tabs[i];
     }
     ui.add_space(4.0);
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| match state.tab {
@@ -121,7 +141,7 @@ fn image_settings(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelState
 
     section_title(ui, icon::STACK, "Slices");
     let axes: Vec<SliceAxis> =
-        if viewer.view_mode == ViewMode::Mpr { SliceAxis::ALL.to_vec() } else { vec![viewer.slices.axis] };
+        if viewer.view_mode() == ViewMode::Mpr { SliceAxis::ALL.to_vec() } else { vec![viewer.slices.axis] };
     for axis in axes {
         let n = axis.slice_count(&volume);
         // slice numbers are shown one-based everywhere in the UI
@@ -151,22 +171,28 @@ fn image_settings(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelState
             .color(OVERLAY),
         );
     }
-    if viewer.view_mode == ViewMode::Slice2d {
+    if viewer.view_mode() == ViewMode::Slice2d {
         annotation_list(ui, viewer, state);
     }
+    ui.add_space(6.0);
+    collapsible(ui, "segmentation", icon::MAGIC_WAND, "Segmentation", true, |ui| {
+        segmentation_panel::show(ui, viewer, &mut state.ai);
+    });
     segments_section(ui, viewer, state);
 }
 
-/// Collapsible segment list and AI tools, shown in the image and volume
-/// tabs. The AI section is always visible; its tools need an engine.
+/// Collapsible segment list and review queue, shown in the image and volume
+/// tabs.
 fn segments_section(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelState) {
-    ui.add_space(6.0);
-    collapsible(ui, "ai", icon::MAGIC_WAND, "AI segmentation", true, |ui| {
-        ai_panel::show(ui, viewer, &mut state.ai);
-    });
     collapsible(ui, "segments", icon::POLYGON, "Segments", true, |ui| {
-        segments_panel::show(ui, viewer, &mut state.segments);
+        let by = super::review_panel::reviewer(&state.review).map(str::to_owned);
+        segments_panel::show(ui, viewer, &mut state.segments, by.as_deref());
     });
+    if super::review_panel::relevant(viewer) {
+        collapsible(ui, "review", icon::CLIPBOARD_TEXT, "Review", true, |ui| {
+            super::review_panel::show(ui, viewer, &mut state.review);
+        });
+    }
 }
 
 /// Annotations of all slices: editable names, value, plane and slice.
@@ -213,7 +239,10 @@ fn annotation_list(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelStat
                 state.name_edits.remove(&row.id);
             }
             RowAction::Review(status) => {
-                viewer.review_annotation(row.id, status, None);
+                let by = super::review_panel::reviewer(&state.review);
+                if let Err(e) = viewer.decide(ferrum_domain::ReviewItem::Annotation(row.id), status, by) {
+                    viewer.status.errors.push(e);
+                }
             }
         }
     }
@@ -374,6 +403,22 @@ fn volume_settings(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelStat
         }
     });
 
+    if viewer.view_mode() == ViewMode::Volume3d {
+        eraser(ui, viewer);
+    }
+
+    ui.add_space(6.0);
+    segmentation_panel::volume_hint(ui, viewer);
+    segments_section(ui, viewer, state);
+
+    collapsible(ui, "perf", icon::LIGHTNING, "Performance", false, |ui| {
+        ui.checkbox(&mut viewer.volume.settings.empty_space_skipping, "Empty-space skipping");
+        icon_slider(ui, icon::GAUGE, "Resolution while rotating", &mut viewer.volume.interactive_scale, 0.25..=1.0);
+    });
+}
+
+/// The volume eraser (3D view only: the toolbar there shows its state).
+fn eraser(ui: &mut egui::Ui, viewer: &mut Viewer) {
     collapsible(ui, "eraser", icon::ERASER, "Volume eraser", viewer.volume.eraser_enabled, |ui| {
         ui.checkbox(&mut viewer.volume.eraser_enabled, "Erase with the left mouse button");
         icon_slider(ui, icon::CIRCLE_DASHED, "Radius, mm", &mut viewer.volume.brush.radius_mm, 1.0..=50.0);
@@ -395,13 +440,6 @@ fn volume_settings(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelStat
                 viewer.reset_mask();
             }
         });
-    });
-
-    segments_section(ui, viewer, state);
-
-    collapsible(ui, "perf", icon::LIGHTNING, "Performance", false, |ui| {
-        ui.checkbox(&mut viewer.volume.settings.empty_space_skipping, "Empty-space skipping");
-        icon_slider(ui, icon::GAUGE, "Resolution while rotating", &mut viewer.volume.interactive_scale, 0.25..=1.0);
     });
 }
 

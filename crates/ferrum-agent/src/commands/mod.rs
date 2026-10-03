@@ -9,14 +9,20 @@ use crate::params::Params;
 use crate::study::{Study, VolumeCache};
 
 pub mod annotate;
+pub mod engine;
 pub mod export;
 pub mod inspect;
+pub mod interactive;
+pub mod masks;
 pub mod review;
 pub mod segment;
 pub mod study;
 pub mod tiles;
 pub mod view;
 pub mod volume;
+
+/// Receives the progress (`0..=1`) and a message of a long command.
+pub type ProgressFn<'a> = dyn FnMut(f64, &str) + 'a;
 
 /// State of one command call.
 pub struct Ctx<'a> {
@@ -26,9 +32,18 @@ pub struct Ctx<'a> {
     pub study: Option<Study>,
     /// Series kept in memory between calls (long-running servers).
     pub cache: Option<&'a mut VolumeCache>,
+    /// Receives the progress (`0..=1`) and a message of long commands.
+    pub progress: Option<&'a mut ProgressFn<'a>>,
 }
 
 impl Ctx<'_> {
+    /// Reports progress of a long command, if anyone listens.
+    pub fn report(&mut self, progress: f64, message: &str) {
+        if let Some(f) = self.progress.as_deref_mut() {
+            f(progress, message);
+        }
+    }
+
     /// The workspace path of the call (resolved and checked).
     pub fn workspace_path(&self, p: &Params) -> Result<PathBuf, AgentError> {
         let ws = p.req_str("workspace")?;
@@ -69,6 +84,14 @@ pub const COMMANDS: &[(&str, Command)] = &[
     ("annotate delete", annotate::delete),
     ("segment list", segment::list),
     ("segment threshold", segment::threshold),
+    ("engine info", engine::info),
+    ("engine list", engine::list),
+    ("segment interactive", interactive::interactive),
+    ("segment auto", engine::auto),
+    ("segment shape", masks::shape),
+    ("segment components", masks::components),
+    ("segment compare", masks::compare),
+    ("segment edit", masks::edit),
     ("segment rename", segment::rename),
     ("segment delete", segment::delete),
     ("review list", review::list),

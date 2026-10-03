@@ -1,7 +1,8 @@
 # Code quality metrics
 
-Two automated gates keep the code base healthy. Both run in CI on every
-pull request.
+Three automated gates keep the code base healthy. All run in CI on every
+pull request: test coverage, the complexity budget and dependency
+licences.
 
 ## Test coverage
 
@@ -53,3 +54,19 @@ Mozilla's [`rust-code-analysis-cli`](https://github.com/mozilla/rust-code-analys
 When a function exceeds the budget, split it into named steps rather than
 adding `#[allow(...)]`; an `allow` needs a comment explaining why the
 function cannot be split.
+
+## Dependency licences
+
+FERRUM is licensed under MIT OR Apache-2.0 and is meant to be embedded in
+commercial and research products, so every dependency must carry a
+permissive licence. [`cargo-deny`](https://github.com/EmbarkStudios/cargo-deny)
+checks the whole dependency graph against the allow-list in `deny.toml`:
+
+```bash
+cargo install cargo-deny --locked  # once
+make licenses                      # cargo deny check licenses
+```
+
+The CI job `licenses` fails when a dependency brings a licence outside the
+list. Adding a licence to `deny.toml` is a deliberate decision: copyleft
+licences (GPL, AGPL, LGPL without an alternative) are not accepted.

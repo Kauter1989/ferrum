@@ -58,7 +58,7 @@ pub struct SliceHeader {
     pub photometric: Photometric,
 }
 
-fn str_of(obj: &InMemDicomObject, tag: Tag) -> Option<String> {
+pub(crate) fn str_of(obj: &InMemDicomObject, tag: Tag) -> Option<String> {
     obj.element_opt(tag)
         .ok()
         .flatten()
@@ -66,15 +66,15 @@ fn str_of(obj: &InMemDicomObject, tag: Tag) -> Option<String> {
         .map(|s| s.trim().trim_end_matches('\0').to_string())
 }
 
-fn f64s_of(obj: &InMemDicomObject, tag: Tag) -> Option<Vec<f64>> {
+pub(crate) fn f64s_of(obj: &InMemDicomObject, tag: Tag) -> Option<Vec<f64>> {
     obj.element_opt(tag).ok().flatten().and_then(|e| e.to_multi_float64().ok())
 }
 
-fn f64_of(obj: &InMemDicomObject, tag: Tag) -> Option<f64> {
+pub(crate) fn f64_of(obj: &InMemDicomObject, tag: Tag) -> Option<f64> {
     f64s_of(obj, tag).and_then(|v| v.first().copied()).filter(|v| v.is_finite())
 }
 
-fn int_of(obj: &InMemDicomObject, tag: Tag) -> Option<i64> {
+pub(crate) fn int_of(obj: &InMemDicomObject, tag: Tag) -> Option<i64> {
     obj.element_opt(tag).ok().flatten().and_then(|e| e.to_int::<i64>().ok())
 }
 

@@ -7,7 +7,7 @@
 
 use std::path::Path;
 
-use ferrum_domain::{SliceAxis, Volume, WindowLevel, WindowPreset};
+use ferrum_domain::{SegmentStyle, SliceAxis, Volume, WindowLevel, WindowPreset};
 use glam::{DVec2, DVec3};
 use serde_json::{json, Value};
 
@@ -131,8 +131,62 @@ fn next_render_id(dir: &Path) -> String {
     format!("r-{:04}", n + 1)
 }
 
-/// Grey values with optional segment outlines.
-pub(super) fn render_pixels(study: &Study, l: &Layout, w: WindowLevel, outlines: bool) -> Vec<u8> {
+/// How segments are drawn on a render.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SegmentOverlay {
+    /// Outline, fill or both.
+    pub style: SegmentStyle,
+    /// Fill opacity for every segment; `None`: each segment's own opacity.
+    pub opacity: Option<f32>,
+}
+
+/// The segment overlay of a render call: `overlays` containing `segments`,
+/// with `segment_style` (default `outline`) and `segment_opacity`.
+pub(super) fn segment_overlay(p: &Params) -> Result<Option<SegmentOverlay>, AgentError> {
+    if !overlays(p)?.contains(&"segments") {
+        return Ok(None);
+    }
+    let style = match p.str("segment_style")? {
+        None => SegmentStyle::Outline,
+        Some(s) => SegmentStyle::parse(s).ok_or_else(|| {
+            AgentError::bad_request(format!("unknown segment_style {s:?}")).hint("outline, fill or fill_outline")
+        })?,
+    };
+    let opacity = p.f64("segment_opacity")?;
+    if opacity.is_some_and(|o| !(0.0..=1.0).contains(&o)) {
+        return Err(AgentError::bad_request("segment_opacity must lie in [0, 1]"));
+    }
+    Ok(Some(SegmentOverlay { style, opacity: opacity.map(|o| o as f32) }))
+}
+
+/// Width of a segment outline in pixels: about a third of a voxel on
+/// screen, 1 to 3 pixels, so it stays visible when slices are enlarged.
+fn outline_width(study: &Study, l: &Layout) -> usize {
+    let voxel_mm = f64::from(l.plane.plane_spacing(&study.volume).min_element());
+    ((voxel_mm / l.pixel_mm) / 3.0).round().clamp(1.0, 3.0) as usize
+}
+
+/// `true` if pixel `i` of label `l0` lies within `t` pixels (along a row or
+/// column) of another label or of the image border.
+fn on_edge(lbl: &[u8], wd: usize, ht: usize, i: usize, t: usize) -> bool {
+    let (x, y, l0) = (i % wd, i / wd, lbl[i]);
+    (1..=t).any(|d| {
+        x < d
+            || y < d
+            || x + d >= wd
+            || y + d >= ht
+            || lbl[i - d] != l0
+            || lbl[i + d] != l0
+            || lbl[i - d * wd] != l0
+            || lbl[i + d * wd] != l0
+    })
+}
+
+/// Grey values with an optional segment overlay. A pixel is on a segment's
+/// outline when another label (or the image border) lies within the
+/// outline width along its row or column, so outlines are closed on every
+/// side.
+pub(super) fn render_pixels(study: &Study, l: &Layout, w: WindowLevel, overlay: Option<SegmentOverlay>) -> Vec<u8> {
     let v = &study.volume;
     let (wd, ht) = (l.width as usize, l.height as usize);
     let mut voxels = Vec::with_capacity(wd * ht);
@@ -147,17 +201,16 @@ pub(super) fn render_pixels(study: &Study, l: &Layout, w: WindowLevel, outlines:
         let g = (w.apply(value) * 255.0).round() as u8;
         rgb.extend_from_slice(&[g, g, g]);
     }
-    if outlines {
+    if let Some(o) = overlay {
         let labels = study.segments.labels();
-        let label = |i: usize| labels.label(voxels[i][0], voxels[i][1], voxels[i][2]).unwrap_or(0);
-        for i in 0..voxels.len() {
-            let l0 = label(i);
-            let (x, y) = (i % wd, i / wd);
-            let edge = (x + 1 < wd && label(i + 1) != l0) || (y + 1 < ht && label(i + wd) != l0) || x == 0 || y == 0;
-            let seg = study.segments.segment(l0).filter(|s| s.visible && l0 != 0);
-            if let (true, Some(seg)) = (edge, seg) {
-                rgb[i * 3..i * 3 + 3].copy_from_slice(&seg.color);
-            }
+        let lbl: Vec<u8> = voxels.iter().map(|p| labels.label(p[0], p[1], p[2]).unwrap_or(0)).collect();
+        let t = outline_width(study, l);
+        for (i, &l0) in lbl.iter().enumerate() {
+            let Some(seg) = study.segments.segment(l0).filter(|s| s.visible && l0 != 0) else { continue };
+            let edge = o.style.outlines() && on_edge(&lbl, wd, ht, i, t);
+            let grey = [rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]];
+            let alpha = o.opacity.unwrap_or(seg.opacity);
+            rgb[i * 3..i * 3 + 3].copy_from_slice(&o.style.blend(grey, seg.color, alpha, edge));
         }
     }
     rgb
@@ -171,10 +224,10 @@ pub fn slice(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     let index = slice_index(study, p, plane)?;
     let w = window(study, p)?;
     let size = size_param(p, max, DEFAULT_SIZE)?;
-    let overlays = overlays(p)?;
+    let overlay = segment_overlay(p)?;
     let layout = Layout::new(&study.volume, plane, index, size);
-    let rgb = render_pixels(study, &layout, w, overlays.contains(&"segments"));
-    save_render(study, layout.width, layout.height, rgb, |id| sidecar(study, &layout, id, w, &overlays))
+    let rgb = render_pixels(study, &layout, w, overlay);
+    save_render(study, layout.width, layout.height, rgb, |id| sidecar(study, &layout, id, w, overlay))
 }
 
 /// Size parameter: largest side in pixels, capped by the operator.
@@ -242,13 +295,17 @@ pub(super) fn slice_json(v: &Volume, l: &Layout) -> Value {
     })
 }
 
-fn sidecar(study: &Study, l: &Layout, id: &str, w: WindowLevel, overlays: &[&str]) -> Value {
+fn sidecar(study: &Study, l: &Layout, id: &str, w: WindowLevel, overlay: Option<SegmentOverlay>) -> Value {
     let mut s = json!({ "render": id, "kind": "slice" });
     if let (Some(o), Value::Object(m)) = (s.as_object_mut(), slice_json(&study.volume, l)) {
         o.extend(m);
     }
     s["window"] = json!({ "center": w.center, "width": w.width });
-    s["overlays"] = json!(overlays);
+    s["overlays"] = json!(overlay.map_or_else(Vec::new, |_| vec!["segments"]));
+    if let Some(o) = overlay {
+        s["segment_style"] = json!(o.style.as_str());
+        s["segment_opacity"] = json!(o.opacity);
+    }
     s["note"] = json!(NOTE);
     s
 }

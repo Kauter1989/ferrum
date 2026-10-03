@@ -1,11 +1,8 @@
 //! `segment list|threshold|rename|delete`: segments saved in the
 //! workspace (label map + `ferrum-segments` sidecar).
 
-use std::collections::VecDeque;
-
-use ferrum_domain::{Author, SegmentationSet, Volume, VoxelBox};
+use ferrum_domain::grow_region;
 use ferrum_io::provenance::provenance_json;
-use glam::UVec3;
 use serde_json::{json, Value};
 
 use super::annotate::agent_provenance;
@@ -16,7 +13,8 @@ use crate::params::Params;
 use crate::points::{describe, nearest_voxel};
 use crate::study::Study;
 
-fn segment_json(study: &Study, label: u8) -> Value {
+/// One segment as JSON (`null` for an unknown label).
+pub fn segment_json(study: &Study, label: u8) -> Value {
     let set = &study.segments;
     let Some(s) = set.segment(label) else { return Value::Null };
     json!({
@@ -34,62 +32,6 @@ pub fn list(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     let study = ctx.study(p)?;
     let items: Vec<Value> = study.segments.segments().iter().map(|s| segment_json(study, s.label)).collect();
     Ok(Output::new(json!({ "segments": items })))
-}
-
-/// 6-connected region of unlabelled voxels with values in `[lo, hi]`,
-/// grown from `seed`. Returns the region's bounding box and its mask, or
-/// `None` once it exceeds `max_voxels`.
-pub fn grow(
-    v: &Volume,
-    labels: &SegmentationSet,
-    seed: [u32; 3],
-    lo: f32,
-    hi: f32,
-    max_voxels: u64,
-) -> Option<(VoxelBox, Vec<u8>)> {
-    let d = v.dims();
-    let (nx, ny, nz) = (d.x as usize, d.y as usize, d.z as usize);
-    let accept = |i: u32, j: u32, k: u32| {
-        labels.labels().label(i, j, k) == Some(0) && v.physical(i, j, k).is_some_and(|x| (lo..=hi).contains(&x))
-    };
-    let mut inside = vec![false; nx * ny * nz];
-    let mut queue = VecDeque::from([seed]);
-    let at = |i: u32, j: u32, k: u32| i as usize + j as usize * nx + k as usize * nx * ny;
-    inside[at(seed[0], seed[1], seed[2])] = true;
-    let (mut lo_c, mut hi_c, mut count) = (UVec3::from(seed), UVec3::from(seed), 0u64);
-    while let Some([i, j, k]) = queue.pop_front() {
-        count += 1;
-        if count > max_voxels {
-            return None;
-        }
-        lo_c = lo_c.min(UVec3::new(i, j, k));
-        hi_c = hi_c.max(UVec3::new(i, j, k));
-        let neighbours = [
-            (i.checked_sub(1), Some(j), Some(k)),
-            ((i + 1 < d.x).then_some(i + 1), Some(j), Some(k)),
-            (Some(i), j.checked_sub(1), Some(k)),
-            (Some(i), (j + 1 < d.y).then_some(j + 1), Some(k)),
-            (Some(i), Some(j), k.checked_sub(1)),
-            (Some(i), Some(j), (k + 1 < d.z).then_some(k + 1)),
-        ];
-        for (a, b, c) in neighbours {
-            let (Some(a), Some(b), Some(c)) = (a, b, c) else { continue };
-            if !inside[at(a, b, c)] && accept(a, b, c) {
-                inside[at(a, b, c)] = true;
-                queue.push_back([a, b, c]);
-            }
-        }
-    }
-    let bx = VoxelBox::new(lo_c, hi_c + UVec3::ONE);
-    let mut mask = Vec::with_capacity(bx.voxel_count());
-    for k in bx.min.z..bx.max.z {
-        for j in bx.min.y..bx.max.y {
-            for i in bx.min.x..bx.max.x {
-                mask.push(u8::from(inside[at(i, j, k)]));
-            }
-        }
-    }
-    Some((bx, mask))
 }
 
 /// `segment threshold`: region growing from a seed within a value range;
@@ -115,7 +57,8 @@ pub fn threshold(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     let voxel_ml = f64::from(s.x) * f64::from(s.y) * f64::from(s.z) / 1000.0;
     let max_ml = p.f64("max_ml")?.unwrap_or(f64::INFINITY);
     let max_voxels = if max_ml.is_finite() { (max_ml / voxel_ml).floor() as u64 } else { u64::MAX };
-    let (bx, mask) = grow(&study.volume, &study.segments, seed, lo, hi, max_voxels).ok_or_else(|| {
+    let seed = glam::UVec3::from(seed);
+    let (bx, mask) = grow_region(&study.volume, &study.segments, seed, lo, hi, max_voxels).ok_or_else(|| {
         AgentError::new(ErrorCode::Limit, format!("the region grows beyond {max_ml} ml"))
             .hint("narrow the value range or move the seed; the region may leak into neighbouring tissue")
     })?;
@@ -132,15 +75,27 @@ pub fn threshold(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     Ok(Output::new(data))
 }
 
-fn own_segment(study: &Study, p: &Params) -> Result<u8, AgentError> {
-    let label = p.u64("label")?.ok_or_else(|| AgentError::bad_request("label is required"))?;
-    let seg = u8::try_from(label).ok().and_then(|l| study.segments.segment(l));
-    let seg = seg.ok_or_else(|| AgentError::not_found(format!("unknown segment {label}")).hint("see segment list"))?;
-    if !matches!(seg.provenance.author, Author::Agent { .. }) {
+/// Checks that the agent may change segment `label`: one it created, or
+/// one an engine made at an agent's request, as long as no person has
+/// confirmed it. Segments of people, engine results nobody asked for
+/// through the agent, and confirmed segments are `forbidden`.
+pub fn changeable_segment(study: &Study, label: u8) -> Result<u8, AgentError> {
+    let seg = study
+        .segments
+        .segment(label)
+        .ok_or_else(|| AgentError::not_found(format!("unknown segment {label}")).hint("see segment list"))?;
+    if seg.provenance.is_agent_work() && seg.provenance.status == ferrum_domain::ReviewStatus::Confirmed {
+        return Err(AgentError::new(
+            ErrorCode::Forbidden,
+            format!("segment {label} was confirmed by a person; agents do not change confirmed segments"),
+        )
+        .hint("ask the person to reopen it in the desktop app, or work on a new segment"));
+    }
+    if !seg.provenance.is_agent_work() {
         return Err(AgentError::new(
             ErrorCode::Forbidden,
             format!(
-                "segment {label} was created by a {}; agents may change only their own segments",
+                "segment {label} was created by a {}; agents may change only segments they created or asked an engine for",
                 seg.provenance.author.kind()
             ),
         ));
@@ -148,7 +103,14 @@ fn own_segment(study: &Study, p: &Params) -> Result<u8, AgentError> {
     Ok(seg.label)
 }
 
-/// `segment rename`: renames a segment the agent created.
+fn own_segment(study: &Study, p: &Params) -> Result<u8, AgentError> {
+    let label = p.u64("label")?.ok_or_else(|| AgentError::bad_request("label is required"))?;
+    let label = u8::try_from(label)
+        .map_err(|_| AgentError::not_found(format!("unknown segment {label}")).hint("see segment list"))?;
+    changeable_segment(study, label)
+}
+
+/// `segment rename`: renames a segment the agent created or requested.
 pub fn rename(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     let study = ctx.study(p)?;
     let label = own_segment(study, p)?;
@@ -159,7 +121,7 @@ pub fn rename(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     Ok(Output::new(json!({ "segment": segment_json(study, label) })))
 }
 
-/// `segment delete`: deletes a segment the agent created.
+/// `segment delete`: deletes a segment the agent created or requested.
 pub fn delete(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     let study = ctx.study(p)?;
     let label = own_segment(study, p)?;

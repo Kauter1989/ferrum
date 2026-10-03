@@ -80,6 +80,22 @@ pub fn summarise(mut values: Vec<f32>) -> Value {
 
 fn region_values(study: &Study, p: &Params) -> Result<(&'static str, Vec<f32>), AgentError> {
     let v = &study.volume;
+    if let (Some(b), Some(_)) = (p.get("box"), p.get("segment")) {
+        let label = super::masks::segment_label(study, p, "segment")?;
+        let bx = super::masks::box_param(study, b)?;
+        let labels = study.segments.labels();
+        let mut out = Vec::new();
+        for k in bx.min.z..bx.max.z {
+            for j in bx.min.y..bx.max.y {
+                for i in bx.min.x..bx.max.x {
+                    if labels.label(i, j, k) == Some(label) {
+                        out.push(value_at(v, [i, j, k]));
+                    }
+                }
+            }
+        }
+        return Ok(("segment within box", out));
+    }
     if let Some(b) = p.get("box") {
         let bp = Params::new(b)?;
         let (a, z) = (nearest_voxel(v, point(study, &bp, "min")?), nearest_voxel(v, point(study, &bp, "max")?));
@@ -113,7 +129,7 @@ fn region_values(study: &Study, p: &Params) -> Result<(&'static str, Vec<f32>), 
     if let Some(id) = p.u64("annotation")? {
         return Ok(("annotation", annotation_values(study, id)?));
     }
-    Err(AgentError::bad_request("give one region: box, sphere, segment or annotation"))
+    Err(AgentError::bad_request("give one region: box, sphere, segment (optionally with box) or annotation"))
 }
 
 fn sphere_values(v: &Volume, centre_mm: DVec3, r: f64) -> Vec<f32> {

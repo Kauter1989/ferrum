@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "ferrum": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/ferrum-cli__EXE__",
+      "args": ["mcp"]
+    }
+  }
+}

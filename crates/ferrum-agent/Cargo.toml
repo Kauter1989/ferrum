@@ -11,6 +11,7 @@ authors.workspace = true
 ferrum-domain.workspace = true
 ferrum-io.workspace = true
 ferrum-render.workspace = true
+ferrum-engines.workspace = true
 glam.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -21,6 +22,10 @@ log.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+dicom-object.workspace = true
+dicom-core.workspace = true
+dicom-dictionary-std.workspace = true
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 
 [lints]
 workspace = true

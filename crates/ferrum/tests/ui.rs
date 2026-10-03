@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use egui_kittest::kittest::Queryable;
+use egui_kittest::kittest::{NodeT, Queryable};
 use egui_kittest::Harness;
 use ferrum::ViewerApp;
 use ferrum_app::{ToolKind, ViewMode};
@@ -68,7 +68,7 @@ fn switching_modes_and_tools_through_the_ui() {
         .with_size(egui::vec2(1200.0, 800.0))
         .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
     h.run();
-    assert_eq!(h.state().viewer.view_mode, ViewMode::Slice2d);
+    assert_eq!(h.state().viewer.view_mode(), ViewMode::Slice2d);
 
     h.get_by_label("Distance").click();
     h.run();
@@ -76,14 +76,14 @@ fn switching_modes_and_tools_through_the_ui() {
 
     h.get_by_label("3D").click();
     h.run();
-    assert_eq!(h.state().viewer.view_mode, ViewMode::Volume3d);
+    assert_eq!(h.state().viewer.view_mode(), ViewMode::Volume3d);
     h.get_by_label("Isosurface").click();
     h.run();
     assert_eq!(h.state().viewer.volume.settings.mode, RenderMode::Isosurface);
 
     h.get_by_label("MPR").click();
     h.run();
-    assert_eq!(h.state().viewer.view_mode, ViewMode::Mpr);
+    assert_eq!(h.state().viewer.view_mode(), ViewMode::Mpr);
 
     h.get_by_label("Settings panel").click();
     h.run();
@@ -94,6 +94,51 @@ fn switching_modes_and_tools_through_the_ui() {
     h.get_by_label("Info").click();
     h.run();
     h.get_by_label("Series information");
+}
+
+#[test]
+fn each_view_mode_offers_only_its_tools_and_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = loaded_app(dir.path(), None);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1400.0, 1000.0))
+        .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
+    h.run();
+
+    // 2D: slice tools, segmentation tools (AI ones disabled without an engine), image settings
+    for label in ["Distance", "Region", "Image", "Details"] {
+        h.get_by_label(label);
+    }
+    assert!(h.get_by_label("AI point").accesskit_node().is_disabled(), "AI tools wait for an engine");
+    assert!(!h.get_by_label("Region").accesskit_node().is_disabled(), "the region tool works right away");
+    assert!(h.query_by_label("Volume").is_none() && h.query_by_label("Rotate").is_none());
+    h.get_by_label_contains("Choose a segmentation tool");
+
+    // 3D: navigation and eraser; no slice or segmentation tools, no engine controls
+    h.get_by_label("3D").click();
+    h.run();
+    for label in ["Rotate", "Volume eraser", "Isosurface", "Details"] {
+        h.get_all_by_label(label).next().unwrap();
+    }
+    for label in ["Distance", "Region", "AI point", "Image", "Engine URL", "Tolerance ±"] {
+        assert!(h.query_by_label(label).is_none(), "{label} in 3D");
+    }
+    h.get_by_label_contains("Segment in 2D");
+    h.get_by_label("Volume eraser").click();
+    h.run();
+    assert!(h.state().viewer.volume.eraser_enabled);
+
+    // MPR: slice and segmentation tools plus both settings tabs; the eraser stays in 3D
+    h.get_by_label("MPR").click();
+    h.run();
+    assert!(!h.state().viewer.volume.eraser_enabled, "MPR's 3D cell must not erase unnoticed");
+    for label in ["Distance", "Region", "Image", "Volume", "Details"] {
+        h.get_by_label(label);
+    }
+    h.get_by_label("Volume").click();
+    h.run();
+    assert!(h.query_by_label("Volume eraser").is_none(), "no eraser outside 3D");
+    h.get_by_label("Opacity");
 }
 
 #[test]
@@ -109,7 +154,7 @@ fn annotation_list_navigates_to_the_slice_and_is_2d_only() {
         .with_size(egui::vec2(1200.0, 800.0))
         .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
     h.run();
-    assert_eq!(h.state().viewer.view_mode, ViewMode::Slice2d);
+    assert_eq!(h.state().viewer.view_mode(), ViewMode::Slice2d);
     assert!(h.query_by_label("Smooth").is_none(), "filters are hidden");
     h.get_by_label_contains("Export JSON");
 
@@ -149,10 +194,22 @@ fn segment_list_edits_segments_in_both_tabs() {
         .with_size(egui::vec2(1200.0, 1400.0))
         .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
     h.run();
-    h.get_by_label_contains(" Add").click();
+    // the built-in region tool in the toolbar creates a segment without an engine
+    h.get_by_label("Region").click();
+    h.run();
+    assert_eq!(h.state().viewer.tool, ToolKind::Region);
+    assert!(h.get_all_by_label("Tolerance ±").count() > 0, "the settings of the active tool are shown");
+    let viewer = &mut h.state_mut().viewer;
+    viewer.set_slice_index(SliceAxis::Axial, 20);
+    viewer.slice_input(
+        SliceAxis::Axial,
+        ferrum_app::InputKind::Press,
+        glam::Vec2::splat(100.0),
+        glam::Vec2::splat(200.0),
+    );
     h.run();
     assert_eq!(h.state().viewer.segment_summaries().len(), 1);
-    h.get_by_label("Delete Segment 1").click();
+    h.get_by_label("Delete Region 1").click();
     h.run();
     assert!(h.state().viewer.segment_summaries().is_empty());
 
@@ -163,13 +220,37 @@ fn segment_list_edits_segments_in_both_tabs() {
     assert!(!h.state().viewer.segmentation().set().unwrap().segment(label).unwrap().visible);
     h.get_by_label("Show Tumour").click();
     h.run();
+    // slices show the segments as an outline, a fill or both; the fill opacity applies to fills only
+    use ferrum_domain::SegmentStyle;
+    assert_eq!(h.state().viewer.segmentation().style, SegmentStyle::FillAndOutline);
+    h.get_by_label("Outline").click();
+    h.run();
+    assert_eq!(h.state().viewer.segmentation().style, SegmentStyle::Outline);
+    assert!(h.get_all_by_label_contains("Fill opacity").any(|n| n.accesskit_node().is_disabled()));
+    h.get_by_label("Fill").click();
+    h.run();
+    assert_eq!(h.state().viewer.segmentation().style, SegmentStyle::Fill);
+    assert!(h.get_all_by_label_contains("Fill opacity").all(|n| !n.accesskit_node().is_disabled()));
+    h.state_mut().viewer.set_segment_fill_opacity(0.25);
+    h.run();
+    let params =
+        h.state().viewer.slice_params(SliceAxis::Axial, (glam::Vec2::ZERO, glam::Vec2::splat(400.0)), 1.0).unwrap();
+    assert_eq!((params.segment_style, params.fill_opacity), (SegmentStyle::Fill, 0.25));
+    h.get_by_label("Both").click();
+    h.run();
     h.get_by_label_contains("Undo edit").click();
     h.run();
     assert_eq!(h.state().viewer.segment_summaries()[0].voxels, 0);
-    h.get_by_label("Volume").click();
+    // the 3D view shows the segments but does not create them
+    h.get_by_label("3D").click();
     h.run();
     h.get_by_label("Opacity of Tumour");
     h.get_by_label("Colour of Tumour");
+    assert!(h.query_by_label("Region").is_none(), "no segmentation tools in 3D");
+    assert!(h.query_by_label("Engine URL").is_none());
+    h.get_by_label_contains("Segment in 2D").click();
+    h.run();
+    assert_eq!(h.state().viewer.view_mode(), ViewMode::Slice2d);
     app = loaded_app(dir.path(), None);
     assert!(app.viewer.segment_summaries().is_empty(), "a new study starts without segments");
 }
@@ -215,7 +296,7 @@ fn ai_tools_are_visible_but_disabled_until_an_engine_connects() {
     h.run();
     let target = h.state().viewer.ai().target().expect("target segment");
     assert!(h.state().viewer.segmentation().set().unwrap().voxel_count(target) > 1000);
-    h.get_by_label_contains("Accept").click();
+    h.get_by_label(&format!("{} Accept", egui_phosphor::light::CHECK)).click();
     h.step();
     h.state_mut().viewer.wait_ai_idle();
     h.run();
@@ -236,7 +317,7 @@ fn automatic_segmentation_runs_from_the_panel() {
             .unwrap();
     app.panel.ai.url = server.url();
     let mut h = Harness::builder()
-        .with_size(egui::vec2(1200.0, 1400.0))
+        .with_size(egui::vec2(1200.0, 1800.0))
         .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
     h.run();
     h.get_by_label_contains("Connect").click();
@@ -256,9 +337,9 @@ fn automatic_segmentation_runs_from_the_panel() {
     assert!(rows[0].voxels > 1000, "{}", rows[0].voxels);
     assert!(rows[0].segment.provenance.is_pending());
 
-    // the segment list shows the proposal; the user confirms it
-    h.get_by_label_contains("Proposed by engine");
-    h.get_by_label("Confirm").click();
+    // the segment list and the review queue show the proposal; the user confirms it
+    assert_eq!(h.get_all_by_label_contains("Proposed by engine").count(), 2);
+    h.get_all_by_label("Confirm").next().unwrap().click();
     h.run();
     let p = &h.state().viewer.segment_summaries()[0].segment.provenance;
     assert_eq!(p.status, ferrum_domain::ReviewStatus::Confirmed);
@@ -324,7 +405,7 @@ fn every_view_mode_renders_the_volume() {
         (ViewMode::Volume3d, RenderMode::TransferFunction),
         (ViewMode::Mpr, RenderMode::Isosurface),
     ] {
-        h.state_mut().viewer.view_mode = mode;
+        h.state_mut().viewer.set_view_mode(mode);
         h.state_mut().viewer.volume.settings.mode = render;
         h.run();
         let img = h.render().expect("render");
@@ -367,7 +448,7 @@ fn segments_are_drawn_in_2d_and_3d() {
         n
     };
     for mode in [ViewMode::Slice2d, ViewMode::Volume3d] {
-        h.state_mut().viewer.view_mode = mode;
+        h.state_mut().viewer.set_view_mode(mode);
         h.state_mut().viewer.volume.settings.mode = RenderMode::Isosurface;
         h.state_mut().viewer.set_segments_shown(true);
         h.run();
@@ -411,4 +492,55 @@ fn start_screen_renders_with_recent_files() {
     }
     let whole = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1600.0, 960.0));
     assert!(lit_fraction(&img, whole) > 0.005, "start screen is empty");
+}
+
+#[test]
+fn agent_proposals_are_reviewed_in_the_desktop_app() {
+    use ferrum_domain::{AnnotationReport, AnnotationSet, NoProgress, Provenance, Timestamp, VolumeRepository};
+    let dir = tempfile::tempdir().unwrap();
+    // an agent's workspace: the series, one proposed measurement
+    let src = phantom_file(dir.path());
+    let repo = ferrum_io::CompositeRepository::default();
+    let series = repo.scan(std::slice::from_ref(&src), &NoProgress).unwrap().remove(0);
+    let ws_dir = dir.path().join("ws");
+    let ws = ferrum_io::Workspace::create(&ws_dir, &src, &series, "agent").unwrap();
+    let volume = repo.load(&series, &NoProgress).unwrap().volume;
+    let mut set = AnnotationSet::default();
+    let key = SliceKey::new(SliceAxis::Axial, 2);
+    let id = set.add_with(
+        key,
+        Annotation::Distance { a: glam::Vec2::ZERO, b: glam::Vec2::new(4.0, 0.0) },
+        Provenance::agent(Some("run-7".into()), Timestamp(5)),
+    );
+    set.rename(id, "Agent distance");
+    ws.save_annotations(&AnnotationReport::build(src.clone(), Default::default(), &volume, &set), "agent").unwrap();
+
+    let mut app = ViewerApp::new(None, Arc::new(ferrum_io::CompositeRepository::default()), vec![]);
+    app.open_workspace(&ws_dir);
+    app.viewer.wait_idle();
+    assert_eq!(app.viewer.review_queue().len(), 1, "{:?}", app.viewer.status);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1200.0, 1400.0))
+        .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
+    h.run();
+    h.get_by_label("Open workspace");
+    h.get_by_label_contains("proposal(s) are not findings");
+    h.get_by_label("Reviewer name").click();
+    h.run();
+    h.get_by_label("Reviewer name").type_text("dr.k");
+    h.run();
+    // every Confirm (review queue or annotation list) records the decision in the workspace
+    h.get_all_by_label("Confirm").next().unwrap().click();
+    h.run();
+    assert!(h.state().viewer.review_queue().is_empty());
+    let log = ws.read_audit().unwrap();
+    let last = log.last().unwrap();
+    assert_eq!((last["command"].as_str(), last["params"]["by"].as_str()), (Some("review confirm"), Some("dr.k")));
+    let saved = ferrum_io::read_annotations(&ws_dir.join("annotations.json"), None).unwrap();
+    let p = saved.provenance(id).unwrap();
+    assert_eq!(
+        (p.status, p.reviewed_by.as_deref(), p.author.kind()),
+        (ferrum_domain::ReviewStatus::Confirmed, Some("dr.k"), "agent")
+    );
+    h.get_by_label_contains("Nothing waits for review");
 }

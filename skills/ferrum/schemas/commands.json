@@ -1,0 +1,2612 @@
+{
+  "study scan": {
+    "description": "Lists the series in files and folders: pseudonymised id, format, modality, size, description.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "a DICOM folder or file, or a NIfTI file"
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "paths"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "study open": {
+    "description": "Opens a series into a workspace (created if needed; the source files are hashed) and describes it. NIfTI files carry no modality: give modality (e.g. CT) so values are taken as Hounsfield units.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "path": {
+          "type": "string",
+          "description": "DICOM folder or NIfTI file"
+        },
+        "series": {
+          "type": "string",
+          "description": "series from study scan, when the source holds several"
+        },
+        "modality": {
+          "type": "string",
+          "description": "modality of a source that carries none (NIfTI), e.g. CT; saved in the workspace"
+        }
+      },
+      "required": [
+        "workspace",
+        "path"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "study info": {
+    "description": "Describes the open study: size, spacing, patient geometry, value unit, window presets, annotation and segment counts.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        }
+      },
+      "required": [
+        "workspace"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "view slice": {
+    "description": "Renders one slice to a PNG with a sidecar mapping pixels to voxels and patient mm. Look with images; take numbers from probe, stats and measure.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "plane": {
+          "type": "string",
+          "enum": [
+            "axial",
+            "coronal",
+            "sagittal"
+          ],
+          "description": "slice orientation"
+        },
+        "slice_number": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "1-based slice number"
+        },
+        "at": {
+          "description": "the slice through this point (instead of slice_number)",
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "voxel": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "description": "0-based voxel (i, j, k) of the canonical LPS grid; integers are voxel centres"
+                }
+              },
+              "required": [
+                "voxel"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "patient_mm": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "description": "LPS patient millimetres"
+                }
+              },
+              "required": [
+                "patient_mm"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "render": {
+                  "type": "string",
+                  "pattern": "^r-[0-9]+$",
+                  "description": "id of an earlier render"
+                },
+                "pixel": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "description": "pixel (x, y) of that render; pixel centres lie at +0.5"
+                }
+              },
+              "required": [
+                "render",
+                "pixel"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "window": {
+          "description": "window preset or explicit window (default: the series' own)",
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "full_range",
+                "brain",
+                "soft_tissue",
+                "lung",
+                "bone"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "center": {
+                  "type": "number",
+                  "description": "window centre"
+                },
+                "width": {
+                  "type": "number",
+                  "description": "window width"
+                }
+              },
+              "required": [
+                "center",
+                "width"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 16,
+          "description": "largest image side in pixels (capped by the operator)"
+        },
+        "overlays": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "segments"
+            ]
+          },
+          "description": "drawn on top: segments (see segment_style)"
+        },
+        "segment_style": {
+          "type": "string",
+          "enum": [
+            "outline",
+            "fill",
+            "fill_outline"
+          ],
+          "description": "with overlays [segments]: outline (default), translucent fill, or both"
+        },
+        "segment_opacity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "fill opacity for every segment (default: each segment's own opacity)"
+        }
+      },
+      "required": [
+        "workspace",
+        "plane"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "view montage": {
+    "description": "Renders several slices of one plane as a labelled grid (PNG + sidecar with a mapping per tile). Use it to find where something is, then view slice for detail.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "plane": {
+          "type": "string",
+          "enum": [
+            "axial",
+            "coronal",
+            "sagittal"
+          ],
+          "description": "slice orientation"
+        },
+        "from": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "first slice number (default 1)"
+        },
+        "to": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "last slice number (default: the last)"
+        },
+        "step": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "every n-th slice (default: at most 16 tiles)"
+        },
+        "columns": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "tiles per row (default: a square grid)"
+        },
+        "window": {
+          "description": "window preset or explicit window (default: the series' own)",
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "full_range",
+                "brain",
+                "soft_tissue",
+                "lung",
+                "bone"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "center": {
+                  "type": "number",
+                  "description": "window centre"
+                },
+                "width": {
+                  "type": "number",
+                  "description": "window width"
+                }
+              },
+              "required": [
+                "center",
+                "width"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 16,
+          "description": "largest image side in pixels (capped by the operator)"
+        },
+        "overlays": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "segments"
+            ]
+          },
+          "description": "drawn on top: segments (see segment_style)"
+        },
+        "segment_style": {
+          "type": "string",
+          "enum": [
+            "outline",
+            "fill",
+            "fill_outline"
+          ],
+          "description": "with overlays [segments]: outline (default), translucent fill, or both"
+        },
+        "segment_opacity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "fill opacity for every segment (default: each segment's own opacity)"
+        }
+      },
+      "required": [
+        "workspace",
+        "plane"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "view mpr": {
+    "description": "Renders axial, coronal and sagittal slices through a point side by side, with a crosshair at the point (PNG + sidecar with a mapping per tile).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "at": {
+          "description": "the point the three planes pass through",
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "voxel": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "description": "0-based voxel (i, j, k) of the canonical LPS grid; integers are voxel centres"
+                }
+              },
+              "required": [
+                "voxel"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "patient_mm": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "description": "LPS patient millimetres"
+                }
+              },
+              "required": [
+                "patient_mm"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "render": {
+                  "type": "string",
+                  "pattern": "^r-[0-9]+$",
+                  "description": "id of an earlier render"
+                },
+                "pixel": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "description": "pixel (x, y) of that render; pixel centres lie at +0.5"
+                }
+              },
+              "required": [
+                "render",
+                "pixel"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "window": {
+          "description": "window preset or explicit window (default: the series' own)",
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "full_range",
+                "brain",
+                "soft_tissue",
+                "lung",
+                "bone"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "center": {
+                  "type": "number",
+                  "description": "window centre"
+                },
+                "width": {
+                  "type": "number",
+                  "description": "window width"
+                }
+              },
+              "required": [
+                "center",
+                "width"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 16,
+          "description": "largest image side in pixels (capped by the operator)"
+        },
+        "overlays": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "segments"
+            ]
+          },
+          "description": "drawn on top: segments (see segment_style)"
+        },
+        "segment_style": {
+          "type": "string",
+          "enum": [
+            "outline",
+            "fill",
+            "fill_outline"
+          ],
+          "description": "with overlays [segments]: outline (default), translucent fill, or both"
+        },
+        "segment_opacity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "fill opacity for every segment (default: each segment's own opacity)"
+        }
+      },
+      "required": [
+        "workspace",
+        "at"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "view volume": {
+    "description": "Renders the volume in 3D on the CPU from a standard viewpoint (PNG). Shows shape and context; its pixels do not map to voxels, so measure on slices.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "mip",
+            "isosurface",
+            "transfer_function"
+          ],
+          "description": "maximum intensity projection (default), shaded isosurface at threshold, or a CT transfer-function preset"
+        },
+        "threshold": {
+          "type": "number",
+          "description": "isosurface value, e.g. 300 for bone in HU"
+        },
+        "preset": {
+          "type": "string",
+          "enum": [
+            "soft_tissue_bone",
+            "lung_vessels",
+            "bone"
+          ],
+          "description": "CT transfer-function preset (mode transfer_function)"
+        },
+        "view": {
+          "type": "string",
+          "enum": [
+            "anterior",
+            "posterior",
+            "left",
+            "right",
+            "superior",
+            "inferior"
+          ],
+          "description": "viewpoint (default anterior)"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 16,
+          "description": "image side in pixels (default 512, capped by the operator)"
+        },
+        "overlays": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "segments"
+            ]
+          },
+          "description": "drawn on top: segments (see segment_style)"
+        }
+      },
+      "required": [
+        "workspace"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "probe": {
+    "description": "Value of the voxel nearest to a point, with unit (HU for CT).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "point": {
+          "description": "where to probe",
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "voxel": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "description": "0-based voxel (i, j, k) of the canonical LPS grid; integers are voxel centres"
+                }
+              },
+              "required": [
+                "voxel"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "patient_mm": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "description": "LPS patient millimetres"
+                }
+              },
+              "required": [
+                "patient_mm"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "render": {
+                  "type": "string",
+                  "pattern": "^r-[0-9]+$",
+                  "description": "id of an earlier render"
+                },
+                "pixel": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "description": "pixel (x, y) of that render; pixel centres lie at +0.5"
+                }
+              },
+              "required": [
+                "render",
+                "pixel"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": [
+        "workspace",
+        "point"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "stats": {
+    "description": "Statistics of the values in one region: voxels, volume in ml, mean, std, min, max, percentiles. A segment together with a box gives the part of the segment inside the box (e.g. a slab of slices).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "box": {
+          "type": "object",
+          "properties": {
+            "min": {
+              "description": "one corner",
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "voxel": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "description": "0-based voxel (i, j, k) of the canonical LPS grid; integers are voxel centres"
+                    }
+                  },
+                  "required": [
+                    "voxel"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "patient_mm": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "description": "LPS patient millimetres"
+                    }
+                  },
+                  "required": [
+                    "patient_mm"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "render": {
+                      "type": "string",
+                      "pattern": "^r-[0-9]+$",
+                      "description": "id of an earlier render"
+                    },
+                    "pixel": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 2,
+                      "maxItems": 2,
+                      "description": "pixel (x, y) of that render; pixel centres lie at +0.5"
+                    }
+                  },
+                  "required": [
+                    "render",
+                    "pixel"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "max": {
+              "description": "the opposite corner",
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "voxel": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "description": "0-based voxel (i, j, k) of the canonical LPS grid; integers are voxel centres"
+                    }
+                  },
+                  "required": [
+                    "voxel"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "patient_mm": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "description": "LPS patient millimetres"
+                    }
+                  },
+                  "required": [
+                    "patient_mm"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "render": {
+                      "type": "string",
+                      "pattern": "^r-[0-9]+$",
+                      "description": "id of an earlier render"
+                    },
+                    "pixel": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 2,
+                      "maxItems": 2,
+                      "description": "pixel (x, y) of that render; pixel centres lie at +0.5"
+                    }
+                  },
+                  "required": [
+                    "render",
+                    "pixel"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "required": [
+            "min",
+            "max"
+          ],
+          "additionalProperties": false
+        },
+        "sphere": {
+          "type": "object",
+          "properties": {
+            "center": {
+              "description": "centre",
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "voxel": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "description": "0-based voxel (i, j, k) of the canonical LPS grid; integers are voxel centres"
+                    }
+                  },
+                  "required": [
+                    "voxel"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "patient_mm": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "description": "LPS patient millimetres"
+                    }
+                  },
+                  "required": [
+                    "patient_mm"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "render": {
+                      "type": "string",
+                      "pattern": "^r-[0-9]+$",
+                      "description": "id of an earlier render"
+                    },
+                    "pixel": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 2,
+                      "maxItems": 2,
+                      "description": "pixel (x, y) of that render; pixel centres lie at +0.5"
+                    }
+                  },
+                  "required": [
+                    "render",
+                    "pixel"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "radius_mm": {
+              "type": "number",
+              "description": "radius in mm"
+            }
+          },
+          "required": [
+            "center",
+            "radius_mm"
+          ],
+          "additionalProperties": false
+        },
+        "segment": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "segment label"
+        },
+        "annotation": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "id of an area or rectangle annotation"
+        }
+      },
+      "required": [
+        "workspace"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "profile": {
+    "description": "Values along a line between two points (nearest voxel at evenly spaced samples), with distances in mm.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "from": {
+          "description": "start",
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "voxel": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "description": "0-based voxel (i, j, k) of the canonical LPS grid; integers are voxel centres"
+                }
+              },
+              "required": [
+                "voxel"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "patient_mm": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "description": "LPS patient millimetres"
+                }
+              },
+              "required": [
+                "patient_mm"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "render": {
+                  "type": "string",
+                  "pattern": "^r-[0-9]+$",
+                  "description": "id of an earlier render"
+                },
+                "pixel": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "description": "pixel (x, y) of that render; pixel centres lie at +0.5"
+                }
+              },
+              "required": [
+                "render",
+                "pixel"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "to": {
+          "description": "end",
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "voxel": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "description": "0-based voxel (i, j, k) of the canonical LPS grid; integers are voxel centres"
+                }
+              },
+              "required": [
+                "voxel"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "patient_mm": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "description": "LPS patient millimetres"
+                }
+              },
+              "required": [
+                "patient_mm"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "render": {
+                  "type": "string",
+                  "pattern": "^r-[0-9]+$",
+                  "description": "id of an earlier render"
+                },
+                "pixel": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "description": "pixel (x, y) of that render; pixel centres lie at +0.5"
+                }
+              },
+              "required": [
+                "render",
+                "pixel"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "samples": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 2000,
+          "description": "number of samples (default: one per smallest voxel spacing)"
+        }
+      },
+      "required": [
+        "workspace",
+        "from",
+        "to"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "measure distance": {
+    "description": "Distance between two points in mm, with an uncertainty of one voxel spacing.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "points": {
+          "type": "array",
+          "items": {
+            "description": "a point",
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "voxel": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "0-based voxel (i, j, k) of the canonical LPS grid; integers are voxel centres"
+                  }
+                },
+                "required": [
+                  "voxel"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "patient_mm": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "LPS patient millimetres"
+                  }
+                },
+                "required": [
+                  "patient_mm"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "render": {
+                    "type": "string",
+                    "pattern": "^r-[0-9]+$",
+                    "description": "id of an earlier render"
+                  },
+                  "pixel": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 2,
+                    "maxItems": 2,
+                    "description": "pixel (x, y) of that render; pixel centres lie at +0.5"
+                  }
+                },
+                "required": [
+                  "render",
+                  "pixel"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "minItems": 2,
+          "description": "the points"
+        }
+      },
+      "required": [
+        "workspace",
+        "points"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "measure angle": {
+    "description": "Angle at the second of three points, in degrees.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "points": {
+          "type": "array",
+          "items": {
+            "description": "a point",
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "voxel": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "0-based voxel (i, j, k) of the canonical LPS grid; integers are voxel centres"
+                  }
+                },
+                "required": [
+                  "voxel"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "patient_mm": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "LPS patient millimetres"
+                  }
+                },
+                "required": [
+                  "patient_mm"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "render": {
+                    "type": "string",
+                    "pattern": "^r-[0-9]+$",
+                    "description": "id of an earlier render"
+                  },
+                  "pixel": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 2,
+                    "maxItems": 2,
+                    "description": "pixel (x, y) of that render; pixel centres lie at +0.5"
+                  }
+                },
+                "required": [
+                  "render",
+                  "pixel"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "minItems": 3,
+          "description": "the points"
+        }
+      },
+      "required": [
+        "workspace",
+        "points"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "measure area": {
+    "description": "Area of a planar polygon through the points, in mm².",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "points": {
+          "type": "array",
+          "items": {
+            "description": "a point",
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "voxel": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "0-based voxel (i, j, k) of the canonical LPS grid; integers are voxel centres"
+                  }
+                },
+                "required": [
+                  "voxel"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "patient_mm": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "LPS patient millimetres"
+                  }
+                },
+                "required": [
+                  "patient_mm"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "render": {
+                    "type": "string",
+                    "pattern": "^r-[0-9]+$",
+                    "description": "id of an earlier render"
+                  },
+                  "pixel": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 2,
+                    "maxItems": 2,
+                    "description": "pixel (x, y) of that render; pixel centres lie at +0.5"
+                  }
+                },
+                "required": [
+                  "render",
+                  "pixel"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "minItems": 3,
+          "description": "the points"
+        }
+      },
+      "required": [
+        "workspace",
+        "points"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "annotate add": {
+    "description": "Adds an annotation on one slice, proposed by the agent for review.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "distance",
+            "angle",
+            "area",
+            "rectangle",
+            "text"
+          ]
+        },
+        "plane": {
+          "type": "string",
+          "enum": [
+            "axial",
+            "coronal",
+            "sagittal"
+          ],
+          "description": "slice orientation"
+        },
+        "points": {
+          "type": "array",
+          "items": {
+            "description": "a point",
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "voxel": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "0-based voxel (i, j, k) of the canonical LPS grid; integers are voxel centres"
+                  }
+                },
+                "required": [
+                  "voxel"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "patient_mm": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "LPS patient millimetres"
+                  }
+                },
+                "required": [
+                  "patient_mm"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "render": {
+                    "type": "string",
+                    "pattern": "^r-[0-9]+$",
+                    "description": "id of an earlier render"
+                  },
+                  "pixel": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 2,
+                    "maxItems": 2,
+                    "description": "pixel (x, y) of that render; pixel centres lie at +0.5"
+                  }
+                },
+                "required": [
+                  "render",
+                  "pixel"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "minItems": 1,
+          "description": "points on one slice: distance 2, angle 3, area ≥ 3, rectangle 2 opposite corners, text 1"
+        },
+        "name": {
+          "type": "string",
+          "description": "name shown in the viewer"
+        },
+        "text": {
+          "type": "string",
+          "description": "text of a text annotation"
+        },
+        "agent": {
+          "type": "string",
+          "description": "id of the agent or harness session, recorded in the provenance of what it creates"
+        }
+      },
+      "required": [
+        "workspace",
+        "kind",
+        "plane",
+        "points"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "annotate list": {
+    "description": "Lists annotations with values, points and provenance.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        }
+      },
+      "required": [
+        "workspace"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "annotate rename": {
+    "description": "Renames an annotation the agent created.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "id": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "annotation id"
+        },
+        "name": {
+          "type": "string",
+          "description": "new name"
+        }
+      },
+      "required": [
+        "workspace",
+        "id",
+        "name"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "annotate delete": {
+    "description": "Deletes an annotation the agent created.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "id": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "annotation id"
+        }
+      },
+      "required": [
+        "workspace",
+        "id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "segment list": {
+    "description": "Lists segments with voxel count, volume in ml and provenance.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        }
+      },
+      "required": [
+        "workspace"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "segment threshold": {
+    "description": "Region growing (6-connected) from a seed within a value range; the result is a new segment proposed by the agent. Existing segments are kept.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "seed": {
+          "description": "seed point; probe it first",
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "voxel": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "description": "0-based voxel (i, j, k) of the canonical LPS grid; integers are voxel centres"
+                }
+              },
+              "required": [
+                "voxel"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "patient_mm": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "description": "LPS patient millimetres"
+                }
+              },
+              "required": [
+                "patient_mm"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "render": {
+                  "type": "string",
+                  "pattern": "^r-[0-9]+$",
+                  "description": "id of an earlier render"
+                },
+                "pixel": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "description": "pixel (x, y) of that render; pixel centres lie at +0.5"
+                }
+              },
+              "required": [
+                "render",
+                "pixel"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "min": {
+          "type": "number",
+          "description": "lowest value (e.g. HU)"
+        },
+        "max": {
+          "type": "number",
+          "description": "highest value"
+        },
+        "max_ml": {
+          "type": "number",
+          "description": "refuse regions larger than this"
+        },
+        "name": {
+          "type": "string",
+          "description": "segment name"
+        },
+        "agent": {
+          "type": "string",
+          "description": "id of the agent or harness session, recorded in the provenance of what it creates"
+        }
+      },
+      "required": [
+        "workspace",
+        "seed",
+        "min",
+        "max"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "engine info": {
+    "description": "Capabilities, labels and licence of a segmentation engine (ferrum-engine/1). Engines marked research_only are for research use only.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "engine": {
+          "type": "string",
+          "description": "engine base URL (default: the first one the operator allows)"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  "engine list": {
+    "description": "Every engine the operator allows: whether it answers, name, version, modes, research_only and GPU group.",
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  "segment interactive": {
+    "description": "Prompts an interactive engine (points, boxes, scribbles, lassos). A new object becomes a segment proposed by the engine; segment refines an object made earlier (append adds to its stored prompts, undo drops the last); from_segment redoes a segment you made, seeded with lassos from its mask. Only a region around the prompts is uploaded. The result carries quality checks.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "engine": {
+          "type": "string",
+          "description": "engine base URL (default: the first one the operator allows)"
+        },
+        "prompts": {
+          "type": "array",
+          "description": "applied in order",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "point"
+                    ]
+                  },
+                  "point": {
+                    "description": "a voxel of (positive) or outside (negative) the object",
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "voxel": {
+                            "type": "array",
+                            "items": {
+                              "type": "number"
+                            },
+                            "minItems": 3,
+                            "maxItems": 3,
+                            "description": "0-based voxel (i, j, k) of the canonical LPS grid; integers are voxel centres"
+                          }
+                        },
+                        "required": [
+                          "voxel"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "patient_mm": {
+                            "type": "array",
+                            "items": {
+                              "type": "number"
+                            },
+                            "minItems": 3,
+                            "maxItems": 3,
+                            "description": "LPS patient millimetres"
+                          }
+                        },
+                        "required": [
+                          "patient_mm"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "render": {
+                            "type": "string",
+                            "pattern": "^r-[0-9]+$",
+                            "description": "id of an earlier render"
+                          },
+                          "pixel": {
+                            "type": "array",
+                            "items": {
+                              "type": "number"
+                            },
+                            "minItems": 2,
+                            "maxItems": 2,
+                            "description": "pixel (x, y) of that render; pixel centres lie at +0.5"
+                          }
+                        },
+                        "required": [
+                          "render",
+                          "pixel"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "positive": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "type",
+                  "point"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "box"
+                    ]
+                  },
+                  "min": {
+                    "description": "one corner",
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "voxel": {
+                            "type": "array",
+                            "items": {
+                              "type": "number"
+                            },
+                            "minItems": 3,
+                            "maxItems": 3,
+                            "description": "0-based voxel (i, j, k) of the canonical LPS grid; integers are voxel centres"
+                          }
+                        },
+                        "required": [
+                          "voxel"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "patient_mm": {
+                            "type": "array",
+                            "items": {
+                              "type": "number"
+                            },
+                            "minItems": 3,
+                            "maxItems": 3,
+                            "description": "LPS patient millimetres"
+                          }
+                        },
+                        "required": [
+                          "patient_mm"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "render": {
+                            "type": "string",
+                            "pattern": "^r-[0-9]+$",
+                            "description": "id of an earlier render"
+                          },
+                          "pixel": {
+                            "type": "array",
+                            "items": {
+                              "type": "number"
+                            },
+                            "minItems": 2,
+                            "maxItems": 2,
+                            "description": "pixel (x, y) of that render; pixel centres lie at +0.5"
+                          }
+                        },
+                        "required": [
+                          "render",
+                          "pixel"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "max": {
+                    "description": "the opposite corner",
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "voxel": {
+                            "type": "array",
+                            "items": {
+                              "type": "number"
+                            },
+                            "minItems": 3,
+                            "maxItems": 3,
+                            "description": "0-based voxel (i, j, k) of the canonical LPS grid; integers are voxel centres"
+                          }
+                        },
+                        "required": [
+                          "voxel"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "patient_mm": {
+                            "type": "array",
+                            "items": {
+                              "type": "number"
+                            },
+                            "minItems": 3,
+                            "maxItems": 3,
+                            "description": "LPS patient millimetres"
+                          }
+                        },
+                        "required": [
+                          "patient_mm"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "render": {
+                            "type": "string",
+                            "pattern": "^r-[0-9]+$",
+                            "description": "id of an earlier render"
+                          },
+                          "pixel": {
+                            "type": "array",
+                            "items": {
+                              "type": "number"
+                            },
+                            "minItems": 2,
+                            "maxItems": 2,
+                            "description": "pixel (x, y) of that render; pixel centres lie at +0.5"
+                          }
+                        },
+                        "required": [
+                          "render",
+                          "pixel"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "positive": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "type",
+                  "min",
+                  "max"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "scribble",
+                      "lasso"
+                    ]
+                  },
+                  "points": {
+                    "type": "array",
+                    "items": {
+                      "description": "a point",
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "voxel": {
+                              "type": "array",
+                              "items": {
+                                "type": "number"
+                              },
+                              "minItems": 3,
+                              "maxItems": 3,
+                              "description": "0-based voxel (i, j, k) of the canonical LPS grid; integers are voxel centres"
+                            }
+                          },
+                          "required": [
+                            "voxel"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "patient_mm": {
+                              "type": "array",
+                              "items": {
+                                "type": "number"
+                              },
+                              "minItems": 3,
+                              "maxItems": 3,
+                              "description": "LPS patient millimetres"
+                            }
+                          },
+                          "required": [
+                            "patient_mm"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "render": {
+                              "type": "string",
+                              "pattern": "^r-[0-9]+$",
+                              "description": "id of an earlier render"
+                            },
+                            "pixel": {
+                              "type": "array",
+                              "items": {
+                                "type": "number"
+                              },
+                              "minItems": 2,
+                              "maxItems": 2,
+                              "description": "pixel (x, y) of that render; pixel centres lie at +0.5"
+                            }
+                          },
+                          "required": [
+                            "render",
+                            "pixel"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    },
+                    "minItems": 2,
+                    "description": "points on one slice: a stroke (scribble) or the outline of a region (lasso, at least 3)"
+                  },
+                  "plane": {
+                    "type": "string",
+                    "enum": [
+                      "axial",
+                      "coronal",
+                      "sagittal"
+                    ],
+                    "description": "slice orientation"
+                  },
+                  "positive": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "type",
+                  "points"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "name": {
+          "type": "string",
+          "description": "segment name"
+        },
+        "segment": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "refine this segment (made by segment interactive)"
+        },
+        "append": {
+          "type": "boolean",
+          "description": "with segment: add the prompts to the stored ones (default: replace them)"
+        },
+        "undo": {
+          "type": "boolean",
+          "description": "with segment: drop the last stored prompt and recompute"
+        },
+        "from_segment": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "redo this segment (one you made or asked an engine for) with the engine, seeded with lassos from its mask"
+        },
+        "roi": {
+          "type": "object",
+          "properties": {
+            "min": {
+              "description": "one corner",
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "voxel": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "description": "0-based voxel (i, j, k) of the canonical LPS grid; integers are voxel centres"
+                    }
+                  },
+                  "required": [
+                    "voxel"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "patient_mm": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "description": "LPS patient millimetres"
+                    }
+                  },
+                  "required": [
+                    "patient_mm"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "render": {
+                      "type": "string",
+                      "pattern": "^r-[0-9]+$",
+                      "description": "id of an earlier render"
+                    },
+                    "pixel": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 2,
+                      "maxItems": 2,
+                      "description": "pixel (x, y) of that render; pixel centres lie at +0.5"
+                    }
+                  },
+                  "required": [
+                    "render",
+                    "pixel"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "max": {
+              "description": "the opposite corner",
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "voxel": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "description": "0-based voxel (i, j, k) of the canonical LPS grid; integers are voxel centres"
+                    }
+                  },
+                  "required": [
+                    "voxel"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "patient_mm": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "description": "LPS patient millimetres"
+                    }
+                  },
+                  "required": [
+                    "patient_mm"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "render": {
+                      "type": "string",
+                      "pattern": "^r-[0-9]+$",
+                      "description": "id of an earlier render"
+                    },
+                    "pixel": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 2,
+                      "maxItems": 2,
+                      "description": "pixel (x, y) of that render; pixel centres lie at +0.5"
+                    }
+                  },
+                  "required": [
+                    "render",
+                    "pixel"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "required": [
+            "min",
+            "max"
+          ],
+          "additionalProperties": false
+        },
+        "whole_volume": {
+          "type": "boolean",
+          "description": "upload the whole volume instead of a region around the prompts"
+        },
+        "min_ml": {
+          "type": "number",
+          "description": "smallest plausible volume (checks.size)"
+        },
+        "max_ml": {
+          "type": "number",
+          "description": "largest plausible volume (checks.size)"
+        },
+        "modality": {
+          "type": "string",
+          "description": "modality sent to the engine (default: the study's; NIfTI has none)"
+        },
+        "agent": {
+          "type": "string",
+          "description": "id of the agent or harness session, recorded in the provenance of what it creates"
+        }
+      },
+      "required": [
+        "workspace"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "segment auto": {
+    "description": "Runs an automatic engine (e.g. TotalSegmentator) on the study; each structure found becomes a segment proposed by the engine, with quality checks. Existing segments are kept.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "engine": {
+          "type": "string",
+          "description": "engine base URL (default: the first one the operator allows)"
+        },
+        "labels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "structures to segment (default: all; see engine info)"
+        },
+        "name_prefix": {
+          "type": "string",
+          "description": "put before every segment name, e.g. monai/ for a second engine"
+        },
+        "modality": {
+          "type": "string",
+          "description": "modality sent to the engine (default: the study's; NIfTI has none)"
+        },
+        "agent": {
+          "type": "string",
+          "description": "id of the agent or harness session, recorded in the provenance of what it creates"
+        }
+      },
+      "required": [
+        "workspace"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "segment shape": {
+    "description": "Shape of a segment from its voxels: volume, extent in mm, slice ranges and largest slices, axial long and short axis with end points, border contact, components and, for segments named left or right, the side it lies on. Measure segments with this, never from images.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "segment": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "segment label"
+        }
+      },
+      "required": [
+        "workspace",
+        "segment"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "segment components": {
+    "description": "Connected components (26-connected) of a segment, largest first, with centroid, box and volume. With split, every further component of at least min_ml becomes a new segment; the largest stays.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "segment": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "segment label"
+        },
+        "min_ml": {
+          "type": "number",
+          "description": "smallest component to split off (default: all)"
+        },
+        "split": {
+          "type": "boolean",
+          "description": "make segments of the components (only segments you created or asked an engine for)"
+        }
+      },
+      "required": [
+        "workspace",
+        "segment"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "segment compare": {
+    "description": "Agreement of two segments: Dice, Jaccard, volumes and their difference, HD95 and Hausdorff distance in mm, centroid distance. b may be in another workspace of the same series (b_workspace).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "a": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "segment label"
+        },
+        "b": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "segment label"
+        },
+        "b_workspace": {
+          "type": "string",
+          "description": "workspace of segment b, opened on the same series (default: this one)"
+        }
+      },
+      "required": [
+        "workspace",
+        "a",
+        "b"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "segment edit": {
+    "description": "Deterministic clean-up of a segment you created or asked an engine for: keep_largest (largest component), fill_holes (enclosed background), restrict_to_box, remove_small (components below min_ml).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "segment": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "segment label"
+        },
+        "op": {
+          "type": "string",
+          "enum": [
+            "keep_largest",
+            "fill_holes",
+            "restrict_to_box",
+            "remove_small"
+          ]
+        },
+        "box": {
+          "type": "object",
+          "properties": {
+            "min": {
+              "description": "one corner",
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "voxel": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "description": "0-based voxel (i, j, k) of the canonical LPS grid; integers are voxel centres"
+                    }
+                  },
+                  "required": [
+                    "voxel"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "patient_mm": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "description": "LPS patient millimetres"
+                    }
+                  },
+                  "required": [
+                    "patient_mm"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "render": {
+                      "type": "string",
+                      "pattern": "^r-[0-9]+$",
+                      "description": "id of an earlier render"
+                    },
+                    "pixel": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 2,
+                      "maxItems": 2,
+                      "description": "pixel (x, y) of that render; pixel centres lie at +0.5"
+                    }
+                  },
+                  "required": [
+                    "render",
+                    "pixel"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "max": {
+              "description": "the opposite corner",
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "voxel": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "description": "0-based voxel (i, j, k) of the canonical LPS grid; integers are voxel centres"
+                    }
+                  },
+                  "required": [
+                    "voxel"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "patient_mm": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "description": "LPS patient millimetres"
+                    }
+                  },
+                  "required": [
+                    "patient_mm"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "render": {
+                      "type": "string",
+                      "pattern": "^r-[0-9]+$",
+                      "description": "id of an earlier render"
+                    },
+                    "pixel": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 2,
+                      "maxItems": 2,
+                      "description": "pixel (x, y) of that render; pixel centres lie at +0.5"
+                    }
+                  },
+                  "required": [
+                    "render",
+                    "pixel"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "required": [
+            "min",
+            "max"
+          ],
+          "additionalProperties": false
+        },
+        "min_ml": {
+          "type": "number",
+          "description": "remove_small: smallest component to keep"
+        }
+      },
+      "required": [
+        "workspace",
+        "segment",
+        "op"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "segment rename": {
+    "description": "Renames a segment the agent created.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "label": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "segment label"
+        },
+        "name": {
+          "type": "string",
+          "description": "new name"
+        }
+      },
+      "required": [
+        "workspace",
+        "label",
+        "name"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "segment delete": {
+    "description": "Deletes a segment the agent created.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "label": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "segment label"
+        }
+      },
+      "required": [
+        "workspace",
+        "label"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "review list": {
+    "description": "Lists the annotations and segments waiting for a person's review.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        }
+      },
+      "required": [
+        "workspace"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "review confirm": {
+    "description": "Confirms an item in the name of a person; only if the operator allows harness review.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "annotation": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "annotation id"
+        },
+        "segment": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "segment label"
+        },
+        "by": {
+          "type": "string",
+          "description": "the person who decided"
+        }
+      },
+      "required": [
+        "workspace",
+        "by"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "review reject": {
+    "description": "Rejects an item in the name of a person; only if the operator allows harness review.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "annotation": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "annotation id"
+        },
+        "segment": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "segment label"
+        },
+        "by": {
+          "type": "string",
+          "description": "the person who decided"
+        }
+      },
+      "required": [
+        "workspace",
+        "by"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "export bundle": {
+    "description": "Writes export/ in the workspace, with SHA-256 of every file: report.json (study, measurements, segments with volumes; unconfirmed items marked) and, by format, annotations.json + segments.nii.gz + segments.json (ferrum) or a DICOM SEG + Comprehensive 3D SR measurement report (dicom). Rejected items are left out of DICOM; proposed ones are marked.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "formats": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "ferrum",
+              "dicom"
+            ]
+          },
+          "minItems": 1,
+          "description": "formats besides report.json (default [\"ferrum\"])"
+        }
+      },
+      "required": [
+        "workspace"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

@@ -85,7 +85,7 @@ flowchart TB
 - An engine's licence is shown to the user. For example, nnInteractive's
   weights are CC BY-NC-SA 4.0, so those results carry a *Research use
   only* badge.
-- FERRUM's code is MIT and bundles no engine or weights.
+- FERRUM's code is MIT OR Apache-2.0 and bundles no engine or weights.
 
 ### 4. Built for people and for agents
 
@@ -154,7 +154,9 @@ review by qualified people.
 | Provenance on annotations and segments; workspace and result formats ([spec](workspace-format.md)) | ✅ |
 | Agent skill command line (`ferrum-cli`, [reference](agent-cli.md)) | ✅ |
 | Agent skill over MCP (`ferrum-cli mcp`) | ✅ |
-| Agent skill: skill package, review queue, engine commands | 📋 Stage 15 |
-| DICOM SEG and SR export | 📋 Stage 15 |
+| Agent skill package and evaluations ([`skills/ferrum`](../skills/ferrum)) | ✅ |
+| Review queue in the desktop app (*Open workspace*) | ✅ |
+| Agent skill with segmentation engines | ✅ |
+| DICOM SEG and SR export | ✅ v0.2.0 |
 
 The detailed plan with user stories is in [dev_plan.md](../dev_plan.md).

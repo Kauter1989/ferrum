@@ -1,5 +1,7 @@
 //! "Segments" section of the settings panel: the segment list with colour,
 //! visibility, opacity, volume and name, plus label-map import/export.
+//! Segments are created with the segmentation tools of the toolbar (or
+//! imported); there is no empty "new segment", which nothing could fill.
 
 use std::collections::HashMap;
 
@@ -9,7 +11,7 @@ use ferrum_app::{SegmentSummary, Viewer};
 use ferrum_domain::{Author, Provenance, ReviewStatus};
 
 use super::theme::{DANGER, SURFACE, TEXT_DIM, WARN};
-use super::widgets::tool_button;
+use super::widgets::{segmented, tool_button};
 
 /// UI-only state of the section.
 #[derive(Debug, Clone, Default)]
@@ -35,14 +37,11 @@ enum RowAction {
 }
 
 /// Draws the section body.
-pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut SegmentsPanelState) {
+/// Review decisions are recorded in the name of `reviewer` (and, with a
+/// workspace open, saved and logged there).
+pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut SegmentsPanelState, reviewer: Option<&str>) {
     let rows = viewer.segment_summaries();
     ui.horizontal_wrapped(|ui| {
-        if ui.button(format!("{} Add", icon::PLUS)).clicked() {
-            if let Ok(label) = viewer.add_segment("") {
-                state.name_edits.remove(&label);
-            }
-        }
         if ui.button(format!("{} Import", icon::UPLOAD_SIMPLE)).clicked() {
             state.import_labels = true;
         }
@@ -60,17 +59,20 @@ pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut SegmentsPanelSta
         }
     });
     if rows.is_empty() {
-        ui.label(
-            RichText::new("Import a label map (NIfTI) or add a segment. Segmentation engines fill segments.")
-                .size(12.0)
-                .color(TEXT_DIM),
-        );
+        let text = if viewer.can_segment().is_ok() {
+            "No segments yet. Choose Region or an AI tool in the toolbar and click on a slice, or import a label \
+             map (NIfTI)."
+        } else {
+            "No segments yet. Create them in the 2D or MPR view, or import a label map (NIfTI)."
+        };
+        ui.label(RichText::new(text).size(12.0).color(TEXT_DIM));
         return;
     }
     let mut show = viewer.segmentation().show;
     if ui.checkbox(&mut show, "Show segments").changed() {
         viewer.set_segments_shown(show);
     }
+    display_controls(ui, viewer);
     for row in rows {
         let label = row.segment.label;
         let result = match segment_row(ui, &row, state) {
@@ -82,7 +84,12 @@ pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut SegmentsPanelSta
             RowAction::Color(c) => viewer.set_segment_color(label, c),
             RowAction::Visible(v) => viewer.set_segment_visible(label, v),
             RowAction::Opacity(o) => viewer.set_segment_opacity(label, o),
-            RowAction::Review(status) => viewer.review_segment(label, status, None),
+            RowAction::Review(status) => {
+                if let Err(e) = viewer.decide(ferrum_domain::ReviewItem::Segment(label), status, reviewer) {
+                    viewer.status.errors.push(e);
+                }
+                Ok(())
+            }
             RowAction::Delete => {
                 state.name_edits.remove(&label);
                 viewer.remove_segment(label)
@@ -191,4 +198,26 @@ pub fn provenance_line(ui: &mut egui::Ui, p: &Provenance, name: &str) -> Option<
         }
     });
     decision
+}
+
+/// How segments are drawn on slices: outline, fill or both, and the fill
+/// opacity (applied on top of each segment's own opacity).
+fn display_controls(ui: &mut egui::Ui, viewer: &mut Viewer) {
+    use ferrum_domain::SegmentStyle;
+    let state = viewer.segmentation();
+    let (style, mut opacity) = (state.style, state.fill_opacity);
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("On slices").size(12.0).color(TEXT_DIM));
+        let labels = SegmentStyle::ALL.map(SegmentStyle::label);
+        let current = SegmentStyle::ALL.iter().position(|s| *s == style);
+        if let Some(i) = segmented(ui, &labels, current) {
+            viewer.set_segment_style(SegmentStyle::ALL[i]);
+        }
+    });
+    let slider = Slider::new(&mut opacity, 0.0..=1.0)
+        .custom_formatter(|v, _| format!("{:.0} %", v * 100.0))
+        .text("Fill opacity");
+    if ui.add_enabled(style.fills(), slider).on_hover_text("Multiplies each segment's opacity on slices").changed() {
+        viewer.set_segment_fill_opacity(opacity);
+    }
 }

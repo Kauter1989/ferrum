@@ -79,6 +79,7 @@ ferrum-bridge --port 8765 nninteractive    # --device cuda:1, --torch-compile, -
 | Weights cache | `NNINTERACTIVE_MODEL_DIR` (default `~/.nninteractive`) |
 | Access token | `--token` / `FERRUM_ENGINE_TOKEN`; FERRUM must send the same token |
 | Faster predictions after a slow first one | `--torch-compile` |
+| Identical masks when prompts are replayed (FERRUM's agent refines that way) | `--deterministic` (slightly slower) |
 
 ### Check the set-up without a GPU
 
@@ -110,10 +111,13 @@ cd ferrum/bridges/totalsegmentator && docker compose up --build    # published o
 | Faster, lighter 3 mm model | `--fast` |
 | Licence for licensed tasks | `--license-number` / `TOTALSEG_LICENSE` |
 | Weights and config | `TOTALSEG_WEIGHTS_PATH`, `TOTALSEG_HOME_DIR` (Docker: the `/weights` volume) |
+| Run jobs in the bridge process instead of a child process per job | `--in-process` |
 
 Notes:
 - The full `total` model needs about 10 GB of GPU memory. `--fast` runs on
   smaller GPUs and, slowly, on the CPU.
+- **One process per job:** every job runs in a child process, which
+  returns all its GPU memory when it ends; **Cancel** terminates it at once.
 - **Usage statistics are switched off.** TotalSegmentator sends anonymous
   usage statistics by default; the bridge disables them before the first
   run, so nothing leaves the machine except the one-time weight download.
@@ -166,6 +170,41 @@ Notes:
   their own licence, so the engine is marked *Research use only* by
   default.
 
+### One GPU for all engines
+
+On a single card such as a 12 GB RTX 3080 Ti, nnInteractive and the full
+TotalSegmentator model (about 10 GB each) fit only in turn.
+`bridges/compose.yml` starts the bridges with profiles for one GPU:
+
+```bash
+cd ferrum/bridges
+docker compose --profile interactive up --build   # nnInteractive (--deterministic) on :8765
+docker compose --profile automatic up --build     # TotalSegmentator total on :8766, a sub-task on :8768
+docker compose --profile mixed up --build         # TotalSegmentator --fast on :8766, sub-task on :8768, MONAI Label on :8767
+docker compose --profile sequential up --build    # all of them
+```
+
+- The sub-task is `TOTALSEG_SUBTASK` (default `lung_nodules`); MONAI
+  Label serves its *radiology* app (`MONAI_LABEL_MODELS`, default
+  `deepedit,segmentation`).
+- Between calls the bridges give their memory back: nnInteractive drops
+  the image when its session closes, TotalSegmentator runs each job in a
+  child process.
+- In the agent's operator configuration, put the engines into one GPU
+  group, so FERRUM runs one engine call at a time, even from several
+  processes:
+
+  ```toml
+  [network]
+  engines = ["http://127.0.0.1:8765", "http://127.0.0.1:8766", "http://127.0.0.1:8767", "http://127.0.0.1:8768"]
+  gpu_groups = { gpu0 = ["http://127.0.0.1:8765", "http://127.0.0.1:8766", "http://127.0.0.1:8767", "http://127.0.0.1:8768"] }
+  ```
+
+- The desktop app connects to one engine at a time; disconnect before
+  starting a job on another engine of the same card.
+- `scripts/benchmark_engines.py` measures time and peak GPU memory of the
+  agent scenarios on your card.
+
 ## 3. Reach a remote GPU
 
 The bridge listens on localhost only. To use a GPU server, forward the
@@ -195,13 +234,15 @@ works the same way.
 
 1. **Open the study** in FERRUM (drag the folder or `.nii.gz` onto the
    window). Choose the **2D** view and the **Lung** window preset.
-2. **Connect.** In the settings panel (**Tab**), open *AI segmentation*.
+2. **Connect.** In the settings panel (**Tab**), open *Segmentation →
+   AI engine*.
    - Check the URL (`http://127.0.0.1:8765`, or `FERRUM_ENGINE_URL` when
      you start FERRUM) and press **Connect**.
    - The status shows *nnInteractive … cuda:0*, the licence, and the
      *Research use only* badge.
-3. **First prompt.** Select **AI point** with **Include** and click inside
-   the lesion on an axial slice.
+3. **First prompt.** Select **AI point** in the *Segment* group of the
+   toolbar, keep **Include** (in the panel) and click inside the lesion on
+   an axial slice.
    - The first prompt uploads the volume (a few seconds for 512×512×250)
      and the model computes its features.
    - The result appears as *AI segment 1*, in 2D and in 3D.
@@ -227,7 +268,7 @@ works the same way.
 | *engine unreachable* | The bridge is not running, listens on another port, or the SSH tunnel is down. Test with `curl http://127.0.0.1:8765/v1/info` |
 | *unauthorized* | The bridge was started with a token; start FERRUM with the same `FERRUM_ENGINE_TOKEN` |
 | `could not select device driver "nvidia"` | Install the NVIDIA Container Toolkit and restart Docker |
-| CUDA out of memory | Use a GPU with more memory, or a smaller or cropped volume. One session runs at a time |
+| CUDA out of memory | Another engine still holds the card: run engines in turn ([One GPU for all engines](#one-gpu-for-all-engines)). Otherwise use a smaller or cropped volume (the agent sends only a region around its prompts) or a GPU with more memory |
 | Very slow prompts | You are running on the CPU (`--device cpu`) or the first prediction is compiling (`--torch-compile`) |
 | Weights do not download | The GPU machine needs access to `huggingface.co` once; or download elsewhere and pass `--model-dir` |
 | The segment ignores voxels of another segment | By design: AI prompts do not overwrite accepted segments. Delete or edit the other segment first |

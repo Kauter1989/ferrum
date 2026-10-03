@@ -41,7 +41,10 @@ pub fn scan(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
 pub fn open(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     let root = ctx.workspace_path(p)?;
     let source = PathBuf::from(p.req_str("path")?);
-    let study = Study::open(ctx.config, &root, &source, p.str("series")?, ctx.cache.as_deref_mut())?;
+    let mut study = Study::open(ctx.config, &root, &source, p.str("series")?, ctx.cache.as_deref_mut())?;
+    if let Some(m) = p.str("modality")? {
+        study.declare_modality(m)?;
+    }
     let out = describe(ctx.config, &study);
     ctx.study = Some(study);
     Ok(out)
@@ -79,6 +82,7 @@ pub(super) fn describe(config: &AgentConfig, study: &Study) -> Output {
     let mut data = json!({
         "series": series_key(config, &study.workspace.manifest().source.series_id),
         "modality": m.modality,
+        "modality_source": if study.modality_declared() { "declared" } else { "series" },
         "description": m.description,
         "dims": [d.x, d.y, d.z],
         "spacing_mm": [s.x, s.y, s.z],
@@ -96,8 +100,12 @@ pub(super) fn describe(config: &AgentConfig, study: &Study) -> Output {
     if s.max_element() > 3.0 * s.min_element() {
         out = out.warn(format!("strongly anisotropic voxels ({:.2} × {:.2} × {:.2} mm)", s.x, s.y, s.z));
     }
-    if !m.modality.eq_ignore_ascii_case("CT") {
+    if m.modality.is_empty() {
+        out = out.warn("the series carries no modality (NIfTI), so values have no unit; if you know it, open the study with modality (e.g. CT)");
+    } else if !m.modality.eq_ignore_ascii_case("CT") {
         out = out.warn("values are not in Hounsfield units (not CT)");
+    } else if study.modality_declared() {
+        out = out.warn("the modality CT was declared, not read from the series: values are taken as Hounsfield units");
     }
     out
 }

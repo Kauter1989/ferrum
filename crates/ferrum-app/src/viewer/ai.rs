@@ -308,7 +308,8 @@ impl Viewer {
         self.ai.target = None;
         self.ai.job = None;
         if self.tool.prompt_kind().is_some() {
-            self.select_tool(crate::ToolKind::Pan);
+            self.tool = crate::ToolKind::Pan;
+            self.tool_ctl.cancel();
         }
     }
 
@@ -325,8 +326,12 @@ impl Viewer {
     /// Sends a prompt for the current object. Opens a session for the
     /// current volume first if needed, and creates the target segment on
     /// the first prompt of an object. Returns `false` if the prompt cannot
-    /// be sent (no engine, unsupported kind, invalid geometry).
+    /// be sent (no engine, unsupported kind, invalid geometry, or the 3D
+    /// view, where segmentation does not start).
     pub fn ai_prompt(&mut self, prompt: Prompt) -> bool {
+        if self.can_segment().is_err() {
+            return false;
+        }
         let Some(d) = self.dataset.as_ref() else {
             return false;
         };
@@ -379,9 +384,14 @@ impl Viewer {
 
     /// Runs automatic segmentation of `labels` (engine label names; `None`
     /// for all). Each structure found becomes a segment. Returns `false` if
-    /// the engine cannot run it or a job is already running.
+    /// the engine cannot run it, a job is already running or the 3D view is
+    /// shown (segmentation starts from the 2D and MPR views).
     pub fn ai_run_automatic(&mut self, labels: Option<Vec<String>>) -> bool {
-        if !self.ai.supports_automatic() || self.ai.job.is_some() || !self.ensure_ai_session() {
+        if self.can_segment().is_err()
+            || !self.ai.supports_automatic()
+            || self.ai.job.is_some()
+            || !self.ensure_ai_session()
+        {
             return false;
         }
         self.ai.cancel.store(false, Ordering::Relaxed);

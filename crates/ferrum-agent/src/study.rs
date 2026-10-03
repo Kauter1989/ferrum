@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use ferrum_domain::{
-    AnnotationReport, AnnotationSet, NoProgress, SegmentationSet, SeriesDescriptor, SeriesMetadata, Volume,
+    AnnotationReport, AnnotationSet, NoProgress, SegmentationSet, SeriesDescriptor, SeriesMetadata, StudyInfo, Volume,
     VolumeRepository,
 };
 use ferrum_io::{CompositeRepository, Workspace};
@@ -62,6 +62,8 @@ pub fn scan(paths: &[PathBuf]) -> Result<Vec<SeriesDescriptor>, AgentError> {
 #[derive(Debug, Default)]
 pub struct VolumeCache {
     entries: HashMap<PathBuf, CachedSeries>,
+    /// Engine sessions of interactive objects (see [`crate::sessions`]).
+    pub engines: crate::sessions::EngineSessions,
 }
 
 #[derive(Debug, Clone)]
@@ -179,6 +181,12 @@ impl Study {
         volume: Arc<Volume>,
         metadata: Arc<SeriesMetadata>,
     ) -> Result<Self, AgentError> {
+        let metadata = match &workspace.manifest().modality {
+            Some(m) if metadata.modality.is_empty() => {
+                Arc::new(SeriesMetadata { modality: m.clone(), ..(*metadata).clone() })
+            }
+            _ => metadata,
+        };
         let d = volume.dims();
         let annotations = workspace.load_annotations([d.x, d.y, d.z])?.unwrap_or_default();
         let segments = workspace.load_segments(&volume)?.unwrap_or_else(|| SegmentationSet::new(d));
@@ -190,15 +198,21 @@ impl Study {
         Ok(Self { workspace, volume, metadata, annotations, segments, source_sha256 })
     }
 
-    /// Saves the annotations into the workspace.
-    pub fn save_annotations(&self) -> Result<(), AgentError> {
-        let report = AnnotationReport::build(
+    /// Saves the annotations into the workspace (study identification
+    /// filtered by the operator's privacy settings).
+    pub fn save_annotations(&self, config: &AgentConfig) -> Result<(), AgentError> {
+        Ok(self.workspace.save_annotations(&self.annotation_report(config), &generator())?)
+    }
+
+    /// The annotation report as the agent may write it: study identifiers
+    /// pass [`shared_study`].
+    pub fn annotation_report(&self, config: &AgentConfig) -> AnnotationReport {
+        AnnotationReport::build(
             self.workspace.manifest().source.path.clone(),
-            self.metadata.study.clone(),
+            shared_study(config, &self.metadata.study),
             &self.volume,
             &self.annotations,
-        );
-        Ok(self.workspace.save_annotations(&report, &generator())?)
+        )
     }
 
     /// Saves the segments into the workspace.
@@ -211,6 +225,35 @@ impl Study {
         self.workspace.path(ferrum_io::workspace::files::RENDERS)
     }
 
+    /// Declares the modality of a source that carries none (NIfTI) and
+    /// saves it in the workspace. A source with its own modality keeps it:
+    /// declaring another one is a `bad_request`.
+    pub fn declare_modality(&mut self, modality: &str) -> Result<(), AgentError> {
+        let m = modality.trim().to_ascii_uppercase();
+        if m.is_empty() || m.len() > 16 || !m.bytes().all(|b| b.is_ascii_alphanumeric()) {
+            return Err(AgentError::bad_request(format!("modality {modality:?} is not a DICOM modality code"))
+                .hint("e.g. CT, MR, PT"));
+        }
+        let declared = self.workspace.manifest().modality.is_some();
+        if !declared && !self.metadata.modality.is_empty() {
+            if self.metadata.modality.eq_ignore_ascii_case(&m) {
+                return Ok(());
+            }
+            return Err(AgentError::bad_request(format!(
+                "the series carries the modality {}; it cannot be declared {m}",
+                self.metadata.modality
+            )));
+        }
+        self.workspace.set_modality(Some(&m))?;
+        self.metadata = Arc::new(SeriesMetadata { modality: m, ..(*self.metadata).clone() });
+        Ok(())
+    }
+
+    /// `true` if the modality was declared rather than read from the source.
+    pub fn modality_declared(&self) -> bool {
+        self.workspace.manifest().modality.is_some()
+    }
+
     /// Unit of the voxel values: `HU` for CT, empty otherwise.
     pub fn value_unit(&self) -> &'static str {
         if self.metadata.modality.eq_ignore_ascii_case("CT") {
@@ -218,6 +261,22 @@ impl Study {
         } else {
             ""
         }
+    }
+}
+
+/// Study identification as the operator allows it to leave FERRUM: UIDs
+/// pseudonymised (unless `pseudonymise_uids` is off), dates only with
+/// `expose_dates`, the accession number only with `expose_identifiers`.
+pub fn shared_study(config: &AgentConfig, s: &StudyInfo) -> StudyInfo {
+    let uid = |id: &str| if id.is_empty() { String::new() } else { series_key(config, id) };
+    let keep = |allowed: bool, v: &str| if allowed { v.to_owned() } else { String::new() };
+    StudyInfo {
+        study_instance_uid: uid(&s.study_instance_uid),
+        series_instance_uid: uid(&s.series_instance_uid),
+        study_date: keep(config.expose_dates, &s.study_date),
+        study_time: keep(config.expose_dates, &s.study_time),
+        accession_number: keep(config.expose_identifiers, &s.accession_number),
+        ..s.clone()
     }
 }
 

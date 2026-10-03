@@ -28,6 +28,23 @@ pub struct Ws {
     pub workspace: String,
 }
 
+/// How segments are drawn with `--overlay segments`.
+#[derive(Debug, Args)]
+pub struct SegmentDisplay {
+    /// outline (default), fill or fill_outline.
+    #[arg(long)]
+    pub segment_style: Option<String>,
+    /// Fill opacity for every segment, 0–1 (default: each segment's own).
+    #[arg(long)]
+    pub segment_opacity: Option<f64>,
+}
+
+impl SegmentDisplay {
+    fn fields(&self) -> [(&'static str, Option<Value>); 2] {
+        [("segment_style", some(self.segment_style.clone())), ("segment_opacity", some(self.segment_opacity))]
+    }
+}
+
 /// Agent id recorded in the provenance of created items.
 #[derive(Debug, Args)]
 pub struct AgentId {
@@ -72,6 +89,9 @@ pub enum Command {
         #[arg(long)]
         annotation: Option<u64>,
     },
+    /// Segmentation engines.
+    #[command(subcommand)]
+    Engine(EngineCmd),
     /// Values along a line.
     Profile {
         #[command(flatten)]
@@ -114,6 +134,9 @@ pub enum Command {
         /// Command name, e.g. "view slice".
         command: Option<String>,
     },
+    /// Skill evaluations: tasks, phantoms and grading.
+    #[command(subcommand)]
+    Eval(Eval),
     /// Serves every command as an MCP tool over stdio.
     Mcp {
         /// Workspace root, if the operator configuration sets none.
@@ -140,6 +163,9 @@ pub enum Study {
         /// Series (from study scan) when the source holds several.
         #[arg(long)]
         series: Option<String>,
+        /// Modality of a source that carries none (NIfTI), e.g. CT.
+        #[arg(long)]
+        modality: Option<String>,
     },
     /// Describes the open study.
     Info {
@@ -179,6 +205,8 @@ pub enum View {
         /// Overlays (segments).
         #[arg(long = "overlay")]
         overlays: Vec<String>,
+        #[command(flatten)]
+        display: SegmentDisplay,
     },
     /// 3D render on the CPU from a standard viewpoint.
     Volume {
@@ -218,6 +246,8 @@ pub enum View {
         /// Overlays (segments).
         #[arg(long = "overlay")]
         overlays: Vec<String>,
+        #[command(flatten)]
+        display: SegmentDisplay,
     },
     /// Renders one slice to PNG + sidecar JSON.
     Slice {
@@ -241,6 +271,47 @@ pub enum View {
         /// Overlays (segments).
         #[arg(long = "overlay")]
         overlays: Vec<String>,
+        #[command(flatten)]
+        display: SegmentDisplay,
+    },
+}
+
+/// `engine …`.
+#[derive(Debug, Subcommand)]
+pub enum EngineCmd {
+    /// Capabilities, labels and licence of an engine.
+    Info {
+        /// Engine URL (default: the first allowed one).
+        #[arg(long)]
+        engine: Option<String>,
+    },
+    /// Every allowed engine: reachable, name, modes, licence, GPU group.
+    List,
+}
+
+/// `eval …`.
+#[derive(Debug, Subcommand)]
+pub enum Eval {
+    /// Lists the evaluation tasks.
+    Tasks,
+    /// Writes the phantoms the tasks run on.
+    Phantoms {
+        /// Output folder.
+        dir: PathBuf,
+    },
+    /// Serves FERRUM's mock segmentation engine for the tasks that need one (until stopped).
+    Engine {
+        /// Address to listen on.
+        #[arg(default_value = "127.0.0.1:8765")]
+        addr: String,
+    },
+    /// Grades a transcript ({"calls": [...], "answer": "..."}) of one task.
+    Grade {
+        /// Task id.
+        #[arg(long)]
+        task: String,
+        /// Transcript JSON file.
+        transcript: PathBuf,
     },
 }
 
@@ -251,6 +322,10 @@ pub enum Export {
     Bundle {
         #[command(flatten)]
         ws: Ws,
+        /// Formats besides report.json: `ferrum` (JSON + NIfTI, default),
+        /// `dicom` (SEG + SR); repeat for several.
+        #[arg(long = "format", value_parser = ["ferrum", "dicom"])]
+        formats: Vec<String>,
     },
 }
 
@@ -353,6 +428,116 @@ pub enum Segment {
         #[arg(long)]
         name: Option<String>,
     },
+    /// Prompts an interactive engine (points `+P`/`-P`, boxes `box:A:B`, `lasso:P1;P2;P3`, `scribble:P1;P2`).
+    Interactive {
+        #[command(flatten)]
+        ws: Ws,
+        #[command(flatten)]
+        agent: AgentId,
+        /// Engine URL (default: the first allowed one).
+        #[arg(long)]
+        engine: Option<String>,
+        /// Segment name.
+        #[arg(long)]
+        name: Option<String>,
+        /// Refine this segment (made by segment interactive).
+        #[arg(long)]
+        segment: Option<u64>,
+        /// With --segment: add the prompts to the stored ones.
+        #[arg(long)]
+        append: bool,
+        /// With --segment: drop the last stored prompt.
+        #[arg(long)]
+        undo: bool,
+        /// Redo this segment of yours with the engine, seeded from its mask.
+        #[arg(long)]
+        from_segment: Option<u64>,
+        /// Region sent to the engine, between two corner points.
+        #[arg(long, num_args = 2, value_names = ["MIN", "MAX"])]
+        roi: Option<Vec<String>>,
+        /// Send the whole volume.
+        #[arg(long)]
+        whole_volume: bool,
+        /// Smallest plausible volume (ml).
+        #[arg(long)]
+        min_ml: Option<f64>,
+        /// Largest plausible volume (ml).
+        #[arg(long)]
+        max_ml: Option<f64>,
+        /// Modality sent to the engine (NIfTI has none).
+        #[arg(long)]
+        modality: Option<String>,
+        /// Prompts in order: +POINT, -POINT, ±box:POINT:POINT, ±lasso:P1;P2;P3, ±scribble:P1;P2.
+        #[arg(allow_hyphen_values = true)]
+        prompts: Vec<String>,
+    },
+    /// Runs an automatic engine.
+    Auto {
+        #[command(flatten)]
+        ws: Ws,
+        #[command(flatten)]
+        agent: AgentId,
+        /// Engine URL (default: the first allowed one).
+        #[arg(long)]
+        engine: Option<String>,
+        /// Structures (default: all).
+        #[arg(long = "label")]
+        labels: Vec<String>,
+        /// Put before every segment name.
+        #[arg(long)]
+        name_prefix: Option<String>,
+        /// Modality sent to the engine (NIfTI has none).
+        #[arg(long)]
+        modality: Option<String>,
+    },
+    /// Shape of a segment: volume, extent, slices, axes, border, components, laterality.
+    Shape {
+        #[command(flatten)]
+        ws: Ws,
+        /// Segment label.
+        segment: u64,
+    },
+    /// Connected components of a segment; --split makes segments of them.
+    Components {
+        #[command(flatten)]
+        ws: Ws,
+        /// Segment label.
+        segment: u64,
+        /// Smallest component to split off (ml).
+        #[arg(long)]
+        min_ml: Option<f64>,
+        /// Make a segment of every further component.
+        #[arg(long)]
+        split: bool,
+    },
+    /// Agreement of two segments (Dice, Hausdorff, volumes).
+    Compare {
+        #[command(flatten)]
+        ws: Ws,
+        /// First segment label.
+        a: u64,
+        /// Second segment label.
+        b: u64,
+        /// Workspace of the second segment (same series).
+        #[arg(long)]
+        b_workspace: Option<String>,
+    },
+    /// Clean-up of a segment: keep_largest, fill_holes, restrict_to_box, remove_small.
+    Edit {
+        #[command(flatten)]
+        ws: Ws,
+        /// Segment label.
+        segment: u64,
+        /// The edit.
+        #[arg(long)]
+        op: String,
+        /// Box for restrict_to_box, between two corner points.
+        #[arg(long = "box", num_args = 2, value_names = ["MIN", "MAX"])]
+        bx: Option<Vec<String>>,
+        /// Smallest component to keep (remove_small, ml).
+        #[arg(long)]
+        min_ml: Option<f64>,
+    },
     /// Renames a segment the agent created.
     Rename {
         #[command(flatten)]
@@ -417,6 +602,34 @@ pub fn parse_point(s: &str) -> Result<Value, String> {
     }
 }
 
+/// `+POINT` / `-POINT` (include / exclude) or `±box:POINT:POINT`.
+pub fn parse_prompt(s: &str) -> Result<Value, String> {
+    let (positive, rest) = match s.split_at_checked(1) {
+        Some(("+", r)) => (true, r),
+        Some(("-", r)) => (false, r),
+        _ => (true, s),
+    };
+    for kind in ["lasso", "scribble"] {
+        if let Some(list) = rest.strip_prefix(kind).and_then(|r| r.strip_prefix(':')) {
+            let points: Vec<Value> = list.split(';').map(parse_point).collect::<Result<_, _>>()?;
+            return Ok(json!({ "type": kind, "positive": positive, "points": points }));
+        }
+    }
+    if let Some(b) = rest.strip_prefix("box:") {
+        let (a, z) = split_box(b).ok_or_else(|| format!("prompt {s:?}: expected box:POINT:POINT"))?;
+        return Ok(json!({ "type": "box", "positive": positive, "min": parse_point(a)?, "max": parse_point(z)? }));
+    }
+    Ok(json!({ "type": "point", "positive": positive, "point": parse_point(rest)? }))
+}
+
+/// Splits `v:1,2,3:v:4,5,6` into its two points.
+fn split_box(b: &str) -> Option<(&str, &str)> {
+    let rest = b.get(1..)?;
+    let second =
+        [":v:", ":mm:", ":voxel:", ":patient_mm:", ":r-"].iter().filter_map(|k| rest.find(k).map(|i| i + 2)).min()?;
+    Some((b[..second].trim_end_matches(':'), &b[second..]))
+}
+
 /// Preset name or `CENTER,WIDTH`.
 pub fn parse_window(s: &str) -> Result<Value, String> {
     match s.split_once(',') {
@@ -447,59 +660,18 @@ impl Command {
         Ok(match self {
             Command::Study(s) => match s {
                 Study::Scan { paths } => call("study scan", vec![("paths", Some(json!(paths)))]),
-                Study::Open { ws: w, path, series } => {
-                    call("study open", vec![ws(w), ("path", Some(json!(path))), ("series", some(series.clone()))])
-                }
+                Study::Open { ws: w, path, series, modality } => call(
+                    "study open",
+                    vec![
+                        ws(w),
+                        ("path", Some(json!(path))),
+                        ("series", some(series.clone())),
+                        ("modality", some(modality.clone())),
+                    ],
+                ),
                 Study::Info { ws: w } => call("study info", vec![ws(w)]),
             },
-            Command::View(View::Slice { ws: w, plane, slice_number, at, window, size, overlays }) => call(
-                "view slice",
-                vec![
-                    ws(w),
-                    ("plane", Some(json!(plane))),
-                    ("slice_number", some(*slice_number)),
-                    ("at", at.as_deref().map(parse_point).transpose()?),
-                    ("window", window.as_deref().map(parse_window).transpose()?),
-                    ("size", some(*size)),
-                    ("overlays", (!overlays.is_empty()).then(|| json!(overlays))),
-                ],
-            ),
-            Command::View(View::Montage { ws: w, plane, from, to, step, columns, window, size, overlays }) => call(
-                "view montage",
-                vec![
-                    ws(w),
-                    ("plane", Some(json!(plane))),
-                    ("from", some(*from)),
-                    ("to", some(*to)),
-                    ("step", some(*step)),
-                    ("columns", some(*columns)),
-                    ("window", window.as_deref().map(parse_window).transpose()?),
-                    ("size", some(*size)),
-                    ("overlays", (!overlays.is_empty()).then(|| json!(overlays))),
-                ],
-            ),
-            Command::View(View::Mpr { ws: w, at, window, size, overlays }) => call(
-                "view mpr",
-                vec![
-                    ws(w),
-                    ("at", Some(parse_point(at)?)),
-                    ("window", window.as_deref().map(parse_window).transpose()?),
-                    ("size", some(*size)),
-                    ("overlays", (!overlays.is_empty()).then(|| json!(overlays))),
-                ],
-            ),
-            Command::View(View::Volume { ws: w, mode, threshold, preset, view, size, overlays }) => call(
-                "view volume",
-                vec![
-                    ws(w),
-                    ("mode", some(mode.clone())),
-                    ("threshold", some(*threshold)),
-                    ("preset", some(preset.clone())),
-                    ("view", some(view.clone())),
-                    ("size", some(*size)),
-                    ("overlays", (!overlays.is_empty()).then(|| json!(overlays))),
-                ],
-            ),
+            Command::View(v) => view_call(v)?,
             Command::Profile { ws: w, from, to, samples } => call(
                 "profile",
                 vec![
@@ -509,7 +681,11 @@ impl Command {
                     ("samples", some(*samples)),
                 ],
             ),
-            Command::Export(Export::Bundle { ws: w }) => call("export bundle", vec![ws(w)]),
+            Command::Export(Export::Bundle { ws: w, formats }) => {
+                call("export bundle", vec![ws(w), ("formats", (!formats.is_empty()).then(|| json!(formats)))])
+            }
+            Command::Engine(EngineCmd::Info { engine }) => call("engine info", vec![("engine", some(engine.clone()))]),
+            Command::Engine(EngineCmd::List) => call("engine list", vec![]),
             Command::Probe { ws: w, point } => call("probe", vec![ws(w), ("point", Some(parse_point(point)?))]),
             Command::Stats { ws: w, bx, sphere, radius_mm, segment, annotation } => {
                 let bx = bx.as_ref().map(|b| -> Result<Value, String> {
@@ -560,9 +736,80 @@ impl Command {
             }
             Command::Commands => ("commands".to_owned(), json!({})),
             Command::Schema { command } => ("schema".to_owned(), json!({ "command": command })),
+            Command::Eval(e) => match e {
+                Eval::Tasks => ("eval tasks".to_owned(), json!({})),
+                Eval::Phantoms { dir } => ("eval phantoms".to_owned(), json!({ "dir": dir })),
+                Eval::Engine { addr } => ("eval engine".to_owned(), json!({ "addr": addr })),
+                Eval::Grade { task, transcript } => {
+                    ("eval grade".to_owned(), json!({ "task": task, "transcript": transcript }))
+                }
+            },
             Command::Mcp { workspace_root } => ("mcp".to_owned(), json!({ "workspace_root": workspace_root })),
         })
     }
+}
+
+fn view_call(v: &View) -> Result<(String, Value), String> {
+    let call = |name: &str, fields: Vec<(&str, Option<Value>)>| (name.to_owned(), object(fields));
+    Ok(match v {
+        View::Slice { ws: w, plane, slice_number, at, window, size, overlays, display } => call(
+            "view slice",
+            [
+                ws(w),
+                ("plane", Some(json!(plane))),
+                ("slice_number", some(*slice_number)),
+                ("at", at.as_deref().map(parse_point).transpose()?),
+                ("window", window.as_deref().map(parse_window).transpose()?),
+                ("size", some(*size)),
+                ("overlays", (!overlays.is_empty()).then(|| json!(overlays))),
+            ]
+            .into_iter()
+            .chain(display.fields())
+            .collect(),
+        ),
+        View::Montage { ws: w, plane, from, to, step, columns, window, size, overlays, display } => call(
+            "view montage",
+            [
+                ws(w),
+                ("plane", Some(json!(plane))),
+                ("from", some(*from)),
+                ("to", some(*to)),
+                ("step", some(*step)),
+                ("columns", some(*columns)),
+                ("window", window.as_deref().map(parse_window).transpose()?),
+                ("size", some(*size)),
+                ("overlays", (!overlays.is_empty()).then(|| json!(overlays))),
+            ]
+            .into_iter()
+            .chain(display.fields())
+            .collect(),
+        ),
+        View::Mpr { ws: w, at, window, size, overlays, display } => call(
+            "view mpr",
+            [
+                ws(w),
+                ("at", Some(parse_point(at)?)),
+                ("window", window.as_deref().map(parse_window).transpose()?),
+                ("size", some(*size)),
+                ("overlays", (!overlays.is_empty()).then(|| json!(overlays))),
+            ]
+            .into_iter()
+            .chain(display.fields())
+            .collect(),
+        ),
+        View::Volume { ws: w, mode, threshold, preset, view, size, overlays } => call(
+            "view volume",
+            vec![
+                ws(w),
+                ("mode", some(mode.clone())),
+                ("threshold", some(*threshold)),
+                ("preset", some(preset.clone())),
+                ("view", some(view.clone())),
+                ("size", some(*size)),
+                ("overlays", (!overlays.is_empty()).then(|| json!(overlays))),
+            ],
+        ),
+    })
 }
 
 fn annotate_call(a: &Annotate) -> Result<(String, Value), String> {
@@ -587,6 +834,56 @@ fn annotate_call(a: &Annotate) -> Result<(String, Value), String> {
     })
 }
 
+fn flag(on: bool) -> Option<Value> {
+    on.then(|| json!(true))
+}
+
+fn corners(b: Option<&[String]>) -> Result<Option<Value>, String> {
+    b.map(|b| Ok(json!({ "min": parse_point(&b[0])?, "max": parse_point(&b[1])? }))).transpose()
+}
+
+fn interactive_call(s: &Segment) -> Result<(String, Value), String> {
+    let Segment::Interactive {
+        ws: w,
+        agent,
+        engine,
+        name,
+        segment,
+        append,
+        undo,
+        from_segment,
+        roi,
+        whole_volume,
+        min_ml,
+        max_ml,
+        modality,
+        prompts,
+    } = s
+    else {
+        return Err("not segment interactive".into());
+    };
+    let prompts: Vec<Value> = prompts.iter().map(String::as_str).map(parse_prompt).collect::<Result<_, _>>()?;
+    Ok((
+        "segment interactive".into(),
+        object(vec![
+            ws(w),
+            ("agent", some(agent.agent.clone())),
+            ("engine", some(engine.clone())),
+            ("name", some(name.clone())),
+            ("prompts", (!prompts.is_empty()).then(|| Value::Array(prompts))),
+            ("segment", some(*segment)),
+            ("append", flag(*append)),
+            ("undo", flag(*undo)),
+            ("from_segment", some(*from_segment)),
+            ("roi", corners(roi.as_deref())?),
+            ("whole_volume", flag(*whole_volume)),
+            ("min_ml", some(*min_ml)),
+            ("max_ml", some(*max_ml)),
+            ("modality", some(modality.clone())),
+        ]),
+    ))
+}
+
 fn segment_call(s: &Segment) -> Result<(String, Value), String> {
     Ok(match s {
         Segment::List { ws: w } => ("segment list".into(), object(vec![ws(w)])),
@@ -600,6 +897,44 @@ fn segment_call(s: &Segment) -> Result<(String, Value), String> {
                 ("max", Some(json!(max))),
                 ("max_ml", some(*max_ml)),
                 ("name", some(name.clone())),
+            ]),
+        ),
+        Segment::Interactive { .. } => interactive_call(s)?,
+        Segment::Auto { ws: w, agent, engine, labels, name_prefix, modality } => (
+            "segment auto".into(),
+            object(vec![
+                ws(w),
+                ("agent", some(agent.agent.clone())),
+                ("engine", some(engine.clone())),
+                ("labels", (!labels.is_empty()).then(|| json!(labels))),
+                ("name_prefix", some(name_prefix.clone())),
+                ("modality", some(modality.clone())),
+            ]),
+        ),
+        Segment::Shape { ws: w, segment } => {
+            ("segment shape".into(), object(vec![ws(w), ("segment", Some(json!(segment)))]))
+        }
+        Segment::Components { ws: w, segment, min_ml, split } => (
+            "segment components".into(),
+            object(vec![ws(w), ("segment", Some(json!(segment))), ("min_ml", some(*min_ml)), ("split", flag(*split))]),
+        ),
+        Segment::Compare { ws: w, a, b, b_workspace } => (
+            "segment compare".into(),
+            object(vec![
+                ws(w),
+                ("a", Some(json!(a))),
+                ("b", Some(json!(b))),
+                ("b_workspace", some(b_workspace.clone())),
+            ]),
+        ),
+        Segment::Edit { ws: w, segment, op, bx, min_ml } => (
+            "segment edit".into(),
+            object(vec![
+                ws(w),
+                ("segment", Some(json!(segment))),
+                ("op", Some(json!(op))),
+                ("box", corners(bx.as_deref())?),
+                ("min_ml", some(*min_ml)),
             ]),
         ),
         Segment::Rename { ws: w, label, name } => {
@@ -623,6 +958,20 @@ mod tests {
         for bad in ["1,2,3", "v:1,2", "mm:a,b,c", "x:1,2,3"] {
             assert!(parse_point(bad).is_err(), "{bad}");
         }
+        assert_eq!(
+            parse_prompt("+v:1,2,3").unwrap(),
+            json!({ "type": "point", "positive": true, "point": { "voxel": [1.0, 2.0, 3.0] } })
+        );
+        assert_eq!(parse_prompt("-mm:1,2,3").unwrap()["positive"], false);
+        let b = parse_prompt("box:v:1,2,3:mm:-4,5,6").unwrap();
+        assert_eq!((b["min"]["voxel"][2].as_f64(), b["max"]["patient_mm"][0].as_f64()), (Some(3.0), Some(-4.0)));
+        assert_eq!(parse_prompt("-box:r-0001:1,2:r-0001:5,6").unwrap()["max"]["render"], "r-0001");
+        assert!(parse_prompt("box:v:1,2,3").is_err() && parse_prompt("+x").is_err());
+        let l = parse_prompt("-lasso:v:1,2,3;v:4,2,3;r-0002:5,6").unwrap();
+        assert_eq!((l["type"].as_str(), l["positive"].as_bool()), (Some("lasso"), Some(false)));
+        assert_eq!(l["points"][2]["render"], "r-0002");
+        assert_eq!(parse_prompt("scribble:v:1,2,3;v:4,2,3").unwrap()["points"].as_array().unwrap().len(), 2);
+        assert!(parse_prompt("lasso:v:1,2").is_err());
         assert_eq!(parse_window("lung").unwrap(), json!("lung"));
         assert_eq!(parse_window("-600,1500").unwrap(), json!({ "center": -600.0, "width": 1500.0 }));
         assert!(parse_window("a,b").is_err());
@@ -648,7 +997,12 @@ mod tests {
             "-600,1500",
             "--overlay",
             "segments",
+            "--segment-style",
+            "fill",
+            "--segment-opacity",
+            "0.3",
         ]);
+        assert_eq!((p["segment_style"].as_str(), p["segment_opacity"].as_f64()), (Some("fill"), Some(0.3)));
         assert_eq!(
             (name.as_str(), &p["window"]["center"], &p["overlays"][0]),
             ("view slice", &json!(-600.0), &json!("segments"))
@@ -672,6 +1026,62 @@ mod tests {
             "200",
         ]);
         assert_eq!((p["min"].as_f64(), p["max"].as_f64()), (Some(-100.0), Some(200.0)));
+        let (name, p) = call(&[
+            "ferrum-cli",
+            "segment",
+            "interactive",
+            "-w",
+            "ws",
+            "--segment",
+            "3",
+            "--append",
+            "--roi",
+            "v:0,0,0",
+            "v:9,9,9",
+            "--agent",
+            "a",
+            "-v:1,2,3",
+        ]);
+        assert_eq!(name, "segment interactive");
+        assert_eq!(
+            (p["segment"].as_u64(), p["append"].as_bool(), p["agent"].as_str()),
+            (Some(3), Some(true), Some("a"))
+        );
+        assert_eq!(p["roi"]["max"], json!({ "voxel": [9.0, 9.0, 9.0] }));
+        assert!(p.get("undo").is_none() && p.get("whole_volume").is_none(), "flags only when set");
+        let (_, p) = call(&["ferrum-cli", "segment", "interactive", "-w", "ws", "--segment", "3", "--undo"]);
+        assert!(p.get("prompts").is_none());
+        let (name, p) = call(&["ferrum-cli", "segment", "auto", "-w", "ws", "--name-prefix", "m/", "--modality", "CT"]);
+        assert_eq!(
+            (name.as_str(), p["name_prefix"].as_str(), p["modality"].as_str()),
+            ("segment auto", Some("m/"), Some("CT"))
+        );
+        let (name, p) = call(&[
+            "ferrum-cli",
+            "segment",
+            "edit",
+            "-w",
+            "ws",
+            "4",
+            "--op",
+            "restrict_to_box",
+            "--box",
+            "v:0,0,0",
+            "v:1,1,1",
+        ]);
+        assert_eq!(
+            (name.as_str(), p["segment"].as_u64(), p["box"]["min"]["voxel"][0].as_f64()),
+            ("segment edit", Some(4), Some(0.0))
+        );
+        let (name, p) = call(&["ferrum-cli", "segment", "compare", "-w", "ws", "1", "2", "--b-workspace", "ws2"]);
+        assert_eq!(
+            (name.as_str(), p["b"].as_u64(), p["b_workspace"].as_str()),
+            ("segment compare", Some(2), Some("ws2"))
+        );
+        let (_, p) = call(&["ferrum-cli", "segment", "components", "-w", "ws", "1", "--split"]);
+        assert_eq!(p["split"], true);
+        assert_eq!(call(&["ferrum-cli", "segment", "shape", "-w", "ws", "1"]).0, "segment shape");
+        assert_eq!(call(&["ferrum-cli", "engine", "list"]).0, "engine list");
         let (name, p) = call(&["ferrum-cli", "run", "probe", "--params", r#"{"workspace":"w"}"#]);
         assert_eq!((name.as_str(), p["workspace"].as_str()), ("probe", Some("w")));
         let (name, p) = call(&["ferrum-cli", "review", "reject", "-w", "ws", "--segment", "2", "--by", "dr.k"]);

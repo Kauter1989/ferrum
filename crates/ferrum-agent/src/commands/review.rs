@@ -57,6 +57,7 @@ fn decide(ctx: &mut Ctx, p: &Params, status: ReviewStatus) -> Result<Output, Age
     if by.is_empty() {
         return Err(AgentError::bad_request("by must name the person who decided"));
     }
+    let config = ctx.config;
     let study = ctx.study(p)?;
     let now = ferrum_domain::Timestamp::now();
     match (p.u64("annotation")?, p.u64("segment")?) {
@@ -64,7 +65,7 @@ fn decide(ctx: &mut Ctx, p: &Params, status: ReviewStatus) -> Result<Output, Age
             if !study.annotations.review(id, status, Some(&by), now) {
                 return Err(AgentError::not_found(format!("unknown annotation {id}")));
             }
-            study.save_annotations()?;
+            study.save_annotations(config)?;
             Ok(Output::new(json!({ "annotation": id, "status": status.as_str(), "by": by })))
         }
         (None, Some(label)) => {

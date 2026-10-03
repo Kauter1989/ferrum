@@ -376,7 +376,7 @@ fn changed_sources_and_bad_calls_are_reported() {
     let env = f.run("study info", json!({}));
     assert_eq!(env["error"]["code"], "source_changed");
     assert!(env["error"]["hint"].as_str().is_some());
-    assert_eq!(Agent::commands().count(), 25);
+    assert_eq!(Agent::commands().count(), 33);
 }
 
 #[test]
@@ -488,6 +488,37 @@ fn export_bundle_marks_unconfirmed_items() {
     // the exported label map lies on the source grid
     let labels = ferrum_io::read_label_nifti(&Path::new(&f.ws).join("export/segments.nii.gz"), &phantom()).unwrap();
     assert!(labels.data().contains(&1));
+}
+
+#[test]
+fn export_bundle_in_dicom() {
+    let f = fixture(AgentConfig::default());
+    f.open();
+    let none = f.run("export bundle", json!({ "formats": ["dicom"] }));
+    assert!(none["warnings"].to_string().contains("nothing to export"), "{none:#}");
+    f.ok("segment threshold", json!({ "seed": { "voxel": [14, 20, 15] }, "min": 50, "max": 150, "name": "Sphere" }));
+    f.ok("annotate add", json!({ "kind": "distance", "plane": "axial", "points": [{ "voxel": [6, 20, 15] }, { "voxel": [22, 20, 15] }] }));
+    f.ok(
+        "annotate add",
+        json!({ "kind": "text", "plane": "axial", "points": [{ "voxel": [6, 20, 15] }], "text": "note" }),
+    );
+    let env = f.run("export bundle", json!({ "formats": ["dicom"] }));
+    assert_eq!(env["ok"], true, "{env:#}");
+    let warnings = env["warnings"].to_string();
+    assert!(warnings.contains("not DICOM") && warnings.contains("Text is not exported"), "{warnings}");
+    let names: Vec<String> = env["data"]["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| Path::new(f["path"].as_str().unwrap()).file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["report.json", "segmentation.dcm", "measurements.dcm"], "no JSON or NIfTI unless asked");
+    let seg = dicom_object::open_file(Path::new(&f.ws).join("export/segmentation.dcm")).unwrap();
+    let frames = seg.element(dicom_dictionary_std::tags::NUMBER_OF_FRAMES).unwrap().to_int::<u32>().unwrap();
+    assert_eq!(frames, 9, "one frame per slice of the sphere (radius 8 mm, slices 2 mm apart)");
+    let both = f.ok("export bundle", json!({ "formats": ["ferrum", "dicom"] }));
+    assert_eq!(both["files"].as_array().unwrap().len(), 6);
+    assert_eq!(f.err("export bundle", json!({ "formats": ["dicom", "png"] })), "bad_request");
 }
 
 #[test]

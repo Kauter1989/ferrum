@@ -133,6 +133,7 @@ pub fn info_to_json(info: &EngineInfo) -> Value {
             "prompts": c.prompts.iter().map(|k| k.as_str()).collect::<Vec<_>>(),
             "planar_boxes_only": c.planar_boxes_only,
             "undo": c.undo,
+            "deterministic": c.deterministic,
         },
         "modalities": info.modalities,
         "labels": info.labels.iter().map(|l| {
@@ -187,6 +188,7 @@ pub fn info_from_json(v: &Value) -> Result<EngineInfo, EngineError> {
                 .unwrap_or_default(),
             planar_boxes_only: flag("planar_boxes_only"),
             undo: flag("undo"),
+            deterministic: c.get("deterministic").and_then(Value::as_bool).unwrap_or(true),
         },
         modalities: v
             .get("modalities")
@@ -461,6 +463,10 @@ mod tests {
         assert_eq!(info_from_json(&info_to_json(&info)).unwrap(), info);
         let mut v = info_to_json(&info);
         v["capabilities"]["prompts"] = json!(["point", "polygon"]);
+        v["capabilities"]["deterministic"] = Value::Null;
+        assert!(info_from_json(&v).unwrap().capabilities.deterministic, "absent means deterministic");
+        v["capabilities"]["deterministic"] = json!(false);
+        assert!(!info_from_json(&v).unwrap().capabilities.deterministic);
         v["unknown"] = json!(1);
         assert_eq!(info_from_json(&v).unwrap().capabilities.prompts, vec![PromptKind::Point]);
         v["protocol"] = json!("ferrum-engine/2");
