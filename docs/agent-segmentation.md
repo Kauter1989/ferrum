@@ -8,7 +8,8 @@ RTX 3080 / 3080 Ti (12 GB VRAM, Ampere)**; the measurements in §2 come
 from a 12 GB RTX 3080. Status: **implemented** (Stage 17 in
 [dev_plan.md](../dev_plan.md));
 the decisions are in [ADR 0010](decisions/0010-agent-segmentation.md),
-the command reference in [agent-cli.md](agent-cli.md#segmentation-engines).
+the command reference in [agent-cli.md](agent-cli.md#segmentation-engines),
+the step-by-step playbook in [segmentation-scenarios.md](segmentation-scenarios.md).
 
 It builds on:
 - the agent skill ([agent-skill.md](agent-skill.md)) and its commands

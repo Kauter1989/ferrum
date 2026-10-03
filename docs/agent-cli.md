@@ -274,8 +274,9 @@ and through MCP and checks that both give identical JSON.
 `engine list`, `engine info`, `segment interactive` and `segment auto`
 reach engines over the [FERRUM Engine Protocol](engine-protocol.md):
 FERRUM's mock engine, or the nnInteractive, TotalSegmentator and MONAI
-Label bridges. The scenarios they serve are in
-[agent-segmentation.md](agent-segmentation.md).
+Label bridges. The scenarios they serve, step by step, are in
+[segmentation-scenarios.md](segmentation-scenarios.md) (design:
+[agent-segmentation.md](agent-segmentation.md)).
 
 **Which engines:**
 - The operator lists the allowed URLs in `[network] engines`. The first

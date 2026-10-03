@@ -47,6 +47,8 @@ TotalSegmentator and MONAI Label on one GPU
   `ferrum-cli eval engine`; `scripts/benchmark_engines.py` for time and
   GPU memory per scenario; measured on an RTX 3080 12 GB
   (docs/agent-segmentation.md §2).
+- `docs/segmentation-scenarios.md`: the segmentation scenarios S0–S8 as
+  a step-by-step playbook with commands, linked from the README.
 
 ### Fixed
 

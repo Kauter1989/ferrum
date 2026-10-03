@@ -126,7 +126,7 @@ FERRUM is a core, not a monolith. The principles, in short (full text:
 | Agent skill package ([`skills/ferrum`](skills/ferrum)): `SKILL.md`, references, schemas, plugin folder in the releases; evaluations with known answers (`ferrum-cli eval`); identifier scan | ✅ |
 | Review in the desktop app: *Open workspace*, review queue with author and status, decisions saved to the workspace and its audit log | ✅ |
 | Agent skill with segmentation engines: `engine info`, `segment interactive`, `segment auto` (allow-listed engines, results proposed by the engine) | ✅ |
-| Agent segmentation scenarios on one GPU ([design](docs/agent-segmentation.md)): refinement from stored prompts, regions of interest, lassos and scribbles, shape/components/compare/edit, quality checks, GPU groups, bridges that free GPU memory, compose profiles | ✅ (GPU benchmark pending) |
+| Agent segmentation scenarios on one GPU ([scenarios](docs/segmentation-scenarios.md), [design](docs/agent-segmentation.md)): refinement from stored prompts, regions of interest, lassos and scribbles, shape/components/compare/edit, quality checks, GPU groups, bridges that free GPU memory, compose profiles; measured on a 12 GB RTX 3080 | ✅ |
 | DICOM export for PACS: binary Segmentation and Comprehensive 3D SR (TID 1500) with lengths, areas and segment volumes; review status marked, identifiers per operator consent; validated with highdicom ([format](docs/workspace-format.md#5-dicom-export)) | ✅ |
 
 > FERRUM is research and engineering software, not a certified medical
@@ -295,6 +295,10 @@ ferrum-cli probe -w ws/ct1 r-0001:412,318                                       
 ferrum-cli segment threshold -w ws/ct1 --seed r-0001:412,318 --min -100 --max 200 --max-ml 50
 ferrum-cli export bundle -w ws/ct1 --format ferrum --format dicom                 # JSON, NIfTI, DICOM SEG + SR
 ```
+
+How an agent segments with the engines — organ volumetry, lesions by
+prompts, detection, corrections, follow-up, dataset pre-labelling — step
+by step with the commands: [docs/segmentation-scenarios.md](docs/segmentation-scenarios.md).
 
 Harnesses that speak MCP start `ferrum-cli mcp`; every command is then a
 tool (`ferrum_view_slice`, `ferrum_probe`, …) with a JSON Schema, and
@@ -621,7 +625,7 @@ also enforces a complexity budget for every function. More in
 │   └── ferrum/              # desktop application (binary: ferrum)
 ├── bridges/                # engines over ferrum-engine/1: nnInteractive, TotalSegmentator (Python, Docker)
 ├── skills/                  # agent skill package (SKILL.md, references, schemas, evals) and plugin manifests
-├── docs/                    # vision, architecture, engine protocol, agent skill, AI demo, testing, ADRs
+├── docs/                    # vision, architecture, engine protocol, agent skill, segmentation scenarios, AI demo, testing, ADRs
 ├── .github/workflows/       # CI (fmt, clippy, tests on lavapipe) and release archives
 └── Makefile
 ```
