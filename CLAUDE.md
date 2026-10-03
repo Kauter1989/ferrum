@@ -70,6 +70,65 @@ make coverage                                # coverage report; CI floor in Make
 cargo run --release -- <path>                 # the app is the default member
 ```
 
+## Workflow, skills and lessons
+
+Start every task with the skill `ferrum-workflow`, adapted from Spec
+Kit.
+- **Phases:** specify → clarify → plan → size → tasks → analyze →
+  implement → verify → deliver → retro.
+- **Tracks:** stage, feature or small.
+- **Modes:**
+  - *gated*: G1 spec, G2 design, G3 merge;
+  - *autonomous*, for features: only G3.
+
+Specs live in `dev_plan.md` with criterion IDs `[N.k-x]`, and tests cite
+them (`// covers N.k-x`). Designs live in `docs/<topic>.md`, and
+decisions in ADRs.
+
+Read `.claude/lessons.md` before a change. It records past bugs and
+wasted rounds, each with the guard that now catches it. The skills in
+`.claude/skills/`:
+
+| Skill | Purpose |
+|---|---|
+| `ferrum-workflow` | entry point: track, mode, phases, gates |
+| `ferrum-specify` | spec and clarification |
+| `ferrum-plan` | design, constitution check, validation plan, tasks |
+| `ferrum-size` | size against the model; PR split; `calibration.md` |
+| `ferrum-analyze` | criterion coverage (`analyze.py`), consistency |
+| `ferrum-change` | implement and deliver; `preflight.sh` runs CI locally |
+| `ferrum-verify` | verification table: test, visual, field |
+| `ferrum-visual-check` | anything that draws pixels (`phantom_render.py`) |
+| `ferrum-field-test` | scripts for the user's GPU machine and their results |
+| `ferrum-release` | version bump, `develop` → `main`, `release.yml` |
+| `ferrum-lessons` | failures and successes, each with a guard; retro |
+
+`develop` and `main` change only through merged PRs. Pushing a feature
+branch is fine. Merging needs the user's word, in every mode.
+
+### Hooks
+
+Hooks in `.claude/settings.json` (`.claude/hooks/ferrum_hooks.py`, tests
+in `test_hooks.py`) enforce the mechanical rules. Skills cover what needs
+judgement.
+
+| Hook | When | Effect |
+|---|---|---|
+| A | commit, merge or rebase on `develop`/`main`; a push to them (`--all`, `HEAD:main`, …) | blocked |
+| B | a commit with volume or DICOM files, or binaries > 1 MiB outside `docs/images/` | blocked |
+| C | a rewrite of a merged ADR | blocked; appending an amendment is fine |
+| D | merging a PR, the release workflow, pushing tags | asks the user |
+| E | a push that fails `cargo fmt --check` or has a stale `commands.json` | blocked |
+| E | a push after a slice/overlay rendering change without a fresh `phantom_render.py` pass | blocked (L1) |
+| F | an edited `.rs` file | `rustfmt` |
+| G | an edited file in the change matrix | a reminder of what else must change |
+| H | session start | fresh `origin/develop`, branch status, lesson titles, environment |
+| I | context compaction | logged to `.claude/state/compactions.log` for `ferrum-size` |
+
+`FERRUM_SKIP_PREPUSH=1 git push …` skips only E, and only in an
+emergency. Run `python3 .claude/hooks/test_hooks.py` after changing a
+hook.
+
 ## Conventions
 
 - Keep functions within the complexity budget in `clippy.toml` (cognitive
