@@ -7,7 +7,8 @@ description: Create a git-flow branch with a standard name (feat/, fix/, docs/, 
 
 FERRUM follows git flow (CLAUDE.md, CONTRIBUTING.md): `develop` is the
 integration branch, work happens on short-lived topic branches that are
-merged back by pull request.
+merged back into `develop` by pull request. The delivery flow after the
+branch exists is in the `ferrum-change` skill.
 
 ## When to use
 
@@ -16,24 +17,25 @@ merged back by pull request.
   feature, a docs update, a refactor): create a separate branch for it
   instead of stacking unrelated commits. Prefer many small branches, one
   topic each.
-- If the session or the user names a branch to develop on, use that name
-  and still rename it with this skill's convention only when asked.
+- If the session names a branch to develop on, use it; check that it was
+  cut from `develop` (`git merge-base --is-ancestor origin/develop HEAD`)
+  and rebase it onto `develop` if not.
 
 ## Name
 
 `<type>/<short-kebab-description>`
 
-| Type | Use for | Base |
-|------|---------|------|
-| `feat/` | new behaviour for users or API | `develop` |
-| `fix/` | bug fixes | `develop` |
-| `docs/` | documentation only | `develop` |
-| `refactor/` | no behaviour change | `develop` |
-| `perf/` | speed or memory | `develop` |
-| `test/` | tests only | `develop` |
-| `chore/` | tooling, CI, dependencies, releases of metadata | `develop` |
-| `hotfix/` | urgent fix of a released version | `main` |
-| `release/` | release preparation, e.g. `release/0.4.0` | `develop` |
+| Type | Use for |
+|------|---------|
+| `feat/` | new behaviour for users or API |
+| `fix/` | bug fixes |
+| `docs/` | documentation only |
+| `refactor/` | no behaviour change |
+| `perf/` | speed or memory |
+| `test/` | tests only |
+| `chore/` | tooling, CI, dependencies, releases of metadata |
+| `hotfix/` | urgent fix of a released version |
+| `release/` | release preparation, e.g. `release/0.4.0` |
 
 Rules for the description: lowercase ASCII, words joined by `-`, 2–5 words,
 what the change is (not who or when), no issue-tracker noise
@@ -48,13 +50,16 @@ prefixes.
    another topic goes into its own commit or stash first; never carry it
    over silently.
 2. Pick the type from the table and write the description.
-3. Find the base: `develop` if it exists locally or on `origin`, otherwise
-   the default branch (`main`); `main` for `hotfix/`.
+3. **Every branch starts from a fresh `origin/develop`**, whatever its type
+   (hotfixes and releases included). Never branch from `main`, from another
+   topic branch, or from a stale local `develop`; never commit on `develop`
+   or `main`.
    ```bash
-   git fetch origin
-   base=develop; git rev-parse --verify -q origin/develop >/dev/null || base=main
-   git switch -c <type>/<description> "origin/$base"
+   git fetch origin develop
+   git switch -c <type>/<description> origin/develop
    ```
+   If a shallow or single-branch clone has no `origin/develop`, fetch it
+   first (`git fetch origin develop`) instead of falling back to `main`.
 4. Commit in small steps with clear messages; push with
    `git push -u origin <branch>`.
 5. Do **not** open a pull request unless asked.
