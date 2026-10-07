@@ -72,8 +72,17 @@ fn region_settings(ui: &mut egui::Ui, viewer: &mut Viewer) {
     ui.label(RichText::new(format!("{} Region tool", icon::PAINT_BUCKET)).strong().color(TEXT));
     let region = viewer.region_settings_mut();
     slider_row(ui, "Tolerance ±", &mut region.tolerance, 0.0..=span * 0.5);
-    slider_row(ui, "Max volume, ml", &mut region.max_ml, 1.0..=5000.0);
-    ui.label(RichText::new("Larger regions have leaked and are not created.").size(11.5).color(TEXT_DIM));
+    slider_row(ui, "Max volume, ml", &mut region.max_ml, 1.0..=20000.0);
+    let (mut smoothing, mut opening) = (region.smoothing as f32, region.opening as f32);
+    slider_row(ui, "Noise smoothing, voxels", &mut smoothing, 0.0..=3.0);
+    slider_row(ui, "Cut thin bridges, voxels", &mut opening, 0.0..=5.0);
+    (region.smoothing, region.opening) = (smoothing.round() as u32, opening.round() as u32);
+    ui.checkbox(&mut region.fill_holes, "Fill vessels and holes");
+    ui.label(
+        RichText::new("Whole organs: raise the tolerance. Larger regions have leaked and are not created.")
+            .size(11.5)
+            .color(TEXT_DIM),
+    );
 }
 
 /// Draws the section body (2D and MPR views).

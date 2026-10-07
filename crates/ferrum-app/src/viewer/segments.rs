@@ -35,11 +35,19 @@ pub struct RegionSettings {
     /// Largest region in millilitres; a larger one has leaked into
     /// neighbouring tissue and is not created.
     pub max_ml: f32,
+    /// Radius in voxels of the smoothing applied before values are
+    /// compared (suppresses noise; `0` compares raw voxels).
+    pub smoothing: u32,
+    /// Radius in voxels of the opening that cuts thin bridges to
+    /// neighbouring structures (`0` keeps them).
+    pub opening: u32,
+    /// Fill vessels and other cavities enclosed by the region.
+    pub fill_holes: bool,
 }
 
 impl Default for RegionSettings {
     fn default() -> Self {
-        Self { tolerance: 50.0, max_ml: 1000.0 }
+        Self { tolerance: 50.0, max_ml: 8000.0, smoothing: 1, opening: 1, fill_holes: true }
     }
 }
 
@@ -249,19 +257,20 @@ impl Viewer {
         }) {
             return Err(format!("This voxel already belongs to {name}"));
         }
-        let RegionSettings { tolerance, max_ml } = self.segments.region;
+        let RegionSettings { tolerance, max_ml, smoothing, opening, fill_holes } = self.segments.region;
         let sp = volume.spacing();
         let voxel_ml = f64::from(sp.x) * f64::from(sp.y) * f64::from(sp.z) / 1000.0;
         let max_voxels = (f64::from(max_ml) / voxel_ml).floor().max(1.0) as u64;
         let set = self.segmentation_mut().ok_or("Open a study first")?;
-        let (bx, mask) =
-            ferrum_domain::grow_region(&volume, set, seed, value - tolerance, value + tolerance, max_voxels)
-                .ok_or_else(|| {
-                    format!(
-                        "The region grows beyond {max_ml:.0} ml: lower the tolerance (now ±{tolerance:.0}) or click \
-                         further from the edge"
-                    )
-                })?;
+        let params = ferrum_domain::RegionParams { tolerance, max_voxels, smoothing, opening, fill_holes };
+        let (bx, mask) = ferrum_domain::grow_region_robust(&volume, set, seed, &params).map_err(|e| match e {
+            ferrum_domain::RegionError::TooLarge => format!(
+                "The region grows beyond {max_ml:.0} ml: lower the tolerance (now ±{tolerance:.0}), raise the \
+                 opening or click further from the edge"
+            ),
+            ferrum_domain::RegionError::Labelled => "This voxel already belongs to a segment".into(),
+            ferrum_domain::RegionError::OutOfGrid => "The click is outside the volume".into(),
+        })?;
         self.segments.regions += 1;
         let label = self.add_segment(&format!("Region {}", self.segments.regions)).map_err(|e| e.to_string())?;
         let provenance = Provenance::human(Timestamp::now());
