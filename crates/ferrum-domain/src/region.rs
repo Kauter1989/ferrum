@@ -68,6 +68,10 @@ enum Accept {
     Edge,
 }
 
+/// Largest number of voxels whose opening is computed exactly; larger
+/// regions are measured on blocks.
+const EXACT_VOXELS: usize = 3_000_000;
+
 /// Largest smoothing radius per axis, in voxels.
 pub const MAX_SMOOTHING_VOXELS: i64 = 6;
 /// Radius of the seed neighbourhood whose median is the reference value.
@@ -266,6 +270,25 @@ fn flood(
         }
     }
     Some((bx, mask))
+}
+
+/// Block sizes (in voxels per axis) for the opening of radius `r` mm of a
+/// box of `size`: `1` while the box has at most [`EXACT_VOXELS`] voxels,
+/// otherwise the smallest blocks, grown along the finest axis first, that
+/// bring it under that count, never more than `r / 2` mm across.
+fn block_factors(size: [usize; 3], w: [f32; 3], r: f32) -> [usize; 3] {
+    let mut f = [1usize; 3];
+    let count = |f: &[usize; 3]| (0..3).map(|a| size[a].div_ceil(f[a])).product::<usize>();
+    while count(&f) > EXACT_VOXELS {
+        let grow = (0..3)
+            .filter(|&a| (f[a] + 1) as f32 * w[a] <= r / 2.0 && f[a] < size[a])
+            .min_by(|&a, &b| (f[a] as f32 * w[a]).total_cmp(&(f[b] as f32 * w[b])));
+        match grow {
+            Some(a) => f[a] += 1,
+            None => break,
+        }
+    }
+    f
 }
 
 /// Side of the blocks of the coarse exterior search of [`enclosed`].
@@ -477,13 +500,14 @@ impl Mask {
     /// itself is not in the core). A structure with no core (a small
     /// lesion) is kept as is.
     ///
-    /// The distances are computed on blocks of at most `r / 2` (majority
-    /// vote), which makes the cut position of a bridge uncertain by that
-    /// much and large organs on fine grids hundreds of times cheaper.
+    /// Small regions are exact. A region of more than [`EXACT_VOXELS`]
+    /// voxels is measured on blocks of at most `r / 2` (majority vote),
+    /// which makes the cut position of a bridge uncertain by that much and
+    /// large organs on fine grids tens of times cheaper.
     fn open(&mut self, r: f32, spacing: Vec3, seed: UVec3) {
         let (nx, ny, nz) = self.size();
         let w = [spacing.x, spacing.y, spacing.z];
-        let f: [usize; 3] = std::array::from_fn(|a| ((r / 2.0 / w[a].max(1e-6)).floor() as usize).max(1));
+        let f = block_factors([nx, ny, nz], w, r);
         let cd = [nx.div_ceil(f[0]), ny.div_ceil(f[1]), nz.div_ceil(f[2])];
         let block = |i: usize, j: usize, k: usize| (i / f[0]) + cd[0] * ((j / f[1]) + cd[1] * (k / f[2]));
         let mut votes = vec![0u32; cd[0] * cd[1] * cd[2]];
@@ -883,6 +907,19 @@ mod tests {
                 assert_eq!(fast, naive(&data, size), "{size:?} density {density}");
             }
         }
+    }
+
+    // covers 16.6-c
+    #[test]
+    fn small_regions_are_opened_exactly_and_large_ones_on_blocks() {
+        assert_eq!(block_factors([30, 30, 30], [1.0; 3], 5.0), [1, 1, 1]);
+        assert_eq!(block_factors([200, 200, 70], [1.4, 1.4, 5.0], 5.0), [1, 1, 1], "2.8 M voxels");
+        let f = block_factors([512, 512, 519], [0.62, 0.62, 0.8], 5.0);
+        assert_eq!(f, [4, 4, 3], "blocks of 2.5 mm at most");
+        let count: usize = [512usize, 512, 519].iter().zip(f).map(|(n, f)| n.div_ceil(f)).product();
+        assert!(count <= EXACT_VOXELS);
+        // blocks never exceed r / 2, even when that leaves the box too big
+        assert_eq!(block_factors([2000, 2000, 2000], [1.0; 3], 2.0), [1, 1, 1]);
     }
 
     // covers 16.6-d

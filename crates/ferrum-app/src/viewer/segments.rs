@@ -53,10 +53,17 @@ impl Default for RegionSettings {
 
 impl RegionSettings {
     /// Defaults for a display window: a tolerance of a tenth of its width,
-    /// so the region follows what looks alike on screen.
+    /// so the region follows what looks alike on screen, but at most
+    /// [`RegionSettings::MAX_DEFAULT_TOLERANCE`]: the automatic window of a
+    /// whole CT is over 1 000 wide, and a tolerance that large leaks into
+    /// every soft tissue on the first click.
     pub fn for_window(window: ferrum_domain::WindowLevel) -> Self {
-        Self { tolerance: (window.width * 0.1).max(f32::EPSILON), ..Self::default() }
+        Self { tolerance: (window.width * 0.1).clamp(f32::EPSILON, Self::MAX_DEFAULT_TOLERANCE), ..Self::default() }
     }
+
+    /// Largest tolerance a display window sets by default, in the volume's
+    /// units (HU for CT; soft tissues differ by 10–40 HU).
+    pub const MAX_DEFAULT_TOLERANCE: f32 = 40.0;
 }
 
 impl Default for SegmentationState {

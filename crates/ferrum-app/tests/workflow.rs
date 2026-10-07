@@ -119,7 +119,7 @@ fn the_region_tool_segments_without_an_engine() {
     assert!(v.select_tool(ToolKind::Region));
     assert_eq!(v.segmentation_step(), SegmentationStep::Draw(ToolKind::Region));
     let tolerance = v.segmentation().region.tolerance;
-    assert!((100.0..200.0).contains(&tolerance), "a tenth of the window width: {tolerance}");
+    assert_eq!(tolerance, 40.0, "a tenth of the 1 400 wide window, capped");
 
     let out = click_centre(&mut v);
     assert!(matches!(out, ToolOutcome::Seed(s) if s == UVec3::new(16, 16, 10)), "{out:?}");
@@ -211,4 +211,14 @@ fn region_settings_keep_the_edge_and_the_failures_are_told_apart() {
 
 fn v_default_limit() -> f32 {
     ferrum_app::RegionSettings::default().max_ml
+}
+
+// covers 16.6-l
+#[test]
+fn the_default_tolerance_follows_the_window_but_is_capped() {
+    use ferrum_domain::WindowLevel;
+    let tol = |w: f32| ferrum_app::RegionSettings::for_window(WindowLevel::new(40.0, w)).tolerance;
+    assert_eq!(tol(200.0), 20.0, "a tenth of a narrow window");
+    assert_eq!(tol(400.0), 40.0);
+    assert_eq!(tol(1500.0), 40.0, "the automatic window of a whole CT would leak");
 }
