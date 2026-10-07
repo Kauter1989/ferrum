@@ -230,85 +230,102 @@ corrections, follow-up, dataset pre-labelling — on a single 12 GB GPU
 
 ## Stage 18 — Segmentation post-processing: quantitative profiles 📋
 
-Quantitative description of a segment: geometry, shape and HU
-intensity. The user picks a **profile**, not individual metrics; a result
-always carries the profile name, its version and every preprocessing
-parameter, so numbers are comparable and reproducible. Values come from
-voxels; agents and engines propose, people confirm (unconfirmed segments
-are marked in the output, as in the export bundle).
+Quantitative description of a segment: geometry, shape and HU intensity.
+The user picks a **profile**, not individual metrics; a result always
+carries the profile name, its version and every preprocessing parameter,
+so numbers are comparable and reproducible. Values come from voxels;
+agents and engines propose, people confirm (a result for an unconfirmed
+segment says so, as the export bundle does).
 
-Design decisions (to be recorded in a new ADR before Phase 1):
+**What exists today (0.3.0, Stage 17)** and stays, with unchanged JSON:
+`segment shape` (voxels, box, centroid, extent, largest slices, axial long
+and short axis, border contact, component count and largest share),
+`segment components`, `segment compare` (Dice, Jaccard, HD95, Hausdorff,
+centroid distance; `ferrum-domain/src/analysis.rs`), `stats` (mean, std,
+min, max, p5–p95 of a box, sphere, segment or area annotation; the maths
+sits in `ferrum-agent`, so the desktop app cannot use it), `volume_ml`,
+and DICOM SR (TID 1500) export. This stage builds on them: one
+implementation shared by UI, CLI and MCP, and what is missing on top.
 
-- Computation lives in a new pure crate `ferrum-radiomics` (depends only on
-  `ferrum-domain`; no I/O, GPU or UI). `ferrum-processing` is not used
-  because `ferrum-agent` may not depend on it. Adding `ferrum-radiomics` to
-  the allowed `ferrum-agent` dependencies updates CLAUDE.md and
-  `docs/architecture.md`.
-- Use case `Viewer::segment_metrics` in `ferrum-app`; the desktop panel,
-  `ferrum-cli` / MCP command and embedding apps are thin adapters. CLI and
-  MCP give identical JSON (schema in `schema.rs`, `docs/agent-cli.md`,
-  contract tests).
-- Naming and definitions follow IBSI feature families
-  (`shape`, `intensity`, `histogram`, `ivh`, later `texture_*`); each
-  feature has a stable id and is tested on analytic phantoms (sphere,
-  box, ellipsoid) and, from Phase 4, the IBSI digital phantom.
-- Profiles: `quick`, `clinical`, `radiomics-ibsi` (Phase 4+). Raw values are
-  always returned; composite indices (if any) are a separate versioned
-  block.
-- Scope of the first release: CT (HU). MR / PET normalisation is out of
-  scope.
+**Design decisions** (recorded in a new ADR, 0011, before Phase 1):
+- Profiles: `quick`, `clinical`, `radiomics-ibsi`. Raw values are always
+  returned; there are no composite indices.
+- Naming and definitions follow IBSI feature families (`shape`,
+  `intensity`, `histogram`, `ivh`, later `texture_*`). Every feature has a
+  stable id, a unit and a definition text.
+- A new use case `Viewer::segment_metrics` in `ferrum-app`; the Segments
+  panel, `ferrum-cli` / MCP command `segment metrics` and embedding apps
+  are thin adapters. CLI and MCP give identical JSON.
+- Where the computation lives: [?] Q1 (new crate `ferrum-radiomics` or
+  `ferrum-domain`).
+- First release scope: CT (HU). MR and PET normalisation are out.
 
 ### Phase 1 — Profile framework and basic metrics (`quick`)
 
 | # | User story | Acceptance criteria |
 |---|---|---|
-| 18.1 | As a **developer**, I want a profile and feature registry so that new metrics plug in without touching adapters. | `ferrum-radiomics` crate: `Feature` id and version, `Profile`, `MetricsResult` (profile, version, preprocessing parameters, per-feature value and unit). ADR written. Layering and docs updated. |
-| 18.2 | As a **radiologist**, I want volume, bounding box, centre of mass and maximum diameters of a segment so that I can size a finding. | Volume (mm³, mL), voxel count, AABB (mm), centre of mass in LPS, maximum 3D and axial diameter, axis extents. Anisotropic spacing handled; analytic phantoms with known answers. |
-| 18.3 | As a **radiologist**, I want first-order HU statistics so that I can characterise density. | mean, std, median, min, max, p5–p95, range, IQR (extends the existing `stats`; both give the same numbers). |
-| 18.4 | As a **user**, I want the `quick` profile in the UI, CLI and MCP. | Segments panel shows a metrics card; `ferrum-cli metrics`, MCP tool, JSON Schema, contract tests; CLI == MCP JSON. Disabled-state and empty-segment cases tested. |
+| 18.1 | As a **developer**, I want a profile and feature registry so that new metrics plug in without touching the adapters. | [18.1-a] A feature has a stable id, family, unit, definition text and the version it appeared in; ids are unique, and a test fails when a registered feature has no definition text. [18.1-b] A profile is a versioned list of feature ids; `quick`, `clinical` and `radiomics-ibsi` are registered; an unknown profile gives `bad_request` that lists the known ones. [18.1-c] A result carries profile name and version, the preprocessing parameters (even if "none"), per feature a value and unit, and the provenance (author, status) of the segment. [18.1-d] ADR 0011 written; layering docs updated as decided in Q1. |
+| 18.2 | As a **radiologist**, I want size measures of a segment so that I can describe a finding. | [18.2-a] Volume in mm³ and mL equals voxel count × voxel volume; exact on a 4×5×6 box at spacing 0.7×0.7×2.5. [18.2-b] Box extent in mm and centroid in patient (LPS) mm, on a grid with a non-identity direction and origin. [18.2-c] Maximum 3D diameter (largest distance between voxel centres): exact on a box (its space diagonal) and equal to a brute-force search on a random blob. [18.2-d] Axial long and short axis, extents, largest slices equal `segment shape` (one implementation, tests for both). [18.2-e] Holds with anisotropic spacing and with a dimension of 1 on each axis (L4). [18.2-f] An empty or unknown segment gives `not_found` with a hint, never NaN or a crash. |
+| 18.3 | As a **radiologist**, I want first-order HU statistics so that I can characterise density. | [18.3-a] Mean, std (population), min, max, p5, p25, p50, p75, p95 equal the current `stats` output on the existing phantom (regression test). [18.3-b] Range and IQR added, exact on a hand-computed set. [18.3-c] Values are rescaled voxel values with their unit; a NIfTI study without a declared modality reports unit `unknown` and a warning (L10). [18.3-d] The definition text states population std and the percentile method. |
+| 18.4 | As a **user**, I want the `quick` profile in the desktop app, CLI and MCP so that I get the same numbers everywhere. | [18.4-a] `segment metrics --profile quick`: schema in `schema.rs`, `skills/ferrum/schemas/commands.json` regenerated, `skills/ferrum/reference/commands.md` and `docs/agent-cli.md` updated. [18.4-b] CLI parse test and one `--help` run (L8). [18.4-c] CLI and MCP JSON are identical (contract test). [18.4-d] The output passes the identifier scan (`tests/privacy.rs`). [18.4-e] Segments panel card shows value, unit and definition tooltip per feature, and a *proposed* label for an unconfirmed segment; `cargo test -p ferrum --test ui` passes (L9). [18.4-f] No segment selected or no engine: the card is visible and says why it has nothing to show. |
 
 ### Phase 2 — Shape and morphology (`clinical`, part 1)
 
 | # | User story | Acceptance criteria |
 |---|---|---|
-| 18.5 | As a **radiologist**, I want surface area and compactness / sphericity measures so that I can judge shape. | Mesh-based surface area (marching cubes, anisotropic spacing), surface-to-volume ratio, compactness 1 / 2, sphericity, spherical disproportion. Sphere / cube phantoms within stated tolerance. |
-| 18.6 | As a **radiologist**, I want PCA-based axes, elongation and flatness. | Principal axes lengths, elongation, flatness, orientation; ellipsoid phantom. |
-| 18.7 | As a **radiologist**, I want convex-hull measures and solidity. | Hull volume and area, solidity, convexity; box and L-shape phantoms. |
-| 18.8 | As a **QA reviewer**, I want connectivity checks so that I notice broken or holey segments. | Component count and largest-component volume, holes / cavities, Euler number. Warnings in the result (not silent fixes). |
+| 18.5 | As a **radiologist**, I want surface area and compactness measures so that I can judge shape. | [18.5-a] Mesh-based surface area (marching cubes, anisotropic spacing); on a sphere of radius 10 voxels within 3 % of 4πr² (tolerance to be confirmed by measurement, L13). [18.5-b] Surface-to-volume ratio, compactness 1 and 2, sphericity, spherical disproportion, with the formulas in the definition text. [18.5-c] The same object voxelised at 1 mm and at 0.5 mm gives the same values within a stated tolerance. [18.5-d] An object one voxel thick gives a defined value or `null` with a reason, never NaN. |
+| 18.6 | As a **radiologist**, I want PCA axes, elongation and flatness. | [18.6-a] Axis lengths from the covariance eigenvalues (IBSI definition); an ellipsoid phantom with semi-axes 5, 8, 12 mm within 3 %. [18.6-b] Elongation and flatness are ratios of those axes. [18.6-c] A line, a plane and a single voxel give `null` with a reason (L4). [18.6-d] Orientation vectors in LPS, sign-normalised so that the result is deterministic. |
+| 18.7 | As a **radiologist**, I want convex-hull measures and solidity. | [18.7-a] Hull volume and area, solidity and convexity. [18.7-b] A box gives solidity 1; an L-shaped phantom gives a value derived by hand in the test. [18.7-c] Hull on mesh vertices, not on every voxel, so the cost follows the surface. |
+| 18.8 | As a **QA reviewer**, I want connectivity checks so that I notice a broken or holey segment. | [18.8-a] Component count and largest-component share equal `segment components`. [18.8-b] Holes: number and volume of cavities not connected to the border (6-connected); a box with a 2×2×2 cavity gives 1 hole of 8 voxels. [18.8-c] Euler number. [18.8-d] `warnings` (`fragmented`, `has_holes`, `touches_border`) with their thresholds in the definition text; warnings never change the mask — edits stay with `segment edit`. |
 
 ### Phase 3 — HU distribution (`clinical`, part 2)
 
 | # | User story | Acceptance criteria |
 |---|---|---|
-| 18.9 | As a **radiologist**, I want shape-of-distribution measures. | Skewness, kurtosis, energy, RMS, MAD / rMAD, entropy, uniformity on a fixed-bin-width histogram (bin width is a recorded parameter). |
-| 18.10 | As a **radiologist**, I want intensity-volume histogram metrics. | V10 / V90, I10 / I90 and the IVH curve; known-distribution tests. |
-| 18.11 | As a **radiologist**, I want the share of voxels in HU ranges. | Configurable ranges (defaults: fat, soft tissue, calcification); fractions sum to 1 within the segment; ranges recorded in the result. |
-| 18.12 | As a **user**, I want the `clinical` profile everywhere. | UI card (grouped, units, tooltips with definitions), CLI / MCP, schema, docs, contract tests. |
+| 18.9 | As a **radiologist**, I want distribution measures. | [18.9-a] Skewness, excess kurtosis, energy, RMS, MAD, rMAD, entropy and uniformity (IBSI definitions) on a fixed-bin-width histogram. [18.9-b] A hand-computed 10-voxel set gives the exact values. [18.9-c] Bin width is a parameter, defaults to 25 HU for CT, and is recorded in the result. [18.9-d] A constant region gives `null` for skewness and kurtosis, not NaN. |
+| 18.10 | As a **radiologist**, I want intensity-volume histogram metrics. | [18.10-a] V10, V90, I10, I90 and the curve. [18.10-b] A linear-ramp phantom gives exact values. [18.10-c] The curve never increases (property test). |
+| 18.11 | As a **radiologist**, I want the share of voxels in HU ranges. | [18.11-a] Configurable half-open ranges; fractions sum to 1 within 1e-12. [18.11-b] Overlapping ranges give `bad_request`. [18.11-c] Default ranges are documented, editable and confirmed by a clinician before release ([?] Q4). [18.11-d] The ranges used are recorded in the result. |
+| 18.12 | As a **user**, I want the `clinical` profile everywhere. | [18.12-a] The card groups features by family with units and definition tooltips. [18.12-b] CLI, MCP, schema, docs and contract tests as in 18.4. [18.12-c] The benchmark of the profile on a 512×512×300 CT with a segment of 100 000 voxels is recorded; the budget is an estimate (≤ 2 s) until measured (L13). |
 
 ### Phase 4 — Reproducible radiomics (`radiomics-ibsi`, preprocessing)
 
 | # | User story | Acceptance criteria |
 |---|---|---|
-| 18.13 | As a **researcher**, I want explicit preprocessing so that results compare across centres. | Isotropic resampling (voxel size parameter), HU re-segmentation range, outlier exclusion; all parameters stored in the result and hashed. |
-| 18.14 | As a **researcher**, I want IBSI conformance checks. | Digital phantom in tests (generated at run time, no data committed); reference values per feature with tolerance; conformance table in `docs/`. |
-| 18.15 | As a **researcher**, I want to know how stable a metric is against boundary changes. | Optional erosion / dilation perturbation reports per-feature spread. |
+| 18.13 | As a **researcher**, I want explicit preprocessing so that results compare across centres. | [18.13-a] Isotropic resampling (voxel size parameter), HU re-segmentation range and outlier exclusion. [18.13-b] Upsampling a linear ramp by 2 keeps its values at the original positions. [18.13-c] All parameters are stored in the result with a SHA-256 `params_hash`. [18.13-d] The same input and parameters give byte-identical JSON. [18.13-e] The loaded volume and the label map are never modified. |
+| 18.14 | As a **researcher**, I want IBSI conformance checks. | [18.14-a] The IBSI digital phantom is built in the test (no data file committed). [18.14-b] Per implemented feature a reference value and a tolerance from the IBSI reference manual. [18.14-c] `docs/radiomics-conformance.md` lists every feature as conformant or not. |
+| 18.15 | As a **researcher**, I want to know how stable a metric is against boundary changes. | [18.15-a] Optional 1-voxel erosion and dilation of the mask; per feature the spread is reported. [18.15-b] The perturbation is deterministic. |
 
 ### Phase 5 — Texture features (`radiomics-ibsi`, part 2)
 
 | # | User story | Acceptance criteria |
 |---|---|---|
-| 18.16 | As a **researcher**, I want GLCM and GLRLM features. | 13-direction 3D matrices, IBSI aggregation methods selectable and recorded; phantom reference values. |
-| 18.17 | As a **researcher**, I want GLSZM, GLDM and NGTDM features. | Same conformance approach. Performance within the complexity budget (clippy.toml) and benchmarked. |
-| 18.18 | As a **researcher**, I want optional filters (LoG, wavelet). | Filter parameters recorded; off by default; conformance where IBSI defines references. |
-| 18.18a | As a **user**, I want every texture matrix family explained where I see it so that I know what a number means and why it is computed. | Mandatory, part of the acceptance of 18.16–18.17 (no texture feature ships without it). Each family has a tooltip in the UI (at least on its group header; per feature where practical) giving: the full name spelled out, what the matrix counts, what it tells about tissue, and a caveat. Texts live in one place in `ferrum-radiomics` (feature registry), so the UI, CLI / MCP output (`description` field, in the schema) and docs show identical wording; a test fails if a registered family or feature has no text. Content: **GLCM** (Gray Level Co-occurrence Matrix) — how often pairs of voxels with given grey levels sit at a given distance and direction; texture contrast, homogeneity, correlation. **GLRLM** (Gray Level Run Length Matrix) — lengths of runs of equal grey level along a direction; coarse (long runs) vs fine (short runs) texture. **GLSZM** (Gray Level Size Zone Matrix) — sizes of connected zones of equal grey level; heterogeneity of zones, direction-independent. **GLDM** (Gray Level Dependence Matrix) — how many neighbours share a voxel's grey level (within a tolerance); local uniformity. **NGTDM** (Neighbouring Gray Tone Difference Matrix) — difference between a voxel and the mean of its neighbourhood; coarseness, busyness, complexity as perceived by a human. Each text states that values depend on bin width and preprocessing (recorded in the result) and are for research, not diagnosis. Texts are reviewed by a clinician or radiologist before release and available in English and Russian if the UI is localised. |
+| 18.16 | As a **researcher**, I want GLCM and GLRLM features. | [18.16-a] 13-direction 3D matrices; the IBSI aggregation method is selectable and recorded. [18.16-b] Reference values on the IBSI phantom as in 18.14. |
+| 18.17 | As a **researcher**, I want GLSZM, GLDM and NGTDM features. | [18.17-a] Same conformance approach as 18.14. [18.17-b] Within the complexity budget in `clippy.toml`; a benchmark is recorded (budget measured, L13). |
+| 18.18 | As a **researcher**, I want optional filters (LoG, wavelet). | [18.18-a] Parameters recorded; off by default. [18.18-b] Conformance where IBSI gives references. |
+| 18.18a | As a **user**, I want every texture matrix family explained where I see it so that I know what a number means and why it is computed. | Mandatory for 18.16–18.17 (no texture feature ships without it). [18.18a-a] Each family has a tooltip in the UI, at least on its group header and per feature where practical. [18.18a-b] A tooltip gives the full name, what the matrix counts, what it says about tissue and a caveat. [18.18a-c] The texts live once, in the feature registry, so UI, CLI/MCP (`description` field, in the schema) and docs show identical wording; a test fails when a family or feature has no text. [18.18a-d] Content: **GLCM** (Gray Level Co-occurrence Matrix) — how often pairs of voxels with given grey levels sit at a given distance and direction; contrast, homogeneity, correlation. **GLRLM** (Gray Level Run Length Matrix) — lengths of runs of equal grey level along a direction; coarse versus fine texture. **GLSZM** (Gray Level Size Zone Matrix) — sizes of connected zones of equal grey level; zone heterogeneity, direction-independent. **GLDM** (Gray Level Dependence Matrix) — how many neighbours share a voxel's grey level within a tolerance; local uniformity. **NGTDM** (Neighbouring Gray Tone Difference Matrix) — difference between a voxel and the mean of its neighbourhood; coarseness, busyness, complexity. [18.18a-e] Each text says that values depend on bin width and preprocessing (recorded in the result) and are for research, not diagnosis. [18.18a-f] Texts are reviewed by a clinician before release ([?] Q4) and exist in English and Russian if the UI is localised. |
 
 ### Phase 6 — Comparison and change over time
 
 | # | User story | Acceptance criteria |
 |---|---|---|
-| 18.19 | As a **clinician**, I want to compare two segmentations so that I can check an agent or engine against a person. | Dice, IoU, Hausdorff (95 %), mean surface distance, volume difference; identical shapes give 1 / 0; shown next to review controls. |
-| 18.20 | As a **clinician**, I want change of a segment between studies. | Volume and HU change, with both studies' provenance and registration state stated; no automatic registration claimed. |
-| 18.21 | As an **integrator**, I want metrics in exports. | Export bundle includes the metrics result with profile, version and parameters; SR (TID 1500) mapping tracked with 15.7. |
+| 18.19 | As a **clinician**, I want to compare two segmentations so that I can check an agent or engine against a person. | Dice, Jaccard, HD95, Hausdorff and centroid distance exist (`segment compare`). [18.19-a] Added: mean surface distance and volume difference in mL and %; checked against a brute-force search on shifted balls (as in Stage 17). [18.19-b] The desktop app shows the agreement next to Confirm / Reject for a segment that is not confirmed, against a reference segment the person picks. [18.19-c] Nothing is confirmed automatically. |
+| 18.20 | As a **clinician**, I want the change of a segment between two studies. | [18.20-a] Volume and HU change, with both studies' provenance. [18.20-b] The result says "not registered" and claims no alignment. [18.20-c] Segments are matched by a pair the person chooses. [18.20-d] A modality or unit mismatch gives `bad_request`. [18.20-e] No identifiers leave FERRUM (pseudonymised UIDs as configured). |
+| 18.21 | As an **integrator**, I want metrics in exports. | [18.21-a] The export bundle includes the metrics result with profile, version and parameters. [18.21-b] Unconfirmed items are marked, as in the bundle today. [18.21-c] The identifier scan passes. [18.21-d] The DICOM SR (TID 1500) export (exists) carries the volume and the metrics it can express; the rest stays in `report.json`. |
 
-Open items: composite indices (irregularity, homogeneity, density) are not
-planned; add only with a documented, versioned formula after Phase 3.
+**Success metrics:**
+- Every feature of Phases 1–3 matches an analytic or hand-computed value on a phantom, exactly or within the stated tolerance.
+- Phases 4–5: every implemented feature is within the IBSI tolerance on the digital phantom, or is listed as not conformant.
+- Field test (Phases 1–3, [?] Q5): the values for a public segmented CT agree with a reference implementation (pyradiomics) on the same mask within the stated tolerances; differences are explained in the PR.
+- Performance: the `clinical` profile ≤ 2 s on the 100 000-voxel segment above (an estimate until measured, L13).
+
+**Out of scope:** MR and PET normalisation, SUV; automatic registration; classification, prediction and feature selection; composite indices (irregularity, homogeneity, density); GPU computation; bundling pyradiomics (it is only a field-test reference).
+
+**Clarifications:**
+- Q: profiles or single metrics? — A: profiles (variant D), IBSI names, tiered delivery (2026-10-03).
+- Q: how many phases? — A: six (2026-10-03).
+- Q: are explanations of the texture matrices needed? — A: mandatory, a tooltip at least (2026-10-03).
+- [?] Q1: where does the computation live — a new crate `ferrum-radiomics` (changes the `ferrum-agent` dependency rule in CLAUDE.md) or `ferrum-domain/analysis.rs` (no constitution change)?
+- [?] Q2: which phases does this stage promise — 1–3 now, 4–6 re-confirmed afterwards?
+- [?] Q3: CT only; for a NIfTI study without a modality, are HU-based features refused until `--modality CT` is given, or computed with a warning?
+- [?] Q4: who confirms the default HU ranges (18.11) and the texture texts (18.18a), and is the UI localised?
+- [?] Q5: field test data — the public MSD Task09 spleen as in Stage 17, with pyradiomics as the reference?
