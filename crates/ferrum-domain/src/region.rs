@@ -157,8 +157,9 @@ fn seed_reference(
 }
 
 /// 6-connected flood fill from `seed` over voxels satisfying `accept`; each
-/// voxel is tested once. `None` when the seed is rejected or the region
-/// exceeds `max_voxels`.
+/// voxel is tested once. The seed is part of the region whatever its own
+/// value (the person chose it; the reference value is only close to it).
+/// `None` when the region exceeds `max_voxels`.
 fn flood(
     d: crate::geometry::Dims3,
     seed: UVec3,
@@ -169,9 +170,6 @@ fn flood(
     const INSIDE: u8 = 1;
     const REJECTED: u8 = 2;
     const EDGE: u8 = 3;
-    if accept(seed.x, seed.y, seed.z) != Accept::Core {
-        return None;
-    }
     let mut state = vec![UNSEEN; d.voxel_count()];
     state[d.index(seed.x, seed.y, seed.z)] = INSIDE;
     let mut queue = VecDeque::from([seed]);
@@ -593,6 +591,24 @@ mod tests {
         let p = RegionParams { smoothing: 0, opening: 2, ..params() };
         let r = grow_region_robust(&v, &SegmentationSet::new(d), UVec3::splat(4), &p).unwrap();
         assert_eq!(count(&r), 27);
+    }
+
+    // covers 16.6-h
+    #[test]
+    fn a_seed_on_an_edge_or_a_vessel_is_never_rejected() {
+        let (v, set) = phantom(0.0);
+        // on the vessel (180 HU) inside a 60 HU organ, with a tolerance that excludes the vessel
+        // from the median of its neighbourhood: the seed itself stays in the region
+        let p = RegionParams { tolerance: 5.0, smoothing: 1, opening: 0, fill_holes: false, ..params() };
+        for seed in [UVec3::new(15, 19, 19), UVec3::new(12, 12, 12), UVec3::new(27, 27, 27)] {
+            let (bx, mask) = grow_region_robust(&v, &set, seed, &p).unwrap();
+            let rel = seed - bx.min;
+            let s = bx.size();
+            assert_eq!(mask[(rel.x + s.x * (rel.y + s.y * rel.z)) as usize], 1, "{seed:?}");
+        }
+        // too large is only about the limit
+        let p = RegionParams { max_voxels: 1, ..p };
+        assert_eq!(grow_region_robust(&v, &set, UVec3::splat(15), &p), Err(RegionError::TooLarge));
     }
 
     // covers 16.6-f
