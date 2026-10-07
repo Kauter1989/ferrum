@@ -253,6 +253,17 @@ that says so instead of editing the old one.
 - **Guard:** `region::tests::the_opening_works_in_millimetres_on_thick_slices`;
   the field-test record in `docs/testing.md`; `ferrum-verify` (field level).
 
+### L19 — Pushed after reading only the first lines of `preflight.sh` (2026-10-07, region tool, 16.6)
+
+- **Symptom:** Commit `6b4ec7f` was pushed while the preflight output had
+  been cut by `head`; its failing app test (a block-based opening shrank a
+  12 mm ball from 799 to 633 voxels) showed up as a red `check` and
+  `coverage` in CI. The next commit fixed it.
+- **Rule:** Before every push, the last line of `preflight.sh` must read
+  `all checks passed`; never filter its output to a prefix.
+- **Guard:** `ferrum-change` §4 (read the whole result); prefer
+  `preflight.sh | tail -3`.
+
 ## What worked
 
 ### W1 — Field test on the user's GPU with a throw-away script (2026-10, Stage 17)

@@ -76,7 +76,7 @@ DICOM tags only via `dicom_dictionary_std::tags`.
 
 ## 4. Check locally — the same as CI
 
-Run `.claude/skills/ferrum-change/preflight.sh` from the repo root. It
+Run `.claude/skills/ferrum-change/preflight.sh` from the repo root and read its last line (`all checks passed`, L19). It
 runs, in CI order:
 1. `cargo fmt --all -- --check`;
 2. `cargo clippy --workspace --all-targets -- -D warnings`;
