@@ -236,6 +236,23 @@ that says so instead of editing the old one.
 - **Guard:** `ferrum-change` §1 (step on harness-named branches),
   session-start hook H (fresh `origin/develop`, branch status).
 
+### L18 — A voxel-based filter passed on a 1 mm phantom and failed on real CT (2026-10, region tool, 16.6)
+
+- **Symptom:** The region tool's smoothing and opening were counted in
+  voxels. Phantom tests (1 mm cubes) gave Dice 0.97–0.999. On MSD liver CT
+  (0.7 × 0.7 × 5 mm) the opening of one voxel cut nothing: the liver leaked
+  into kidney, muscle and spleen (Dice 0.38–0.78), and a bridge 4 mm wide
+  and one slice thick looked "thick" in voxels. A second field run showed
+  one click taking 35–70 s on a 0.6 × 0.6 × 0.8 mm study (60 M voxel box).
+- **Root cause:** Isotropic synthetic data hid the unit (L4 is the same
+  family). No timing was taken on a realistic volume size.
+- **Rule:** Sizes of filters and morphology are in millimetres, never
+  voxels. Every phantom for such a feature has anisotropic spacing and a
+  realistic volume size, and the test says how long it may take. Run a
+  field test on real cases before saying a feature "works".
+- **Guard:** `region::tests::the_opening_works_in_millimetres_on_thick_slices`;
+  the field-test record in `docs/testing.md`; `ferrum-verify` (field level).
+
 ## What worked
 
 ### W1 — Field test on the user's GPU with a throw-away script (2026-10, Stage 17)
@@ -298,3 +315,17 @@ that says so instead of editing the old one.
   in the session that installed the hooks.
 - **Keep:** When a lesson's rule is mechanical, add a hook and a test
   for it. Leave judgement to the skills.
+
+### W7 — Prototype on real cases in Python, then port (2026-10, region tool, 16.6)
+
+- **What:** After the field test showed the first design failing, the
+  fix was explored in `numpy`/`scipy` on four public MSD liver cases (a
+  grid of tolerance, smoothing and opening, 20 combinations in minutes),
+  then ported to Rust and re-run through the same field script.
+- **Outcome:** The prototype found the one change that mattered
+  (millimetre-based opening: mean Dice 0.74 → 0.92) before any Rust was
+  written. Self-testing the field script on a phantom found a real bug
+  (a seed outside the tolerance was reported as "too large").
+- **Keep:** For an algorithm that depends on data, try the parameter grid
+  on real cases in a scripting language first; self-test every field
+  script on a phantom before sending it.

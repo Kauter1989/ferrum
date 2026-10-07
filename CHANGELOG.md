@@ -10,10 +10,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 - Desktop: the region tool segments whole organs on noisy images. The
   reference value is the median of the smoothed values around the seed,
-  voxels are compared after smoothing, thin bridges to neighbouring
-  structures are cut, and vessels and holes inside the region are filled.
-  New settings: smoothing, bridge cutting, hole filling; the default size
-  limit is now 8 000 ml (up to 20 000 ml). (Stage 16, 16.6)
+  voxels are compared after smoothing, contacts with neighbouring organs
+  are cut by an opening measured in millimetres (so thick and thin slices
+  are treated alike), and vessels and holes inside the region are filled.
+  New settings: smoothing (mm), bridge cutting (mm), hole filling; the
+  default size limit is now 8 000 ml (up to 20 000 ml) and the default
+  tolerance at most 40. On MSD liver CT the best Dice rose from 0.46–0.78
+  to 0.88–0.96. (Stage 16, 16.6)
 
 ## [0.3.0] — 2026-10-03
 

@@ -65,6 +65,16 @@ histogram 1.5 Gvoxel/s, bricks 2 Gvoxel/s, AO 256³ in 48 ms, DICOM
 128-slice load in 50 ms; empty-space skipping speeds up GPU rendering
 1.5–5× (isosurface 23.8 → 4.6 ms at 256² on llvmpipe).
 
+## Field tests
+
+Things CI cannot run: real studies, drivers, engines. The scripts are
+throw-away (skill `ferrum-field-test`); the results are recorded here, with
+the criterion they verify.
+
+| Criterion | Level | What was run | Result |
+|---|---|---|---|
+| 16.6-j (region tool on whole organs) | field | MSD Task03 liver, cases 0, 53, 82, 105 (0.6–0.7 × 0.6–0.7 × 0.7–5 mm), commit `af36501`; the seed is a typical reference voxel, Dice against the reference (liver and tumour) over tolerances ±15 … ±100 HU with the default settings (smoothing 1.5 mm, opening 5 mm, fill holes) | best Dice 0.951, 0.961, 0.883, 0.958 against 0.779, 0.539, 0.564, 0.462 for the old raw method; the working range is ±20 … ±40 HU (narrower stays small, wider leaks and is refused by the size limit). Below 0.90 on case 82: the reference includes a hypodense tumour at the surface, which no threshold fills. One click takes 1–3 s on the 0.7 × 0.7 × 5 mm cases and 10–25 s on the 0.6 × 0.6 × 0.8 mm cases (60 M voxel box); the desktop app blocks meanwhile |
+
 ## Adding tests
 
 - New domain rule → unit test next to it, plus a property if it has an
