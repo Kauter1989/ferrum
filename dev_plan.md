@@ -251,7 +251,7 @@ and DICOM SR (TID 1500) export. This stage builds on them: one
 implementation shared by UI, CLI and MCP, and what is missing on top.
 
 **Design decisions** (recorded in a new ADR, 0011, before Phase 1):
-- Profiles: `quick`, `clinical`, `radiomics-ibsi`. Raw values are always
+- Profiles: `quick` and `clinical` (`radiomics-ibsi` comes with Stage 19). Raw values are always
   returned; there are no composite indices.
 - Naming and definitions follow IBSI feature families (`shape`,
   `intensity`, `histogram`, `ivh`, later `texture_*`). Every feature has a
@@ -263,15 +263,16 @@ implementation shared by UI, CLI and MCP, and what is missing on top.
   only on `ferrum-domain` (no I/O, GPU or UI). `ferrum-agent` may depend on
   it; CLAUDE.md and `docs/architecture.md` are updated with ADR 0011
   (the user consented to this constitution change, 2026-10-07).
-- This stage promises Phases 1–3 (`quick` and `clinical`). Phases 4–6 stay
-  in the plan and are confirmed again (G1) after Phase 3 is released.
+- This stage is Phases 1–3 (`quick` and `clinical`). IBSI preprocessing,
+  texture features, comparison and change over time moved to Stage 19
+  (below); it is confirmed again (G1) after this stage is released.
 - First release scope: CT (HU). MR and PET normalisation are out.
 
 ### Phase 1 — Profile framework and basic metrics (`quick`)
 
 | # | User story | Acceptance criteria |
 |---|---|---|
-| 18.1 | As a **developer**, I want a profile and feature registry so that new metrics plug in without touching the adapters. | [18.1-a] A feature has a stable id, family, unit, definition text and the version it appeared in; ids are unique, and a test fails when a registered feature has no definition text. [18.1-b] A profile is a versioned list of feature ids; `quick`, `clinical` and `radiomics-ibsi` are registered; an unknown profile gives `bad_request` that lists the known ones. [18.1-c] A result carries profile name and version, the preprocessing parameters (even if "none"), per feature a value and unit, and the provenance (author, status) of the segment. [18.1-d] ADR 0011 written; layering docs updated as decided in Q1. |
+| 18.1 | As a **developer**, I want a profile and feature registry so that new metrics plug in without touching the adapters. | [18.1-a] A feature has a stable id, family, unit, definition text and the version it appeared in; ids are unique, and a test fails when a registered feature has no definition text. [18.1-b] A profile is a versioned list of feature ids; `quick` and `clinical` are registered; an unknown profile gives `bad_request` that lists the known ones. [18.1-c] A result carries profile name and version, the preprocessing parameters (even if "none"), per feature a value and unit, and the provenance (author, status) of the segment. [18.1-d] ADR 0011 written; layering docs updated as decided in Q1. |
 | 18.2 | As a **radiologist**, I want size measures of a segment so that I can describe a finding. | [18.2-a] Volume in mm³ and mL equals voxel count × voxel volume; exact on a 4×5×6 box at spacing 0.7×0.7×2.5. [18.2-b] Box extent in mm and centroid in patient (LPS) mm, on a grid with a non-identity direction and origin. [18.2-c] Maximum 3D diameter (largest distance between voxel centres): exact on a box (its space diagonal) and equal to a brute-force search on a random blob. [18.2-d] Axial long and short axis, extents, largest slices equal `segment shape` (one implementation, tests for both). [18.2-e] Holds with anisotropic spacing and with a dimension of 1 on each axis (L4). [18.2-f] An empty or unknown segment gives `not_found` with a hint, never NaN or a crash. |
 | 18.3 | As a **radiologist**, I want first-order HU statistics so that I can characterise density. | [18.3-a] Mean, std (population), min, max, p5, p25, p50, p75, p95 equal the current `stats` output on the existing phantom (regression test). [18.3-b] Range and IQR added, exact on a hand-computed set. [18.3-c] Values are rescaled voxel values with their unit; a NIfTI study without a declared modality reports unit `unknown` and a warning (L10). [18.3-d] The definition text states population std and the percentile method. [18.3-e] HU-based features of a study whose modality is unknown (NIfTI) are refused with `bad_request` and a hint to declare it (`--modality CT`); no value is computed with a guessed unit. [18.3-f] The desktop app asks for the modality (and so the value unit) when it opens a NIfTI file that does not declare one, shows it afterwards, and keeps it in the workspace manifest like the CLI does. |
 | 18.4 | As a **user**, I want the `quick` profile in the desktop app, CLI and MCP so that I get the same numbers everywhere. | [18.4-a] `segment metrics --profile quick`: schema in `schema.rs`, `skills/ferrum/schemas/commands.json` regenerated, `skills/ferrum/reference/commands.md` and `docs/agent-cli.md` updated. [18.4-b] CLI parse test and one `--help` run (L8). [18.4-c] CLI and MCP JSON are identical (contract test). [18.4-d] The output passes the identifier scan (`tests/privacy.rs`). [18.4-e] Segments panel card shows value, unit and definition tooltip per feature, and a *proposed* label for an unconfirmed segment; `cargo test -p ferrum --test ui` passes (L9). [18.4-f] No segment selected or no engine: the card is visible and says why it has nothing to show. [18.4-g] `--describe` (CLI) and `describe` (MCP) add the definition text of every feature to the result; without it the result has none. |
@@ -294,31 +295,6 @@ implementation shared by UI, CLI and MCP, and what is missing on top.
 | 18.11 | As a **radiologist**, I want the share of voxels in HU ranges. | [18.11-a] Configurable half-open ranges; fractions sum to 1 within 1e-12. [18.11-b] Overlapping ranges give `bad_request`. [18.11-c] The ranges are a parameter. In the desktop app they are taken from the interface fields (the person edits them); an agent passes its own ranges or leaves them out and gets the documented defaults, which are marked as defaults and not as clinical advice. [18.11-d] The ranges used are recorded in the result. |
 | 18.12 | As a **user**, I want the `clinical` profile everywhere. | [18.12-a] The card groups features by family with units and definition tooltips. [18.12-b] CLI, MCP, schema, docs and contract tests as in 18.4. [18.12-c] The benchmark of the profile on a 512×512×300 CT with a segment of 100 000 voxels is recorded; the budget is an estimate (≤ 2 s) until measured (L13). |
 
-### Phase 4 — Reproducible radiomics (`radiomics-ibsi`, preprocessing)
-
-| # | User story | Acceptance criteria |
-|---|---|---|
-| 18.13 | As a **researcher**, I want explicit preprocessing so that results compare across centres. | [18.13-a] Isotropic resampling (voxel size parameter), HU re-segmentation range and outlier exclusion. [18.13-b] Upsampling a linear ramp by 2 keeps its values at the original positions. [18.13-c] All parameters are stored in the result with a SHA-256 `params_hash`. [18.13-d] The same input and parameters give byte-identical JSON. [18.13-e] The loaded volume and the label map are never modified. |
-| 18.14 | As a **researcher**, I want IBSI conformance checks. | [18.14-a] The IBSI digital phantom is built in the test (no data file committed). [18.14-b] Per implemented feature a reference value and a tolerance from the IBSI reference manual. [18.14-c] `docs/radiomics-conformance.md` lists every feature as conformant or not. |
-| 18.15 | As a **researcher**, I want to know how stable a metric is against boundary changes. | [18.15-a] Optional 1-voxel erosion and dilation of the mask; per feature the spread is reported. [18.15-b] The perturbation is deterministic. |
-
-### Phase 5 — Texture features (`radiomics-ibsi`, part 2)
-
-| # | User story | Acceptance criteria |
-|---|---|---|
-| 18.16 | As a **researcher**, I want GLCM and GLRLM features. | [18.16-a] 13-direction 3D matrices; the IBSI aggregation method is selectable and recorded. [18.16-b] Reference values on the IBSI phantom as in 18.14. |
-| 18.17 | As a **researcher**, I want GLSZM, GLDM and NGTDM features. | [18.17-a] Same conformance approach as 18.14. [18.17-b] Within the complexity budget in `clippy.toml`; a benchmark is recorded (budget measured, L13). |
-| 18.18 | As a **researcher**, I want optional filters (LoG, wavelet). | [18.18-a] Parameters recorded; off by default. [18.18-b] Conformance where IBSI gives references. |
-| 18.22 | As a **user**, I want every texture matrix family explained where I see it so that I know what a number means and why it is computed. | Mandatory for 18.16–18.17 (no texture feature ships without it). [18.22-a] Each family has a tooltip in the UI, at least on its group header and per feature where practical. [18.22-b] A tooltip gives the full name, what the matrix counts, what it says about tissue and a caveat. [18.22-c] The texts live once, in the feature registry, so UI, CLI/MCP (`description` field, in the schema) and docs show identical wording; a test fails when a family or feature has no text. [18.22-d] Content: **GLCM** (Gray Level Co-occurrence Matrix) — how often pairs of voxels with given grey levels sit at a given distance and direction; contrast, homogeneity, correlation. **GLRLM** (Gray Level Run Length Matrix) — lengths of runs of equal grey level along a direction; coarse versus fine texture. **GLSZM** (Gray Level Size Zone Matrix) — sizes of connected zones of equal grey level; zone heterogeneity, direction-independent. **GLDM** (Gray Level Dependence Matrix) — how many neighbours share a voxel's grey level within a tolerance; local uniformity. **NGTDM** (Neighbouring Gray Tone Difference Matrix) — difference between a voxel and the mean of its neighbourhood; coarseness, busyness, complexity. [18.22-e] Each text says that values depend on bin width and preprocessing (recorded in the result) and are for research, not diagnosis. [18.22-f] Texts are in English; GUI localisation is a separate task (out of scope here). Who reviews the texts is decided when Phase 5 is confirmed. |
-
-### Phase 6 — Comparison and change over time
-
-| # | User story | Acceptance criteria |
-|---|---|---|
-| 18.19 | As a **clinician**, I want to compare two segmentations so that I can check an agent or engine against a person. | Dice, Jaccard, HD95, Hausdorff and centroid distance exist (`segment compare`). [18.19-a] Added: mean surface distance and volume difference in mL and %; checked against a brute-force search on shifted balls (as in Stage 17). [18.19-b] The desktop app shows the agreement next to Confirm / Reject for a segment that is not confirmed, against a reference segment the person picks. [18.19-c] Nothing is confirmed automatically. |
-| 18.20 | As a **clinician**, I want the change of a segment between two studies. | [18.20-a] Volume and HU change, with both studies' provenance. [18.20-b] The result says "not registered" and claims no alignment. [18.20-c] Segments are matched by a pair the person chooses. [18.20-d] A modality or unit mismatch gives `bad_request`. [18.20-e] No identifiers leave FERRUM (pseudonymised UIDs as configured). |
-| 18.21 | As an **integrator**, I want metrics in exports. | [18.21-a] The export bundle includes the metrics result with profile, version and parameters. [18.21-b] Unconfirmed items are marked, as in the bundle today. [18.21-c] The identifier scan passes. [18.21-d] The DICOM SR (TID 1500) export (exists) carries the volume and the metrics it can express; the rest stays in `report.json`. |
-
 **Implementation** (Phases 1–3; sizing and tasks in
 [docs/radiomics.md](docs/radiomics.md) §7–8):
 
@@ -333,19 +309,69 @@ implementation shared by UI, CLI and MCP, and what is missing on top.
 
 **Success metrics:**
 - Every feature of Phases 1–3 matches an analytic or hand-computed value on a phantom, exactly or within the stated tolerance.
-- Phases 4–5: every implemented feature is within the IBSI tolerance on the digital phantom, or is listed as not conformant.
 - Field test (Phases 1–3): the values for a public segmented CT agree with a reference implementation (pyradiomics) on the same mask within the stated tolerances; differences are explained in the PR.
 - Performance: the `clinical` profile ≤ 2 s on the 100 000-voxel segment above (an estimate until measured, L13).
 
-**Out of scope:** GUI localisation (a separate task, added to the plan later); MR and PET normalisation, SUV; automatic registration; classification, prediction and feature selection; composite indices (irregularity, homogeneity, density); GPU computation; bundling pyradiomics (it is only a field-test reference).
+**Out of scope:** GUI localisation (a separate task, added to the plan later); IBSI preprocessing, texture features, extra comparison measures and change over time (Stage 19); MR and PET normalisation, SUV; automatic registration; classification, prediction and feature selection; composite indices (irregularity, homogeneity, density); GPU computation; bundling pyradiomics (it is only a field-test reference).
 
 **Clarifications:**
 - Q: profiles or single metrics? — A: profiles (variant D), IBSI names, tiered delivery (2026-10-03).
 - Q: how many phases? — A: six (2026-10-03).
 - Q: are explanations of the texture matrices needed? — A: mandatory, a tooltip at least (2026-10-03).
 - Q1: where does the computation live? — A: a new crate `ferrum-radiomics`; the constitution change (ferrum-agent dependency rule) is consented (2026-10-07).
-- Q2: which phases does this stage promise? — A: 1–3 now; 4–6 are confirmed again afterwards (2026-10-07).
+- Q2: which phases does this stage promise? — A: 1–3 now; the rest moved to Stage 19 and is confirmed again afterwards (2026-10-07).
 - Q3: NIfTI without a modality? — A: HU-based features are refused until the modality is declared, and the format must be clarified when the data is loaded, in the app too (2026-10-07).
 - Q4: HU ranges and localisation? — A: GUI localisation is a separate task, to be added to the plan later. Ranges for the skill are formed separately or left as documented defaults; in the GUI they come from the interface (2026-10-07).
 - Q5: field test data? — A: MSD Task09 spleen with pyradiomics as the reference (2026-10-07).
-- open: who reviews the texture texts (18.22) — decided at the Phase 5 re-confirmation.
+
+## Stage 19 — Reproducible radiomics and comparison 📋
+
+The second half of the quantitative profiles started in Stage 18: the
+`radiomics-ibsi` profile (explicit preprocessing, IBSI conformance,
+stability), texture features with explanations in the interface, and
+comparison and change over time. It builds on `ferrum-radiomics`
+([ADR 0011](docs/decisions/0011-radiomics-crate.md),
+[docs/radiomics.md](docs/radiomics.md)) and starts only after Stage 18
+(its Phases 1–3) is released. The spec is confirmed again (G1) before its
+design.
+
+What exists today (0.3.0, Stage 17) and stays: `segment compare` (Dice,
+Jaccard, HD95, Hausdorff, centroid distance) and the DICOM SR (TID 1500)
+export. The rows below moved here from Stage 18 on 2026-10-07 (the user's
+decision), so that Stage 18 closes after its Phase 3.
+
+### Phase 1 — Reproducible radiomics (`radiomics-ibsi`, preprocessing)
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 19.1 | As a **researcher**, I want explicit preprocessing so that results compare across centres. | [19.1-a] Isotropic resampling (voxel size parameter), HU re-segmentation range and outlier exclusion. [19.1-b] Upsampling a linear ramp by 2 keeps its values at the original positions. [19.1-c] All parameters are stored in the result with a SHA-256 `params_hash`. [19.1-d] The same input and parameters give byte-identical JSON. [19.1-e] The loaded volume and the label map are never modified. |
+| 19.2 | As a **researcher**, I want IBSI conformance checks. | [19.2-a] The IBSI digital phantom is built in the test (no data file committed). [19.2-b] Per implemented feature a reference value and a tolerance from the IBSI reference manual. [19.2-c] `docs/radiomics-conformance.md` lists every feature as conformant or not. |
+| 19.3 | As a **researcher**, I want to know how stable a metric is against boundary changes. | [19.3-a] Optional 1-voxel erosion and dilation of the mask; per feature the spread is reported. [19.3-b] The perturbation is deterministic. |
+
+### Phase 2 — Texture features (`radiomics-ibsi`, part 2)
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 19.4 | As a **researcher**, I want GLCM and GLRLM features. | [19.4-a] 13-direction 3D matrices; the IBSI aggregation method is selectable and recorded. [19.4-b] Reference values on the IBSI phantom as in 19.2. |
+| 19.5 | As a **researcher**, I want GLSZM, GLDM and NGTDM features. | [19.5-a] Same conformance approach as 19.2. [19.5-b] Within the complexity budget in `clippy.toml`; a benchmark is recorded (budget measured, L13). |
+| 19.6 | As a **researcher**, I want optional filters (LoG, wavelet). | [19.6-a] Parameters recorded; off by default. [19.6-b] Conformance where IBSI gives references. |
+| 19.7 | As a **user**, I want every texture matrix family explained where I see it so that I know what a number means and why it is computed. | Mandatory for 19.4–19.5 (no texture feature ships without it). [19.7-a] Each family has a tooltip in the UI, at least on its group header and per feature where practical. [19.7-b] A tooltip gives the full name, what the matrix counts, what it says about tissue and a caveat. [19.7-c] The texts live once, in the feature registry, so UI, CLI/MCP (`description` field, in the schema) and docs show identical wording; a test fails when a family or feature has no text. [19.7-d] Content: **GLCM** (Gray Level Co-occurrence Matrix) — how often pairs of voxels with given grey levels sit at a given distance and direction; contrast, homogeneity, correlation. **GLRLM** (Gray Level Run Length Matrix) — lengths of runs of equal grey level along a direction; coarse versus fine texture. **GLSZM** (Gray Level Size Zone Matrix) — sizes of connected zones of equal grey level; zone heterogeneity, direction-independent. **GLDM** (Gray Level Dependence Matrix) — how many neighbours share a voxel's grey level within a tolerance; local uniformity. **NGTDM** (Neighbouring Gray Tone Difference Matrix) — difference between a voxel and the mean of its neighbourhood; coarseness, busyness, complexity. [19.7-e] Each text says that values depend on bin width and preprocessing (recorded in the result) and are for research, not diagnosis. [19.7-f] Texts are in English; GUI localisation is a separate task (out of scope here). Who reviews the texts is decided when Phase 5 is confirmed. |
+
+### Phase 3 — Comparison and change over time
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 19.8 | As a **clinician**, I want to compare two segmentations so that I can check an agent or engine against a person. | Dice, Jaccard, HD95, Hausdorff and centroid distance exist (`segment compare`). [19.8-a] Added: mean surface distance and volume difference in mL and %; checked against a brute-force search on shifted balls (as in Stage 17). [19.8-b] The desktop app shows the agreement next to Confirm / Reject for a segment that is not confirmed, against a reference segment the person picks. [19.8-c] Nothing is confirmed automatically. |
+| 19.9 | As a **clinician**, I want the change of a segment between two studies. | [19.9-a] Volume and HU change, with both studies' provenance. [19.9-b] The result says "not registered" and claims no alignment. [19.9-c] Segments are matched by a pair the person chooses. [19.9-d] A modality or unit mismatch gives `bad_request`. [19.9-e] No identifiers leave FERRUM (pseudonymised UIDs as configured). |
+| 19.10 | As an **integrator**, I want metrics in exports. | [19.10-a] The export bundle includes the metrics result with profile, version and parameters. [19.10-b] Unconfirmed items are marked, as in the bundle today. [19.10-c] The identifier scan passes. [19.10-d] The DICOM SR (TID 1500) export (exists) carries the volume and the metrics it can express; the rest stays in `report.json`. |
+
+**Success metrics:**
+- Every implemented feature is within the IBSI tolerance on the digital phantom, or is listed as not conformant.
+- Texture and preprocessing values for a public segmented CT agree with pyradiomics on the same mask within the stated tolerances; differences are explained.
+
+**Out of scope:** GUI localisation (a separate task); MR and PET normalisation, SUV; automatic registration; classification, prediction and feature selection; composite indices.
+
+**Clarifications:**
+- Q: are explanations of the texture matrices needed? — A: mandatory, a tooltip at least (2026-10-03).
+- Q: what happens to Phases 4–6 of Stage 18? — A: they moved to this stage; the spec is confirmed again before the design (2026-10-07).
+- open: who reviews the texture texts (19.7).

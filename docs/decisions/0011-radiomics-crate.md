@@ -60,7 +60,7 @@ that list.
   one dependency each. `cargo deny check licenses` must stay green; any
   new numeric dependency needs its licence checked first.
 - `ferrum-app` still compiles without wgpu and egui.
-- Texture features (Stage 18, Phase 5) and IBSI preprocessing (Phase 4)
+- Texture features and IBSI preprocessing (Stage 19)
   have a place to live without touching the domain.
 
 ## Alternatives considered

@@ -1,9 +1,9 @@
 # Quantitative segment profiles (Stage 18)
 
-Design for Phases 1–3 of [Stage 18](../dev_plan.md) (`quick` and
-`clinical` profiles). Phases 4–6 (IBSI preprocessing, texture features,
-comparison and change over time) are designed when they are confirmed
-again after Phase 3 (see §7). Decision:
+Design for [Stage 18](../dev_plan.md) (`quick` and `clinical` profiles).
+IBSI preprocessing, texture features, comparison and change over time
+are [Stage 19](../dev_plan.md); they are designed when Stage 19 is
+confirmed again after Stage 18 is released (see §7). Decision:
 [ADR 0011](decisions/0011-radiomics-crate.md).
 
 ## 1. Context
@@ -82,7 +82,7 @@ pub struct Input<'a> {
   (same JSON, regression test 18.3-a).
 - **Percentiles** are nearest-rank, as `stats` has them today
   (`round((n−1)·q)`), and the definition text says so. IBSI uses linear
-  interpolation; the `radiomics-ibsi` profile (Phase 4) will use it and
+  interpolation; the `radiomics-ibsi` profile (Stage 19) will use it and
   bump its version. Mixing them silently is a lesson waiting to happen.
 - **No threads in reductions** (Phases 1–3), so that results are
   byte-identical on every machine.
@@ -242,7 +242,7 @@ reference). No criterion draws pixels in the renderer, so there is no
 | 18.12-c | `crates/ferrum-radiomics/benches/profiles.rs`, the number goes into the docs | test |
 | Stage success: values agree with pyradiomics on MSD Task09 spleen | a field script (not committed) run on the user's machine, differences explained in the PR | field |
 
-Every criterion of Phases 1–3 has at least one row.
+Every criterion of Stage 18 has at least one row.
 
 ## 7. Size and PR split
 
@@ -252,7 +252,7 @@ Estimates use the closest merged PRs in `.claude/skills/ferrum-size/calibration.
 1 631 L). Lines are code / tests / docs; generated `commands.json` is not
 weighed. All are estimates until measured.
 
-Stage 18 (Phases 1–3) is **XL** as one piece (≈ 7 500 lines) and is split
+Stage 18 is **XL** as one piece (≈ 7 500 lines) and is split
 into six PRs, each M, each leaving `develop` releasable.
 
 | PR | Tasks | Est. lines (code/tests/docs) | Files | Surfaces | Class | Field test after |
@@ -267,13 +267,12 @@ into six PRs, each M, each leaving `develop` releasable.
 Re-estimate when a PR passes its estimate by 30 %, a new contract surface
 appears, or the session needs a compaction (`ferrum-size` §4).
 
-### Phases 4–6
+### Stage 19
 
-They are not part of this design. The analyze script counts every
-criterion of the stage, so Stage 18 could not reach a clean report until
-Phases 4–6 are done. **Proposal (a decision for G2):** move Phases 4–6 to
-a new **Stage 19** (renumbered 19.1–19.10), so that Stage 18 closes after
-Phase 3 and Stage 19 gets its own spec confirmation, design and size.
+IBSI preprocessing, texture features, comparison and change over time
+were Phases 4–6 of Stage 18. On 2026-10-07 they moved to Stage 19, so
+that Stage 18 closes after its Phase 3 and gets a clean analyze report.
+Stage 19 has its own spec confirmation, design and size.
 
 ## 8. Tasks
 
