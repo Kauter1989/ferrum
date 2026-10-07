@@ -215,6 +215,27 @@ that says so instead of editing the old one.
 - **Guard:** skill `ferrum-size` (budgets and the log in
   `calibration.md`), gate G2 of `ferrum-workflow`.
 
+### L17 — Worked on a harness-named branch in a stale clone, outside the workflow (2026-10, region tool, 16.6)
+
+- **Symptom:** The cloud session handed over the branch
+  `claude/loving-franklin-4eg2ly`, cut from `main`. The local clone had no
+  `origin/develop`, so `.claude/`, the hooks, `ferrum-workflow` and
+  `CLAUDE.md`'s workflow section were not on disk. The change (a
+  noise-robust region tool) was built and pushed with no spec, no
+  criteria, no `preflight.sh` and no verification table, and a duplicate
+  branch skill was written. A UI test also hit L9 again (the Region
+  settings made the panel taller than the 1 400 px test window).
+- **Root cause:** `main`-only clone taken as "there is no `develop`"; no
+  `git fetch origin develop` before the first decision.
+- **Rule:** At the start of every task, run `git fetch origin develop`
+  and read `.claude/` from it before anything else. A branch name set by
+  the harness is renamed to `<prefix>/<topic>` and rebased onto
+  `origin/develop` before the first commit. Re-run `preflight.sh` with
+  lavapipe installed (`apt-get install mesa-vulkan-drivers libvulkan1`);
+  without a Vulkan driver the GPU tests are skipped, unlike CI.
+- **Guard:** `ferrum-change` §1 (step on harness-named branches),
+  session-start hook H (fresh `origin/develop`, branch status).
+
 ## What worked
 
 ### W1 — Field test on the user's GPU with a throw-away script (2026-10, Stage 17)

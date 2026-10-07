@@ -197,6 +197,10 @@ fn flood(
                 // reached diagonally: growing continues only across faces
                 Accept::Core => continue,
                 Accept::Edge => {
+                    count += 1;
+                    if count > max_voxels {
+                        return None;
+                    }
                     lo = lo.min(n);
                     hi = hi.max(n);
                     EDGE
@@ -527,6 +531,7 @@ mod tests {
         r.1.iter().filter(|v| **v == 1).count()
     }
 
+    // covers 16.6-b
     #[test]
     fn noise_does_not_break_the_organ_and_vessels_are_filled() {
         let (v, set) = phantom(40.0);
@@ -540,6 +545,7 @@ mod tests {
         assert_eq!(mask[(rel.x + s.x * (rel.y + s.y * rel.z)) as usize], 1, "vessel filled");
     }
 
+    // covers 16.6-a
     #[test]
     fn a_noisy_seed_voxel_does_not_matter() {
         let (mut v, set) = phantom(10.0);
@@ -558,6 +564,7 @@ mod tests {
         assert!(count(&r) > 3500, "{}", count(&r));
     }
 
+    // covers 16.6-c
     #[test]
     fn the_opening_cuts_thin_bridges() {
         let (v, set) = phantom(0.0);
@@ -569,6 +576,7 @@ mod tests {
         assert!(cut.0.max.x <= 29, "bridge removed: {:?}", cut.0);
     }
 
+    // covers 16.6-d
     #[test]
     fn small_lesions_survive_the_opening() {
         let (v, set) = phantom(0.0);
@@ -587,6 +595,7 @@ mod tests {
         assert_eq!(count(&r), 27);
     }
 
+    // covers 16.6-f
     #[test]
     fn errors_say_why() {
         let (v, mut set) = phantom(0.0);

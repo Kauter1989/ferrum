@@ -199,6 +199,10 @@ fn segment_list_edits_segments_in_both_tabs() {
     h.run();
     assert_eq!(h.state().viewer.tool, ToolKind::Region);
     assert!(h.get_all_by_label("Tolerance ±").count() > 0, "the settings of the active tool are shown");
+    // covers 16.6-g
+    for label in ["Noise smoothing, voxels", "Cut thin bridges, voxels", "Fill vessels and holes", "Max volume, ml"] {
+        assert!(h.get_all_by_label_contains(label).count() > 0, "{label}");
+    }
     let viewer = &mut h.state_mut().viewer;
     viewer.set_slice_index(SliceAxis::Axial, 20);
     viewer.slice_input(

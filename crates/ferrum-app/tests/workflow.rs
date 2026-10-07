@@ -126,8 +126,8 @@ fn the_region_tool_segments_without_an_engine() {
     let rows = v.segment_summaries();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].segment.name, "Region 1");
-    // the ball: (4/3)·π·6³ ≈ 905 voxels of 1 mm³
-    assert!((800..1000).contains(&rows[0].voxels), "{}", rows[0].voxels);
+    // the ball: (4/3)·π·6³ ≈ 905 voxels of 1 mm³; 895 on this grid (see the settings test)
+    assert_eq!(rows[0].voxels, 895);
     let p = &rows[0].segment.provenance;
     assert_eq!((p.author.clone(), p.status), (Author::Human, ReviewStatus::Confirmed), "drawn by the user");
     assert!(v.status.message.starts_with("Region 1: 0.9 ml"), "{}", v.status.message);
@@ -179,4 +179,33 @@ fn engines_never_start_from_the_3d_view() {
     assert!(v.ai_run_automatic(None), "automatic runs from the slice views");
     v.wait_ai_idle();
     assert!(v.segment_summaries().len() >= 2);
+}
+
+// covers 16.6-e
+// covers 16.6-f
+#[test]
+fn region_settings_keep_the_edge_and_the_failures_are_told_apart() {
+    let seed = UVec3::new(16, 16, 10);
+    assert!((v_default_limit() - 8000.0).abs() < f32::EPSILON, "a lung is about 6 000 ml");
+    for (smoothing, opening, fill_holes) in [(0, 0, false), (1, 0, false), (1, 1, true)] {
+        let mut v = viewer();
+        v.select_tool(ToolKind::Region);
+        let r = v.region_settings_mut();
+        (r.smoothing, r.opening, r.fill_holes) = (smoothing, opening, fill_holes);
+        let label = v.grow_region_at(seed).unwrap();
+        let n = v.segmentation().set().unwrap().voxel_count(label);
+        assert_eq!(n, 895, "smoothing {smoothing}, opening {opening}: the sharp edge stays");
+    }
+    let mut v = viewer();
+    v.select_tool(ToolKind::Region);
+    v.region_settings_mut().opening = 2;
+    v.region_settings_mut().max_ml = 0.5;
+    let err = v.grow_region_at(seed).unwrap_err();
+    assert!(err.contains("beyond 0 ml") || err.contains("beyond 1 ml"), "{err}");
+    assert!(err.contains("opening"), "{err}");
+    assert!(v.grow_region_at(UVec3::splat(99)).unwrap_err().contains("outside"));
+}
+
+fn v_default_limit() -> f32 {
+    ferrum_app::RegionSettings::default().max_ml
 }

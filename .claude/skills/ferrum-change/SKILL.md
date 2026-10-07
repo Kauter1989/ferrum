@@ -23,6 +23,10 @@ small change starts here.
    git checkout -b feat/<topic> origin/develop    # or fix/, docs/, refactor/, chore/
    ```
    Never commit on `develop` or `main` (L2).
+   If the session handed you a branch (`claude/…`), rename it to
+   `<prefix>/<topic>` and rebase it onto `origin/develop` before the first
+   commit (L17). A clone without `origin/develop` is not "a repo without
+   `develop`": fetch it first.
 3. For a design or a stage, first check what already exists on the fresh
    base:
    - `dev_plan.md`;

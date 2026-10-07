@@ -79,7 +79,7 @@ fn region_settings(ui: &mut egui::Ui, viewer: &mut Viewer) {
     (region.smoothing, region.opening) = (smoothing.round() as u32, opening.round() as u32);
     ui.checkbox(&mut region.fill_holes, "Fill vessels and holes");
     ui.label(
-        RichText::new("Whole organs: raise the tolerance. Larger regions have leaked and are not created.")
+        RichText::new("Whole organs: raise the tolerance. Smoothing above 1 shrinks small structures. Larger regions have leaked and are not created.")
             .size(11.5)
             .color(TEXT_DIM),
     );

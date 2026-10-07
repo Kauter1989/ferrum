@@ -6,6 +6,15 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Desktop: the region tool segments whole organs on noisy images. The
+  reference value is the median of the smoothed values around the seed,
+  voxels are compared after smoothing, thin bridges to neighbouring
+  structures are cut, and vessels and holes inside the region are filled.
+  New settings: smoothing, bridge cutting, hole filling; the default size
+  limit is now 8 000 ml (up to 20 000 ml). (Stage 16, 16.6)
+
 ## [0.3.0] — 2026-10-03
 
 Stage 17: agent segmentation scenarios with nnInteractive,
