@@ -606,7 +606,7 @@ fn surface_distances(from: &MaskRegion, to: &MaskRegion, spacing: Vec3) -> Vec<f
 /// Squared Euclidean distance (mm²) of every voxel of a box of `size` to
 /// the nearest seed, with anisotropic `spacing` (Felzenszwalb–Huttenlocher,
 /// separable).
-fn squared_edt(seeds: &[bool], size: UVec3, spacing: Vec3) -> Vec<f64> {
+pub(crate) fn squared_edt(seeds: &[bool], size: UVec3, spacing: Vec3) -> Vec<f64> {
     let mut f: Vec<f64> = seeds.iter().map(|s| if *s { 0.0 } else { f64::INFINITY }).collect();
     let (sx, sy, sz) = (size.x as usize, size.y as usize, size.z as usize);
     let lines: [(usize, usize, usize, f64); 3] = [

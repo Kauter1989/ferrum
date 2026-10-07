@@ -126,11 +126,12 @@ fn the_region_tool_segments_without_an_engine() {
     let rows = v.segment_summaries();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].segment.name, "Region 1");
-    // the ball: (4/3)·π·6³ ≈ 905 voxels of 1 mm³; 895 on this grid (see the settings test)
-    assert_eq!(rows[0].voxels, 895);
+    // the ball: (4/3)·π·6³ ≈ 905 voxels of 1 mm³, 895 on this grid; the default opening
+    // (5 mm) is wider than the 12 mm ball is thick and rounds it off a little
+    assert_eq!(rows[0].voxels, 799);
     let p = &rows[0].segment.provenance;
     assert_eq!((p.author.clone(), p.status), (Author::Human, ReviewStatus::Confirmed), "drawn by the user");
-    assert!(v.status.message.starts_with("Region 1: 0.9 ml"), "{}", v.status.message);
+    assert!(v.status.message.starts_with("Region 1: 0.8 ml"), "{}", v.status.message);
     assert!(v.segmentation().show, "the result is shown");
 
     // a second click in the same structure explains instead of duplicating it
@@ -187,18 +188,20 @@ fn engines_never_start_from_the_3d_view() {
 fn region_settings_keep_the_edge_and_the_failures_are_told_apart() {
     let seed = UVec3::new(16, 16, 10);
     assert!((v_default_limit() - 8000.0).abs() < f32::EPSILON, "a lung is about 6 000 ml");
-    for (smoothing, opening, fill_holes) in [(0, 0, false), (1, 0, false), (1, 1, true)] {
+    for (smoothing_mm, opening_mm, fill_holes, expected) in
+        [(0.0, 0.0, false, 895), (1.0, 0.0, false, 895), (1.0, 0.0, true, 895), (1.0, 1.5, true, 871)]
+    {
         let mut v = viewer();
         v.select_tool(ToolKind::Region);
         let r = v.region_settings_mut();
-        (r.smoothing, r.opening, r.fill_holes) = (smoothing, opening, fill_holes);
+        (r.smoothing_mm, r.opening_mm, r.fill_holes) = (smoothing_mm, opening_mm, fill_holes);
         let label = v.grow_region_at(seed).unwrap();
         let n = v.segmentation().set().unwrap().voxel_count(label);
-        assert_eq!(n, 895, "smoothing {smoothing}, opening {opening}: the sharp edge stays");
+        assert_eq!(n, expected, "smoothing {smoothing_mm} mm, opening {opening_mm} mm");
     }
     let mut v = viewer();
     v.select_tool(ToolKind::Region);
-    v.region_settings_mut().opening = 2;
+    v.region_settings_mut().opening_mm = 2.0;
     v.region_settings_mut().max_ml = 0.5;
     let err = v.grow_region_at(seed).unwrap_err();
     assert!(err.contains("beyond 0 ml") || err.contains("beyond 1 ml"), "{err}");

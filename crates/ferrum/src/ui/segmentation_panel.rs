@@ -73,13 +73,11 @@ fn region_settings(ui: &mut egui::Ui, viewer: &mut Viewer) {
     let region = viewer.region_settings_mut();
     slider_row(ui, "Tolerance ±", &mut region.tolerance, 0.0..=span * 0.5);
     slider_row(ui, "Max volume, ml", &mut region.max_ml, 1.0..=20000.0);
-    let (mut smoothing, mut opening) = (region.smoothing as f32, region.opening as f32);
-    slider_row(ui, "Noise smoothing, voxels", &mut smoothing, 0.0..=3.0);
-    slider_row(ui, "Cut thin bridges, voxels", &mut opening, 0.0..=5.0);
-    (region.smoothing, region.opening) = (smoothing.round() as u32, opening.round() as u32);
+    slider_row(ui, "Noise smoothing, mm", &mut region.smoothing_mm, 0.0..=6.0);
+    slider_row(ui, "Cut thin bridges, mm", &mut region.opening_mm, 0.0..=15.0);
     ui.checkbox(&mut region.fill_holes, "Fill vessels and holes");
     ui.label(
-        RichText::new("Whole organs: raise the tolerance. Smoothing above 1 shrinks small structures. Larger regions have leaked and are not created.")
+        RichText::new("Whole organs: raise the tolerance. Strong smoothing shrinks small structures. Larger regions have leaked and are not created.")
             .size(11.5)
             .color(TEXT_DIM),
     );

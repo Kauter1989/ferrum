@@ -9,16 +9,19 @@
 //! 1. the reference value is the **median of the smoothed values around the
 //!    seed**, not one voxel;
 //! 2. voxels are accepted by their **smoothed value** (box mean over
-//!    `smoothing` voxels in each direction);
-//! 3. an **opening** removes bridges thinner than `2 × opening` voxels
-//!    between the organ and its neighbours;
+//!    `smoothing_mm` in each direction, in millimetres so that thick and
+//!    thin slices are treated alike);
+//! 3. an **opening** of `opening_mm` (a distance transform in millimetres,
+//!    so anisotropic voxels are handled) removes bridges thinner than
+//!    twice that between the organ and its neighbours;
 //! 4. **holes** enclosed by the region (vessels in the liver, bronchi and
 //!    vessels in the lung) are filled.
 
 use std::collections::VecDeque;
 
-use glam::UVec3;
+use glam::{UVec3, Vec3};
 
+use crate::analysis::squared_edt;
 use crate::segmentation::{SegmentationSet, VoxelBox};
 use crate::volume::Volume;
 
@@ -30,11 +33,12 @@ pub struct RegionParams {
     pub tolerance: f32,
     /// Region size limit in voxels; a larger region has leaked.
     pub max_voxels: u64,
-    /// Radius of the box mean applied before comparing, in voxels
-    /// (`0` compares raw values).
-    pub smoothing: u32,
-    /// Radius of the opening in voxels (`0` keeps thin bridges).
-    pub opening: u32,
+    /// Half-width of the box mean applied before comparing, in millimetres
+    /// (`0` compares raw values; at most [`MAX_SMOOTHING_VOXELS`] voxels
+    /// per axis).
+    pub smoothing_mm: f32,
+    /// Radius of the opening in millimetres (`0` keeps thin bridges).
+    pub opening_mm: f32,
     /// Fill cavities enclosed by the region.
     pub fill_holes: bool,
 }
@@ -64,8 +68,8 @@ enum Accept {
     Edge,
 }
 
-/// Largest smoothing radius that is applied.
-const MAX_SMOOTHING: u32 = 3;
+/// Largest smoothing radius per axis, in voxels.
+pub const MAX_SMOOTHING_VOXELS: i64 = 6;
 /// Radius of the seed neighbourhood whose median is the reference value.
 const SEED_RADIUS: i64 = 1;
 
@@ -88,7 +92,13 @@ pub fn grow_region_robust(
     if labels.labels().label(seed.x, seed.y, seed.z) != Some(0) {
         return Err(RegionError::Labelled);
     }
-    let radius = i64::from(params.smoothing.min(MAX_SMOOTHING));
+    let sp = volume.spacing();
+    let axis_radius = |mm: f32, w: f32| ((mm / w.max(1e-6)).floor() as i64).clamp(0, MAX_SMOOTHING_VOXELS);
+    let radius = [
+        axis_radius(params.smoothing_mm, sp.x),
+        axis_radius(params.smoothing_mm, sp.y),
+        axis_radius(params.smoothing_mm, sp.z),
+    ];
     let smooth = |i: i64, j: i64, k: i64| smoothed(volume, radius, i, j, k);
     let reference = seed_reference(&smooth, seed, d.x, d.y, d.z).ok_or(RegionError::OutOfGrid)?;
     let (lo, hi) = (reference - params.tolerance, reference + params.tolerance);
@@ -106,8 +116,8 @@ pub fn grow_region_robust(
     };
     let (bx, mask) = flood(d, seed, params.max_voxels, accept).ok_or(RegionError::TooLarge)?;
     let mut mask = Mask::new(bx, mask);
-    if params.opening > 0 {
-        mask.open(params.opening, seed);
+    if params.opening_mm > 0.0 {
+        mask.open(params.opening_mm, sp, seed);
     }
     if params.fill_holes {
         mask.fill_holes(|i, j, k| labels.labels().label(i, j, k) == Some(0));
@@ -115,16 +125,16 @@ pub fn grow_region_robust(
     mask.into_result().ok_or(RegionError::OutOfGrid)
 }
 
-/// Box mean of the values within `radius` voxels of `(i, j, k)`.
-fn smoothed(volume: &Volume, radius: i64, i: i64, j: i64, k: i64) -> Option<f32> {
+/// Box mean of the values within `radius` voxels (per axis) of `(i, j, k)`.
+fn smoothed(volume: &Volume, radius: [i64; 3], i: i64, j: i64, k: i64) -> Option<f32> {
     let d = volume.dims();
-    if radius == 0 {
+    if radius == [0; 3] {
         return volume.physical(u32::try_from(i).ok()?, u32::try_from(j).ok()?, u32::try_from(k).ok()?);
     }
     let (mut sum, mut n) = (0.0f64, 0u32);
-    for z in (k - radius).max(0)..=(k + radius).min(i64::from(d.z) - 1) {
-        for y in (j - radius).max(0)..=(j + radius).min(i64::from(d.y) - 1) {
-            for x in (i - radius).max(0)..=(i + radius).min(i64::from(d.x) - 1) {
+    for z in (k - radius[2]).max(0)..=(k + radius[2]).min(i64::from(d.z) - 1) {
+        for y in (j - radius[1]).max(0)..=(j + radius[1]).min(i64::from(d.y) - 1) {
+            for x in (i - radius[0]).max(0)..=(i + radius[0]).min(i64::from(d.x) - 1) {
                 if let Some(v) = volume.physical(x as u32, y as u32, z as u32) {
                     sum += f64::from(v);
                     n += 1;
@@ -268,43 +278,44 @@ impl Mask {
         .flatten()
     }
 
-    /// Opening by `n` face-neighbour erosions and dilations. The component
-    /// holding the seed survives (the largest one if the seed itself is
-    /// eroded away); the dilation never leaves the original region. A
-    /// structure that erodes away entirely (a small lesion) is kept as is.
-    fn open(&mut self, n: u32, seed: UVec3) {
-        let original = self.data.clone();
-        for _ in 0..n {
-            self.data = self.erode();
+    /// Opening of radius `r` mm: the core is the part of the region at
+    /// least `r` from its outside (exact anisotropic distance transform),
+    /// then it is grown back by `r`, never beyond the original region. The
+    /// component holding the seed survives (the largest one if the seed
+    /// itself is not in the core). A structure with no core (a small
+    /// lesion) is kept as is.
+    fn open(&mut self, r: f32, spacing: Vec3, seed: UVec3) {
+        let (nx, ny, nz) = self.size();
+        let r2 = f64::from(r) * f64::from(r);
+        // distance of every region voxel to the nearest outside voxel; the
+        // margin of one voxel makes the box border count as outside
+        let (px, py, pz) = (nx + 2, ny + 2, nz + 2);
+        let mut outside = vec![true; px * py * pz];
+        for k in 0..nz {
+            for j in 0..ny {
+                for i in 0..nx {
+                    outside[(i + 1) + px * ((j + 1) + py * (k + 1))] = self.data[self.at(i, j, k)] != 1;
+                }
+            }
         }
+        let d2 = squared_edt(&outside, UVec3::new(px as u32, py as u32, pz as u32), spacing);
+        let mut core = vec![0u8; self.data.len()];
+        for k in 0..nz {
+            for j in 0..ny {
+                for i in 0..nx {
+                    let idx = self.at(i, j, k);
+                    core[idx] = u8::from(self.data[idx] == 1 && d2[(i + 1) + px * ((j + 1) + py * (k + 1))] >= r2);
+                }
+            }
+        }
+        let original = std::mem::replace(&mut self.data, core);
         let s = seed - self.bx.min;
-        let seed_idx = self.at(s.x as usize, s.y as usize, s.z as usize);
-        let Some(core) = self.component(seed_idx) else {
+        let Some(core) = self.component(self.at(s.x as usize, s.y as usize, s.z as usize)) else {
             self.data = original;
             return;
         };
-        self.data = core;
-        for _ in 0..n {
-            let grown = self.dilate();
-            self.data = grown.iter().zip(&original).map(|(&g, &o)| g & o).collect();
-        }
-    }
-
-    fn erode(&self) -> Vec<u8> {
-        let (nx, ny, nz) = self.size();
-        (0..self.data.len())
-            .map(|idx| {
-                let (i, j, k) = (idx % nx, (idx / nx) % ny, idx / (nx * ny));
-                let on_edge = i == 0 || j == 0 || k == 0 || i + 1 == nx || j + 1 == ny || k + 1 == nz;
-                u8::from(self.data[idx] == 1 && !on_edge && self.around(idx).all(|n| self.data[n] == 1))
-            })
-            .collect()
-    }
-
-    fn dilate(&self) -> Vec<u8> {
-        (0..self.data.len())
-            .map(|idx| u8::from(self.data[idx] == 1 || self.around(idx).any(|n| self.data[n] == 1)))
-            .collect()
+        let near = squared_edt(&core.iter().map(|&c| c == 1).collect::<Vec<_>>(), self.bx.size(), spacing);
+        self.data = (0..original.len()).map(|n| u8::from(original[n] == 1 && near[n] <= r2)).collect();
     }
 
     /// The connected component of the mask containing `seed_idx`, or the
@@ -522,7 +533,7 @@ mod tests {
     }
 
     fn params() -> RegionParams {
-        RegionParams { tolerance: 25.0, max_voxels: u64::MAX, smoothing: 1, opening: 1, fill_holes: true }
+        RegionParams { tolerance: 25.0, max_voxels: u64::MAX, smoothing_mm: 1.0, opening_mm: 1.5, fill_holes: true }
     }
 
     fn count(r: &(VoxelBox, Vec<u8>)) -> usize {
@@ -566,12 +577,40 @@ mod tests {
     #[test]
     fn the_opening_cuts_thin_bridges() {
         let (v, set) = phantom(0.0);
-        let without = RegionParams { opening: 0, smoothing: 0, fill_holes: false, ..params() };
+        let without = RegionParams { opening_mm: 0.0, smoothing_mm: 0.0, fill_holes: false, ..params() };
         let leaked = grow_region_robust(&v, &set, UVec3::new(15, 15, 15), &without).unwrap();
         assert!(leaked.0.max.x > 34, "leaks through the bridge into the blob");
         let cut =
-            grow_region_robust(&v, &set, UVec3::new(15, 15, 15), &RegionParams { opening: 1, ..without }).unwrap();
+            grow_region_robust(&v, &set, UVec3::new(15, 15, 15), &RegionParams { opening_mm: 1.5, ..without }).unwrap();
         assert!(cut.0.max.x <= 29, "bridge removed: {:?}", cut.0);
+    }
+
+    // covers 16.6-i
+    #[test]
+    fn the_opening_works_in_millimetres_on_thick_slices() {
+        // 5 mm slices: a bridge 4 voxels wide in the plane but a single slice thick
+        // is 4 mm × 5 mm; an opening counted in voxels would not see it as thin
+        let d = Dims3::new(40, 40, 12);
+        let mut data = vec![0.0f32; d.voxel_count()];
+        for k in 0..12u32 {
+            for j in 0..40u32 {
+                for i in 0..40u32 {
+                    let organ = (10..26).contains(&i) && (10..26).contains(&j) && (3..9).contains(&k);
+                    let bridge = (26..36).contains(&i) && (16..20).contains(&j) && k == 5;
+                    let blob = (36..40).contains(&i) && (10..26).contains(&j) && (3..9).contains(&k);
+                    data[d.index(i, j, k)] = if organ || bridge || blob { 60.0 } else { 0.0 };
+                }
+            }
+        }
+        let v = Volume::from_physical(d, Vec3::new(1.0, 1.0, 5.0), &data).unwrap();
+        let set = SegmentationSet::new(d);
+        let p = RegionParams { smoothing_mm: 0.0, opening_mm: 0.0, fill_holes: false, ..params() };
+        let seed = UVec3::new(18, 18, 5);
+        let leaked = grow_region_robust(&v, &set, seed, &p).unwrap();
+        assert_eq!(leaked.0.max.x, 40, "without the opening the blob is reached");
+        let cut = grow_region_robust(&v, &set, seed, &RegionParams { opening_mm: 3.0, ..p }).unwrap();
+        assert!(cut.0.max.x <= 28, "the bridge is cut: {:?}", cut.0);
+        assert_eq!(cut.0.min, UVec3::new(10, 10, 3), "the organ keeps its full extent");
     }
 
     // covers 16.6-d
@@ -579,7 +618,7 @@ mod tests {
     fn small_lesions_survive_the_opening() {
         let (v, set) = phantom(0.0);
         // the blob is 6³ = 216 voxels, wider than the opening
-        let r = grow_region_robust(&v, &set, UVec3::new(36, 14, 14), &RegionParams { opening: 2, ..params() });
+        let r = grow_region_robust(&v, &set, UVec3::new(36, 14, 14), &RegionParams { opening_mm: 2.5, ..params() });
         assert!(r.is_ok());
         // a 3-voxel lesion erodes away and is kept unchanged
         let d = Dims3::new(9, 9, 9);
@@ -588,7 +627,7 @@ mod tests {
             data[d.index(i, j, k)] = 100.0;
         }
         let v = Volume::from_physical(d, Vec3::ONE, &data).unwrap();
-        let p = RegionParams { smoothing: 0, opening: 2, ..params() };
+        let p = RegionParams { smoothing_mm: 0.0, opening_mm: 3.0, ..params() };
         let r = grow_region_robust(&v, &SegmentationSet::new(d), UVec3::splat(4), &p).unwrap();
         assert_eq!(count(&r), 27);
     }
@@ -599,7 +638,7 @@ mod tests {
         let (v, set) = phantom(0.0);
         // on the vessel (180 HU) inside a 60 HU organ, with a tolerance that excludes the vessel
         // from the median of its neighbourhood: the seed itself stays in the region
-        let p = RegionParams { tolerance: 5.0, smoothing: 1, opening: 0, fill_holes: false, ..params() };
+        let p = RegionParams { tolerance: 5.0, smoothing_mm: 1.0, opening_mm: 0.0, fill_holes: false, ..params() };
         for seed in [UVec3::new(15, 19, 19), UVec3::new(12, 12, 12), UVec3::new(27, 27, 27)] {
             let (bx, mask) = grow_region_robust(&v, &set, seed, &p).unwrap();
             let rel = seed - bx.min;

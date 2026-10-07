@@ -35,19 +35,19 @@ pub struct RegionSettings {
     /// Largest region in millilitres; a larger one has leaked into
     /// neighbouring tissue and is not created.
     pub max_ml: f32,
-    /// Radius in voxels of the smoothing applied before values are
-    /// compared (suppresses noise; `0` compares raw voxels).
-    pub smoothing: u32,
-    /// Radius in voxels of the opening that cuts thin bridges to
+    /// Half-width in millimetres of the smoothing applied before values
+    /// are compared (suppresses noise; `0` compares raw voxels).
+    pub smoothing_mm: f32,
+    /// Radius in millimetres of the opening that cuts thin bridges to
     /// neighbouring structures (`0` keeps them).
-    pub opening: u32,
+    pub opening_mm: f32,
     /// Fill vessels and other cavities enclosed by the region.
     pub fill_holes: bool,
 }
 
 impl Default for RegionSettings {
     fn default() -> Self {
-        Self { tolerance: 50.0, max_ml: 8000.0, smoothing: 1, opening: 1, fill_holes: true }
+        Self { tolerance: 50.0, max_ml: 8000.0, smoothing_mm: 1.5, opening_mm: 5.0, fill_holes: true }
     }
 }
 
@@ -257,12 +257,12 @@ impl Viewer {
         }) {
             return Err(format!("This voxel already belongs to {name}"));
         }
-        let RegionSettings { tolerance, max_ml, smoothing, opening, fill_holes } = self.segments.region;
+        let RegionSettings { tolerance, max_ml, smoothing_mm, opening_mm, fill_holes } = self.segments.region;
         let sp = volume.spacing();
         let voxel_ml = f64::from(sp.x) * f64::from(sp.y) * f64::from(sp.z) / 1000.0;
         let max_voxels = (f64::from(max_ml) / voxel_ml).floor().max(1.0) as u64;
         let set = self.segmentation_mut().ok_or("Open a study first")?;
-        let params = ferrum_domain::RegionParams { tolerance, max_voxels, smoothing, opening, fill_holes };
+        let params = ferrum_domain::RegionParams { tolerance, max_voxels, smoothing_mm, opening_mm, fill_holes };
         let (bx, mask) = ferrum_domain::grow_region_robust(&volume, set, seed, &params).map_err(|e| match e {
             ferrum_domain::RegionError::TooLarge => format!(
                 "The region grows beyond {max_ml:.0} ml: lower the tolerance (now ±{tolerance:.0}), raise the \
