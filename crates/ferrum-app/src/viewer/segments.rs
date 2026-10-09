@@ -1,11 +1,15 @@
 //! Segmentation use cases of the [`Viewer`]: the segment list, label-map
 //! import, mask edits (used by segmentation engines) and undo.
 
+use std::sync::Arc;
+
 use ferrum_domain::{
-    LabelMap, Provenance, ReviewStatus, Segment, SegmentStyle, SegmentationError, SegmentationSet, Timestamp, VoxelBox,
+    CancelFlag, LabelMap, Provenance, RegionError, ReviewStatus, Segment, SegmentStyle, SegmentationError,
+    SegmentationSet, Timestamp, VoxelBox,
 };
 
 use super::Viewer;
+use crate::jobs::RegionRequest;
 
 /// Segmentation of the loaded dataset.
 #[derive(Debug, Clone)]
@@ -22,6 +26,10 @@ pub struct SegmentationState {
     pub region: RegionSettings,
     /// Regions created so far (for their default names).
     regions: u32,
+    /// Cancel flag of the region job that is running, if any.
+    region_job: Option<Arc<CancelFlag>>,
+    /// Outcome of the latest finished region job (for [`Viewer::grow_region_at`]).
+    last_region: Option<Result<u8, String>>,
 }
 
 /// Settings of the region tool ([`ToolKind::Region`](crate::ToolKind::Region)):
@@ -35,20 +43,35 @@ pub struct RegionSettings {
     /// Largest region in millilitres; a larger one has leaked into
     /// neighbouring tissue and is not created.
     pub max_ml: f32,
+    /// Half-width in millimetres of the smoothing applied before values
+    /// are compared (suppresses noise; `0` compares raw voxels).
+    pub smoothing_mm: f32,
+    /// Radius in millimetres of the opening that cuts thin bridges to
+    /// neighbouring structures (`0` keeps them).
+    pub opening_mm: f32,
+    /// Fill vessels and other cavities enclosed by the region.
+    pub fill_holes: bool,
 }
 
 impl Default for RegionSettings {
     fn default() -> Self {
-        Self { tolerance: 50.0, max_ml: 1000.0 }
+        Self { tolerance: 50.0, max_ml: 8000.0, smoothing_mm: 1.5, opening_mm: 5.0, fill_holes: true }
     }
 }
 
 impl RegionSettings {
     /// Defaults for a display window: a tolerance of a tenth of its width,
-    /// so the region follows what looks alike on screen.
+    /// so the region follows what looks alike on screen, but at most
+    /// [`RegionSettings::MAX_DEFAULT_TOLERANCE`]: the automatic window of a
+    /// whole CT is over 1 000 wide, and a tolerance that large leaks into
+    /// every soft tissue on the first click.
     pub fn for_window(window: ferrum_domain::WindowLevel) -> Self {
-        Self { tolerance: (window.width * 0.1).max(f32::EPSILON), ..Self::default() }
+        Self { tolerance: (window.width * 0.1).clamp(f32::EPSILON, Self::MAX_DEFAULT_TOLERANCE), ..Self::default() }
     }
+
+    /// Largest tolerance a display window sets by default, in the volume's
+    /// units (HU for CT; soft tissues differ by 10–40 HU).
+    pub const MAX_DEFAULT_TOLERANCE: f32 = 40.0;
 }
 
 impl Default for SegmentationState {
@@ -60,6 +83,8 @@ impl Default for SegmentationState {
             style: SegmentStyle::default(),
             fill_opacity: 1.0,
             region: RegionSettings::default(),
+            region_job: None,
+            last_region: None,
             regions: 0,
         }
     }
@@ -234,52 +259,127 @@ impl Viewer {
         &mut self.segments.region
     }
 
-    /// Grows a region from `seed` with the region settings and stores it
-    /// as a new segment drawn by the user. Returns its label, or a message
-    /// saying why nothing was created (seed inside a segment, region
-    /// larger than the limit, segmentation not possible in this view).
-    pub fn grow_region_at(&mut self, seed: glam::UVec3) -> Result<u8, String> {
+    /// `true` while a region is growing in the background.
+    pub fn region_pending(&self) -> bool {
+        self.segments.region_job.is_some()
+    }
+
+    /// Stops the region that is growing in the background; no segment is
+    /// created from it, even if it had just finished.
+    pub fn cancel_region(&mut self) {
+        if let Some(cancel) = &self.segments.region_job {
+            cancel.cancel();
+            self.status.message = "Cancelling the region…".into();
+        }
+    }
+
+    /// Starts growing a region from `seed` with the region settings on a
+    /// worker thread; the segment appears when the job has finished (see
+    /// [`Viewer::poll`]). Fails at once, with a message, when nothing can
+    /// grow: segmentation not possible in this view, a region is already
+    /// growing, or the seed is outside the volume or inside a segment.
+    pub fn start_region_at(&mut self, seed: glam::UVec3) -> Result<(), String> {
         self.can_segment()?;
+        if self.region_pending() {
+            return Err("A region is still growing: wait for it or cancel it".into());
+        }
         let d = self.dataset.as_ref().ok_or("Open a study first")?;
-        let volume = d.volume.clone();
-        let value = volume.physical(seed.x, seed.y, seed.z).ok_or("The click is outside the volume")?;
+        let (volume, revision) = (d.volume.clone(), d.revision);
+        let seed_value = volume.physical(seed.x, seed.y, seed.z).ok_or("The click is outside the volume")?;
         if let Some(name) = self.segments.set.as_ref().and_then(|s| {
             let label = s.labels().label(seed.x, seed.y, seed.z).filter(|l| *l != 0)?;
             s.segment(label).map(|g| g.name.clone())
         }) {
             return Err(format!("This voxel already belongs to {name}"));
         }
-        let RegionSettings { tolerance, max_ml } = self.segments.region;
+        let RegionSettings { tolerance, max_ml, smoothing_mm, opening_mm, fill_holes } = self.segments.region;
         let sp = volume.spacing();
         let voxel_ml = f64::from(sp.x) * f64::from(sp.y) * f64::from(sp.z) / 1000.0;
         let max_voxels = (f64::from(max_ml) / voxel_ml).floor().max(1.0) as u64;
-        let set = self.segmentation_mut().ok_or("Open a study first")?;
-        let (bx, mask) =
-            ferrum_domain::grow_region(&volume, set, seed, value - tolerance, value + tolerance, max_voxels)
-                .ok_or_else(|| {
-                    format!(
-                        "The region grows beyond {max_ml:.0} ml: lower the tolerance (now ±{tolerance:.0}) or click \
-                         further from the edge"
-                    )
-                })?;
+        let labels = self.segmentation_mut().ok_or("Open a study first")?.labels().clone();
+        let params = ferrum_domain::RegionParams { tolerance, max_voxels, smoothing_mm, opening_mm, fill_holes };
+        let cancel = Arc::new(CancelFlag::default());
+        let request = RegionRequest { revision, seed, seed_value, tolerance, max_ml };
+        self.jobs.region(volume, labels, request, params, cancel.clone());
+        self.segments.region_job = Some(cancel);
+        self.status.message = "Growing the region…".into();
+        Ok(())
+    }
+
+    /// Grows a region from `seed` like [`Viewer::start_region_at`] and
+    /// waits for it (tests and embedders without an event loop). Returns
+    /// its label, or a message saying why nothing was created.
+    pub fn grow_region_at(&mut self, seed: glam::UVec3) -> Result<u8, String> {
+        self.start_region_at(seed)?;
+        self.segments.last_region = None;
+        while self.region_pending() {
+            let Some(event) = self.jobs.wait() else {
+                break;
+            };
+            self.handle_event(event);
+        }
+        self.segments.last_region.take().unwrap_or_else(|| Err("The region was not created".into()))
+    }
+
+    /// Applies a finished region job: a new segment drawn by the user. A
+    /// result is dropped when it was cancelled or the study changed
+    /// meanwhile; voxels labelled since the click are not overwritten.
+    pub(super) fn finish_region(&mut self, request: RegionRequest, result: Result<(VoxelBox, Vec<u8>), RegionError>) {
+        let cancelled = self.segments.region_job.take().is_none_or(|c| c.is_set());
+        let outcome = if cancelled || result == Err(RegionError::Cancelled) {
+            Err("Region growing cancelled".to_string())
+        } else if self.dataset.as_ref().is_none_or(|d| d.revision != request.revision) {
+            Err("The study changed: the region was dropped".to_string())
+        } else {
+            result
+                .map_err(|e| region_error_message(e, &request))
+                .and_then(|(bx, mask)| self.add_region(&request, bx, &mask))
+        };
+        if let Err(message) = &outcome {
+            self.status.message = message.clone();
+        }
+        self.segments.last_region = Some(outcome);
+    }
+
+    fn add_region(&mut self, request: &RegionRequest, bx: VoxelBox, mask: &[u8]) -> Result<u8, String> {
         self.segments.regions += 1;
         let label = self.add_segment(&format!("Region {}", self.segments.regions)).map_err(|e| e.to_string())?;
         let provenance = Provenance::human(Timestamp::now());
         self.with_set(|s| {
             s.set_provenance(label, provenance)?;
-            s.apply_mask(label, bx, &mask, false)
+            s.apply_mask(label, bx, mask, false)
         })
         .map_err(|e| e.to_string())?;
+        let sp = self.dataset.as_ref().map_or(glam::Vec3::ONE, |d| d.volume.spacing());
         let ml = self.segments.set.as_ref().map_or(0.0, |s| s.volume_ml(label, sp));
-        self.status.message =
-            format!("Region {}: {ml:.1} ml, values {value:.0} ± {tolerance:.0}", self.segments.regions);
+        self.status.message = format!(
+            "Region {}: {ml:.1} ml, values {:.0} ± {:.0}",
+            self.segments.regions, request.seed_value, request.tolerance
+        );
         Ok(label)
     }
 
     /// Removes every segment.
     pub fn clear_segmentation(&mut self) {
+        if let Some(cancel) = &self.segments.region_job {
+            cancel.cancel();
+        }
         self.segments.regions = 0;
         self.segments.set = None;
         self.segments.generation = self.bump_revision();
+    }
+}
+
+/// Why a region job produced nothing, in words for the status line.
+fn region_error_message(e: RegionError, request: &RegionRequest) -> String {
+    match e {
+        RegionError::TooLarge => format!(
+            "The region grows beyond {:.0} ml: lower the tolerance (now ±{:.0}), raise the opening or click further \
+             from the edge",
+            request.max_ml, request.tolerance
+        ),
+        RegionError::Labelled => "This voxel already belongs to a segment".into(),
+        RegionError::OutOfGrid => "The click is outside the volume".into(),
+        RegionError::Cancelled => "Region growing cancelled".into(),
     }
 }

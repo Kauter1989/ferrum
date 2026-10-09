@@ -23,6 +23,10 @@ small change starts here.
    git checkout -b feat/<topic> origin/develop    # or fix/, docs/, refactor/, chore/
    ```
    Never commit on `develop` or `main` (L2).
+   If the session handed you a branch (`claude/…`), rename it to
+   `<prefix>/<topic>` and rebase it onto `origin/develop` before the first
+   commit (L17). A clone without `origin/develop` is not "a repo without
+   `develop`": fetch it first.
 3. For a design or a stage, first check what already exists on the fresh
    base:
    - `dev_plan.md`;
@@ -72,7 +76,7 @@ DICOM tags only via `dicom_dictionary_std::tags`.
 
 ## 4. Check locally — the same as CI
 
-Run `.claude/skills/ferrum-change/preflight.sh` from the repo root. It
+Run `.claude/skills/ferrum-change/preflight.sh` from the repo root and read its last line (`all checks passed`, L19). It
 runs, in CI order:
 1. `cargo fmt --all -- --check`;
 2. `cargo clippy --workspace --all-targets -- -D warnings`;

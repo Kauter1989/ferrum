@@ -215,6 +215,55 @@ that says so instead of editing the old one.
 - **Guard:** skill `ferrum-size` (budgets and the log in
   `calibration.md`), gate G2 of `ferrum-workflow`.
 
+### L17 — Worked on a harness-named branch in a stale clone, outside the workflow (2026-10, region tool, 16.6)
+
+- **Symptom:** The cloud session handed over the branch
+  `claude/loving-franklin-4eg2ly`, cut from `main`. The local clone had no
+  `origin/develop`, so `.claude/`, the hooks, `ferrum-workflow` and
+  `CLAUDE.md`'s workflow section were not on disk. The change (a
+  noise-robust region tool) was built and pushed with no spec, no
+  criteria, no `preflight.sh` and no verification table, and a duplicate
+  branch skill was written. A UI test also hit L9 again (the Region
+  settings made the panel taller than the 1 400 px test window).
+- **Root cause:** `main`-only clone taken as "there is no `develop`"; no
+  `git fetch origin develop` before the first decision.
+- **Rule:** At the start of every task, run `git fetch origin develop`
+  and read `.claude/` from it before anything else. A branch name set by
+  the harness is renamed to `<prefix>/<topic>` and rebased onto
+  `origin/develop` before the first commit. Re-run `preflight.sh` with
+  lavapipe installed (`apt-get install mesa-vulkan-drivers libvulkan1`);
+  without a Vulkan driver the GPU tests are skipped, unlike CI.
+- **Guard:** `ferrum-change` §1 (step on harness-named branches),
+  session-start hook H (fresh `origin/develop`, branch status).
+
+### L18 — A voxel-based filter passed on a 1 mm phantom and failed on real CT (2026-10, region tool, 16.6)
+
+- **Symptom:** The region tool's smoothing and opening were counted in
+  voxels. Phantom tests (1 mm cubes) gave Dice 0.97–0.999. On MSD liver CT
+  (0.7 × 0.7 × 5 mm) the opening of one voxel cut nothing: the liver leaked
+  into kidney, muscle and spleen (Dice 0.38–0.78), and a bridge 4 mm wide
+  and one slice thick looked "thick" in voxels. A second field run showed
+  one click taking 35–70 s on a 0.6 × 0.6 × 0.8 mm study (60 M voxel box).
+- **Root cause:** Isotropic synthetic data hid the unit (L4 is the same
+  family). No timing was taken on a realistic volume size.
+- **Rule:** Sizes of filters and morphology are in millimetres, never
+  voxels. Every phantom for such a feature has anisotropic spacing and a
+  realistic volume size, and the test says how long it may take. Run a
+  field test on real cases before saying a feature "works".
+- **Guard:** `region::tests::the_opening_works_in_millimetres_on_thick_slices`;
+  the field-test record in `docs/testing.md`; `ferrum-verify` (field level).
+
+### L19 — Pushed after reading only the first lines of `preflight.sh` (2026-10-07, region tool, 16.6)
+
+- **Symptom:** Commit `6b4ec7f` was pushed while the preflight output had
+  been cut by `head`; its failing app test (a block-based opening shrank a
+  12 mm ball from 799 to 633 voxels) showed up as a red `check` and
+  `coverage` in CI. The next commit fixed it.
+- **Rule:** Before every push, the last line of `preflight.sh` must read
+  `all checks passed`; never filter its output to a prefix.
+- **Guard:** `ferrum-change` §4 (read the whole result); prefer
+  `preflight.sh | tail -3`.
+
 ## What worked
 
 ### W1 — Field test on the user's GPU with a throw-away script (2026-10, Stage 17)
@@ -277,3 +326,17 @@ that says so instead of editing the old one.
   in the session that installed the hooks.
 - **Keep:** When a lesson's rule is mechanical, add a hook and a test
   for it. Leave judgement to the skills.
+
+### W7 — Prototype on real cases in Python, then port (2026-10, region tool, 16.6)
+
+- **What:** After the field test showed the first design failing, the
+  fix was explored in `numpy`/`scipy` on four public MSD liver cases (a
+  grid of tolerance, smoothing and opening, 20 combinations in minutes),
+  then ported to Rust and re-run through the same field script.
+- **Outcome:** The prototype found the one change that mattered
+  (millimetre-based opening: mean Dice 0.74 → 0.92) before any Rust was
+  written. Self-testing the field script on a phantom found a real bug
+  (a seed outside the tolerance was reported as "too large").
+- **Keep:** For an algorithm that depends on data, try the parameter grid
+  on real cases in a scripting language first; self-test every field
+  script on a phantom before sending it.

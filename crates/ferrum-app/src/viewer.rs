@@ -418,6 +418,7 @@ impl Viewer {
                     self.volume.ao = Some((revision, threshold, ao));
                 }
             }
+            JobEvent::Region { request, result } => self.finish_region(request, result),
             JobEvent::Filtered { revision, kind, result } => match result {
                 Ok(v) if self.dataset.as_ref().is_some_and(|d| d.revision == revision) => {
                     let rev = self.bump_revision();
@@ -596,7 +597,7 @@ impl Viewer {
                 self.ai_prompt(p.clone());
             }
             ToolOutcome::Seed(voxel) => {
-                if let Err(e) = self.grow_region_at(*voxel) {
+                if let Err(e) = self.start_region_at(*voxel) {
                     self.status.message = e;
                 }
             }

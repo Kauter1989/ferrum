@@ -8,10 +8,12 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use ferrum_domain::{
-    CancelFlag, LoadedSeries, ProgressSink, RepositoryError, SeriesDescriptor, Volume, VolumeRepository,
+    grow_region_robust, CancelFlag, LabelMap, LoadedSeries, ProgressSink, RegionError, RegionParams, RepositoryError,
+    SeriesDescriptor, Volume, VolumeRepository, VoxelBox,
 };
 use ferrum_processing::ambient_occlusion::AoParams;
 use ferrum_processing::{filters, AmbientOcclusion};
+use glam::UVec3;
 
 /// Volume filters offered to the user.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -30,6 +32,22 @@ impl FilterKind {
             FilterKind::Sobel => "Sobel edges".to_string(),
         }
     }
+}
+
+/// What a region job was asked to do, handed back with its result.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RegionRequest {
+    /// Dataset revision the job ran on; a result for another revision is
+    /// dropped.
+    pub revision: u64,
+    /// Clicked voxel.
+    pub seed: UVec3,
+    /// Physical value at the seed.
+    pub seed_value: f32,
+    /// Tolerance used, in the volume's units.
+    pub tolerance: f32,
+    /// Size limit used, in millilitres.
+    pub max_ml: f32,
 }
 
 /// Events emitted by jobs.
@@ -54,6 +72,13 @@ pub enum JobEvent {
         threshold: f32,
         /// Result.
         ao: Arc<AmbientOcclusion>,
+    },
+    /// A region grown from a click (see [`JobQueue::region`]).
+    Region {
+        /// What was asked.
+        request: RegionRequest,
+        /// Bounding box and mask of the region, or why there is none.
+        result: Result<(VoxelBox, Vec<u8>), RegionError>,
     },
     /// Filter applied to dataset `revision`.
     Filtered {
@@ -158,6 +183,23 @@ impl JobQueue {
         });
     }
 
+    /// Grows a region on a worker thread (10–25 s on the finest studies).
+    /// `labels` is a snapshot taken at the click; `cancel` is checked while
+    /// growing.
+    pub fn region(
+        &mut self,
+        volume: Arc<Volume>,
+        labels: LabelMap,
+        request: RegionRequest,
+        params: RegionParams,
+        cancel: Arc<CancelFlag>,
+    ) {
+        self.spawn_compute(move || {
+            let result = grow_region_robust(&volume, &labels, request.seed, &params, &cancel);
+            JobEvent::Region { request, result }
+        });
+    }
+
     /// Requests cancellation of the running I/O job.
     pub fn cancel_io(&mut self) {
         if let Some(c) = &self.io_cancel {
@@ -178,7 +220,7 @@ impl JobQueue {
     fn account(&mut self, e: &JobEvent) {
         match e {
             JobEvent::Scanned(_) | JobEvent::Loaded(_) => self.running_io = self.running_io.saturating_sub(1),
-            JobEvent::AmbientOcclusion { .. } | JobEvent::Filtered { .. } => {
+            JobEvent::AmbientOcclusion { .. } | JobEvent::Filtered { .. } | JobEvent::Region { .. } => {
                 self.running_compute = self.running_compute.saturating_sub(1)
             }
             JobEvent::Progress { .. } => {}

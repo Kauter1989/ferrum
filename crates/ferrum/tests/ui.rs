@@ -191,7 +191,7 @@ fn segment_list_edits_segments_in_both_tabs() {
     let dir = tempfile::tempdir().unwrap();
     let mut app = loaded_app(dir.path(), None);
     let mut h = Harness::builder()
-        .with_size(egui::vec2(1200.0, 1400.0))
+        .with_size(egui::vec2(1200.0, 1700.0))
         .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
     h.run();
     // the built-in region tool in the toolbar creates a segment without an engine
@@ -199,6 +199,10 @@ fn segment_list_edits_segments_in_both_tabs() {
     h.run();
     assert_eq!(h.state().viewer.tool, ToolKind::Region);
     assert!(h.get_all_by_label("Tolerance ±").count() > 0, "the settings of the active tool are shown");
+    // covers 16.6-g
+    for label in ["Noise smoothing, mm", "Cut thin bridges, mm", "Fill vessels and holes", "Max volume, ml"] {
+        assert!(h.get_all_by_label_contains(label).count() > 0, "{label}");
+    }
     let viewer = &mut h.state_mut().viewer;
     viewer.set_slice_index(SliceAxis::Axial, 20);
     viewer.slice_input(
@@ -207,6 +211,7 @@ fn segment_list_edits_segments_in_both_tabs() {
         glam::Vec2::splat(100.0),
         glam::Vec2::splat(200.0),
     );
+    h.state_mut().viewer.wait_idle();
     h.run();
     assert_eq!(h.state().viewer.segment_summaries().len(), 1);
     h.get_by_label("Delete Region 1").click();
@@ -520,7 +525,7 @@ fn agent_proposals_are_reviewed_in_the_desktop_app() {
     app.viewer.wait_idle();
     assert_eq!(app.viewer.review_queue().len(), 1, "{:?}", app.viewer.status);
     let mut h = Harness::builder()
-        .with_size(egui::vec2(1200.0, 1400.0))
+        .with_size(egui::vec2(1200.0, 1700.0))
         .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
     h.run();
     h.get_by_label("Open workspace");

@@ -70,10 +70,25 @@ fn region_settings(ui: &mut egui::Ui, viewer: &mut Viewer) {
         return;
     };
     ui.label(RichText::new(format!("{} Region tool", icon::PAINT_BUCKET)).strong().color(TEXT));
+    if viewer.region_pending() {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Growing the region…").color(TEXT_DIM));
+            if ui.button("Cancel").clicked() {
+                viewer.cancel_region();
+            }
+        });
+    }
     let region = viewer.region_settings_mut();
     slider_row(ui, "Tolerance ±", &mut region.tolerance, 0.0..=span * 0.5);
-    slider_row(ui, "Max volume, ml", &mut region.max_ml, 1.0..=5000.0);
-    ui.label(RichText::new("Larger regions have leaked and are not created.").size(11.5).color(TEXT_DIM));
+    slider_row(ui, "Max volume, ml", &mut region.max_ml, 1.0..=20000.0);
+    slider_row(ui, "Noise smoothing, mm", &mut region.smoothing_mm, 0.0..=6.0);
+    slider_row(ui, "Cut thin bridges, mm", &mut region.opening_mm, 0.0..=15.0);
+    ui.checkbox(&mut region.fill_holes, "Fill vessels and holes");
+    ui.label(
+        RichText::new("Whole organs: raise the tolerance. Strong smoothing shrinks small structures. Larger regions have leaked and are not created.")
+            .size(11.5)
+            .color(TEXT_DIM),
+    );
 }
 
 /// Draws the section body (2D and MPR views).
