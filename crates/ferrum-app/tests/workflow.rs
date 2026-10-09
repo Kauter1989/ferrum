@@ -9,7 +9,7 @@ use std::sync::Arc;
 use ferrum_app::{InputKind, SegmentationStep, ToolKind, ToolOutcome, ViewMode, Viewer};
 use ferrum_domain::{
     Author, Dims3, LoadedSeries, RepositoryError, ReviewStatus, SeriesDescriptor, SeriesMetadata, SliceAxis, Volume,
-    VolumeRepository,
+    VolumeRepository, VoxelBox,
 };
 use ferrum_engines::MockEngine;
 use glam::{UVec3, Vec2, Vec3};
@@ -34,6 +34,13 @@ impl VolumeRepository for NoRepo {
 
 /// A bright ball (400 HU, radius 6 voxels of 1 mm) in air.
 fn viewer() -> Viewer {
+    let mut v = Viewer::new(Arc::new(NoRepo));
+    v.install(series());
+    v
+}
+
+/// The ball as a loaded series.
+fn series() -> LoadedSeries {
     let dims = Dims3::new(32, 32, 20);
     let c = Vec3::new(16.0, 16.0, 10.0);
     let vals: Vec<f32> = (0..dims.voxel_count())
@@ -46,12 +53,10 @@ fn viewer() -> Viewer {
             }
         })
         .collect();
-    let mut v = Viewer::new(Arc::new(NoRepo));
-    v.install(LoadedSeries {
+    LoadedSeries {
         volume: Volume::from_physical(dims, Vec3::ONE, &vals).unwrap(),
         metadata: SeriesMetadata { modality: "CT".into(), ..SeriesMetadata::default() },
-    });
-    v
+    }
 }
 
 /// A click in the middle of the axial slice through the ball's centre.
@@ -123,6 +128,9 @@ fn the_region_tool_segments_without_an_engine() {
 
     let out = click_centre(&mut v);
     assert!(matches!(out, ToolOutcome::Seed(s) if s == UVec3::new(16, 16, 10)), "{out:?}");
+    assert!(v.region_pending() && v.segment_summaries().is_empty(), "the click returns before the region exists");
+    v.wait_idle();
+    assert!(!v.region_pending());
     let rows = v.segment_summaries();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].segment.name, "Region 1");
@@ -136,6 +144,7 @@ fn the_region_tool_segments_without_an_engine() {
 
     // a second click in the same structure explains instead of duplicating it
     click_centre(&mut v);
+    assert!(!v.region_pending(), "refused at once, no job");
     assert_eq!(v.segment_summaries().len(), 1);
     assert!(v.status.message.contains("already belongs to Region 1"), "{}", v.status.message);
 
@@ -221,4 +230,58 @@ fn the_default_tolerance_follows_the_window_but_is_capped() {
     assert_eq!(tol(200.0), 20.0, "a tenth of a narrow window");
     assert_eq!(tol(400.0), 40.0);
     assert_eq!(tol(1500.0), 40.0, "the automatic window of a whole CT would leak");
+}
+
+// covers 16.6-m
+#[test]
+fn the_region_grows_in_the_background_and_can_be_cancelled() {
+    let mut v = viewer();
+    assert!(v.select_tool(ToolKind::Region));
+
+    // a second click while one region grows is refused with a message
+    click_centre(&mut v);
+    assert!(v.region_pending());
+    click_centre(&mut v);
+    assert!(v.status.message.contains("still growing"), "{}", v.status.message);
+    v.wait_idle();
+    assert_eq!(v.segment_summaries().len(), 1, "one job, one segment");
+    assert!(v.status.message.starts_with("Region 1:"), "{}", v.status.message);
+
+    // cancelling: no segment, even if the job had just finished, and the next click works
+    v.clear_segmentation();
+    v.wait_idle();
+    click_centre(&mut v);
+    std::thread::sleep(std::time::Duration::from_millis(200)); // the job has finished, its event is not yet handled
+    v.cancel_region();
+    v.wait_idle();
+    assert!(!v.region_pending() && v.segment_summaries().is_empty());
+    assert!(v.status.message.contains("cancelled"), "{}", v.status.message);
+    click_centre(&mut v);
+    v.wait_idle();
+    assert_eq!(v.segment_summaries().len(), 1, "a new click grows a region again");
+
+    // a study that is replaced meanwhile gets no region
+    v.clear_segmentation();
+    click_centre(&mut v);
+    v.install(series());
+    v.wait_idle();
+    assert!(!v.region_pending() && v.segment_summaries().is_empty(), "{}", v.status.message);
+}
+
+// covers 16.6-m
+#[test]
+fn a_region_never_overwrites_voxels_labelled_since_the_click() {
+    let mut v = viewer();
+    assert!(v.select_tool(ToolKind::Region));
+    click_centre(&mut v);
+    // a person draws a segment over half of the ball while the region grows
+    let other = v.add_segment("Other").unwrap();
+    let bx = VoxelBox::new(UVec3::new(16, 0, 0), UVec3::new(32, 32, 20));
+    v.apply_segment_mask(other, bx, &vec![1; bx.voxel_count()], false).unwrap();
+    let before = v.segmentation().set().unwrap().voxel_count(other);
+    v.wait_idle();
+    let rows = v.segment_summaries();
+    let region = rows.iter().find(|r| r.segment.name == "Region 1").unwrap();
+    assert!(region.voxels > 0 && region.voxels < 799, "only the free half: {}", region.voxels);
+    assert_eq!(v.segmentation().set().unwrap().voxel_count(other), before, "the person's segment is untouched");
 }

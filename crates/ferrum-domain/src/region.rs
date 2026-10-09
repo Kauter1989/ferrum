@@ -22,7 +22,8 @@ use std::collections::VecDeque;
 use glam::{UVec3, Vec3};
 
 use crate::analysis::squared_edt;
-use crate::segmentation::{SegmentationSet, VoxelBox};
+use crate::repository::CancelFlag;
+use crate::segmentation::{LabelMap, VoxelBox};
 use crate::volume::Volume;
 
 /// Parameters of [`grow_region_robust`].
@@ -52,6 +53,8 @@ pub enum RegionError {
     Labelled,
     /// The region exceeded `max_voxels`.
     TooLarge,
+    /// The caller cancelled the growing.
+    Cancelled,
 }
 
 /// How a voxel takes part in the growing.
@@ -68,6 +71,9 @@ enum Accept {
     Edge,
 }
 
+/// How often (in grown voxels) the growing looks at the cancel flag.
+const CANCEL_CHECK_VOXELS: u64 = 1 << 16;
+
 /// Largest number of voxels whose opening is computed exactly; larger
 /// regions are measured on blocks.
 const EXACT_VOXELS: usize = 3_000_000;
@@ -82,18 +88,28 @@ const SEED_RADIUS: i64 = 1;
 /// the module documentation).
 ///
 /// Returns the region's bounding box and its mask over that box (`i`
-/// fastest, `1` inside), ready for [`SegmentationSet::apply_mask`].
+/// fastest, `1` inside), ready for
+/// [`SegmentationSet::apply_mask`](crate::SegmentationSet::apply_mask).
+///
+/// `cancel` is checked before the growing, every 65 536 voxels of it and
+/// between the later steps; a cancelled call returns
+/// [`RegionError::Cancelled`]. Run it on a worker thread: on a study of
+/// 0.6 × 0.6 × 0.8 mm one call takes 10–25 s.
 pub fn grow_region_robust(
     volume: &Volume,
-    labels: &SegmentationSet,
+    labels: &LabelMap,
     seed: UVec3,
     params: &RegionParams,
+    cancel: &CancelFlag,
 ) -> Result<(VoxelBox, Vec<u8>), RegionError> {
     let d = volume.dims();
+    if cancel.is_set() {
+        return Err(RegionError::Cancelled);
+    }
     if labels.dims() != d || !d.contains(i64::from(seed.x), i64::from(seed.y), i64::from(seed.z)) {
         return Err(RegionError::OutOfGrid);
     }
-    if labels.labels().label(seed.x, seed.y, seed.z) != Some(0) {
+    if labels.label(seed.x, seed.y, seed.z) != Some(0) {
         return Err(RegionError::Labelled);
     }
     let sp = volume.spacing();
@@ -107,7 +123,7 @@ pub fn grow_region_robust(
     let reference = seed_reference(&smooth, seed, d.x, d.y, d.z).ok_or(RegionError::OutOfGrid)?;
     let (lo, hi) = (reference - params.tolerance, reference + params.tolerance);
     let accept = |i: u32, j: u32, k: u32| {
-        if labels.labels().label(i, j, k) != Some(0) {
+        if labels.label(i, j, k) != Some(0) {
             return Accept::No;
         }
         if smooth(i64::from(i), i64::from(j), i64::from(k)).is_some_and(|x| (lo..=hi).contains(&x)) {
@@ -118,13 +134,16 @@ pub fn grow_region_robust(
             Accept::No
         }
     };
-    let (bx, mask) = flood(d, seed, params.max_voxels, accept).ok_or(RegionError::TooLarge)?;
+    let (bx, mask) = flood(d, seed, params.max_voxels, cancel, accept)?;
     let mut mask = Mask::new(bx, mask);
     if params.opening_mm > 0.0 {
         mask.open(params.opening_mm, sp, seed);
     }
+    if cancel.is_set() {
+        return Err(RegionError::Cancelled);
+    }
     if params.fill_holes {
-        mask.fill_holes(|i, j, k| labels.labels().label(i, j, k) == Some(0));
+        mask.fill_holes(cancel, |i, j, k| labels.label(i, j, k) == Some(0))?;
     }
     mask.into_result().ok_or(RegionError::OutOfGrid)
 }
@@ -179,14 +198,15 @@ fn seed_reference(
 /// voxel is tested once (the verdict is kept, also for voxels met
 /// diagonally before a face neighbour reaches them). The seed is part of
 /// the region whatever its own value (the person chose it; the reference
-/// value is only close to it). `None` when the region exceeds
-/// `max_voxels`.
+/// value is only close to it). Fails when the region exceeds
+/// `max_voxels` or `cancel` is set.
 fn flood(
     d: crate::geometry::Dims3,
     seed: UVec3,
     max_voxels: u64,
+    cancel: &CancelFlag,
     accept: impl Fn(u32, u32, u32) -> Accept,
-) -> Option<(VoxelBox, Vec<u8>)> {
+) -> Result<(VoxelBox, Vec<u8>), RegionError> {
     const UNSEEN: u8 = 0;
     const INSIDE: u8 = 1;
     const REJECTED: u8 = 2;
@@ -214,7 +234,10 @@ fn flood(
         let (i, j, k) = (idx % nx, (idx / nx) % ny, idx / plane);
         count += 1;
         if count > max_voxels {
-            return None;
+            return Err(RegionError::TooLarge);
+        }
+        if count % CANCEL_CHECK_VOXELS == 0 && cancel.is_set() {
+            return Err(RegionError::Cancelled);
         }
         let v = UVec3::new(i as u32, j as u32, k as u32);
         lo = lo.min(v);
@@ -248,7 +271,7 @@ fn flood(
                 Accept::Edge => {
                     count += 1;
                     if count > max_voxels {
-                        return None;
+                        return Err(RegionError::TooLarge);
                     }
                     let u = UVec3::new(ni as u32, nj as u32, nk as u32);
                     lo = lo.min(u);
@@ -269,7 +292,7 @@ fn flood(
             );
         }
     }
-    Some((bx, mask))
+    Ok((bx, mask))
 }
 
 /// Block sizes (in voxels per axis) for the opening of radius `r` mm of a
@@ -631,7 +654,7 @@ impl Mask {
     /// in each slice along every axis: a vessel that leaves the organ
     /// through its surface is open in 3D but a closed ring in the slices
     /// across it. Only voxels for which `free` holds (unlabelled) are added.
-    fn fill_holes(&mut self, free: impl Fn(u32, u32, u32) -> bool) {
+    fn fill_holes(&mut self, cancel: &CancelFlag, free: impl Fn(u32, u32, u32) -> bool) -> Result<(), RegionError> {
         let (nx, ny, nz) = self.size();
         let min = self.bx.min;
         let free_at = |idx: usize| {
@@ -644,6 +667,9 @@ impl Mask {
             let (a, b, c) = ((axis + 1) % 3, (axis + 2) % 3, axis);
             let mut plane = vec![0u8; dims[a] * dims[b]];
             for r in 0..dims[c] {
+                if r % 16 == 0 && cancel.is_set() {
+                    return Err(RegionError::Cancelled);
+                }
                 for q in 0..dims[b] {
                     for p in 0..dims[a] {
                         plane[p + dims[a] * q] = self.data[p * strides[a] + q * strides[b] + r * strides[c]];
@@ -658,6 +684,7 @@ impl Mask {
                 }
             }
         }
+        Ok(())
     }
 
     /// Crops the mask to its bounding box; `None` when empty.
@@ -693,7 +720,12 @@ impl Mask {
 mod tests {
     use super::*;
     use crate::geometry::Dims3;
+    use crate::SegmentationSet;
     use glam::Vec3;
+
+    fn grow(v: &Volume, labels: &LabelMap, seed: UVec3, p: &RegionParams) -> Result<(VoxelBox, Vec<u8>), RegionError> {
+        grow_region_robust(v, labels, seed, p, &CancelFlag::default())
+    }
 
     /// Deterministic noise in `[-amp, amp]`.
     fn noise(i: u32, j: u32, k: u32, amp: f32) -> f32 {
@@ -742,7 +774,7 @@ mod tests {
     #[test]
     fn noise_does_not_break_the_organ_and_vessels_are_filled() {
         let (v, set) = phantom(40.0);
-        let r = grow_region_robust(&v, &set, UVec3::new(15, 15, 15), &params()).unwrap();
+        let r = grow(&v, set.labels(), UVec3::new(15, 15, 15), &params()).unwrap();
         // the cube is 16³ = 4096 voxels; allow a little erosion at the edge
         assert!((3500..=4300).contains(&count(&r)), "{}", count(&r));
         // the vessel centre is inside
@@ -767,7 +799,7 @@ mod tests {
         data[d.index(15, 15, 15)] = 200.0;
         v = Volume::from_physical(d, Vec3::ONE, &data).unwrap();
         assert!(crate::grow_region(&v, &set, UVec3::new(15, 15, 15), 35.0, 85.0, u64::MAX).is_none());
-        let r = grow_region_robust(&v, &set, UVec3::new(15, 15, 15), &params()).unwrap();
+        let r = grow(&v, set.labels(), UVec3::new(15, 15, 15), &params()).unwrap();
         assert!(count(&r) > 3500, "{}", count(&r));
     }
 
@@ -776,10 +808,9 @@ mod tests {
     fn the_opening_cuts_thin_bridges() {
         let (v, set) = phantom(0.0);
         let without = RegionParams { opening_mm: 0.0, smoothing_mm: 0.0, fill_holes: false, ..params() };
-        let leaked = grow_region_robust(&v, &set, UVec3::new(15, 15, 15), &without).unwrap();
+        let leaked = grow(&v, set.labels(), UVec3::new(15, 15, 15), &without).unwrap();
         assert!(leaked.0.max.x > 34, "leaks through the bridge into the blob");
-        let cut =
-            grow_region_robust(&v, &set, UVec3::new(15, 15, 15), &RegionParams { opening_mm: 1.5, ..without }).unwrap();
+        let cut = grow(&v, set.labels(), UVec3::new(15, 15, 15), &RegionParams { opening_mm: 1.5, ..without }).unwrap();
         assert!(cut.0.max.x <= 29, "bridge removed: {:?}", cut.0);
     }
 
@@ -804,9 +835,9 @@ mod tests {
         let set = SegmentationSet::new(d);
         let p = RegionParams { smoothing_mm: 0.0, opening_mm: 0.0, fill_holes: false, ..params() };
         let seed = UVec3::new(18, 18, 5);
-        let leaked = grow_region_robust(&v, &set, seed, &p).unwrap();
+        let leaked = grow(&v, set.labels(), seed, &p).unwrap();
         assert_eq!(leaked.0.max.x, 40, "without the opening the blob is reached");
-        let cut = grow_region_robust(&v, &set, seed, &RegionParams { opening_mm: 3.0, ..p }).unwrap();
+        let cut = grow(&v, set.labels(), seed, &RegionParams { opening_mm: 3.0, ..p }).unwrap();
         assert!(cut.0.max.x <= 28, "the bridge is cut: {:?}", cut.0);
         assert_eq!(cut.0.min, UVec3::new(10, 10, 3), "the organ keeps its full extent");
     }
@@ -831,7 +862,7 @@ mod tests {
         let v = Volume::from_physical(d, Vec3::ONE, &data).unwrap();
         let set = SegmentationSet::new(d);
         let p = RegionParams { smoothing_mm: 0.0, opening_mm: 1.5, fill_holes: false, ..params() };
-        let (bx, _) = grow_region_robust(&v, &set, UVec3::new(2, 10, 10), &p).unwrap();
+        let (bx, _) = grow(&v, set.labels(), UVec3::new(2, 10, 10), &p).unwrap();
         assert!(bx.max.x <= 14 && bx.min.x == 2, "organ A, not the larger B: {bx:?}");
     }
 
@@ -922,12 +953,39 @@ mod tests {
         assert_eq!(block_factors([2000, 2000, 2000], [1.0; 3], 2.0), [1, 1, 1]);
     }
 
+    // covers 16.6-m
+    #[test]
+    fn a_cancelled_growing_returns_cancelled() {
+        let (v, set) = phantom(0.0);
+        let cancel = CancelFlag::default();
+        cancel.cancel();
+        assert_eq!(
+            grow_region_robust(&v, set.labels(), UVec3::splat(15), &params(), &cancel),
+            Err(RegionError::Cancelled),
+            "checked before the growing"
+        );
+        // and while growing: the flag is raised after 70 000 voxels were looked at, so the
+        // next check (every 65 536 grown voxels) stops a region of 128 000
+        let d = Dims3::new(80, 40, 40);
+        let looked = std::cell::Cell::new(0u32);
+        let late = CancelFlag::default();
+        let r = flood(d, UVec3::splat(20), u64::MAX, &late, |_, _, _| {
+            looked.set(looked.get() + 1);
+            if looked.get() == 70_000 {
+                late.cancel();
+            }
+            Accept::Core
+        });
+        assert_eq!(r, Err(RegionError::Cancelled));
+        assert!(looked.get() < 128_000, "stopped early: {}", looked.get());
+    }
+
     // covers 16.6-d
     #[test]
     fn small_lesions_survive_the_opening() {
         let (v, set) = phantom(0.0);
         // the blob is 6³ = 216 voxels, wider than the opening
-        let r = grow_region_robust(&v, &set, UVec3::new(36, 14, 14), &RegionParams { opening_mm: 2.5, ..params() });
+        let r = grow(&v, set.labels(), UVec3::new(36, 14, 14), &RegionParams { opening_mm: 2.5, ..params() });
         assert!(r.is_ok());
         // a 3-voxel lesion erodes away and is kept unchanged
         let d = Dims3::new(9, 9, 9);
@@ -937,7 +995,7 @@ mod tests {
         }
         let v = Volume::from_physical(d, Vec3::ONE, &data).unwrap();
         let p = RegionParams { smoothing_mm: 0.0, opening_mm: 3.0, ..params() };
-        let r = grow_region_robust(&v, &SegmentationSet::new(d), UVec3::splat(4), &p).unwrap();
+        let r = grow(&v, &LabelMap::new(d), UVec3::splat(4), &p).unwrap();
         assert_eq!(count(&r), 27);
     }
 
@@ -949,14 +1007,14 @@ mod tests {
         // from the median of its neighbourhood: the seed itself stays in the region
         let p = RegionParams { tolerance: 5.0, smoothing_mm: 1.0, opening_mm: 0.0, fill_holes: false, ..params() };
         for seed in [UVec3::new(15, 19, 19), UVec3::new(12, 12, 12), UVec3::new(27, 27, 27)] {
-            let (bx, mask) = grow_region_robust(&v, &set, seed, &p).unwrap();
+            let (bx, mask) = grow(&v, set.labels(), seed, &p).unwrap();
             let rel = seed - bx.min;
             let s = bx.size();
             assert_eq!(mask[(rel.x + s.x * (rel.y + s.y * rel.z)) as usize], 1, "{seed:?}");
         }
         // too large is only about the limit
         let p = RegionParams { max_voxels: 1, ..p };
-        assert_eq!(grow_region_robust(&v, &set, UVec3::splat(15), &p), Err(RegionError::TooLarge));
+        assert_eq!(grow(&v, set.labels(), UVec3::splat(15), &p), Err(RegionError::TooLarge));
     }
 
     // covers 16.6-f
@@ -964,13 +1022,13 @@ mod tests {
     fn errors_say_why() {
         let (v, mut set) = phantom(0.0);
         let p = params();
-        assert_eq!(grow_region_robust(&v, &set, UVec3::splat(99), &p).unwrap_err(), RegionError::OutOfGrid);
+        assert_eq!(grow(&v, set.labels(), UVec3::splat(99), &p).unwrap_err(), RegionError::OutOfGrid);
         assert_eq!(
-            grow_region_robust(&v, &set, UVec3::splat(15), &RegionParams { max_voxels: 10, ..p }).unwrap_err(),
+            grow(&v, set.labels(), UVec3::splat(15), &RegionParams { max_voxels: 10, ..p }).unwrap_err(),
             RegionError::TooLarge
         );
         let l = set.add_segment("x").unwrap();
         set.apply_mask(l, VoxelBox::new(UVec3::splat(15), UVec3::splat(16)), &[1], false).unwrap();
-        assert_eq!(grow_region_robust(&v, &set, UVec3::splat(15), &p).unwrap_err(), RegionError::Labelled);
+        assert_eq!(grow(&v, set.labels(), UVec3::splat(15), &p).unwrap_err(), RegionError::Labelled);
     }
 }

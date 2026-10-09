@@ -70,6 +70,14 @@ fn region_settings(ui: &mut egui::Ui, viewer: &mut Viewer) {
         return;
     };
     ui.label(RichText::new(format!("{} Region tool", icon::PAINT_BUCKET)).strong().color(TEXT));
+    if viewer.region_pending() {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Growing the region…").color(TEXT_DIM));
+            if ui.button("Cancel").clicked() {
+                viewer.cancel_region();
+            }
+        });
+    }
     let region = viewer.region_settings_mut();
     slider_row(ui, "Tolerance ±", &mut region.tolerance, 0.0..=span * 0.5);
     slider_row(ui, "Max volume, ml", &mut region.max_ml, 1.0..=20000.0);

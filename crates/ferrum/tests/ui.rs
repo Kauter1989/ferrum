@@ -211,6 +211,7 @@ fn segment_list_edits_segments_in_both_tabs() {
         glam::Vec2::splat(100.0),
         glam::Vec2::splat(200.0),
     );
+    h.state_mut().viewer.wait_idle();
     h.run();
     assert_eq!(h.state().viewer.segment_summaries().len(), 1);
     h.get_by_label("Delete Region 1").click();
