@@ -79,7 +79,10 @@ fn region_settings(ui: &mut egui::Ui, viewer: &mut Viewer) {
         });
     }
     let region = viewer.region_settings_mut();
-    slider_row(ui, "Tolerance ±", &mut region.tolerance, 0.0..=span * 0.5);
+    if slider_row(ui, "Tolerance ±", &mut region.tolerance, 0.0..=span * 0.5) {
+        region.tolerance_auto = false;
+    }
+    ui.checkbox(&mut region.tolerance_auto, "Automatic tolerance (from the clicked value)");
     slider_row(ui, "Max volume, ml", &mut region.max_ml, 1.0..=20000.0);
     slider_row(ui, "Noise smoothing, mm", &mut region.smoothing_mm, 0.0..=6.0);
     slider_row(ui, "Cut thin bridges, mm", &mut region.opening_mm, 0.0..=15.0);
