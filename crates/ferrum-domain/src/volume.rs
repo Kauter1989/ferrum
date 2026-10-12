@@ -1,6 +1,6 @@
 //! The scalar volume entity.
 
-use glam::{Mat3, UVec3, Vec3};
+use glam::{DVec3, Mat3, UVec3, Vec3};
 use thiserror::Error;
 
 use crate::geometry::{Aabb, Dims3};
@@ -174,6 +174,13 @@ impl Volume {
     /// Patient position (LPS, mm) of the centre of voxel `v`.
     pub fn voxel_to_patient(&self, v: Vec3) -> Vec3 {
         self.geometry.voxel_to_patient(v, self.spacing)
+    }
+
+    /// Patient position (LPS, mm) of the continuous voxel index `v`, in
+    /// double precision (for measurements; integers are voxel centres).
+    pub fn voxel_to_patient_f64(&self, v: DVec3) -> DVec3 {
+        let g = self.geometry;
+        g.origin.as_dvec3() + g.direction.as_dmat3() * (v * self.spacing.as_dvec3())
     }
 
     /// Grid dimensions.

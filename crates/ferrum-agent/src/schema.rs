@@ -266,6 +266,18 @@ fn mask_schema(command: &str) -> Option<(&'static str, Value)> {
             "Shape of a segment from its voxels: volume, extent in mm, slice ranges and largest slices, axial long and short axis with end points, border contact, components and, for segments named left or right, the side it lies on. Measure segments with this, never from images.",
             obj(json!({ "workspace": workspace(), "segment": label() }), &["workspace", "segment"]),
         ),
+        "segment metrics" => (
+            "Quantitative profile of a segment from its voxels and values: size (volume, extent, centroid in LPS mm, axial axes, largest slices) and first-order HU statistics (mean, std, min, max, percentiles, range, IQR). The result names the profile and its version and records every parameter. Intensity features need a CT study in HU: a NIfTI file without a declared modality is refused (declare it with study open --modality CT). Never read these numbers off an image.",
+            obj(
+                json!({
+                    "workspace": workspace(),
+                    "segment": label(),
+                    "profile": { "type": "string", "enum": ferrum_radiomics::PROFILES.iter().map(|p| p.name).collect::<Vec<_>>(), "description": "which features to compute (default quick: size and first-order statistics)" },
+                    "describe": { "type": "boolean", "description": "add the definition text of every feature to the result" },
+                }),
+                &["workspace", "segment"],
+            ),
+        ),
         "segment components" => (
             "Connected components (26-connected) of a segment, largest first, with centroid, box and volume. With split, every further component of at least min_ml becomes a new segment; the largest stays.",
             obj(

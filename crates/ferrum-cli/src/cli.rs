@@ -497,6 +497,19 @@ pub enum Segment {
         /// Segment label.
         segment: u64,
     },
+    /// Quantitative profile of a segment: size and first-order HU statistics.
+    Metrics {
+        #[command(flatten)]
+        ws: Ws,
+        /// Segment label.
+        segment: u64,
+        /// Which features to compute.
+        #[arg(long, default_value = "quick")]
+        profile: String,
+        /// Add the definition text of every feature.
+        #[arg(long)]
+        describe: bool,
+    },
     /// Connected components of a segment; --split makes segments of them.
     Components {
         #[command(flatten)]
@@ -914,6 +927,15 @@ fn segment_call(s: &Segment) -> Result<(String, Value), String> {
         Segment::Shape { ws: w, segment } => {
             ("segment shape".into(), object(vec![ws(w), ("segment", Some(json!(segment)))]))
         }
+        Segment::Metrics { ws: w, segment, profile, describe } => (
+            "segment metrics".into(),
+            object(vec![
+                ws(w),
+                ("segment", Some(json!(segment))),
+                ("profile", Some(json!(profile))),
+                ("describe", flag(*describe)),
+            ]),
+        ),
         Segment::Components { ws: w, segment, min_ml, split } => (
             "segment components".into(),
             object(vec![ws(w), ("segment", Some(json!(segment))), ("min_ml", some(*min_ml)), ("split", flag(*split))]),
@@ -975,6 +997,26 @@ mod tests {
         assert_eq!(parse_window("lung").unwrap(), json!("lung"));
         assert_eq!(parse_window("-600,1500").unwrap(), json!({ "center": -600.0, "width": 1500.0 }));
         assert!(parse_window("a,b").is_err());
+    }
+
+    // covers 18.4-b
+    #[test]
+    fn segment_metrics_flags_become_parameters() {
+        let call = |args: &[&str]| Cli::try_parse_from(args).unwrap().command.to_call().unwrap();
+        let (name, params) =
+            call(&["ferrum-cli", "segment", "metrics", "-w", "ws", "3", "--profile", "quick", "--describe"]);
+        assert_eq!(name, "segment metrics");
+        assert_eq!(
+            (params["segment"].as_u64(), params["profile"].as_str(), params["describe"].as_bool()),
+            (Some(3), Some("quick"), Some(true))
+        );
+        let (_, plain) = call(&["ferrum-cli", "segment", "metrics", "-w", "ws", "3"]);
+        assert_eq!(plain["profile"], "quick", "the default profile is sent");
+        assert!(plain.get("describe").is_none(), "describe is off unless asked for");
+        assert!(
+            Cli::try_parse_from(["ferrum-cli", "segment", "metrics", "-w", "ws"]).is_err(),
+            "the label is required"
+        );
     }
 
     #[test]

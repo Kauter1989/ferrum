@@ -2216,6 +2216,39 @@
       "additionalProperties": false
     }
   },
+  "segment metrics": {
+    "description": "Quantitative profile of a segment from its voxels and values: size (volume, extent, centroid in LPS mm, axial axes, largest slices) and first-order HU statistics (mean, std, min, max, percentiles, range, IQR). The result names the profile and its version and records every parameter. Intensity features need a CT study in HU: a NIfTI file without a declared modality is refused (declare it with study open --modality CT). Never read these numbers off an image.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "segment": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "segment label"
+        },
+        "profile": {
+          "type": "string",
+          "enum": [
+            "quick"
+          ],
+          "description": "which features to compute (default quick: size and first-order statistics)"
+        },
+        "describe": {
+          "type": "boolean",
+          "description": "add the definition text of every feature to the result"
+        }
+      },
+      "required": [
+        "workspace",
+        "segment"
+      ],
+      "additionalProperties": false
+    }
+  },
   "segment components": {
     "description": "Connected components (26-connected) of a segment, largest first, with centroid, box and volume. With split, every further component of at least min_ml becomes a new segment; the largest stays.",
     "parameters": {

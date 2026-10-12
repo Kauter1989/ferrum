@@ -25,6 +25,7 @@ flowchart LR
     R["ferrum-render<br/>WGSL/wgpu + CPU reference"]
     IO["ferrum-io<br/>DICOM · NIfTI repositories"]
     EN["ferrum-engines<br/>ferrum-engine/1 client · mock · server"]
+    RX["ferrum-radiomics<br/>feature registry · profiles · segment metrics"]
     AG["ferrum-agent<br/>agent commands · envelope · workspaces"]
     CLI["ferrum-cli<br/>command line"]
 
@@ -44,6 +45,8 @@ flowchart LR
     AG --> IO
     AG -->|"CPU ray caster"| R
     AG -->|"engine commands"| EN
+    AG -->|"segment metrics"| RX
+    RX --> D
 ```
 
 | Crate | Responsibility | Must not |
@@ -55,7 +58,8 @@ flowchart LR
 | `ferrum-engines` | `HttpEngine` (`ferrum-engine/1` client over HTTP), `MockEngine` (region growing, no model), reference protocol server and conformance suite | know about rendering or UI |
 | `ferrum-app` | `Viewer` facade, background `JobQueue`, `ToolController`, `GpuSink` port; which tools each view mode offers (`tool_availability`, `set_view_mode`) and the segmentation workflow (`segmentation_step`, the region tool: `ferrum_domain::grow_region_robust` with seed median, smoothing, opening and hole filling, run as a `JobQueue` job with a cancel flag) | depend on wgpu or egui |
 | `ferrum` | panels, widgets, paint callbacks, dialogs; composition root | contain business logic |
-| `ferrum-agent` | agent skill (depends on `ferrum-domain`, `ferrum-io`, `ferrum-engines` and `ferrum-render` without its GPU feature) ([design](agent-skill.md), [CLI and MCP](agent-cli.md), [segmentation](agent-segmentation.md)): commands on JSON parameters with JSON Schemas, `ferrum-agent/1` envelope and error codes, operator configuration, workspace sessions with a series cache, CPU slice renders with pixel mapping, audit log, MCP server (stdio); engine objects refined from stored prompts, GPU groups, engine sessions cached for MCP, quality checks | depend on wgpu, egui or `ferrum-app` state |
+| `ferrum-radiomics` | feature registry (stable id, family, unit, definition text), versioned profiles (`quick`), size and first-order intensity features of a segment, the result type that names profile, version and parameters; calls `ferrum_domain::analysis` for the measures the domain already has ([design](radiomics.md), [ADR 0011](decisions/0011-radiomics-crate.md)) | do I/O, know GPUs or UI, copy a measure that `ferrum-domain` has |
+| `ferrum-agent` | agent skill (depends on `ferrum-domain`, `ferrum-io`, `ferrum-engines`, `ferrum-radiomics` and `ferrum-render` without its GPU feature) ([design](agent-skill.md), [CLI and MCP](agent-cli.md), [segmentation](agent-segmentation.md)): commands on JSON parameters with JSON Schemas, `ferrum-agent/1` envelope and error codes, operator configuration, workspace sessions with a series cache, CPU slice renders with pixel mapping, audit log, MCP server (stdio); engine objects refined from stored prompts, GPU groups, engine sessions cached for MCP, quality checks | depend on wgpu, egui or `ferrum-app` state |
 | `ferrum-cli` | `ferrum-cli` binary: argument parsing to agent calls, exit codes | contain command logic |
 
 

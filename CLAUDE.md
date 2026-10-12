@@ -26,6 +26,7 @@ segmentation engines, and an agent skill (planned). Read
 ```
 ferrum (presentation) → ferrum-app (application) → ferrum-domain ← ferrum-io (data)
                                        ↘ ferrum-processing, ferrum-render (infrastructure)
+                                       ↘ ferrum-radiomics → ferrum-domain (segment metrics)
 ```
 
 - `ferrum-domain` has no I/O, no GPU, no UI dependencies; it defines ports
@@ -36,10 +37,17 @@ ferrum (presentation) → ferrum-app (application) → ferrum-domain ← ferrum-
 - `ferrum-engines` implements `SegmentationEngine` (`ferrum-engine/1`
   client, mock, reference server); nothing else talks to engines. Protocol
   changes update `docs/engine-protocol.md` and the conformance suite.
+- `ferrum-radiomics` holds the quantitative description of a segment (the
+  feature registry, versioned profiles, size, shape and intensity
+  features) and depends only on `ferrum-domain`: no I/O, GPU or UI. It
+  calls the mask analysis of `ferrum-domain` instead of copying it, so each
+  measure has one implementation ([ADR 0011](docs/decisions/0011-radiomics-crate.md)).
+  Every feature has a stable id, a unit and a definition text; a result
+  names its profile, version and parameters.
 - `ferrum-agent` holds the agent commands (JSON in, `ferrum-agent/1`
   envelope out) and depends only on `ferrum-domain`, `ferrum-io`,
-  `ferrum-engines` (engine commands) and `ferrum-render` (CPU renderer, no
-  `gpu` feature, so no wgpu);
+  `ferrum-engines` (engine commands), `ferrum-radiomics` (segment metrics)
+  and `ferrum-render` (CPU renderer, no `gpu` feature, so no wgpu);
   `ferrum-cli` only parses arguments. New commands get a JSON Schema in
   `schema.rs` and update `docs/agent-cli.md` and the contract tests in
   `crates/ferrum-agent/tests`; the CLI and MCP must give identical JSON.

@@ -14,6 +14,7 @@ pub mod export;
 pub mod inspect;
 pub mod interactive;
 pub mod masks;
+pub mod metrics;
 pub mod review;
 pub mod segment;
 pub mod study;
@@ -89,6 +90,7 @@ pub const COMMANDS: &[(&str, Command)] = &[
     ("segment interactive", interactive::interactive),
     ("segment auto", engine::auto),
     ("segment shape", masks::shape),
+    ("segment metrics", metrics::metrics),
     ("segment components", masks::components),
     ("segment compare", masks::compare),
     ("segment edit", masks::edit),

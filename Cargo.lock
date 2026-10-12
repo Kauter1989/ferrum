@@ -1464,6 +1464,7 @@ dependencies = [
  "ferrum-domain",
  "ferrum-engines",
  "ferrum-io",
+ "ferrum-radiomics",
  "ferrum-render",
  "flate2",
  "glam",
@@ -1558,6 +1559,17 @@ dependencies = [
  "glam",
  "proptest",
  "rayon",
+]
+
+[[package]]
+name = "ferrum-radiomics"
+version = "0.3.0"
+dependencies = [
+ "approx",
+ "ferrum-domain",
+ "glam",
+ "proptest",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
