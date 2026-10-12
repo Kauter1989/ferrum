@@ -6,6 +6,23 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Agent: `segment metrics` (`--profile quick`, `--describe`) gives the size
+  and first-order HU statistics of a segment in one call, from a new pure
+  crate `ferrum-radiomics` ([design](docs/radiomics.md),
+  [ADR 0011](docs/decisions/0011-radiomics-crate.md)). Every feature has
+  a stable id, a unit and a definition; the result names the profile and
+  its version and the parameters. Intensity features need a CT study:
+  NIfTI without a declared modality is refused with a hint. `stats` now
+  uses the same statistics, with unchanged output.
+- Desktop: a ruler button on each segment opens a metrics card (size and
+  HU statistics, units, a definition on hover, a note while the segment is
+  only a proposal, "out of date" when the segment changed). A NIfTI file,
+  which says nothing about what it is, asks for its image type when it is
+  opened; the answer is kept in the workspace, as `study open --modality`
+  does, and a workspace's modality is applied when it is opened.
+
 ### Changed
 
 - Desktop: the region tool chooses its tolerance from the clicked value until you set it: 300 HU on aerated lung, a tenth of the window width (at most 40) elsewhere; *Automatic tolerance* in the panel. On MSD lung CT one click now grows one lung (Dice 0.92–0.97 against a classical reference); the old default grew nothing. (Stage 16, 16.6-n)

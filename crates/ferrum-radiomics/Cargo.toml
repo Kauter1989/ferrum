@@ -1,0 +1,20 @@
+[package]
+name = "ferrum-radiomics"
+description = "Quantitative description of a segment: a feature registry, versioned profiles (size, shape, HU intensity) and their computation. Pure: no I/O, GPU or UI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+ferrum-domain.workspace = true
+glam.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+approx.workspace = true
+proptest.workspace = true
+
+[lints]
+workspace = true

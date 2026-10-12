@@ -31,7 +31,7 @@ The desktop reader sets an empty modality for NIfTI (`ferrum-io/src/nifti.rs`).
 | Point | Answer |
 |---|---|
 | Layering | Yes, after ADR 0011: `ferrum-radiomics` depends on `ferrum-domain` only; `ferrum-app` and `ferrum-agent` use it. `ferrum-app` still compiles without wgpu and egui. |
-| Ports | Yes. No file access outside `ferrum-io`; no engine involved. If the desktop app needs to save a declared modality, the port in `ferrum-domain` (`ResultStore`) is extended, and `ferrum-io` implements it (to be confirmed in PR 2, see §5). |
+| Ports | Yes. No file access outside `ferrum-io`; no engine involved. The desktop app saves a declared modality through the port in `ferrum-domain`: `ResultStore` got `modality` and `set_modality` (default methods), `ferrum-io::WorkspaceStore` implements them with the manifest (PR 2). |
 | No inference in Rust | Yes; classical image analysis only. |
 | Agents propose, people confirm; values come from voxels | Yes. Metrics only read; warnings never change a mask. A result for a segment that is not confirmed carries its provenance. |
 | Identifiers | Yes. Results hold numbers, ids and units; the identifier scan (`tests/privacy.rs`) covers the new command. |
@@ -114,7 +114,8 @@ voxel segment) until PR 6 measures it with a benchmark in
 ### 3.3 Profiles
 
 `quick`: size, first-order. `clinical`: `quick` plus shape, hull,
-topology and distribution. Both are `0.x` until Phase 3 is released and
+topology and distribution; it is registered with its first additional
+features (PR 3), so that no profile is an alias of another. Both are `0.x` until Phase 3 is released and
 `1` afterwards; the result always names profile and version. A feature
 added to a profile is a version bump.
 
@@ -203,13 +204,13 @@ reference). No criterion draws pixels in the renderer, so there is no
 | 18.3-c | `metrics.rs::unit_is_reported_and_unknown_warns` (NIfTI, DICOM) | test |
 | 18.3-d | `feature.rs::definitions_name_std_and_percentile_method` | test |
 | 18.3-e | `metrics.rs::unknown_modality_is_refused_with_a_hint` (NIfTI) | test |
-| 18.3-f | `crates/ferrum-app/tests/use_cases.rs::declare_modality_is_kept` and the dialog | test, manual |
+| 18.3-f | `crates/ferrum-app/tests/metrics.rs` (`an_image_without_a_modality_asks_and_remembers_the_answer`, `an_image_with_its_own_modality_keeps_it`, `the_declaration_is_kept_in_the_workspace_and_taken_from_it`), `ferrum-io` `workspace_store_keeps_the_declared_modality_in_the_manifest`, `ui.rs::a_nifti_file_without_a_modality_asks_what_it_is`; the dialog looked at in a render and, on a real NIfTI, by a person | test, manual |
 | 18.4-a | `commands.json` freshness (`crates/ferrum-cli/tests/package.rs`), contract test | test |
 | 18.4-b | `cli.rs::segment_metrics_parses` and one `--help` run | test |
 | 18.4-c | `crates/ferrum-agent/tests/mcp.rs` parity case | test |
 | 18.4-d | `crates/ferrum-agent/tests/privacy.rs` | test |
-| 18.4-e | `crates/ferrum/tests/ui.rs::metrics_card_shows_values_and_proposed_label`; a person opens the card on a real study | test, manual |
-| 18.4-f | `ui.rs::metrics_card_explains_missing_segment` | test |
+| 18.4-e | `crates/ferrum-app/tests/metrics.rs::a_segment_is_measured_in_the_background_…`, `…marked_out_of_date…`, `ui.rs::the_metrics_card_shows_values_with_units_and_says_when_a_segment_is_a_proposal`, `metrics_card.rs::every_row_carries_the_definition_of_its_feature`; the card looked at in a render; a person opens it on a real study | test, manual |
+| 18.4-f | `ui.rs::the_metrics_card_explains_an_unknown_image_type_and_recovers_when_it_is_set`, `metrics.rs::an_unknown_image_type_explains_instead_of_guessing` | test |
 | 18.4-g | `metrics.rs::describe_adds_definitions` | test |
 | 18.5-a | `mesh.rs::sphere_area_within_3_percent`; closed-mesh invariants | test |
 | 18.5-b | `mesh.rs::compactness_and_sphericity_formulas` (hand-computed cube) | test |

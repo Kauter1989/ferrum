@@ -67,6 +67,7 @@ impl Viewer {
         };
         match store.load(&d.volume) {
             Ok((annotations, segments)) => {
+                self.adopt_workspace_modality(store.as_ref());
                 self.annotations = annotations.unwrap_or_default();
                 let has_segments = segments.is_some();
                 self.segments.set = segments;

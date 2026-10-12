@@ -35,6 +35,7 @@ pub struct ViewerApp {
     show_studies: bool,
     show_about: bool,
     text_input: String,
+    modality_dialog: crate::ui::metrics_card::ModalityDialog,
     pending_screenshot: Option<PathBuf>,
     last_frame: Option<std::time::Instant>,
     frame_ms: f32,
@@ -102,6 +103,7 @@ impl ViewerApp {
             show_studies: true,
             show_about: false,
             text_input: String::new(),
+            modality_dialog: crate::ui::metrics_card::ModalityDialog::default(),
             pending_screenshot: None,
             last_frame: None,
             frame_ms: 0.0,
@@ -645,6 +647,7 @@ impl ViewerApp {
         if let Some(series) = self.viewer.series_choice.clone() {
             self.series_dialog(ctx, series);
         }
+        crate::ui::metrics_card::modality_dialog(ctx, &mut self.viewer, &mut self.modality_dialog);
         if self.viewer.pending_text.is_some() {
             let mut close = None;
             egui::Window::new("Annotation text").collapsible(false).anchor(Align2::CENTER_CENTER, [0.0, 0.0]).show(

@@ -19,11 +19,13 @@ use crate::jobs::{FilterKind, JobEvent, JobQueue};
 use crate::tools::{InputKind, ProbeReading, SliceContext, ToolController, ToolInput, ToolKind, ToolOutcome};
 
 mod ai;
+mod metrics;
 mod review;
 mod segments;
 mod workflow;
 
 pub use ai::{AiState, AiStatus};
+pub use metrics::{MetricsOutcome, MetricsState, MetricsView};
 pub use review::ReviewEntry;
 pub use segments::{RegionSettings, SegmentSummary, SegmentationState};
 pub use workflow::SegmentationStep;
@@ -236,6 +238,7 @@ pub struct Viewer {
     tool_ctl: ToolController,
     annotations: AnnotationSet,
     segments: SegmentationState,
+    metrics: MetricsState,
     ai: AiState,
     /// Latest probe reading.
     pub probe: Option<ProbeReading>,
@@ -265,6 +268,7 @@ impl Viewer {
             tool_ctl: ToolController::default(),
             annotations: AnnotationSet::default(),
             segments: SegmentationState::default(),
+            metrics: MetricsState::default(),
             ai: AiState::new(),
             probe: None,
             status: Status { message: "Open a DICOM folder or NIfTI file to start".into(), ..Status::default() },
@@ -334,6 +338,7 @@ impl Viewer {
         self.volume.mask_generation = self.bump_revision();
         self.annotations.clear();
         self.clear_segmentation();
+        self.metrics = MetricsState::default();
         self.segments.region = RegionSettings::for_window(self.slices.window);
         self.reset_ai_session();
         self.tool_ctl.cancel();
@@ -419,6 +424,7 @@ impl Viewer {
                 }
             }
             JobEvent::Region { request, result } => self.finish_region(request, result),
+            e @ JobEvent::Metrics { .. } => self.finish_metrics(e),
             JobEvent::Filtered { revision, kind, result } => match result {
                 Ok(v) if self.dataset.as_ref().is_some_and(|d| d.revision == revision) => {
                     let rev = self.bump_revision();

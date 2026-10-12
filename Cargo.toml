@@ -4,6 +4,7 @@ default-members = ["crates/ferrum"]
 members = [
     "crates/ferrum-domain",
     "crates/ferrum-processing",
+    "crates/ferrum-radiomics",
     "crates/ferrum-io",
     "crates/ferrum-render",
     "crates/ferrum-app",
@@ -24,6 +25,7 @@ repository = "https://github.com/Kauter1989/ferrum"
 [workspace.dependencies]
 ferrum-domain = { path = "crates/ferrum-domain" }
 ferrum-processing = { path = "crates/ferrum-processing" }
+ferrum-radiomics = { path = "crates/ferrum-radiomics" }
 ferrum-io = { path = "crates/ferrum-io" }
 ferrum-render = { path = "crates/ferrum-render", default-features = false }
 ferrum-app = { path = "crates/ferrum-app" }

@@ -55,4 +55,16 @@ pub trait ResultStore: Send + Sync {
 
     /// Appends a review decision to the audit log.
     fn log(&self, decision: &ReviewDecision) -> Result<(), String>;
+
+    /// The modality declared for the study, if any: a NIfTI file carries
+    /// none, so the person who opens it says what it is. `None` when none
+    /// was declared (the source's own modality applies).
+    fn modality(&self) -> Option<String> {
+        None
+    }
+
+    /// Keeps the declared modality of the study (`CT`, `MR`, …).
+    fn set_modality(&self, _modality: &str) -> Result<(), String> {
+        Err("this store cannot keep a modality".into())
+    }
 }

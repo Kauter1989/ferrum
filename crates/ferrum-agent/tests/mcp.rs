@@ -19,7 +19,7 @@ fn phantom(path: &Path, value: f32) {
 /// The session both transports run.
 fn script(ws: &str, src: &Path) -> Vec<(&'static str, Value)> {
     vec![
-        ("study open", json!({ "workspace": ws, "path": src })),
+        ("study open", json!({ "workspace": ws, "path": src, "modality": "CT" })),
         ("study info", json!({ "workspace": ws })),
         ("view slice", json!({ "workspace": ws, "plane": "axial", "slice_number": 6, "window": "bone", "size": 48 })),
         ("probe", json!({ "workspace": ws, "point": { "render": "r-0001", "pixel": [40, 10] } })),
@@ -35,6 +35,9 @@ fn script(ws: &str, src: &Path) -> Vec<(&'static str, Value)> {
             "segment threshold",
             json!({ "workspace": ws, "seed": { "voxel": [20, 5, 5] }, "min": 0, "max": 900, "agent": "t" }),
         ),
+        // covers 18.4-c
+        ("segment metrics", json!({ "workspace": ws, "segment": 1, "describe": true })),
+        ("segment metrics", json!({ "workspace": ws, "segment": 1, "profile": "nope" })),
         (
             "annotate add",
             json!({ "workspace": ws, "kind": "distance", "plane": "axial", "points": [{ "voxel": [1, 1, 2] }, { "voxel": [5, 1, 2] }] }),

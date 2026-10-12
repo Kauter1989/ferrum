@@ -76,3 +76,11 @@ that list.
   protocol is for segmentation, and a Python dependency would break the
   offline, deterministic CLI. pyradiomics is used only as a reference in
   the field test.
+
+## Amendment (2026-10-12)
+
+Accepted: gate G2 of Stage 18 passed and the user approved the design
+(2026-10-07). The crate was introduced by the first PR of the stage, with
+the layering text in `CLAUDE.md` and `docs/architecture.md`. The profile
+`clinical` is registered with its first additional features (PR 3), not
+earlier, so that no profile is an alias of another.

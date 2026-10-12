@@ -1,0 +1,33 @@
+//! Quantitative description of a segment.
+//!
+//! A *feature* has a stable id, a unit and a definition text
+//! ([`feature`]). A *profile* is a versioned list of features
+//! ([`profile`]). [`compute`] measures one segment under one profile and
+//! returns a [`MetricsResult`] that records the profile, its version and
+//! every parameter the numbers depend on.
+//!
+//! The crate is pure: no I/O, no GPU, no UI. It depends on
+//! `ferrum-domain` only and reuses its mask analysis, so each measure has
+//! one implementation (ADR 0011).
+//!
+//! Values come from voxels. A measure that is undefined for a segment is
+//! [`Value::Null`] with a reason; NaN and infinity never leave the crate.
+
+pub mod compute;
+pub mod error;
+pub mod feature;
+pub mod intensity;
+pub mod params;
+pub mod profile;
+pub mod result;
+pub mod size;
+
+pub use compute::{compute, Input};
+pub use error::MetricsError;
+pub use feature::{feature_by_id, Family, Feature, Unit, FEATURES};
+pub use params::{Params, Preprocessing, ValueUnit};
+pub use profile::{Profile, PROFILES, QUICK};
+pub use result::{FeatureValue, MetricsResult, Value};
+
+#[cfg(test)]
+mod tests;

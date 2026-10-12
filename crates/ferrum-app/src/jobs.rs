@@ -8,11 +8,12 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use ferrum_domain::{
-    grow_region_robust, CancelFlag, LabelMap, LoadedSeries, ProgressSink, RegionError, RegionParams, RepositoryError,
-    SeriesDescriptor, Volume, VolumeRepository, VoxelBox,
+    grow_region_robust, CancelFlag, LabelMap, LoadedSeries, MaskRegion, ProgressSink, RegionError, RegionParams,
+    RepositoryError, SeriesDescriptor, Volume, VolumeRepository, VoxelBox,
 };
 use ferrum_processing::ambient_occlusion::AoParams;
 use ferrum_processing::{filters, AmbientOcclusion};
+use ferrum_radiomics::{compute, Input, MetricsError, MetricsResult, Params, Profile, ValueUnit};
 use glam::UVec3;
 
 /// Volume filters offered to the user.
@@ -50,6 +51,19 @@ pub struct RegionRequest {
     pub max_ml: f32,
 }
 
+/// What a metrics job was asked to do, handed back with its result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MetricsRequest {
+    /// Dataset revision the job ran on.
+    pub dataset_revision: u64,
+    /// Revision of the segmentation the segment was taken from.
+    pub segments_revision: u64,
+    /// The segment.
+    pub label: u8,
+    /// Name of the profile.
+    pub profile: &'static str,
+}
+
 /// Events emitted by jobs.
 #[derive(Debug)]
 pub enum JobEvent {
@@ -79,6 +93,13 @@ pub enum JobEvent {
         request: RegionRequest,
         /// Bounding box and mask of the region, or why there is none.
         result: Result<(VoxelBox, Vec<u8>), RegionError>,
+    },
+    /// Quantitative profile of a segment (see [`JobQueue::metrics`]).
+    Metrics {
+        /// What was asked.
+        request: MetricsRequest,
+        /// The features, or why there are none.
+        result: Result<Box<MetricsResult>, MetricsError>,
     },
     /// Filter applied to dataset `revision`.
     Filtered {
@@ -200,6 +221,23 @@ impl JobQueue {
         });
     }
 
+    /// Measures a segment on a worker thread. `region` is a snapshot of the
+    /// segment's voxels.
+    pub fn metrics(
+        &mut self,
+        volume: Arc<Volume>,
+        region: MaskRegion,
+        unit: ValueUnit,
+        profile: &'static Profile,
+        request: MetricsRequest,
+    ) {
+        self.spawn_compute(move || {
+            let input = Input { region: &region, volume: &volume, unit };
+            let result = compute(&input, profile, &Params::default()).map(Box::new);
+            JobEvent::Metrics { request, result }
+        });
+    }
+
     /// Requests cancellation of the running I/O job.
     pub fn cancel_io(&mut self) {
         if let Some(c) = &self.io_cancel {
@@ -220,9 +258,10 @@ impl JobQueue {
     fn account(&mut self, e: &JobEvent) {
         match e {
             JobEvent::Scanned(_) | JobEvent::Loaded(_) => self.running_io = self.running_io.saturating_sub(1),
-            JobEvent::AmbientOcclusion { .. } | JobEvent::Filtered { .. } | JobEvent::Region { .. } => {
-                self.running_compute = self.running_compute.saturating_sub(1)
-            }
+            JobEvent::AmbientOcclusion { .. }
+            | JobEvent::Filtered { .. }
+            | JobEvent::Region { .. }
+            | JobEvent::Metrics { .. } => self.running_compute = self.running_compute.saturating_sub(1),
             JobEvent::Progress { .. } => {}
         }
         self.handles.retain(|h| !h.is_finished());
