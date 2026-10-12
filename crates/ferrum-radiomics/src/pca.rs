@@ -67,13 +67,13 @@ fn jacobi(mut a: [[f64; 3]; 3]) -> ([f64; 3], [[f64; 3]; 3]) {
             let theta = (a[q][q] - a[p][p]) / (2.0 * a[p][q]);
             let t = theta.signum() / (theta.abs() + (theta * theta + 1.0).sqrt());
             let (c, s) = (1.0 / (t * t + 1.0).sqrt(), t / (t * t + 1.0).sqrt());
-            for k in 0..3 {
-                let (akp, akq) = (a[k][p], a[k][q]);
-                a[k][p] = c * akp - s * akq;
-                a[k][q] = s * akp + c * akq;
+            for row in &mut a {
+                let (akp, akq) = (row[p], row[q]);
+                row[p] = c * akp - s * akq;
+                row[q] = s * akp + c * akq;
             }
-            for k in 0..3 {
-                let (apk, aqk) = (a[p][k], a[q][k]);
+            let (row_p, row_q) = (a[p], a[q]);
+            for (k, (apk, aqk)) in row_p.iter().zip(row_q.iter()).enumerate() {
                 a[p][k] = c * apk - s * aqk;
                 a[q][k] = s * apk + c * aqk;
             }
