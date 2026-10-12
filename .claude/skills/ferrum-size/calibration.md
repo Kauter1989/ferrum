@@ -75,3 +75,4 @@ Lines are additions plus deletions. "Outcome" records what the size cost:
 | Date | PR | Estimated class / lines | Actual lines / files | Compactions | CI rounds | Post-merge bugs | Note |
 |---|---|---|---|---|---|---|---|
 | 2026-10-03 | #39 | not estimated | 6 998 / 75 | ≥ 1 | 0 red | 0 so far (L1 pre-dated it) | budget derived from this |
+| 2026-10-09 | #45 | not estimated (asked as a fix; grew through three field-test rounds) | 1 480 + / 44 − / 17 | 0 recorded in this session | 1 red (L19: pushed on a truncated preflight) | 0 so far (L18: the first design failed on real CT, found by the field test before the merge) | one feature, 11 commits: algorithm, field fixes, performance, background job; sized M it would have asked for the field test before the first push |

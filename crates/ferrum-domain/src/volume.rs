@@ -76,6 +76,12 @@ impl IntensityRange {
         (self.normalize(value) * f32::from(u16::MAX)).round() as u16
     }
 
+    /// Physical value of a (possibly fractional) stored value, e.g. a mean
+    /// of stored values.
+    pub fn from_storage_f64(&self, stored: f64) -> f32 {
+        self.denormalize((stored / f64::from(u16::MAX)) as f32)
+    }
+
     /// `u16` storage → physical value.
     pub fn from_storage(&self, stored: u16) -> f32 {
         self.denormalize(f32::from(stored) / f32::from(u16::MAX))
