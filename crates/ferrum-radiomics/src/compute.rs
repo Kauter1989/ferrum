@@ -2,13 +2,15 @@
 
 use ferrum_domain::{MaskRegion, Volume};
 
+use crate::diameter::max_diameter_mm;
 use crate::error::MetricsError;
 use crate::intensity::{first_order, region_values, FirstOrder};
 use crate::params::{Params, ValueUnit};
 use crate::profile::Profile;
 use crate::result::{unit_label, FeatureValue, MetricsResult, Value};
-use crate::shape::{shape3d, Shape3d};
+use crate::shape::{shape3d, HullStats, Shape3d};
 use crate::size::{size, Size};
+use crate::topology::{topology, warnings, Topology};
 
 /// What is measured.
 #[derive(Debug, Clone)]
@@ -25,6 +27,9 @@ pub struct Input<'a> {
 struct Measured {
     size: Option<Size>,
     shape: Option<Shape3d>,
+    topology: Option<Topology>,
+    diameter: Option<f64>,
+    voxel_mm3: f64,
     intensity: Option<FirstOrder>,
 }
 
@@ -33,7 +38,12 @@ impl Measured {
         let has = |prefix: &str| profile.features.iter().any(|id| id.starts_with(prefix));
         Self {
             size: has("size.").then(|| size(region, volume)),
-            shape: has("shape.").then(|| shape3d(region, volume)),
+            shape: has("shape.").then(|| {
+                shape3d(region, volume, has("shape.hull_") || has("shape.solidity") || has("shape.convexity"))
+            }),
+            topology: has("topology.").then(|| topology(region, volume.dims())),
+            diameter: has("size.max_diameter_mm").then(|| max_diameter_mm(region, volume.spacing())),
+            voxel_mm3: voxel_mm3(volume),
             intensity: if has("intensity.") { first_order(region_values(region, volume)) } else { None },
         }
     }
@@ -42,7 +52,11 @@ impl Measured {
         let missing = || Value::Null { reason: "not computed".to_owned() };
         let Some((family, _)) = id.split_once('.') else { return missing() };
         match family {
+            "size" if id == "size.max_diameter_mm" => {
+                self.diameter.map_or_else(missing, |d| Value::number(d, "not a finite number"))
+            }
             "size" => self.size.as_ref().map_or_else(missing, |s| size_value(s, id)),
+            "topology" => self.topology.as_ref().map_or_else(missing, |t| topology_value(t, self.voxel_mm3, id)),
             "shape" => self.shape.as_ref().map_or_else(missing, |s| shape_value(s, id)),
             "intensity" => self.intensity.as_ref().map_or_else(
                 || Value::Null { reason: "the segment has no voxel values".to_owned() },
@@ -50,6 +64,24 @@ impl Measured {
             ),
             _ => missing(),
         }
+    }
+}
+
+fn voxel_mm3(volume: &Volume) -> f64 {
+    let s = volume.spacing();
+    f64::from(s.x) * f64::from(s.y) * f64::from(s.z)
+}
+
+fn topology_value(t: &Topology, voxel_mm3: f64, id: &str) -> Value {
+    let number = |x: f64| Value::number(x, "not a finite number");
+    match id {
+        "topology.components" => number(t.components as f64),
+        "topology.largest_component_share" => number(t.largest_share),
+        "topology.holes" => number(t.holes as f64),
+        "topology.hole_volume_mm3" => number(t.hole_voxels as f64 * voxel_mm3),
+        "topology.euler_number" => number(t.euler as f64),
+        "topology.border_sides" => number(f64::from(t.border_sides)),
+        _ => Value::Null { reason: "not computed".to_owned() },
     }
 }
 
@@ -88,6 +120,8 @@ fn shape_value(s: &Shape3d, id: &str) -> Value {
     };
     let no_surface = "the surface encloses no volume";
     let no_extent = "the segment has no extent";
+    let no_hull = "the surface is flat or a single point, so it has no convex hull";
+    let hull = |f: fn(&HullStats) -> f64| number(s.hull.as_ref().map(f), no_hull);
     let not_unique =
         "the axis direction is not unique: two axes are equally long, or the segment has no extent along it";
     let direction = |axis: usize, component: usize| number(s.axes.directions[axis].map(|d| d[component]), not_unique);
@@ -99,6 +133,10 @@ fn shape_value(s: &Shape3d, id: &str) -> Value {
         "shape.compactness_2" => number(s.compactness_2(), no_surface),
         "shape.sphericity" => number(s.sphericity(), no_surface),
         "shape.spherical_disproportion" => number(s.spherical_disproportion(), no_surface),
+        "shape.hull_volume_ml" => hull(|h| h.volume_mm3 / 1000.0),
+        "shape.hull_area_mm2" => hull(|h| h.area_mm2),
+        "shape.solidity" => number(s.solidity(), no_hull),
+        "shape.convexity" => number(s.convexity(), no_hull),
         "shape.major_axis_mm" => number(Some(s.axes.lengths_mm[0]), no_extent),
         "shape.minor_axis_mm" => number(Some(s.axes.lengths_mm[1]), no_extent),
         "shape.least_axis_mm" => number(Some(s.axes.lengths_mm[2]), no_extent),
@@ -174,6 +212,6 @@ pub fn compute(input: &Input, profile: &Profile, params: &Params) -> Result<Metr
         unit: input.unit.clone(),
         params: *params,
         features,
-        warnings: Vec::new(),
+        warnings: measured.topology.as_ref().map_or_else(Vec::new, warnings),
     })
 }

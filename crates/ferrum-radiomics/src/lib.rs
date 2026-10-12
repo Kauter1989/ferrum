@@ -14,8 +14,10 @@
 //! [`Value::Null`] with a reason; NaN and infinity never leave the crate.
 
 pub mod compute;
+pub mod diameter;
 pub mod error;
 pub mod feature;
+pub mod hull;
 pub mod intensity;
 pub mod mesh;
 pub mod params;
@@ -24,6 +26,7 @@ pub mod profile;
 pub mod result;
 pub mod shape;
 pub mod size;
+pub mod topology;
 
 pub use compute::{compute, Input};
 pub use error::MetricsError;

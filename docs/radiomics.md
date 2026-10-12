@@ -50,11 +50,12 @@ ferrum-radiomics/src/
   result.rs       MetricsResult, Value (Number | Null { reason }), Warning
   params.rs       Params { bin_width, hu_ranges, … }, recorded in the result
   intensity.rs    first-order, histogram, IVH, HU-range shares
-  size.rs         volume, box, centroid in mm, extents, 3D diameter
+  size.rs         volume, box, centroid in mm, extents, axial axes
+  diameter.rs     maximum 3D diameter between voxel centres
   mesh.rs         marching cubes: area, mesh volume
   pca.rs          3×3 symmetric eigen-decomposition (Jacobi), axes, elongation, flatness
-  hull.rs         3D convex hull, farthest pair, solidity, convexity
-  topology.rs     cavities, Euler number, warnings
+  hull.rs         3D convex hull and farthest pair (solidity and convexity are formed in shape.rs)
+  topology.rs     pieces, cavities, Euler number, warnings (thresholds as constants)
 ```
 
 Entry point:
@@ -94,13 +95,14 @@ pub struct Input<'a> {
 | Feature | Method | Risk |
 |---|---|---|
 | Volume, extent, centroid (mm) | voxel count × voxel volume; centroid of voxel centres mapped through the grid's direction and origin | none |
-| Maximum 3D diameter | farthest pair among the hull vertices of the boundary voxel centres (voxel centres, as the existing long axis; IBSI and pyradiomics use mesh vertices, so the field test expects small differences) | hull robustness |
+| Maximum 3D diameter | farthest pair among the hull vertices of the end voxels of the lines along the longest side of the box (a distance along a line is largest at an end, so no other voxel can be an end of the farthest pair); voxel centres, as the existing long axis; IBSI and pyradiomics use mesh vertices, so the field test expects small differences; a flat or straight set has no 3D hull and is searched pairwise | hull robustness |
 | Surface area, mesh volume | marching cubes at iso 0.5 on the mask padded by one voxel; the surface of each of the 256 corner patterns is built from the face loops (no memorised table; ambiguous faces separate the inside corners, so voxels that touch only at an edge or a corner are separate pieces), each loop a fan around its centroid and wound outwards; vertices scaled by the spacing; area as the sum of triangle areas | closed and outward-wound for every pattern, checked by invariants; a binary mask's mesh is rougher than the smooth shape (a ball: +7 %, see §5) |
 | Compactness 1 and 2, sphericity, spherical disproportion, surface-to-volume | IBSI formulas on the mesh area and mesh volume | none |
 | PCA axes, elongation, flatness | population covariance of the voxel centres in patient mm (computed on indices, then carried through direction and spacing); Jacobi eigenvalues; axis length 4√λ (IBSI); a direction is `Null` when two axes are equally long or the segment has no extent along it; a flat or thin body has zero for the lengths with no extent (exactly), and `Null` ratios only for a single voxel |
-| Convex hull, solidity, convexity | incremental hull on the mesh vertices (not on every voxel); no new dependency | coplanar and tiny inputs → `Null` with a reason |
+| Convex hull, solidity, convexity | incremental hull on the deduplicated mesh vertices (the six axis extremes first, so interior points cost a few face tests); no new dependency; solidity = mesh volume / hull volume, convexity = hull area / mesh area | coplanar and tiny inputs → `Null` with a reason |
 | Components, largest share | `ferrum_domain::analysis::components` | none |
-| Cavities | flood fill of the background (6-connected) from the border of the padded box; the unreached background is the cavities | cost follows the box |
+| Cavities | `ferrum_domain::analysis::fill_holes` marks the background not 6-connected to the border of the box; its 6-connected pieces are the cavities | cost follows the box |
+| Warnings | `fragmented` (largest piece below 95 % of the voxels), `has_holes` (one cavity or more), `touches_border` (one image side or more); thresholds are in the definition texts; they never change the mask | none |
 | Euler number | Euler characteristic of the cubical complex of the 26-connected foreground (vertices − edges + faces − cubes) | verified on a cube (1), a cube with a cavity (2) and a torus (0) |
 | First-order | mean, population std, min, max, nearest-rank percentiles, range, IQR; skewness, excess kurtosis, energy, RMS, MAD, rMAD, entropy, uniformity (IBSI definitions) | constant region → `Null` |
 | Histogram | fixed bin width (default 25 HU for CT), recorded | none |
@@ -202,7 +204,7 @@ reference). No criterion draws pixels in the renderer, so there is no
 | 18.1-d | review of ADR 0011, `CLAUDE.md`, `docs/architecture.md` | manual |
 | 18.2-a | `size.rs::volume_of_a_box_with_anisotropic_spacing` (4×5×6, 0.7×0.7×2.5) | test |
 | 18.2-b | `size.rs::extent_and_centroid_in_patient_mm_with_direction` | test |
-| 18.2-c | `hull.rs::max_diameter_equals_brute_force` (box diagonal, random blob) | test |
+| 18.2-c | `diameter.rs` (`the_diameter_of_a_box_is_its_space_diagonal`, `the_diameter_equals_a_brute_force_search_on_random_blobs`, `flat_thin_and_single_voxel_segments_have_a_diameter`), `hull.rs::farthest_pair_equals_brute_force_and_handles_flat_sets`, `tests.rs::the_3d_diameter_of_the_block_is_its_space_diagonal`, `crates/ferrum-agent/tests/metrics.rs::the_clinical_profile_adds_diameter_hull_and_connectivity` | test |
 | 18.2-d | `metrics.rs::axes_and_extents_equal_segment_shape` | test |
 | 18.2-e | `size.rs::dims_of_one_and_anisotropy` (each axis) | test |
 | 18.2-f | `metrics.rs::empty_or_unknown_segment_is_not_found` | test |
@@ -227,13 +229,13 @@ reference). No criterion draws pixels in the renderer, so there is no
 | 18.6-b | `pca.rs::an_ellipsoid_has_the_axes_…`, `tests.rs::the_axes_of_a_block_are_known_by_hand_and_a_tie_has_no_direction` | test |
 | 18.6-c | `pca.rs::a_line_a_plane_and_a_point_are_undefined_where_…`, `tests.rs::a_point_a_line_and_a_plate_never_give_nan` | test |
 | 18.6-d | `pca.rs` (`directions_are_unit_vectors_in_lps_with_a_fixed_sign`, `the_sign_of_a_direction_is_fixed_by_its_largest_component`, `an_object_turned_by_45_degrees_…`), `metrics.rs` (a null direction says why) | test |
-| 18.7-a | `hull.rs::volume_area_solidity_convexity` | test |
-| 18.7-b | `hull.rs::box_is_solid_and_l_shape_by_hand` | test |
-| 18.7-c | `hull.rs::cost_follows_the_surface` (vertex count of the input is checked) | test |
-| 18.8-a | `topology.rs::components_equal_segment_components` | test |
-| 18.8-b | `topology.rs::box_with_a_2x2x2_cavity_has_one_hole_of_8_voxels` | test |
-| 18.8-c | `topology.rs::euler_of_cube_hollow_cube_and_torus` (1, 2, 0) | test |
-| 18.8-d | `topology.rs::warnings_do_not_change_the_mask` | test |
+| 18.7-a | `hull.rs` (`volume_and_area_of_a_box`, `every_point_is_inside_or_on_the_hull_and_the_surface_is_closed`, `volume_equals_the_brute_force_hull_of_a_small_cloud`, `interior_and_repeated_points_change_nothing`, `flat_or_tiny_input_has_no_hull`), `tests.rs::a_box_is_its_own_hull` | test |
+| 18.7-b | `tests.rs` (`a_box_is_its_own_hull`, `two_voxels_apart_have_a_hull_known_by_hand`), `hull.rs::the_hull_of_an_l_shaped_mesh_is_known_by_hand` (11/3, derived with the mixed area in the test comment and checked against an independent facet-polygon computation outside the repository) | test |
+| 18.7-c | `hull.rs::cost_follows_the_surface` (3 000 interior points leave 8 vertices) | test |
+| 18.8-a | `topology.rs::pieces_touching_at_an_edge_or_a_corner_are_one_piece_and_far_pieces_are_not` (pieces come from `ferrum_domain::analysis::components`, the same call as `segment components`) | test |
+| 18.8-b | `topology.rs` (`a_box_with_a_cavity_has_one_hole_of_eight_voxels_and_euler_number_two`, `separate_cavities_are_counted_and_a_tunnel_is_not_a_cavity`), `tests.rs::a_hollow_box_reports_its_cavity_and_warns` | test |
+| 18.8-c | `topology.rs` (box 1, box with a cavity 2, ring 0, two voxels sharing a corner 1) | test |
+| 18.8-d | `topology.rs` (`a_segment_at_the_edge_of_the_image_touches_the_border`, `warnings_leave_the_mask_alone`), `tests.rs::a_piece_far_away_and_the_image_border_each_give_their_warning` | test |
 | 18.9-a | `intensity.rs::distribution_measures_follow_ibsi_definitions` | test |
 | 18.9-b | `intensity.rs::ten_voxel_set_exact` | test |
 | 18.9-c | `metrics.rs::bin_width_is_recorded` | test |

@@ -69,6 +69,7 @@ fn family_title(family: Family) -> &'static str {
     match family {
         Family::Size => "Size",
         Family::Shape => "Shape",
+        Family::Topology => "Connectivity",
         Family::Intensity => "Intensity",
     }
 }
@@ -155,7 +156,7 @@ fn ready(ui: &mut egui::Ui, label: u8, result: &MetricsResult) {
         .color(TEXT_DIM),
     );
     let all = rows(result);
-    for family in [Family::Size, Family::Shape, Family::Intensity] {
+    for family in [Family::Size, Family::Shape, Family::Topology, Family::Intensity] {
         let lines: Vec<&CardRow> = all.iter().filter(|r| r.family == family).collect();
         if lines.is_empty() {
             continue;
@@ -274,7 +275,7 @@ mod tests {
                 .unwrap();
         let lines = rows(&result);
         let shape: Vec<&CardRow> = lines.iter().filter(|l| l.family == Family::Shape).collect();
-        assert_eq!(shape.len(), 21);
+        assert_eq!(shape.len(), 25);
         let area = shape.iter().find(|l| l.label == "Surface area").unwrap();
         assert!(area.value.ends_with(" mm²"), "{}", area.value);
         // a cube has no unique minor or least axis: the dash, and the reason on hover
@@ -282,6 +283,21 @@ mod tests {
         assert_eq!(tie.value, "—");
         assert!(tie.reason.as_deref().unwrap_or("").contains("not unique"));
         assert!(shape.iter().find(|l| l.label == "Sphericity").unwrap().value.parse::<f64>().is_ok());
+        // a cube is its own hull: solidity 1; the connectivity group says one piece, no cavity
+        assert_eq!(shape.iter().find(|l| l.label == "Solidity").unwrap().value, "1.00");
+        let links: Vec<(&str, &str)> =
+            lines.iter().filter(|l| l.family == Family::Topology).map(|l| (l.label, l.value.as_str())).collect();
+        assert_eq!(
+            links,
+            [
+                ("Pieces", "1"),
+                ("Largest piece share", "1"),
+                ("Cavities", "0"),
+                ("Cavity volume (mm³)", "0 mm³"),
+                ("Euler number", "1"),
+                ("Image sides touched", "3"),
+            ]
+        );
     }
 
     #[test]

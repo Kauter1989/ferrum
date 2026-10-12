@@ -11,6 +11,8 @@ pub enum Family {
     Size,
     /// Shape of the segment: surface, compactness, principal axes.
     Shape,
+    /// Connectivity of the segment: pieces, cavities, Euler number.
+    Topology,
     /// First-order statistics of the voxel values.
     Intensity,
 }
@@ -21,6 +23,7 @@ impl Family {
         match self {
             Self::Size => "size",
             Self::Shape => "shape",
+            Self::Topology => "topology",
             Self::Intensity => "intensity",
         }
     }
@@ -72,6 +75,10 @@ const fn size(id: &'static str, label: &'static str, unit: &'static str, definit
 
 const fn shape(id: &'static str, label: &'static str, unit: &'static str, definition: &'static str) -> Feature {
     feature(id, label, Family::Shape, Unit::Fixed(unit), definition, false)
+}
+
+const fn topology(id: &'static str, label: &'static str, unit: &'static str, definition: &'static str) -> Feature {
+    feature(id, label, Family::Topology, Unit::Fixed(unit), definition, false)
 }
 
 const fn intensity(id: &'static str, label: &'static str, definition: &'static str) -> Feature {
@@ -145,6 +152,12 @@ pub const FEATURES: &[Feature] = &[
         "Short axis (axial)",
         "mm",
         "Longest extent perpendicular to size.long_axis_mm on the same axial slice, in mm.",
+    ),
+    size(
+        "size.max_diameter_mm",
+        "Maximum 3D diameter",
+        "mm",
+        "Largest distance between two voxel centres of the segment, in mm, in any direction (not only on one axial slice). Voxel centres, not mesh vertices, so it can differ slightly from other tools.",
     ),
     size(
         "size.largest_slice_axial",
@@ -289,6 +302,66 @@ pub const FEATURES: &[Feature] = &[
         "Least axis direction z (superior +)",
         "",
         "z component of the unit vector along the least axis in patient LPS coordinates (superior +), the sign chosen so that the largest component of the vector is positive. Undefined when the axis is not unique: two axes are equally long, or the segment has no extent along it.",
+    ),
+    shape(
+        "shape.hull_volume_ml",
+        "Convex hull volume",
+        "mL",
+        "Volume of the smallest convex solid that contains the surface mesh (the convex hull of the mesh vertices), in mL. Undefined when the mesh is flat.",
+    ),
+    shape(
+        "shape.hull_area_mm2",
+        "Convex hull area",
+        "mm2",
+        "Surface area of the convex hull of the mesh vertices, in mm². Undefined when the mesh is flat.",
+    ),
+    shape(
+        "shape.solidity",
+        "Solidity",
+        "",
+        "shape.mesh_volume_ml divided by shape.hull_volume_ml: 1 for a convex body, smaller the more the segment is dented, hollowed or split into pieces.",
+    ),
+    shape(
+        "shape.convexity",
+        "Convexity",
+        "",
+        "Area of the convex hull divided by the surface area of the mesh: 1 for a convex body; for a connected body it is at most 1 and drops as the surface gets more folded, for separate pieces it can exceed 1.",
+    ),
+    topology(
+        "topology.components",
+        "Pieces",
+        "",
+        "Number of 26-connected pieces (voxels that touch by a face, an edge or a corner are one piece). Warning `fragmented` when the largest piece holds less than 95 % of the voxels.",
+    ),
+    topology(
+        "topology.largest_component_share",
+        "Largest piece share",
+        "",
+        "Share of the voxels that belong to the largest piece, 0 to 1. Warning `fragmented` below 0.95.",
+    ),
+    topology(
+        "topology.holes",
+        "Cavities",
+        "",
+        "Number of cavities: background enclosed by the segment and not connected to the outside (6-connected background). A tunnel that opens to the outside is not a cavity. Warning `has_holes` when there is at least one.",
+    ),
+    topology(
+        "topology.hole_volume_mm3",
+        "Cavity volume (mm³)",
+        "mm3",
+        "Volume of all cavities together: their voxel count times the volume of one voxel, in cubic millimetres.",
+    ),
+    topology(
+        "topology.euler_number",
+        "Euler number",
+        "",
+        "Euler characteristic of the segment as a union of closed voxels (26-connected): pieces minus tunnels plus cavities. 1 for a solid body, 2 for a body with one cavity, 0 for a ring.",
+    ),
+    topology(
+        "topology.border_sides",
+        "Image sides touched",
+        "",
+        "How many of the six sides of the image box the segment touches (0 to 6). Warning `touches_border` when it is above 0: the segment may be cut off by the field of view.",
     ),
     intensity("intensity.mean", "Mean", "Mean of the voxel values inside the segment."),
     intensity(
