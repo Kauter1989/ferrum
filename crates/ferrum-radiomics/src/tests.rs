@@ -138,3 +138,133 @@ fn a_region_that_is_not_tight_gives_the_same_numbers() {
     );
     assert_eq!(a, b);
 }
+
+fn clinical(region: &MaskRegion, volume: &Volume) -> MetricsResult {
+    compute(&Input { region, volume, unit: ValueUnit::Hu }, &CLINICAL, &Params::default()).unwrap()
+}
+
+/// A grid of 12 x 12 x 12 voxels (1 x 1 x 2 mm), all zero.
+fn empty_volume() -> Volume {
+    let dims = Dims3 { x: 12, y: 12, z: 12 };
+    Volume::from_physical(dims, Vec3::new(1.0, 1.0, 2.0), &vec![0.0; dims.voxel_count()]).unwrap()
+}
+
+fn cells(cells: &[(u32, u32, u32)]) -> MaskRegion {
+    MaskRegion::from_grid(Dims3 { x: 12, y: 12, z: 12 }, |n| {
+        let p = (n as u32 % 12, (n as u32 / 12) % 12, n as u32 / 144);
+        cells.contains(&p)
+    })
+    .unwrap()
+}
+
+fn num(r: &MetricsResult, id: &str) -> f64 {
+    r.number(id).unwrap_or_else(|| panic!("{id}: {:?}", r.get(id)))
+}
+
+// covers 18.5-b
+#[test]
+fn the_shape_figures_of_a_single_voxel_follow_from_its_octahedron() {
+    // 1 x 1 x 1 mm voxels: the surface is an octahedron of area sqrt(3) and volume 1/6
+    let v = Volume::from_physical(Dims3 { x: 3, y: 3, z: 3 }, Vec3::ONE, &[0.0; 27]).unwrap();
+    let one = MaskRegion::from_grid(Dims3 { x: 3, y: 3, z: 3 }, |n| n == 13).unwrap();
+    let r = clinical(&one, &v);
+    let (area, volume) = (3.0_f64.sqrt(), 1.0 / 6.0);
+    let pi = std::f64::consts::PI;
+    let near = |id: &str, expected: f64| {
+        assert!((num(&r, id) - expected).abs() < 1e-12, "{id}: {} != {expected}", num(&r, id))
+    };
+    near("shape.surface_area_mm2", area);
+    near("shape.mesh_volume_ml", volume / 1000.0);
+    near("shape.surface_to_volume_per_mm", area / volume);
+    // (36 pi V^2)^(1/3) = pi^(1/3) / 1 for V = 1/6
+    near("shape.sphericity", pi.cbrt() / area);
+    near("shape.compactness_2", pi / area.powi(3));
+    near("shape.compactness_1", volume / (pi.sqrt() * area.powf(1.5)));
+    near("shape.spherical_disproportion", area / pi.cbrt());
+    let sphericity = num(&r, "shape.sphericity");
+    assert!(
+        (sphericity.powi(3) - num(&r, "shape.compactness_2")).abs() < 1e-12,
+        "compactness 2 is the cube of the sphericity"
+    );
+    assert!((sphericity * num(&r, "shape.spherical_disproportion") - 1.0).abs() < 1e-12);
+}
+
+// covers 18.6-b, 18.6-d
+#[test]
+fn the_axes_of_a_block_are_known_by_hand_and_a_tie_has_no_direction() {
+    let (v, r) = (phantom(), block());
+    let c = clinical(&r, &v);
+    // 4 x 4 x 4 voxels of 1 x 1 x 2 mm: index variance (4^2 - 1) / 12 = 1.25; along k times 2^2
+    let (major, minor) = (4.0 * 5.0_f64.sqrt(), 4.0 * 1.25_f64.sqrt());
+    assert!((num(&c, "shape.major_axis_mm") - major).abs() < 1e-9);
+    assert!((num(&c, "shape.minor_axis_mm") - minor).abs() < 1e-9);
+    assert!((num(&c, "shape.least_axis_mm") - minor).abs() < 1e-9);
+    assert!((num(&c, "shape.elongation") - 0.5).abs() < 1e-9 && (num(&c, "shape.flatness") - 0.5).abs() < 1e-9);
+    // the long axis is k: (0, 0, 1) in LPS; the other two are equally long, so they have no direction
+    assert_eq!(
+        [num(&c, "shape.major_axis_dir_x"), num(&c, "shape.major_axis_dir_y"), num(&c, "shape.major_axis_dir_z")]
+            .map(f64::abs),
+        [0.0, 0.0, 1.0]
+    );
+    for id in ["shape.minor_axis_dir_x", "shape.least_axis_dir_z"] {
+        match &c.get(id).unwrap().value {
+            Value::Null { reason } => assert!(reason.contains("not unique"), "{reason}"),
+            other => panic!("{id}: {other:?}"),
+        }
+    }
+}
+
+// covers 18.5-d, 18.6-c
+#[test]
+fn a_point_a_line_and_a_plate_never_give_nan() {
+    let v = empty_volume();
+    let line: Vec<_> = (0..7).map(|i| (i, 3, 4)).collect();
+    let plate: Vec<_> = (0..6).flat_map(|i| (0..6).map(move |j| (i, j, 2))).collect();
+    for (name, body) in [("point", vec![(3, 4, 5)]), ("line", line), ("plate", plate)] {
+        let r = clinical(&cells(&body), &v);
+        for f in &r.features {
+            if let Value::Number(x) = f.value {
+                assert!(x.is_finite(), "{name}: {} is {x}", f.feature.id);
+            }
+        }
+        let sphericity = num(&r, "shape.sphericity");
+        assert!(sphericity > 0.0 && sphericity <= 1.0, "{name}: {sphericity}");
+        assert!(num(&r, "shape.surface_area_mm2") > 0.0 && num(&r, "shape.mesh_volume_ml") > 0.0, "{name}");
+    }
+    // a point has no extent: the ratios are undefined and say why
+    let point = clinical(&cells(&[(3, 4, 5)]), &v);
+    for id in ["shape.elongation", "shape.flatness"] {
+        match &point.get(id).unwrap().value {
+            Value::Null { reason } => assert!(reason.contains("no extent"), "{reason}"),
+            other => panic!("{id}: {other:?}"),
+        }
+    }
+    // a plate is flat: no extent along its normal, which has a unique direction
+    let plate: Vec<_> = (0..6).flat_map(|i| (0..6).map(move |j| (i, j, 2))).collect();
+    let plate = clinical(&cells(&plate), &v);
+    assert_eq!((num(&plate, "shape.least_axis_mm"), num(&plate, "shape.flatness")), (0.0, 0.0));
+    assert_eq!(num(&plate, "shape.least_axis_dir_z"), 1.0);
+}
+
+// covers 18.5-b
+#[test]
+fn clinical_adds_to_quick_without_changing_what_quick_says() {
+    let (v, r) = (phantom(), block());
+    let quick = run(ValueUnit::Hu).unwrap();
+    let c = clinical(&r, &v);
+    for f in &quick.features {
+        assert_eq!(c.get(f.feature.id), Some(f), "{} differs between the profiles", f.feature.id);
+    }
+    assert_eq!((c.profile, c.profile_version), ("clinical", "0.1"));
+    assert!(c.features.len() > quick.features.len());
+    assert_eq!(c.get("shape.surface_area_mm2").unwrap().unit, "mm2");
+    // shape does not need the unit, so quick's refusal is the only reason clinical is refused too
+    assert!(matches!(
+        compute(
+            &Input { region: &r, volume: &v, unit: ValueUnit::Unknown { modality: String::new() } },
+            &CLINICAL,
+            &Params::default()
+        ),
+        Err(MetricsError::UnitUnknown { .. })
+    ));
+}

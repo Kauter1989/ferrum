@@ -9,6 +9,8 @@
 pub enum Family {
     /// Size of the segment: volume, extent, centroid, axes.
     Size,
+    /// Shape of the segment: surface, compactness, principal axes.
+    Shape,
     /// First-order statistics of the voxel values.
     Intensity,
 }
@@ -18,6 +20,7 @@ impl Family {
     pub const fn name(self) -> &'static str {
         match self {
             Self::Size => "size",
+            Self::Shape => "shape",
             Self::Intensity => "intensity",
         }
     }
@@ -65,6 +68,10 @@ const fn feature(
 
 const fn size(id: &'static str, label: &'static str, unit: &'static str, definition: &'static str) -> Feature {
     feature(id, label, Family::Size, Unit::Fixed(unit), definition, false)
+}
+
+const fn shape(id: &'static str, label: &'static str, unit: &'static str, definition: &'static str) -> Feature {
+    feature(id, label, Family::Shape, Unit::Fixed(unit), definition, false)
 }
 
 const fn intensity(id: &'static str, label: &'static str, definition: &'static str) -> Feature {
@@ -156,6 +163,132 @@ pub const FEATURES: &[Feature] = &[
         "Largest sagittal slice",
         "",
         "1-based number of the sagittal slice (along i) with the most voxels of the segment.",
+    ),
+    shape(
+        "shape.mesh_volume_ml",
+        "Volume of the surface",
+        "mL",
+        "Volume enclosed by the surface mesh (marching cubes at half the distance between a voxel inside and one outside), in mL. Slightly smaller than size.volume_ml because the mesh cuts the corners of the voxels.",
+    ),
+    shape(
+        "shape.surface_area_mm2",
+        "Surface area",
+        "mm2",
+        "Area of the surface mesh in mm². A mesh of a binary mask is rougher than a smooth surface: a ball comes out about 7 % larger than 4 pi r squared, at any voxel size.",
+    ),
+    shape(
+        "shape.surface_to_volume_per_mm",
+        "Surface to volume ratio",
+        "1/mm",
+        "Surface area divided by the volume of the surface mesh, in 1/mm. Larger for small, thin or irregular segments.",
+    ),
+    shape(
+        "shape.compactness_1",
+        "Compactness 1",
+        "",
+        "V / (sqrt(pi) * A^(3/2)) with the mesh volume V and the surface area A. About 0.053 (1 / 6 pi) for a perfect sphere, smaller for other shapes.",
+    ),
+    shape(
+        "shape.compactness_2",
+        "Compactness 2",
+        "",
+        "36 pi V^2 / A^3 with the mesh volume V and the surface area A: 1 for a perfect sphere, smaller for other shapes (the cube of the sphericity).",
+    ),
+    shape(
+        "shape.sphericity",
+        "Sphericity",
+        "",
+        "(36 pi V^2)^(1/3) / A with the mesh volume V and the surface area A: 1 for a perfect sphere, smaller for any other shape. A mesh of a binary mask gives about 0.93 even for a ball.",
+    ),
+    shape(
+        "shape.spherical_disproportion",
+        "Spherical disproportion",
+        "",
+        "A / (4 pi R^2) with the surface area A and R = (3 V / 4 pi)^(1/3) from the mesh volume V: 1 for a perfect sphere, larger for other shapes (the inverse of the sphericity).",
+    ),
+    shape(
+        "shape.major_axis_mm",
+        "Major axis",
+        "mm",
+        "4 sqrt(l1) where l1 is the largest eigenvalue of the covariance matrix of the voxel centres in patient millimetres (population covariance, divisor N). For a solid ellipsoid with semi-axis a this is 4 a / sqrt(5), about 1.79 a.",
+    ),
+    shape(
+        "shape.minor_axis_mm",
+        "Minor axis",
+        "mm",
+        "4 sqrt(l2) where l2 is the second eigenvalue of the covariance matrix of the voxel centres in patient millimetres (population covariance).",
+    ),
+    shape(
+        "shape.least_axis_mm",
+        "Least axis",
+        "mm",
+        "4 sqrt(l3) where l3 is the smallest eigenvalue of the covariance matrix of the voxel centres in patient millimetres (population covariance). Zero for a segment one voxel thick.",
+    ),
+    shape(
+        "shape.elongation",
+        "Elongation",
+        "",
+        "sqrt(l2 / l1): the minor axis over the major axis. 1 for a round cross-section, towards 0 for a long thin segment. Undefined for a single voxel.",
+    ),
+    shape(
+        "shape.flatness",
+        "Flatness",
+        "",
+        "sqrt(l3 / l1): the least axis over the major axis. 1 for a ball, towards 0 for a flat segment. Undefined for a single voxel.",
+    ),
+    shape(
+        "shape.major_axis_dir_x",
+        "Major axis direction x (left +)",
+        "",
+        "x component of the unit vector along the major axis in patient LPS coordinates (left +), the sign chosen so that the largest component of the vector is positive. Undefined when the axis is not unique: two axes are equally long, or the segment has no extent along it.",
+    ),
+    shape(
+        "shape.major_axis_dir_y",
+        "Major axis direction y (posterior +)",
+        "",
+        "y component of the unit vector along the major axis in patient LPS coordinates (posterior +), the sign chosen so that the largest component of the vector is positive. Undefined when the axis is not unique: two axes are equally long, or the segment has no extent along it.",
+    ),
+    shape(
+        "shape.major_axis_dir_z",
+        "Major axis direction z (superior +)",
+        "",
+        "z component of the unit vector along the major axis in patient LPS coordinates (superior +), the sign chosen so that the largest component of the vector is positive. Undefined when the axis is not unique: two axes are equally long, or the segment has no extent along it.",
+    ),
+    shape(
+        "shape.minor_axis_dir_x",
+        "Minor axis direction x (left +)",
+        "",
+        "x component of the unit vector along the minor axis in patient LPS coordinates (left +), the sign chosen so that the largest component of the vector is positive. Undefined when the axis is not unique: two axes are equally long, or the segment has no extent along it.",
+    ),
+    shape(
+        "shape.minor_axis_dir_y",
+        "Minor axis direction y (posterior +)",
+        "",
+        "y component of the unit vector along the minor axis in patient LPS coordinates (posterior +), the sign chosen so that the largest component of the vector is positive. Undefined when the axis is not unique: two axes are equally long, or the segment has no extent along it.",
+    ),
+    shape(
+        "shape.minor_axis_dir_z",
+        "Minor axis direction z (superior +)",
+        "",
+        "z component of the unit vector along the minor axis in patient LPS coordinates (superior +), the sign chosen so that the largest component of the vector is positive. Undefined when the axis is not unique: two axes are equally long, or the segment has no extent along it.",
+    ),
+    shape(
+        "shape.least_axis_dir_x",
+        "Least axis direction x (left +)",
+        "",
+        "x component of the unit vector along the least axis in patient LPS coordinates (left +), the sign chosen so that the largest component of the vector is positive. Undefined when the axis is not unique: two axes are equally long, or the segment has no extent along it.",
+    ),
+    shape(
+        "shape.least_axis_dir_y",
+        "Least axis direction y (posterior +)",
+        "",
+        "y component of the unit vector along the least axis in patient LPS coordinates (posterior +), the sign chosen so that the largest component of the vector is positive. Undefined when the axis is not unique: two axes are equally long, or the segment has no extent along it.",
+    ),
+    shape(
+        "shape.least_axis_dir_z",
+        "Least axis direction z (superior +)",
+        "",
+        "z component of the unit vector along the least axis in patient LPS coordinates (superior +), the sign chosen so that the largest component of the vector is positive. Undefined when the axis is not unique: two axes are equally long, or the segment has no extent along it.",
     ),
     intensity("intensity.mean", "Mean", "Mean of the voxel values inside the segment."),
     intensity(

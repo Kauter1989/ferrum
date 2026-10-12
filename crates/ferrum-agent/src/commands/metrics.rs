@@ -11,11 +11,16 @@ use super::Ctx;
 use crate::envelope::{AgentError, Output};
 use crate::params::Params;
 
-/// Digits kept in the envelope; counts and whole numbers are unaffected.
-const DIGITS: i32 = 4;
+/// Significant digits kept in the envelope; whole numbers up to a million
+/// are unaffected, and small figures (a compactness of 0.0412) keep theirs.
+const SIGNIFICANT: i32 = 6;
 
 fn round(x: f64) -> f64 {
-    let f = 10f64.powi(DIGITS);
+    if x == 0.0 || !x.is_finite() {
+        return x;
+    }
+    let decimals = (SIGNIFICANT - 1 - x.abs().log10().floor() as i32).clamp(0, 15);
+    let f = 10f64.powi(decimals);
     (x * f).round() / f
 }
 
@@ -83,7 +88,8 @@ pub fn metrics(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
         "features": features_json(&result, describe),
         "method": "from the label map and the voxel values; extents are voxel counts × spacing, the centroid is the \
                    mean of the voxel centres in LPS millimetres, percentiles are nearest rank, std is the population \
-                   standard deviation",
+                   standard deviation; shape: area and volume of a marching-cubes surface mesh, principal axes from \
+                   the population covariance of the voxel centres in millimetres; six significant digits",
     }));
     for w in &result.warnings {
         out = out.warn(w.clone());

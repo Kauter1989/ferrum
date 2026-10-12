@@ -16,6 +16,7 @@ follow [Semantic Versioning](https://semver.org/).
   its version and the parameters. Intensity features need a CT study:
   NIfTI without a declared modality is refused with a hint. `stats` now
   uses the same statistics, with unchanged output.
+- Agent: `segment metrics --profile clinical` (0.1) adds the shape of a segment: area and volume of a marching-cubes surface mesh (built without a lookup table, closed and outward-wound), surface-to-volume ratio, compactness 1 and 2, sphericity, spherical disproportion, and the principal axes (lengths, elongation, flatness, directions in LPS). A mesh of a binary mask is rougher than the smooth shape: a ball comes out about 7 % larger in area.
 - Desktop: a ruler button on each segment opens a metrics card (size and
   HU statistics, units, a definition on hover, a note while the segment is
   only a proposal, "out of date" when the segment changed). A NIfTI file,

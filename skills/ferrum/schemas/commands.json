@@ -2217,7 +2217,7 @@
     }
   },
   "segment metrics": {
-    "description": "Quantitative profile of a segment from its voxels and values: size (volume, extent, centroid in LPS mm, axial axes, largest slices) and first-order HU statistics (mean, std, min, max, percentiles, range, IQR). The result names the profile and its version and records every parameter. Intensity features need a CT study in HU: a NIfTI file without a declared modality is refused (declare it with study open --modality CT). Never read these numbers off an image.",
+    "description": "Quantitative profile of a segment from its voxels and values: size (volume, extent, centroid in LPS mm, axial axes, largest slices), with profile clinical also shape (surface area, compactness, sphericity, principal axes and their directions), and first-order HU statistics (mean, std, min, max, percentiles, range, IQR). The result names the profile and its version and records every parameter. Intensity features need a CT study in HU: a NIfTI file without a declared modality is refused (declare it with study open --modality CT). Never read these numbers off an image.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -2233,9 +2233,10 @@
         "profile": {
           "type": "string",
           "enum": [
-            "quick"
+            "quick",
+            "clinical"
           ],
-          "description": "which features to compute (default quick: size and first-order statistics)"
+          "description": "which features to compute (default quick: size and first-order statistics; clinical adds the shape)"
         },
         "describe": {
           "type": "boolean",
