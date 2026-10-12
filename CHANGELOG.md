@@ -6,6 +6,17 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Agent: `segment metrics` (`--profile quick`, `--describe`) gives the size
+  and first-order HU statistics of a segment in one call, from a new pure
+  crate `ferrum-radiomics` ([design](docs/radiomics.md),
+  [ADR 0011](docs/decisions/0011-radiomics-crate.md)). Every feature has
+  a stable id, a unit and a definition; the result names the profile and
+  its version and the parameters. Intensity features need a CT study:
+  NIfTI without a declared modality is refused with a hint. `stats` now
+  uses the same statistics, with unchanged output.
+
 ### Changed
 
 - Desktop: the region tool segments whole organs on noisy images. The

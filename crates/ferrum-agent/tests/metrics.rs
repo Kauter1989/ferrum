@@ -1,0 +1,285 @@
+//! `segment metrics` (Stage 18, `docs/radiomics.md`): the quantitative
+//! profile of a segment through the public envelope, on phantoms with
+//! known answers — a NIfTI study (no modality until declared) and a DICOM
+//! CT series generated at run time.
+#![allow(missing_docs, clippy::unwrap_used, clippy::expect_used)]
+
+use std::path::{Path, PathBuf};
+
+use dicom_core::{DataElement, PrimitiveValue, VR};
+use dicom_dictionary_std::{tags, uids};
+use dicom_object::{FileMetaTableBuilder, InMemDicomObject};
+use ferrum_agent::Agent;
+use serde_json::{json, Value};
+
+struct Fixture {
+    _dir: tempfile::TempDir,
+    nifti: PathBuf,
+    ws: String,
+    agent: Agent,
+}
+
+fn fixture() -> Fixture {
+    let dir = tempfile::tempdir().unwrap();
+    let nifti = ferrum_agent::evals::write_phantoms(&dir.path().join("in")).unwrap().remove(0);
+    let ws = dir.path().join("ws/ct1").to_string_lossy().into_owned();
+    Fixture { _dir: dir, nifti, ws, agent: Agent::default() }
+}
+
+impl Fixture {
+    fn run(&self, command: &str, extra: Value) -> Value {
+        let mut p = json!({ "workspace": self.ws });
+        p.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        self.agent.run(command, &p)
+    }
+
+    fn ok(&self, command: &str, extra: Value) -> Value {
+        let e = self.run(command, extra);
+        assert_eq!(e["ok"], true, "{command}: {e:#}");
+        e["data"].clone()
+    }
+
+    fn err(&self, command: &str, extra: Value) -> Value {
+        let e = self.run(command, extra);
+        assert_eq!(e["ok"], false, "{command} should fail: {e:#}");
+        e["error"].clone()
+    }
+
+    /// Opens the NIfTI phantom, declared as CT unless `modality` is `None`,
+    /// and cuts the cube (216 voxels of 1000 HU) and the sphere out of it.
+    fn open(&self, modality: Option<&str>) {
+        let mut p = json!({ "path": self.nifti });
+        if let Some(m) = modality {
+            p["modality"] = json!(m);
+        }
+        self.ok("study open", p);
+        self.ok(
+            "segment threshold",
+            json!({ "seed": { "voxel": [30, 30, 14] }, "min": 500, "max": 1500, "name": "Cube" }),
+        );
+        self.ok(
+            "segment threshold",
+            json!({ "seed": { "voxel": [14, 20, 15] }, "min": 50, "max": 150, "name": "Sphere" }),
+        );
+    }
+}
+
+fn value(data: &Value, id: &str) -> f64 {
+    data["features"][id]["value"].as_f64().unwrap_or_else(|| panic!("{id}: {:#}", data["features"][id]))
+}
+
+fn close(a: f64, b: f64, tol: f64, what: &str) {
+    assert!((a - b).abs() <= tol, "{what}: {a} != {b}");
+}
+
+// covers 18.1-c, 18.2-a, 18.2-b, 18.3-c
+#[test]
+fn the_quick_profile_of_the_cube_has_the_known_answers() {
+    let f = fixture();
+    f.open(Some("ct"));
+    let m = f.ok("segment metrics", json!({ "segment": 1 }));
+    assert_eq!((m["profile"]["name"].as_str(), m["profile"]["version"].as_str()), (Some("quick"), Some("0.1")));
+    assert_eq!((m["unit"].as_str(), m["params"]["preprocessing"].as_str()), (Some("HU"), Some("none")));
+    assert_eq!(m["segment"]["label"], 1);
+    assert_eq!(m["segment"]["provenance"]["status"], "proposed", "the segment's provenance travels with its numbers");
+    // 6 x 6 x 6 voxels of 1 x 1 x 2 mm
+    assert_eq!(value(&m, "size.voxels"), 216.0);
+    assert_eq!(value(&m, "size.volume_mm3"), 432.0);
+    assert_eq!(value(&m, "size.volume_ml"), 0.432);
+    assert_eq!(
+        [value(&m, "size.extent_i_mm"), value(&m, "size.extent_j_mm"), value(&m, "size.extent_k_mm")],
+        [6.0, 6.0, 12.0]
+    );
+    // centroid voxel (30.5, 30.5, 14.5) with origin (-20, -20, 100) mm and 1 x 1 x 2 mm spacing
+    assert_eq!(
+        [value(&m, "size.centroid_x_mm"), value(&m, "size.centroid_y_mm"), value(&m, "size.centroid_z_mm")],
+        [10.5, 10.5, 129.0]
+    );
+    // every voxel is 1000 HU
+    for id in ["intensity.mean", "intensity.min", "intensity.max", "intensity.p5", "intensity.p50", "intensity.p95"] {
+        close(value(&m, id), 1000.0, 0.1, id);
+        assert_eq!(m["features"][id]["unit"], "HU");
+    }
+    for id in ["intensity.std", "intensity.range", "intensity.iqr"] {
+        close(value(&m, id), 0.0, 0.1, id);
+    }
+    assert_eq!(m["features"]["size.volume_ml"]["unit"], "mL");
+}
+
+// covers 18.2-d, 18.3-a
+#[test]
+fn size_equals_segment_shape_and_intensity_equals_stats() {
+    let f = fixture();
+    f.open(Some("ct"));
+    for label in [1, 2] {
+        let m = f.ok("segment metrics", json!({ "segment": label }));
+        let shape = &f.ok("segment shape", json!({ "segment": label }))["shape"];
+        for (id, key) in [("size.extent_i_mm", 0), ("size.extent_j_mm", 1), ("size.extent_k_mm", 2)] {
+            close(value(&m, id), shape["extent_mm"][key].as_f64().unwrap(), 0.01, id);
+        }
+        close(value(&m, "size.long_axis_mm"), shape["long_axis"]["mm"].as_f64().unwrap(), 0.01, "long axis");
+        close(value(&m, "size.short_axis_mm"), shape["short_axis"]["mm"].as_f64().unwrap(), 0.01, "short axis");
+        assert_eq!(value(&m, "size.largest_slice_axial"), shape["slices"]["axial"]["largest"].as_f64().unwrap());
+        assert_eq!(value(&m, "size.largest_slice_coronal"), shape["slices"]["coronal"]["largest"].as_f64().unwrap());
+        assert_eq!(value(&m, "size.largest_slice_sagittal"), shape["slices"]["sagittal"]["largest"].as_f64().unwrap());
+        close(value(&m, "size.volume_ml"), shape["volume_ml"].as_f64().unwrap(), 0.0005, "volume");
+
+        let stats = f.ok("stats", json!({ "segment": label }));
+        close(value(&m, "intensity.mean"), stats["mean"].as_f64().unwrap(), 0.005, "mean");
+        close(value(&m, "intensity.std"), stats["std"].as_f64().unwrap(), 0.005, "std");
+        // `stats` leaves the percentiles unrounded, the envelope of the metrics keeps four digits
+        for (id, p) in
+            [("intensity.p5", "p5"), ("intensity.p25", "p25"), ("intensity.p50", "p50"), ("intensity.p95", "p95")]
+        {
+            close(value(&m, id), stats["percentiles"][p].as_f64().unwrap(), 0.0001, id);
+        }
+        assert_eq!(value(&m, "size.voxels"), stats["voxels"].as_f64().unwrap());
+    }
+}
+
+// covers 18.3-e
+#[test]
+fn a_study_without_a_modality_is_refused_with_a_hint_and_the_shape_still_works() {
+    let f = fixture();
+    f.open(None);
+    let e = f.err("segment metrics", json!({ "segment": 1 }));
+    assert_eq!(e["code"], "bad_request");
+    assert!(e["message"].as_str().unwrap().contains("unit of the voxel values is unknown"), "{e:#}");
+    assert!(e["hint"].as_str().unwrap().contains("--modality CT"), "{e:#}");
+    f.ok("segment shape", json!({ "segment": 1 }));
+
+    // declaring MR does not make HU of it
+    f.ok("study open", json!({ "path": f.nifti, "modality": "mr" }));
+    let mr = f.err("segment metrics", json!({ "segment": 1 }));
+    assert!(mr["message"].as_str().unwrap().contains("MR"), "{mr:#}");
+
+    // declared CT: the same call now works, in HU
+    f.ok("study open", json!({ "path": f.nifti, "modality": "ct" }));
+    let ct = f.ok("segment metrics", json!({ "segment": 1 }));
+    assert_eq!(ct["unit"], "HU");
+    assert_eq!(value(&ct, "size.voxels"), 216.0);
+}
+
+// covers 18.1-b, 18.2-f, 18.4-g
+#[test]
+fn errors_are_specific_and_describe_adds_the_definitions() {
+    let f = fixture();
+    f.open(Some("ct"));
+    let bad = f.err("segment metrics", json!({ "segment": 1, "profile": "everything" }));
+    assert_eq!(bad["code"], "bad_request");
+    assert!(bad["message"].as_str().unwrap().contains("quick"), "the known profiles are listed: {bad:#}");
+    assert_eq!(f.err("segment metrics", json!({ "segment": 99 }))["code"], "not_found");
+    let plain = f.ok("segment metrics", json!({ "segment": 2 }));
+    assert!(plain["features"].as_object().unwrap().values().all(|v| v.get("definition").is_none()));
+    let described = f.ok("segment metrics", json!({ "segment": 2, "describe": true }));
+    let features = described["features"].as_object().unwrap();
+    assert_eq!(features.len(), plain["features"].as_object().unwrap().len());
+    for (id, v) in features {
+        assert!(v["definition"].as_str().unwrap().len() > 20, "{id} has no definition");
+    }
+    assert!(features["intensity.std"]["definition"].as_str().unwrap().contains("Population"));
+
+    // a segment that exists but holds no voxels: cut the cube away with a box elsewhere
+    let cut = json!({ "segment": 1, "op": "restrict_to_box", "box": { "min": { "voxel": [0, 0, 0] }, "max": { "voxel": [2, 2, 2] } } });
+    f.ok("segment edit", cut);
+    let empty = f.err("segment metrics", json!({ "segment": 1 }));
+    assert_eq!(empty["code"], "not_found", "{empty:#}");
+    assert!(empty["message"].as_str().unwrap().contains("no voxels"), "{empty:#}");
+}
+
+// covers 18.1-c
+#[test]
+fn the_same_call_gives_the_same_numbers_bit_for_bit() {
+    let f = fixture();
+    f.open(Some("ct"));
+    let (a, b) = (f.ok("segment metrics", json!({ "segment": 2 })), f.ok("segment metrics", json!({ "segment": 2 })));
+    assert_eq!(a, b);
+}
+
+/// 16 x 16 x 8 CT in HU: air (-1000) and a block of 400 HU (voxels 5..11 in i
+/// and j, slices 2..6), 1 x 1 x 2 mm, with a `CT` modality in the header.
+fn write_ct(dir: &Path) {
+    std::fs::create_dir_all(dir).unwrap();
+    for k in 0..8u32 {
+        let pixels: Vec<u16> = (0..256u32)
+            .map(|p| {
+                let (i, j) = (p % 16, p / 16);
+                // stored = HU + 1024
+                if (5..11).contains(&i) && (5..11).contains(&j) && (2..6).contains(&k) {
+                    1424
+                } else {
+                    24
+                }
+            })
+            .collect();
+        let text = |t, vr, v: &str| DataElement::new(t, vr, PrimitiveValue::from(v));
+        let uid = "1.2.826.0.1.3680043.8.498.777";
+        let elements = vec![
+            text(tags::SOP_CLASS_UID, VR::UI, uids::CT_IMAGE_STORAGE),
+            text(tags::SOP_INSTANCE_UID, VR::UI, &format!("{uid}.{}", k + 1)),
+            text(tags::MODALITY, VR::CS, "CT"),
+            text(tags::STUDY_INSTANCE_UID, VR::UI, "1.2.826.0.1.3680043.8.498.776"),
+            text(tags::SERIES_INSTANCE_UID, VR::UI, uid),
+            text(tags::INSTANCE_NUMBER, VR::IS, &(k + 1).to_string()),
+            text(tags::IMAGE_POSITION_PATIENT, VR::DS, &format!("-8\\-8\\{}", f64::from(k) * 2.0)),
+            text(tags::IMAGE_ORIENTATION_PATIENT, VR::DS, "1\\0\\0\\0\\1\\0"),
+            text(tags::PIXEL_SPACING, VR::DS, "1\\1"),
+            text(tags::SLICE_THICKNESS, VR::DS, "2"),
+            text(tags::PHOTOMETRIC_INTERPRETATION, VR::CS, "MONOCHROME2"),
+            text(tags::RESCALE_SLOPE, VR::DS, "1"),
+            text(tags::RESCALE_INTERCEPT, VR::DS, "-1024"),
+            DataElement::new(tags::SAMPLES_PER_PIXEL, VR::US, PrimitiveValue::from(1u16)),
+            DataElement::new(tags::ROWS, VR::US, PrimitiveValue::from(16u16)),
+            DataElement::new(tags::COLUMNS, VR::US, PrimitiveValue::from(16u16)),
+            DataElement::new(tags::BITS_ALLOCATED, VR::US, PrimitiveValue::from(16u16)),
+            DataElement::new(tags::BITS_STORED, VR::US, PrimitiveValue::from(16u16)),
+            DataElement::new(tags::HIGH_BIT, VR::US, PrimitiveValue::from(15u16)),
+            DataElement::new(tags::PIXEL_REPRESENTATION, VR::US, PrimitiveValue::from(0u16)),
+            DataElement::new(tags::PIXEL_DATA, VR::OW, PrimitiveValue::U16(pixels.into())),
+        ];
+        let obj = InMemDicomObject::from_element_iter(elements);
+        let file = obj.with_meta(FileMetaTableBuilder::new().transfer_syntax(uids::EXPLICIT_VR_LITTLE_ENDIAN)).unwrap();
+        file.write_to_file(dir.join(format!("{k:03}.dcm"))).unwrap();
+    }
+}
+
+// covers 18.3-c
+#[test]
+fn a_dicom_ct_series_is_in_hu_without_being_told() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("series");
+    write_ct(&src);
+    let ws = dir.path().join("ws/ct").to_string_lossy().into_owned();
+    let agent = Agent::default();
+    let run = |c: &str, extra: Value| {
+        let mut p = json!({ "workspace": ws });
+        p.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        let e = agent.run(c, &p);
+        assert_eq!(e["ok"], true, "{c}: {e:#}");
+        e["data"].clone()
+    };
+    run("study open", json!({ "path": src }));
+    run("segment threshold", json!({ "seed": { "voxel": [8, 8, 3] }, "min": 300, "max": 500 }));
+    let m = run("segment metrics", json!({ "segment": 1 }));
+    assert_eq!(m["unit"], "HU");
+    // 6 x 6 x 4 voxels of 1 x 1 x 2 mm, all 400 HU; origin (-8, -8, 0)
+    assert_eq!(value(&m, "size.voxels"), 144.0);
+    assert_eq!(value(&m, "size.volume_mm3"), 288.0);
+    assert_eq!([value(&m, "size.centroid_x_mm"), value(&m, "size.centroid_y_mm")], [-8.0 + 7.5, -8.0 + 7.5]);
+    assert_eq!(value(&m, "size.centroid_z_mm"), 7.0);
+    close(value(&m, "intensity.mean"), 400.0, 1e-6, "mean");
+    close(value(&m, "intensity.std"), 0.0, 1e-6, "std");
+}
+
+// covers 18.4-a
+#[test]
+fn the_schema_lists_exactly_the_registered_profiles() {
+    let (description, schema) =
+        ferrum_agent::schema::command_schema("segment metrics").expect("the command has a schema");
+    assert!(description.contains("Quantitative profile"));
+    let listed: Vec<&str> =
+        schema["properties"]["profile"]["enum"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+    let registered: Vec<&str> = ferrum_radiomics::PROFILES.iter().map(|p| p.name).collect();
+    assert_eq!(listed, registered, "the schema and the registry must not drift apart");
+    assert_eq!(schema["required"], json!(["workspace", "segment"]));
+}

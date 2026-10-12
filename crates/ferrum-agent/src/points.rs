@@ -67,8 +67,7 @@ pub fn patient_to_voxel(volume: &Volume, p: DVec3) -> DVec3 {
 
 /// LPS patient coordinates of continuous voxel `v`.
 pub fn voxel_to_patient(volume: &Volume, v: DVec3) -> DVec3 {
-    let g = volume.geometry();
-    g.origin.as_dvec3() + g.direction.as_dmat3() * (v * volume.spacing().as_dvec3())
+    volume.voxel_to_patient_f64(v)
 }
 
 /// Resolves a point to continuous voxel coordinates. `renders` is the

@@ -12,6 +12,7 @@ ferrum-domain.workspace = true
 ferrum-io.workspace = true
 ferrum-render.workspace = true
 ferrum-engines.workspace = true
+ferrum-radiomics.workspace = true
 glam.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

@@ -114,7 +114,8 @@ voxel segment) until PR 6 measures it with a benchmark in
 ### 3.3 Profiles
 
 `quick`: size, first-order. `clinical`: `quick` plus shape, hull,
-topology and distribution. Both are `0.x` until Phase 3 is released and
+topology and distribution; it is registered with its first additional
+features (PR 3), so that no profile is an alias of another. Both are `0.x` until Phase 3 is released and
 `1` afterwards; the result always names profile and version. A feature
 added to a profile is a version bump.
 
