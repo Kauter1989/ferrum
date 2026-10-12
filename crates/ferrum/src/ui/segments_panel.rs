@@ -23,6 +23,8 @@ pub struct SegmentsPanelState {
     pub import_labels: bool,
     /// Set when the user asks to export the label map.
     pub export_labels: bool,
+    /// The segment whose metrics card is open.
+    metrics_for: Option<u8>,
 }
 
 /// What the user did on one row.
@@ -33,6 +35,7 @@ enum RowAction {
     Visible(bool),
     Opacity(f32),
     Review(ReviewStatus),
+    Metrics,
     Delete,
 }
 
@@ -90,14 +93,43 @@ pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut SegmentsPanelSta
                 }
                 Ok(())
             }
+            RowAction::Metrics => {
+                toggle_metrics(viewer, state, label);
+                Ok(())
+            }
             RowAction::Delete => {
                 state.name_edits.remove(&label);
+                if state.metrics_for == Some(label) {
+                    state.metrics_for = None;
+                }
                 viewer.remove_segment(label)
             }
         };
         if let Err(e) = result {
             viewer.status.errors.push(e.to_string());
         }
+        if state.metrics_for == Some(label) {
+            super::metrics_card::card(ui, viewer, label, &row.segment.name, row.segment.provenance.status);
+        }
+    }
+    if state.metrics_for.is_none() {
+        ui.label(
+            RichText::new("Press the ruler on a segment to measure it: size and HU statistics.")
+                .size(12.0)
+                .color(TEXT_DIM),
+        );
+    }
+}
+
+/// Opens or closes the metrics card of segment `label`; opening measures.
+fn toggle_metrics(viewer: &mut Viewer, state: &mut SegmentsPanelState, label: u8) {
+    if state.metrics_for == Some(label) {
+        state.metrics_for = None;
+        return;
+    }
+    state.metrics_for = Some(label);
+    if let Err(e) = viewer.request_segment_metrics(label, &ferrum_radiomics::QUICK) {
+        viewer.status.errors.push(e);
     }
 }
 
@@ -118,7 +150,7 @@ fn segment_row(ui: &mut egui::Ui, row: &SegmentSummary, state: &mut SegmentsPane
                 action = RowAction::Color(color);
             }
             let buf = state.name_edits.entry(s.label).or_insert_with(|| s.name.clone());
-            let used = ui.min_rect().width() + 2.0 * super::widgets::TOOL + 3.0 * ui.spacing().item_spacing.x;
+            let used = ui.min_rect().width() + 3.0 * super::widgets::TOOL + 4.0 * ui.spacing().item_spacing.x;
             let edit = ui.add(egui::TextEdit::singleline(buf).desired_width((inner_width - used).max(60.0)));
             edit.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Segment name"));
             if edit.changed() && !buf.trim().is_empty() {
@@ -130,6 +162,10 @@ fn segment_row(ui: &mut egui::Ui, row: &SegmentSummary, state: &mut SegmentsPane
             let (eye, verb) = if s.visible { (icon::EYE, "Hide") } else { (icon::EYE_SLASH, "Show") };
             if tool_button(ui, eye, &format!("{verb} {}", s.name), false).clicked() {
                 action = RowAction::Visible(!s.visible);
+            }
+            let open = state.metrics_for == Some(s.label);
+            if tool_button(ui, icon::RULER, &format!("Measure {}", s.name), open).clicked() {
+                action = RowAction::Metrics;
             }
             if tool_button(ui, icon::TRASH, &format!("Delete {}", s.name), false).clicked() {
                 action = RowAction::Delete;

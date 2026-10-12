@@ -37,6 +37,8 @@ pub enum Unit {
 pub struct Feature {
     /// Stable id, `family.name`; never reused for another meaning.
     pub id: &'static str,
+    /// Short name for people, as the desktop app shows it.
+    pub label: &'static str,
     /// Group of the feature.
     pub family: Family,
     /// Unit of its value.
@@ -50,116 +52,150 @@ pub struct Feature {
     pub needs_unit: bool,
 }
 
-const fn feature(id: &'static str, family: Family, unit: Unit, definition: &'static str, needs_unit: bool) -> Feature {
-    Feature { id, family, unit, definition, since: "stage 18", needs_unit }
+const fn feature(
+    id: &'static str,
+    label: &'static str,
+    family: Family,
+    unit: Unit,
+    definition: &'static str,
+    needs_unit: bool,
+) -> Feature {
+    Feature { id, label, family, unit, definition, since: "stage 18", needs_unit }
 }
 
-const fn size(id: &'static str, unit: &'static str, definition: &'static str) -> Feature {
-    feature(id, Family::Size, Unit::Fixed(unit), definition, false)
+const fn size(id: &'static str, label: &'static str, unit: &'static str, definition: &'static str) -> Feature {
+    feature(id, label, Family::Size, Unit::Fixed(unit), definition, false)
 }
 
-const fn intensity(id: &'static str, definition: &'static str) -> Feature {
-    feature(id, Family::Intensity, Unit::Value, definition, true)
+const fn intensity(id: &'static str, label: &'static str, definition: &'static str) -> Feature {
+    feature(id, label, Family::Intensity, Unit::Value, definition, true)
 }
 
 /// Every registered feature, in the order profiles list them.
 pub const FEATURES: &[Feature] = &[
-    size("size.voxels", "", "Number of voxels labelled with the segment."),
+    size("size.voxels", "Voxels", "", "Number of voxels labelled with the segment."),
     size(
         "size.volume_mm3",
+        "Volume (mm³)",
         "mm3",
         "Voxel count times the volume of one voxel (spacing x times y times z), in cubic millimetres.",
     ),
-    size("size.volume_ml", "mL", "size.volume_mm3 divided by 1000; one millilitre is 1000 cubic millimetres."),
+    size(
+        "size.volume_ml",
+        "Volume",
+        "mL",
+        "size.volume_mm3 divided by 1000; one millilitre is 1000 cubic millimetres.",
+    ),
     size(
         "size.extent_i_mm",
+        "Extent along i",
         "mm",
         "Extent of the bounding box along grid axis i (columns): voxels from the first to the last labelled \
          voxel times the spacing along i, in mm.",
     ),
     size(
         "size.extent_j_mm",
+        "Extent along j",
         "mm",
         "Extent of the bounding box along grid axis j (rows): voxels from the first to the last labelled voxel \
          times the spacing along j, in mm.",
     ),
     size(
         "size.extent_k_mm",
+        "Extent along k",
         "mm",
         "Extent of the bounding box along grid axis k (slices): voxels from the first to the last labelled \
          voxel times the spacing along k, in mm.",
     ),
     size(
         "size.centroid_x_mm",
+        "Centroid x (left +)",
         "mm",
         "x of the centroid (the mean of the voxel centres) in patient LPS coordinates, in mm; +x is the \
          patient's left.",
     ),
     size(
         "size.centroid_y_mm",
+        "Centroid y (posterior +)",
         "mm",
         "y of the centroid (the mean of the voxel centres) in patient LPS coordinates, in mm; +y is posterior.",
     ),
     size(
         "size.centroid_z_mm",
+        "Centroid z (superior +)",
         "mm",
         "z of the centroid (the mean of the voxel centres) in patient LPS coordinates, in mm; +z is superior.",
     ),
     size(
         "size.long_axis_mm",
+        "Long axis (axial)",
         "mm",
         "Longest distance between two voxel centres on the axial slice with the most voxels of the segment, in \
          mm. Uncertain by one in-plane voxel spacing.",
     ),
     size(
         "size.short_axis_mm",
+        "Short axis (axial)",
         "mm",
         "Longest extent perpendicular to size.long_axis_mm on the same axial slice, in mm.",
     ),
     size(
         "size.largest_slice_axial",
+        "Largest axial slice",
         "",
         "1-based number of the axial slice (along k) with the most voxels of the segment.",
     ),
     size(
         "size.largest_slice_coronal",
+        "Largest coronal slice",
         "",
         "1-based number of the coronal slice (along j) with the most voxels of the segment.",
     ),
     size(
         "size.largest_slice_sagittal",
+        "Largest sagittal slice",
         "",
         "1-based number of the sagittal slice (along i) with the most voxels of the segment.",
     ),
-    intensity("intensity.mean", "Mean of the voxel values inside the segment."),
+    intensity("intensity.mean", "Mean", "Mean of the voxel values inside the segment."),
     intensity(
         "intensity.std",
+        "Standard deviation",
         "Population standard deviation (divisor N, not N - 1) of the voxel values inside the segment.",
     ),
-    intensity("intensity.min", "Lowest voxel value inside the segment."),
-    intensity("intensity.max", "Highest voxel value inside the segment."),
-    intensity("intensity.range", "intensity.max minus intensity.min."),
+    intensity("intensity.min", "Minimum", "Lowest voxel value inside the segment."),
+    intensity("intensity.max", "Maximum", "Highest voxel value inside the segment."),
+    intensity("intensity.range", "Range", "intensity.max minus intensity.min."),
     intensity(
         "intensity.p5",
+        "5th percentile",
         "5th percentile of the voxel values, nearest rank: the sorted value at index round((N - 1) * 0.05).",
     ),
     intensity(
         "intensity.p25",
+        "25th percentile",
         "25th percentile of the voxel values, nearest rank: the sorted value at index round((N - 1) * 0.25).",
     ),
     intensity(
         "intensity.p50",
+        "Median",
         "Median (50th percentile) of the voxel values, nearest rank: the sorted value at index round((N - 1) * 0.5).",
     ),
     intensity(
         "intensity.p75",
+        "75th percentile",
         "75th percentile of the voxel values, nearest rank: the sorted value at index round((N - 1) * 0.75).",
     ),
     intensity(
         "intensity.p95",
+        "95th percentile",
         "95th percentile of the voxel values, nearest rank: the sorted value at index round((N - 1) * 0.95).",
     ),
-    intensity("intensity.iqr", "Interquartile range: intensity.p75 minus intensity.p25 (nearest-rank percentiles)."),
+    intensity(
+        "intensity.iqr",
+        "Interquartile range",
+        "Interquartile range: intensity.p75 minus intensity.p25 (nearest-rank percentiles).",
+    ),
 ];
 
 /// The registered feature with `id`.
@@ -184,6 +220,7 @@ mod tests {
             assert!(!name.is_empty());
             assert!(f.definition.len() > 20, "{} has no real definition", f.id);
             assert!(!f.since.is_empty(), "{} has no origin", f.id);
+            assert!(!f.label.is_empty(), "{} has no label", f.id);
         }
     }
 
@@ -196,6 +233,14 @@ mod tests {
             assert!(feature_by_id(id).unwrap().definition.contains("nearest rank"), "{id}");
         }
         assert!(feature_by_id("intensity.iqr").unwrap().definition.contains("nearest-rank"));
+    }
+
+    #[test]
+    fn labels_are_unique_within_a_family() {
+        let mut seen = HashSet::new();
+        for f in FEATURES {
+            assert!(seen.insert((f.family, f.label)), "two {} features are called {:?}", f.family.name(), f.label);
+        }
     }
 
     #[test]

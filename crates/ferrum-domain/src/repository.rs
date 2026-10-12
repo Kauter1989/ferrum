@@ -128,6 +128,17 @@ pub struct SeriesMetadata {
     pub source: PathBuf,
 }
 
+/// The DICOM modality code (`CT`, `MR`, …) that `text` stands for, in upper
+/// case, or why it is not one. A NIfTI file carries no modality; the person
+/// who opens it declares one.
+pub fn parse_modality(text: &str) -> Result<String, String> {
+    let m = text.trim().to_ascii_uppercase();
+    if m.is_empty() || m.len() > 16 || !m.bytes().all(|b| b.is_ascii_alphanumeric()) {
+        return Err(format!("modality {text:?} is not a DICOM modality code (e.g. CT, MR, PT)"));
+    }
+    Ok(m)
+}
+
 /// A fully loaded series.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LoadedSeries {
@@ -167,5 +178,14 @@ mod tests {
     fn errors_have_messages() {
         assert_eq!(RepositoryError::Cancelled.to_string(), "operation cancelled");
         assert!(RepositoryError::Corrupt("x".into()).to_string().contains('x'));
+    }
+
+    #[test]
+    fn modality_codes_are_normalised_or_refused() {
+        assert_eq!(parse_modality(" ct ").unwrap(), "CT");
+        assert_eq!(parse_modality("Mr").unwrap(), "MR");
+        for bad in ["", "   ", "C T", "CT!", "ABCDEFGHIJKLMNOPQ"] {
+            assert!(parse_modality(bad).is_err(), "{bad:?}");
+        }
     }
 }

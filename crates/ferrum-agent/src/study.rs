@@ -229,11 +229,8 @@ impl Study {
     /// saves it in the workspace. A source with its own modality keeps it:
     /// declaring another one is a `bad_request`.
     pub fn declare_modality(&mut self, modality: &str) -> Result<(), AgentError> {
-        let m = modality.trim().to_ascii_uppercase();
-        if m.is_empty() || m.len() > 16 || !m.bytes().all(|b| b.is_ascii_alphanumeric()) {
-            return Err(AgentError::bad_request(format!("modality {modality:?} is not a DICOM modality code"))
-                .hint("e.g. CT, MR, PT"));
-        }
+        let m =
+            ferrum_domain::parse_modality(modality).map_err(|e| AgentError::bad_request(e).hint("e.g. CT, MR, PT"))?;
         let declared = self.workspace.manifest().modality.is_some();
         if !declared && !self.metadata.modality.is_empty() {
             if self.metadata.modality.eq_ignore_ascii_case(&m) {
