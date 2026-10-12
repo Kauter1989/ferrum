@@ -16,6 +16,12 @@ follow [Semantic Versioning](https://semver.org/).
   its version and the parameters. Intensity features need a CT study:
   NIfTI without a declared modality is refused with a hint. `stats` now
   uses the same statistics, with unchanged output.
+- Desktop: a ruler button on each segment opens a metrics card (size and
+  HU statistics, units, a definition on hover, a note while the segment is
+  only a proposal, "out of date" when the segment changed). A NIfTI file,
+  which says nothing about what it is, asks for its image type when it is
+  opened; the answer is kept in the workspace, as `study open --modality`
+  does, and a workspace's modality is applied when it is opened.
 
 ### Changed
 

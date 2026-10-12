@@ -39,11 +39,20 @@ fn phantom_file(dir: &Path) -> PathBuf {
     path
 }
 
-fn loaded_app(dir: &Path, render_state: Option<&egui_wgpu::RenderState>) -> ViewerApp {
+/// The phantom opened as a NIfTI file, which says nothing about what it is:
+/// the app asks (see `a_nifti_file_without_a_modality_asks_what_it_is`).
+fn opened_app(dir: &Path, render_state: Option<&egui_wgpu::RenderState>) -> ViewerApp {
     let repo = Arc::new(ferrum_io::CompositeRepository::default());
     let mut app = ViewerApp::new(render_state, repo, vec![phantom_file(dir)]);
     app.viewer.wait_idle();
     assert!(app.viewer.dataset().is_some(), "{:?}", app.viewer.status);
+    app
+}
+
+/// [`opened_app`] after the person said it is a CT, so that no dialog covers the views.
+fn loaded_app(dir: &Path, render_state: Option<&egui_wgpu::RenderState>) -> ViewerApp {
+    let mut app = opened_app(dir, render_state);
+    app.viewer.declare_modality("CT").unwrap();
     app
 }
 
@@ -548,4 +557,139 @@ fn agent_proposals_are_reviewed_in_the_desktop_app() {
         (ferrum_domain::ReviewStatus::Confirmed, Some("dr.k"), "agent")
     );
     h.get_by_label_contains("Nothing waits for review");
+}
+
+fn proposed_tumour(app: &mut ViewerApp) -> u8 {
+    let label = add_tumour(app);
+    app.viewer
+        .set_segment_provenance(
+            label,
+            ferrum_domain::Provenance::agent(Some("run-1".into()), ferrum_domain::Timestamp(1)),
+        )
+        .unwrap();
+    label
+}
+
+// covers 18.3-f
+#[test]
+fn a_nifti_file_without_a_modality_asks_what_it_is() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = opened_app(dir.path(), None);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1200.0, 800.0))
+        .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
+    h.run();
+    h.get_by_label("Image type");
+    h.get_by_label_contains("does not say what kind of image it is");
+    assert!(h.state().viewer.needs_modality());
+
+    h.get_by_label("CT (HU)").click();
+    h.run();
+    assert_eq!(h.state().viewer.dataset().unwrap().metadata.modality, "CT");
+    assert!(h.query_by_label("Image type").is_none(), "answered: the dialog is gone");
+
+    // "Not now" leaves the type unknown and does not ask again for this image
+    let dir2 = tempfile::tempdir().unwrap();
+    let app = opened_app(dir2.path(), None);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1200.0, 800.0))
+        .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
+    h.run();
+    h.get_by_label("Not now").click();
+    h.run();
+    assert!(h.query_by_label("Image type").is_none());
+    assert!(!h.state().viewer.value_unit().is_known());
+
+    // another type is typed in; a wrong code is refused with the reason
+    let dir3 = tempfile::tempdir().unwrap();
+    let app = opened_app(dir3.path(), None);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1200.0, 800.0))
+        .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
+    h.run();
+    h.get_by_label("MR").click();
+    h.run();
+    assert_eq!(h.state().viewer.dataset().unwrap().metadata.modality, "MR");
+}
+
+// covers 18.4-e
+#[test]
+fn the_metrics_card_shows_values_with_units_and_says_when_a_segment_is_a_proposal() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = loaded_app(dir.path(), None);
+    let label = proposed_tumour(&mut app);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1200.0, 2400.0))
+        .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
+    h.run();
+    h.get_by_label_contains("Press the ruler on a segment");
+
+    h.get_by_label("Measure Tumour").click();
+    h.step(); // the spinner keeps asking for frames while the job runs, so not `run`
+    h.get_by_label("Measuring…");
+    h.state_mut().viewer.wait_idle();
+    h.run();
+    h.get_by_label("Metrics · Tumour");
+    h.get_by_label("proposed · not confirmed by a person");
+    // 16 x 16 x 16 voxels of 1 mm
+    h.get_by_label("4096");
+    h.get_by_label("4.096 mL");
+    h.get_by_label("4096 mm³");
+    h.get_by_label("Mean");
+    assert!(h.get_all_by_label_contains(" HU").count() >= 8, "intensity values carry their unit");
+    assert!(h.query_by_label_contains("Press the ruler on a segment").is_none(), "the hint gives way to the card");
+
+    // a person confirms it: the note goes
+    h.state_mut().viewer.review_segment(label, ferrum_domain::ReviewStatus::Confirmed, Some("dr.k")).unwrap();
+    h.run();
+    assert!(h.query_by_label("proposed · not confirmed by a person").is_none());
+    // the segment changed: the numbers are marked out of date until measured again
+    let bx = ferrum_domain::VoxelBox::new(glam::UVec3::ZERO, glam::UVec3::new(4, 4, 4));
+    h.state_mut().viewer.apply_segment_mask(label, bx, &vec![1; bx.voxel_count()], false).unwrap();
+    h.run();
+    h.get_by_label_contains("Out of date");
+    h.get_by_label("Measure again").click();
+    h.step();
+    h.state_mut().viewer.wait_idle();
+    h.run();
+    assert!(h.query_by_label_contains("Out of date").is_none());
+    h.get_by_label("4160");
+    // the card closes with the same button
+    h.get_by_label("Measure Tumour").click();
+    h.run();
+    assert!(h.query_by_label("Metrics · Tumour").is_none());
+}
+
+// covers 18.4-f
+#[test]
+fn the_metrics_card_explains_an_unknown_image_type_and_recovers_when_it_is_set() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = opened_app(dir.path(), None);
+    proposed_tumour(&mut app);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1200.0, 2400.0))
+        .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
+    h.run();
+    h.get_by_label("Not now").click();
+    h.run();
+
+    h.get_by_label("Measure Tumour").click();
+    h.run();
+    h.get_by_label_contains("image type is not known");
+    assert!(h.query_by_label("Mean").is_none(), "no value is shown from a guessed unit");
+    assert!(h.query_by_label("Image type").is_none(), "the person already said not now");
+
+    // the card leads back to the question; the answer measures
+    h.get_by_label("Set image type…").click();
+    h.run();
+    h.get_by_label("Image type");
+    h.get_by_label("CT (HU)").click();
+    h.run();
+    assert!(h.query_by_label("Image type").is_none());
+    h.get_by_label("Measure").click();
+    h.step();
+    h.state_mut().viewer.wait_idle();
+    h.run();
+    h.get_by_label("Mean");
+    h.get_by_label("4.096 mL");
 }

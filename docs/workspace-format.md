@@ -154,7 +154,9 @@ ws/ct1/
 
 **Modality:** the manifest may hold `"modality": "CT"`: the modality
 declared for a source that carries none (NIfTI) by `study open
---modality`. A DICOM series keeps its own.
+--modality`, or by the person in the desktop app's *Image type* dialog,
+which writes it here and reads it when it opens the workspace. A DICOM
+series keeps its own.
 
 **Sources:**
 - Source files are referenced and hashed (SHA-256), never copied or

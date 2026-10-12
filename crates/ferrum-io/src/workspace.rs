@@ -463,6 +463,17 @@ impl ResultStore for WorkspaceStore {
         self.workspace.save_segments(segments, volume, &self.generator).map_err(|e| e.to_string())
     }
 
+    fn modality(&self) -> Option<String> {
+        // read from the manifest on disk, so a declaration made by the agent meanwhile counts
+        Workspace::open(self.workspace.root()).ok().and_then(|w| w.manifest().modality.clone())
+    }
+
+    fn set_modality(&self, modality: &str) -> Result<(), String> {
+        let m = ferrum_domain::parse_modality(modality)?;
+        let mut w = Workspace::open(self.workspace.root()).map_err(|e| e.to_string())?;
+        w.set_modality(Some(&m)).map_err(|e| e.to_string())
+    }
+
     fn log(&self, d: &ReviewDecision) -> Result<(), String> {
         let (kind, id) = match d.item {
             ReviewItem::Annotation(id) => ("annotation", id),
@@ -648,6 +659,24 @@ mod tests {
         assert_eq!(log[1]["time"], "2026-10-01T00:00:00Z");
         std::fs::write(ws.path(files::AUDIT), "{\n").unwrap();
         assert!(ws.read_audit().is_err());
+    }
+
+    // covers 18.3-f
+    #[test]
+    fn workspace_store_keeps_the_declared_modality_in_the_manifest() {
+        let f = fixture();
+        Workspace::create(&f.root, &f.source, &f.series, "t").unwrap();
+        let store = WorkspaceStore::open(&f.root, "FERRUM test").unwrap();
+        assert_eq!(store.modality(), None, "nothing declared yet");
+        store.set_modality(" ct ").unwrap();
+        assert_eq!(store.modality().as_deref(), Some("CT"), "stored as the DICOM code");
+        // the agent reads the same manifest
+        assert_eq!(Workspace::open(&f.root).unwrap().manifest().modality.as_deref(), Some("CT"));
+        // a declaration made by someone else meanwhile counts, through a store opened earlier
+        Workspace::open(&f.root).unwrap().set_modality(Some("MR")).unwrap();
+        assert_eq!(store.modality().as_deref(), Some("MR"));
+        assert!(store.set_modality("not a code!").is_err());
+        assert_eq!(store.modality().as_deref(), Some("MR"), "a refused declaration changes nothing");
     }
 
     #[test]
