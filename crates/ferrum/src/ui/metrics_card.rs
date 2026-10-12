@@ -42,6 +42,7 @@ pub fn format_value(value: &Value, unit: &str) -> String {
     match unit {
         "" => number,
         "mm3" => format!("{number} mm³"),
+        "mm2" => format!("{number} mm²"),
         u => format!("{number} {u}"),
     }
 }
@@ -67,6 +68,7 @@ pub fn rows(result: &MetricsResult) -> Vec<CardRow> {
 fn family_title(family: Family) -> &'static str {
     match family {
         Family::Size => "Size",
+        Family::Shape => "Shape",
         Family::Intensity => "Intensity",
     }
 }
@@ -153,7 +155,7 @@ fn ready(ui: &mut egui::Ui, label: u8, result: &MetricsResult) {
         .color(TEXT_DIM),
     );
     let all = rows(result);
-    for family in [Family::Size, Family::Intensity] {
+    for family in [Family::Size, Family::Shape, Family::Intensity] {
         let lines: Vec<&CardRow> = all.iter().filter(|r| r.family == family).collect();
         if lines.is_empty() {
             continue;
@@ -261,10 +263,33 @@ mod tests {
     }
 
     #[test]
+    fn the_rows_of_the_clinical_profile_have_a_shape_group_with_units() {
+        use ferrum_domain::{Dims3, MaskRegion, Volume};
+        use ferrum_radiomics::{compute, Input, Params, ValueUnit, CLINICAL};
+        let dims = Dims3::new(8, 8, 8);
+        let volume = Volume::from_physical(dims, glam::Vec3::ONE, &vec![10.0; dims.voxel_count()]).unwrap();
+        let region = MaskRegion::from_grid(dims, |n| n % 8 < 4 && (n / 8) % 8 < 4 && n / 64 < 4).unwrap();
+        let result =
+            compute(&Input { region: &region, volume: &volume, unit: ValueUnit::Hu }, &CLINICAL, &Params::default())
+                .unwrap();
+        let lines = rows(&result);
+        let shape: Vec<&CardRow> = lines.iter().filter(|l| l.family == Family::Shape).collect();
+        assert_eq!(shape.len(), 21);
+        let area = shape.iter().find(|l| l.label == "Surface area").unwrap();
+        assert!(area.value.ends_with(" mm²"), "{}", area.value);
+        // a cube has no unique minor or least axis: the dash, and the reason on hover
+        let tie = shape.iter().find(|l| l.label.starts_with("Minor axis direction x")).unwrap();
+        assert_eq!(tie.value, "—");
+        assert!(tie.reason.as_deref().unwrap_or("").contains("not unique"));
+        assert!(shape.iter().find(|l| l.label == "Sphericity").unwrap().value.parse::<f64>().is_ok());
+    }
+
+    #[test]
     fn values_are_formatted_for_people() {
         assert_eq!(format_value(&Value::Number(64.0), ""), "64");
         assert_eq!(format_value(&Value::Number(0.128), "mL"), "0.128 mL");
         assert_eq!(format_value(&Value::Number(432.0), "mm3"), "432 mm³");
+        assert_eq!(format_value(&Value::Number(326.006), "mm2"), "326.01 mm²");
         assert_eq!(format_value(&Value::Number(-50.0), "HU"), "-50 HU");
         assert_eq!(format_value(&Value::Number(111.80339), "HU"), "111.80 HU");
         assert_eq!(format_value(&Value::Null { reason: "r".into() }, "mm"), "—");

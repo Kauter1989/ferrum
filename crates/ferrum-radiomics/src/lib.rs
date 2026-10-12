@@ -17,16 +17,19 @@ pub mod compute;
 pub mod error;
 pub mod feature;
 pub mod intensity;
+pub mod mesh;
 pub mod params;
+pub mod pca;
 pub mod profile;
 pub mod result;
+pub mod shape;
 pub mod size;
 
 pub use compute::{compute, Input};
 pub use error::MetricsError;
 pub use feature::{feature_by_id, Family, Feature, Unit, FEATURES};
 pub use params::{Params, Preprocessing, ValueUnit};
-pub use profile::{Profile, PROFILES, QUICK};
+pub use profile::{Profile, CLINICAL, PROFILES, QUICK};
 pub use result::{FeatureValue, MetricsResult, Value};
 
 #[cfg(test)]

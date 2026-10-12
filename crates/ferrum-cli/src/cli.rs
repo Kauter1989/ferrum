@@ -503,7 +503,7 @@ pub enum Segment {
         ws: Ws,
         /// Segment label.
         segment: u64,
-        /// Which features to compute.
+        /// Which features to compute: quick (size, statistics) or clinical (adds shape).
         #[arg(long, default_value = "quick")]
         profile: String,
         /// Add the definition text of every feature.
@@ -1017,6 +1017,8 @@ mod tests {
             Cli::try_parse_from(["ferrum-cli", "segment", "metrics", "-w", "ws"]).is_err(),
             "the label is required"
         );
+        let (_, clinical) = call(&["ferrum-cli", "segment", "metrics", "-w", "ws", "3", "--profile", "clinical"]);
+        assert_eq!(clinical["profile"], "clinical");
     }
 
     #[test]

@@ -100,6 +100,7 @@ fn session(agent: &Agent, ws: &str, src: &Path) -> Vec<Value> {
         ("annotate list", json!({ "workspace": ws })),
         ("segment threshold", json!({ "workspace": ws, "seed": { "voxel": [8, 8, 3] }, "min": 300, "max": 500 })),
         ("segment metrics", json!({ "workspace": ws, "segment": 1, "describe": true })), // covers 18.4-d
+        ("segment metrics", json!({ "workspace": ws, "segment": 1, "profile": "clinical", "describe": true })),
         ("segment list", json!({ "workspace": ws })),
         ("review list", json!({ "workspace": ws })),
         ("export bundle", json!({ "workspace": ws, "formats": ["ferrum", "dicom"] })),

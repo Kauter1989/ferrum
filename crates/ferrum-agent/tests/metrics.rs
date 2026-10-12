@@ -283,3 +283,45 @@ fn the_schema_lists_exactly_the_registered_profiles() {
     assert_eq!(listed, registered, "the schema and the registry must not drift apart");
     assert_eq!(schema["required"], json!(["workspace", "segment"]));
 }
+
+// covers 18.5-b, 18.6-b, 18.6-c, 18.6-d
+#[test]
+fn the_clinical_profile_adds_the_shape_with_known_axes_and_says_why_a_direction_is_missing() {
+    let f = fixture();
+    f.open(Some("ct"));
+    let quick = f.ok("segment metrics", json!({ "segment": 1 }));
+    let c = f.ok("segment metrics", json!({ "segment": 1, "profile": "clinical" }));
+    assert_eq!((c["profile"]["name"].as_str(), c["profile"]["version"].as_str()), (Some("clinical"), Some("0.1")));
+    for (id, v) in quick["features"].as_object().unwrap() {
+        assert_eq!(&c["features"][id], v, "{id} is the same in both profiles");
+    }
+    // the cube: 6 x 6 x 6 voxels of 1 x 1 x 2 mm. Index variance 35 / 12, four times that along k
+    close(value(&c, "shape.major_axis_mm"), 4.0 * (35.0_f64 / 3.0).sqrt(), 1e-3, "major axis");
+    close(value(&c, "shape.minor_axis_mm"), 4.0 * (35.0_f64 / 12.0).sqrt(), 1e-3, "minor axis");
+    close(value(&c, "shape.least_axis_mm"), 4.0 * (35.0_f64 / 12.0).sqrt(), 1e-3, "least axis");
+    close(value(&c, "shape.elongation"), 0.5, 1e-6, "elongation");
+    close(value(&c, "shape.flatness"), 0.5, 1e-6, "flatness");
+    assert_eq!(
+        [value(&c, "shape.major_axis_dir_x"), value(&c, "shape.major_axis_dir_y"), value(&c, "shape.major_axis_dir_z")],
+        [0.0, 0.0, 1.0]
+    );
+    // the other two axes are equally long: no direction, and the reason is in the result
+    let tie = &c["features"]["shape.minor_axis_dir_x"];
+    assert!(tie["value"].is_null() && tie["reason"].as_str().unwrap().contains("not unique"), "{tie:#}");
+    // a cube is less spherical than a ball, and the formulas agree with each other
+    let sphericity = value(&c, "shape.sphericity");
+    assert!((0.78..0.86).contains(&sphericity), "{sphericity}");
+    close(sphericity.powi(3), value(&c, "shape.compactness_2"), 1e-5, "compactness 2 is the cube of the sphericity");
+    close(sphericity * value(&c, "shape.spherical_disproportion"), 1.0, 1e-5, "disproportion is the inverse");
+    assert_eq!(c["features"]["shape.surface_area_mm2"]["unit"], "mm2");
+
+    // the ball of radius 8 mm: round, so rounder than the cube; its mesh area is a little above 4 pi r^2
+    let ball = f.ok("segment metrics", json!({ "segment": 2, "profile": "clinical" }));
+    let s = value(&ball, "shape.sphericity");
+    assert!((0.89..0.95).contains(&s) && s > sphericity, "{s}");
+    let area = value(&ball, "shape.surface_area_mm2");
+    let analytic = 4.0 * std::f64::consts::PI * 64.0;
+    assert!((1.03..1.09).contains(&(area / analytic)), "area {area} against {analytic}");
+    // 4 a / sqrt(5) = 14.31 mm; measured 14.23 on 2 mm slices: within 1 %
+    close(value(&ball, "shape.major_axis_mm"), 4.0 * 8.0 / 5.0_f64.sqrt(), 0.15, "ball axis 4 a / sqrt(5)");
+}

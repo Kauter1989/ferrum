@@ -75,8 +75,64 @@ pub const QUICK: Profile = Profile {
     ],
 };
 
+/// Size, shape and first-order statistics: what a radiologist reads from a
+/// segment.
+pub const CLINICAL: Profile = Profile {
+    name: "clinical",
+    version: "0.1",
+    summary: "Size, shape (surface, compactness, principal axes) and first-order statistics of the voxel values.",
+    features: &[
+        "size.voxels",
+        "size.volume_mm3",
+        "size.volume_ml",
+        "size.extent_i_mm",
+        "size.extent_j_mm",
+        "size.extent_k_mm",
+        "size.centroid_x_mm",
+        "size.centroid_y_mm",
+        "size.centroid_z_mm",
+        "size.long_axis_mm",
+        "size.short_axis_mm",
+        "size.largest_slice_axial",
+        "size.largest_slice_coronal",
+        "size.largest_slice_sagittal",
+        "shape.mesh_volume_ml",
+        "shape.surface_area_mm2",
+        "shape.surface_to_volume_per_mm",
+        "shape.compactness_1",
+        "shape.compactness_2",
+        "shape.sphericity",
+        "shape.spherical_disproportion",
+        "shape.major_axis_mm",
+        "shape.minor_axis_mm",
+        "shape.least_axis_mm",
+        "shape.elongation",
+        "shape.flatness",
+        "shape.major_axis_dir_x",
+        "shape.major_axis_dir_y",
+        "shape.major_axis_dir_z",
+        "shape.minor_axis_dir_x",
+        "shape.minor_axis_dir_y",
+        "shape.minor_axis_dir_z",
+        "shape.least_axis_dir_x",
+        "shape.least_axis_dir_y",
+        "shape.least_axis_dir_z",
+        "intensity.mean",
+        "intensity.std",
+        "intensity.min",
+        "intensity.max",
+        "intensity.range",
+        "intensity.p5",
+        "intensity.p25",
+        "intensity.p50",
+        "intensity.p75",
+        "intensity.p95",
+        "intensity.iqr",
+    ],
+};
+
 /// Every registered profile.
-pub const PROFILES: &[Profile] = &[QUICK];
+pub const PROFILES: &[Profile] = &[QUICK, CLINICAL];
 
 #[cfg(test)]
 mod tests {
@@ -104,10 +160,22 @@ mod tests {
         match Profile::by_name("nope") {
             Err(MetricsError::UnknownProfile { given, known }) => {
                 assert_eq!(given, "nope");
-                assert_eq!(known, vec!["quick"]);
+                assert_eq!(known, vec!["quick", "clinical"]);
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    // covers 18.1-b
+    #[test]
+    fn clinical_contains_every_quick_feature_in_the_same_order() {
+        let mut rest = CLINICAL.features.iter();
+        for id in QUICK.features {
+            assert!(rest.any(|c| c == id), "clinical lacks {id} or lists it out of order");
+        }
+        assert!(CLINICAL.features.len() > QUICK.features.len());
+        assert!(CLINICAL.features().any(|f| f.family == crate::feature::Family::Shape));
+        assert_eq!(Profile::by_name("clinical").unwrap().version, "0.1");
     }
 
     #[test]

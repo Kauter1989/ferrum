@@ -267,12 +267,12 @@ fn mask_schema(command: &str) -> Option<(&'static str, Value)> {
             obj(json!({ "workspace": workspace(), "segment": label() }), &["workspace", "segment"]),
         ),
         "segment metrics" => (
-            "Quantitative profile of a segment from its voxels and values: size (volume, extent, centroid in LPS mm, axial axes, largest slices) and first-order HU statistics (mean, std, min, max, percentiles, range, IQR). The result names the profile and its version and records every parameter. Intensity features need a CT study in HU: a NIfTI file without a declared modality is refused (declare it with study open --modality CT). Never read these numbers off an image.",
+            "Quantitative profile of a segment from its voxels and values: size (volume, extent, centroid in LPS mm, axial axes, largest slices), with profile clinical also shape (surface area, compactness, sphericity, principal axes and their directions), and first-order HU statistics (mean, std, min, max, percentiles, range, IQR). The result names the profile and its version and records every parameter. Intensity features need a CT study in HU: a NIfTI file without a declared modality is refused (declare it with study open --modality CT). Never read these numbers off an image.",
             obj(
                 json!({
                     "workspace": workspace(),
                     "segment": label(),
-                    "profile": { "type": "string", "enum": ferrum_radiomics::PROFILES.iter().map(|p| p.name).collect::<Vec<_>>(), "description": "which features to compute (default quick: size and first-order statistics)" },
+                    "profile": { "type": "string", "enum": ferrum_radiomics::PROFILES.iter().map(|p| p.name).collect::<Vec<_>>(), "description": "which features to compute (default quick: size and first-order statistics; clinical adds the shape)" },
                     "describe": { "type": "boolean", "description": "add the definition text of every feature to the result" },
                 }),
                 &["workspace", "segment"],

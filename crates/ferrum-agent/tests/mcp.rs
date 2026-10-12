@@ -37,6 +37,7 @@ fn script(ws: &str, src: &Path) -> Vec<(&'static str, Value)> {
         ),
         // covers 18.4-c
         ("segment metrics", json!({ "workspace": ws, "segment": 1, "describe": true })),
+        ("segment metrics", json!({ "workspace": ws, "segment": 1, "profile": "clinical", "describe": true })),
         ("segment metrics", json!({ "workspace": ws, "segment": 1, "profile": "nope" })),
         (
             "annotate add",

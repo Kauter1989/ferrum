@@ -95,9 +95,9 @@ pub struct Input<'a> {
 |---|---|---|
 | Volume, extent, centroid (mm) | voxel count × voxel volume; centroid of voxel centres mapped through the grid's direction and origin | none |
 | Maximum 3D diameter | farthest pair among the hull vertices of the boundary voxel centres (voxel centres, as the existing long axis; IBSI and pyradiomics use mesh vertices, so the field test expects small differences) | hull robustness |
-| Surface area, mesh volume | marching cubes at iso 0.5 on the mask padded by one voxel; vertices scaled by the spacing; area as the sum of triangle areas | table errors; checked by mesh invariants (every edge shared by exactly two triangles, Euler characteristic 2 for a ball) |
+| Surface area, mesh volume | marching cubes at iso 0.5 on the mask padded by one voxel; the surface of each of the 256 corner patterns is built from the face loops (no memorised table; ambiguous faces separate the inside corners, so voxels that touch only at an edge or a corner are separate pieces), each loop a fan around its centroid and wound outwards; vertices scaled by the spacing; area as the sum of triangle areas | closed and outward-wound for every pattern, checked by invariants; a binary mask's mesh is rougher than the smooth shape (a ball: +7 %, see §5) |
 | Compactness 1 and 2, sphericity, spherical disproportion, surface-to-volume | IBSI formulas on the mesh area and mesh volume | none |
-| PCA axes, elongation, flatness | covariance of voxel centres in mm; Jacobi eigenvalues; axis length 4√λ (IBSI) | degenerate sets → `Null` |
+| PCA axes, elongation, flatness | population covariance of the voxel centres in patient mm (computed on indices, then carried through direction and spacing); Jacobi eigenvalues; axis length 4√λ (IBSI); a direction is `Null` when two axes are equally long or the segment has no extent along it; a flat or thin body has zero for the lengths with no extent (exactly), and `Null` ratios only for a single voxel |
 | Convex hull, solidity, convexity | incremental hull on the mesh vertices (not on every voxel); no new dependency | coplanar and tiny inputs → `Null` with a reason |
 | Components, largest share | `ferrum_domain::analysis::components` | none |
 | Cavities | flood fill of the background (6-connected) from the border of the padded box; the unreached background is the cavities | cost follows the box |
@@ -158,10 +158,17 @@ CPU renderer.
 
 ## 5. Risks and assumptions
 
-- **Marching cubes table.** A wrong table gives wrong area quietly.
-  Mitigation: the mesh invariants above, tested on a ball, a box and a
-  torus, and a comparison with the analytic area of a sphere within 3 %
-  (a tolerance to be set by measurement, L13).
+- **Marching cubes.** A wrong table gives wrong area quietly, so there
+  is none: each pattern's surface is built from the face loops, and the
+  invariants (every edge used once in each direction, so closed and
+  outward-wound; Euler characteristic 2 for a ball; exact area and volume
+  of a single voxel, an octahedron) are tested on random masks that
+  contain every pattern. Measured (L13): the area of a ball of radius
+  10 mm is 7.4 % above 4πr² at 1 mm voxels and 6.6 % at 0.5 mm, so it does
+  not converge to 1; the sphericity of a voxelised ball is about 0.93.
+  The triangulation of ambiguous cubes is this crate's own; IBSI's
+  reference differs in the details, so conformance (Stage 19) is checked
+  against its phantom, not assumed.
 - **Convex hull robustness** on coplanar or very small inputs. Mitigation:
   property tests against brute force (every input point inside or on the
   hull, volume against a reference), and `Null` with a reason on
@@ -212,14 +219,14 @@ reference). No criterion draws pixels in the renderer, so there is no
 | 18.4-e | `crates/ferrum-app/tests/metrics.rs::a_segment_is_measured_in_the_background_…`, `…marked_out_of_date…`, `ui.rs::the_metrics_card_shows_values_with_units_and_says_when_a_segment_is_a_proposal`, `metrics_card.rs::every_row_carries_the_definition_of_its_feature`; the card looked at in a render; a person opens it on a real study | test, manual |
 | 18.4-f | `ui.rs::the_metrics_card_explains_an_unknown_image_type_and_recovers_when_it_is_set`, `metrics.rs::an_unknown_image_type_explains_instead_of_guessing` | test |
 | 18.4-g | `metrics.rs::describe_adds_definitions` | test |
-| 18.5-a | `mesh.rs::sphere_area_within_3_percent`; closed-mesh invariants | test |
-| 18.5-b | `mesh.rs::compactness_and_sphericity_formulas` (hand-computed cube) | test |
-| 18.5-c | `mesh.rs::scale_invariance_between_1mm_and_half_mm` | test |
-| 18.5-d | `mesh.rs::one_voxel_thick_object_is_null_with_reason` | test |
-| 18.6-a | `pca.rs::ellipsoid_axes_within_3_percent` (5, 8, 12 mm) | test |
-| 18.6-b | `pca.rs::elongation_and_flatness_are_axis_ratios` | test |
-| 18.6-c | `pca.rs::line_plane_and_point_are_null` | test |
-| 18.6-d | `pca.rs::orientation_is_sign_normalised_and_deterministic` | test |
+| 18.5-a | `mesh.rs` (`the_surface_is_closed_and_wound_outwards_for_every_kind_of_cube`, `a_ball_is_a_closed_surface_of_euler_characteristic_two`, `a_single_voxel_is_an_octahedron_with_exact_area_and_volume`, `the_area_of_a_ball_exceeds_the_analytic_value_by_the_known_margin_at_every_resolution`, `voxels_that_touch_only_at_an_edge_or_a_corner_are_separate_closed_pieces`) | test |
+| 18.5-b | `tests.rs::the_shape_figures_of_a_single_voxel_follow_from_its_octahedron`, `clinical_adds_to_quick_without_changing_what_quick_says`, `metrics.rs::the_clinical_profile_adds_the_shape_…` | test |
+| 18.5-c | `mesh.rs::spacing_scales_the_mesh_exactly`, the ball at two resolutions in `the_area_of_a_ball_exceeds_…` | test |
+| 18.5-d | `tests.rs::a_point_a_line_and_a_plate_never_give_nan` | test |
+| 18.6-a | `pca.rs::an_ellipsoid_has_the_axes_of_its_semi_axes` (5, 12, 8 mm, 1 and 2 mm slices) | test |
+| 18.6-b | `pca.rs::an_ellipsoid_has_the_axes_…`, `tests.rs::the_axes_of_a_block_are_known_by_hand_and_a_tie_has_no_direction` | test |
+| 18.6-c | `pca.rs::a_line_a_plane_and_a_point_are_undefined_where_…`, `tests.rs::a_point_a_line_and_a_plate_never_give_nan` | test |
+| 18.6-d | `pca.rs` (`directions_are_unit_vectors_in_lps_with_a_fixed_sign`, `the_sign_of_a_direction_is_fixed_by_its_largest_component`, `an_object_turned_by_45_degrees_…`), `metrics.rs` (a null direction says why) | test |
 | 18.7-a | `hull.rs::volume_area_solidity_convexity` | test |
 | 18.7-b | `hull.rs::box_is_solid_and_l_shape_by_hand` | test |
 | 18.7-c | `hull.rs::cost_follows_the_surface` (vertex count of the input is checked) | test |
