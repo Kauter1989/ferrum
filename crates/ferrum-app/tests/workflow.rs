@@ -285,3 +285,30 @@ fn a_region_never_overwrites_voxels_labelled_since_the_click() {
     assert!(region.voxels > 0 && region.voxels < 799, "only the free half: {}", region.voxels);
     assert_eq!(v.segmentation().set().unwrap().voxel_count(other), before, "the person's segment is untouched");
 }
+
+// covers 16.6-n
+#[test]
+fn the_tolerance_comes_from_the_clicked_value_until_the_user_sets_it() {
+    use ferrum_app::RegionSettings;
+    use ferrum_domain::WindowLevel;
+    let w = WindowLevel::new(-600.0, 1500.0);
+    let ct = (-1000.0, 400.0);
+    assert_eq!(RegionSettings::auto_tolerance(-880.0, ct, w), 300.0, "aerated lung");
+    assert_eq!(RegionSettings::auto_tolerance(90.0, ct, w), 40.0, "soft tissue: a tenth of the window, capped");
+    assert_eq!(RegionSettings::auto_tolerance(-880.0, (0.0, 4000.0), w), 40.0, "not Hounsfield-like: no lung class");
+    assert_eq!(RegionSettings::auto_tolerance(-880.0, (-1000.0, -900.0), w), 40.0, "too narrow a range for CT");
+
+    let mut v = viewer();
+    assert!(v.select_tool(ToolKind::Region));
+    assert!(v.segmentation().region.tolerance_auto);
+    v.grow_region_at(UVec3::new(16, 16, 10)).unwrap(); // the ball, 400 HU
+    assert_eq!(v.segmentation().region.tolerance, 40.0);
+    v.grow_region_at(UVec3::new(1, 1, 1)).unwrap(); // the air around it, -1000 HU
+    assert_eq!(v.segmentation().region.tolerance, 300.0, "the value used is shown");
+    // a value set by hand is kept
+    let r = v.region_settings_mut();
+    (r.tolerance_auto, r.tolerance) = (false, 123.0);
+    v.clear_segmentation();
+    v.grow_region_at(UVec3::new(16, 16, 10)).unwrap();
+    assert_eq!(v.segmentation().region.tolerance, 123.0);
+}

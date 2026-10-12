@@ -264,6 +264,20 @@ that says so instead of editing the old one.
 - **Guard:** `ferrum-change` §4 (read the whole result); prefer
   `preflight.sh | tail -3`.
 
+### L20 — A default tuned on the liver was useless on the lung (2026-10, region tool, 16.6-n)
+
+- **Symptom:** After the liver field test the default tolerance was capped
+  at 40 HU. On MSD lung CT that grew nothing (aerated parenchyma varies by
+  hundreds of HU; ±200…±400 gives Dice 0.92–0.97 for one lung). It was
+  found only because the user asked for the lungs.
+- **Rule:** A default that depends on tissue must be checked on every
+  tissue the feature claims (liver, lung, …) before it is called "works";
+  prefer a value derived from the data (here: the clicked value) to one
+  constant. Say what the reference is (the lung set has no human lung mask:
+  a classical reference was used and named as such).
+- **Guard:** `workflow.rs::the_tolerance_comes_from_the_clicked_value_until_the_user_sets_it`;
+  the lung row in `docs/testing.md`.
+
 ## What worked
 
 ### W1 — Field test on the user's GPU with a throw-away script (2026-10, Stage 17)

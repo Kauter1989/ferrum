@@ -8,6 +8,7 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Desktop: the region tool chooses its tolerance from the clicked value until you set it: 300 HU on aerated lung, a tenth of the window width (at most 40) elsewhere; *Automatic tolerance* in the panel. On MSD lung CT one click now grows one lung (Dice 0.92–0.97 against a classical reference); the old default grew nothing. (Stage 16, 16.6-n)
 - Desktop: the region tool segments whole organs on noisy images. The
   reference value is the median of the smoothed values around the seed,
   voxels are compared after smoothing, contacts with neighbouring organs

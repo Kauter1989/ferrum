@@ -40,6 +40,9 @@ pub struct RegionSettings {
     /// Accepted distance from the seed value, in the volume's units (HU
     /// for CT).
     pub tolerance: f32,
+    /// Choose `tolerance` at every click from the clicked value (see
+    /// [`RegionSettings::auto_tolerance`]) until the user sets it by hand.
+    pub tolerance_auto: bool,
     /// Largest region in millilitres; a larger one has leaked into
     /// neighbouring tissue and is not created.
     pub max_ml: f32,
@@ -55,7 +58,14 @@ pub struct RegionSettings {
 
 impl Default for RegionSettings {
     fn default() -> Self {
-        Self { tolerance: 50.0, max_ml: 8000.0, smoothing_mm: 1.5, opening_mm: 5.0, fill_holes: true }
+        Self {
+            tolerance: 50.0,
+            tolerance_auto: true,
+            max_ml: 8000.0,
+            smoothing_mm: 1.5,
+            opening_mm: 5.0,
+            fill_holes: true,
+        }
     }
 }
 
@@ -72,6 +82,29 @@ impl RegionSettings {
     /// Largest tolerance a display window sets by default, in the volume's
     /// units (HU for CT; soft tissues differ by 10–40 HU).
     pub const MAX_DEFAULT_TOLERANCE: f32 = 40.0;
+
+    /// A seed below this value, in a volume that looks like Hounsfield
+    /// units, is aerated lung.
+    pub const AERATED_BELOW: f32 = -500.0;
+
+    /// Tolerance for aerated lung, in HU: parenchyma varies by hundreds of
+    /// HU over vessels, bronchi and noise (measured on MSD lung CT: ±200
+    /// gives Dice 0.92–0.95 against one lung, ±40 gives nothing).
+    pub const AERATED_TOLERANCE: f32 = 300.0;
+
+    /// The tolerance for a click on `seed_value` in a volume with values in
+    /// `range` shown through `window`: [`Self::AERATED_TOLERANCE`] for aerated
+    /// lung in a CT-like volume (air below −500 and a span of at least
+    /// 1 000), otherwise a tenth of the window width, at most
+    /// [`Self::MAX_DEFAULT_TOLERANCE`].
+    pub fn auto_tolerance(seed_value: f32, range: (f32, f32), window: ferrum_domain::WindowLevel) -> f32 {
+        let ct_like = range.0 <= Self::AERATED_BELOW && range.1 - range.0 >= 1000.0;
+        if ct_like && seed_value < Self::AERATED_BELOW {
+            Self::AERATED_TOLERANCE
+        } else {
+            Self::for_window(window).tolerance
+        }
+    }
 }
 
 impl Default for SegmentationState {
@@ -292,7 +325,12 @@ impl Viewer {
         }) {
             return Err(format!("This voxel already belongs to {name}"));
         }
-        let RegionSettings { tolerance, max_ml, smoothing_mm, opening_mm, fill_holes } = self.segments.region;
+        if self.segments.region.tolerance_auto {
+            let r = volume.range();
+            self.segments.region.tolerance =
+                RegionSettings::auto_tolerance(seed_value, (r.min, r.max), self.slices.window);
+        }
+        let RegionSettings { tolerance, max_ml, smoothing_mm, opening_mm, fill_holes, .. } = self.segments.region;
         let sp = volume.spacing();
         let voxel_ml = f64::from(sp.x) * f64::from(sp.y) * f64::from(sp.z) / 1000.0;
         let max_voxels = (f64::from(max_ml) / voxel_ml).floor().max(1.0) as u64;
