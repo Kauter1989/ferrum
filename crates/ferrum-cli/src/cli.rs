@@ -999,6 +999,26 @@ mod tests {
         assert!(parse_window("a,b").is_err());
     }
 
+    // covers 18.4-b
+    #[test]
+    fn segment_metrics_flags_become_parameters() {
+        let call = |args: &[&str]| Cli::try_parse_from(args).unwrap().command.to_call().unwrap();
+        let (name, params) =
+            call(&["ferrum-cli", "segment", "metrics", "-w", "ws", "3", "--profile", "quick", "--describe"]);
+        assert_eq!(name, "segment metrics");
+        assert_eq!(
+            (params["segment"].as_u64(), params["profile"].as_str(), params["describe"].as_bool()),
+            (Some(3), Some("quick"), Some(true))
+        );
+        let (_, plain) = call(&["ferrum-cli", "segment", "metrics", "-w", "ws", "3"]);
+        assert_eq!(plain["profile"], "quick", "the default profile is sent");
+        assert!(plain.get("describe").is_none(), "describe is off unless asked for");
+        assert!(
+            Cli::try_parse_from(["ferrum-cli", "segment", "metrics", "-w", "ws"]).is_err(),
+            "the label is required"
+        );
+    }
+
     #[test]
     fn command_lines_become_calls() {
         let call = |args: &[&str]| Cli::try_parse_from(args).unwrap().command.to_call().unwrap();
@@ -1103,17 +1123,6 @@ mod tests {
         let (_, p) = call(&["ferrum-cli", "segment", "components", "-w", "ws", "1", "--split"]);
         assert_eq!(p["split"], true);
         assert_eq!(call(&["ferrum-cli", "segment", "shape", "-w", "ws", "1"]).0, "segment shape");
-        // covers 18.4-b
-        let (name, params) =
-            call(&["ferrum-cli", "segment", "metrics", "-w", "ws", "3", "--profile", "quick", "--describe"]);
-        assert_eq!(name, "segment metrics");
-        assert_eq!(
-            (params["segment"].as_u64(), params["profile"].as_str(), params["describe"].as_bool()),
-            (Some(3), Some("quick"), Some(true))
-        );
-        let (_, plain) = call(&["ferrum-cli", "segment", "metrics", "-w", "ws", "3"]);
-        assert_eq!(plain["profile"], "quick", "the default profile is sent");
-        assert!(plain.get("describe").is_none(), "describe is off unless asked for");
         assert_eq!(call(&["ferrum-cli", "engine", "list"]).0, "engine list");
         let (name, p) = call(&["ferrum-cli", "run", "probe", "--params", r#"{"workspace":"w"}"#]);
         assert_eq!((name.as_str(), p["workspace"].as_str()), ("probe", Some("w")));
