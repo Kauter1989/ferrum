@@ -11,7 +11,7 @@
 //! on the face. The points are in a fixed order, so the result is the
 //! same on every machine.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 type P = [f64; 3];
 
@@ -147,28 +147,100 @@ fn simplex(points: &[P], eps: f64) -> Option<[usize; 4]> {
     (d_d > eps).then_some([a, b, c, d])
 }
 
-/// Hull under construction.
+/// Hull under construction (Quickhull): every face lists the points that
+/// are outside it and not yet inside the hull. A point is tested again
+/// only when its face goes, so the cost follows the points near the
+/// surface, not the product of all points and all faces.
 struct Builder<'a> {
     points: &'a [P],
-    faces: Vec<Face>,
+    faces: Vec<Option<Face>>,
+    outside: Vec<Vec<usize>>,
+    /// The face that owns each directed edge (a, b) of its winding.
+    owner: HashMap<(usize, usize), usize>,
     eps: f64,
 }
 
 impl Builder<'_> {
-    /// Adds point `p` (index into `points`): nothing if it is inside.
-    fn add(&mut self, p: usize) {
+    fn add_face(&mut self, face: Face) -> usize {
+        let id = self.faces.len();
+        for j in 0..3 {
+            self.owner.insert((face.v[j], face.v[(j + 1) % 3]), id);
+        }
+        self.faces.push(Some(face));
+        self.outside.push(Vec::new());
+        id
+    }
+
+    fn remove_face(&mut self, id: usize) {
+        if let Some(face) = self.faces[id].take() {
+            for j in 0..3 {
+                self.owner.remove(&(face.v[j], face.v[(j + 1) % 3]));
+            }
+        }
+    }
+
+    /// Lists point `p` as outside the first of `candidates` that sees it;
+    /// a point no candidate sees is inside and is dropped.
+    fn assign(&mut self, p: usize, candidates: &[usize]) {
         let at = self.points[p];
-        let eps = self.eps;
-        let (seen, kept): (Vec<Face>, Vec<Face>) = self.faces.iter().copied().partition(|f| f.height(at) > eps);
-        if seen.is_empty() {
-            return;
+        let found = candidates.iter().copied().find(|id| self.faces[*id].is_some_and(|f| f.height(at) > self.eps));
+        if let Some(id) = found {
+            self.outside[id].push(p);
         }
-        let edges: HashSet<(usize, usize)> =
-            seen.iter().flat_map(|f| (0..3).map(|j| (f.v[j], f.v[(j + 1) % 3]))).collect();
-        self.faces = kept;
-        for (a, b) in edges.iter().filter(|(a, b)| !edges.contains(&(*b, *a))) {
-            self.faces.push(Face::through(self.points, [*a, *b, p]));
+    }
+
+    /// The faces that see `apex`, found from face `start` across shared edges.
+    fn visible_from(&self, start: usize, apex: P) -> Vec<usize> {
+        let mut seen = HashSet::from([start]);
+        let mut visible = vec![start];
+        let mut next = 0;
+        while next < visible.len() {
+            let Some(face) = self.faces[visible[next]] else { break };
+            next += 1;
+            for j in 0..3 {
+                let twin = self.owner.get(&(face.v[(j + 1) % 3], face.v[j])).copied();
+                if let Some(t) = twin.filter(|t| !seen.contains(t)) {
+                    if self.faces[t].is_some_and(|f| f.height(apex) > self.eps) {
+                        seen.insert(t);
+                        visible.push(t);
+                    }
+                }
+            }
         }
+        visible
+    }
+
+    /// Replaces the faces that see the furthest outside point of `id` by a
+    /// cone from that point to the edge of the gap; returns the new faces.
+    fn grow(&mut self, id: usize) -> Vec<usize> {
+        let face = self.faces[id].unwrap_or_else(|| unreachable!("a listed face is alive"));
+        let apex = self.outside[id]
+            .iter()
+            .copied()
+            .max_by(|a, b| face.height(self.points[*a]).total_cmp(&face.height(self.points[*b])))
+            .unwrap_or_else(|| unreachable!("a listed face has points"));
+        let visible = self.visible_from(id, self.points[apex]);
+        let gone: HashSet<usize> = visible.iter().copied().collect();
+        let mut horizon = Vec::new();
+        for vf in &visible {
+            let Some(f) = self.faces[*vf] else { continue };
+            for j in 0..3 {
+                let (a, b) = (f.v[j], f.v[(j + 1) % 3]);
+                if self.owner.get(&(b, a)).is_none_or(|t| !gone.contains(t)) {
+                    horizon.push((a, b));
+                }
+            }
+        }
+        let pool: Vec<usize> = visible.iter().flat_map(|vf| std::mem::take(&mut self.outside[*vf])).collect();
+        for vf in &visible {
+            self.remove_face(*vf);
+        }
+        let new: Vec<usize> =
+            horizon.iter().map(|(a, b)| self.add_face(Face::through(self.points, [*a, *b, apex]))).collect();
+        for p in pool.into_iter().filter(|p| *p != apex) {
+            self.assign(p, &new);
+        }
+        new
     }
 }
 
@@ -193,12 +265,20 @@ pub fn convex_hull(points: &[[f64; 3]]) -> Option<Hull> {
         let sum = s.iter().fold([0.0; 3], |a, i| [a[0] + points[*i][0], a[1] + points[*i][1], a[2] + points[*i][2]]);
         [sum[0] / 4.0, sum[1] / 4.0, sum[2] / 4.0]
     };
-    let faces = [[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]].map(|f| Face::new(points, f.map(|j| s[j]), centre));
-    let mut builder = Builder { points, faces: faces.to_vec(), eps };
-    for i in extremes(points).into_iter().chain(0..points.len()) {
-        builder.add(i);
+    let start = [[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]].map(|f| Face::new(points, f.map(|j| s[j]), centre));
+    let mut builder = Builder { points, faces: Vec::new(), outside: Vec::new(), owner: HashMap::new(), eps };
+    let ids: Vec<usize> = start.into_iter().map(|f| builder.add_face(f)).collect();
+    for p in (0..points.len()).filter(|p| !s.contains(p)) {
+        builder.assign(p, &ids);
     }
-    let faces = sorted(builder.faces.iter().map(|f| f.v).collect());
+    let mut pending: Vec<usize> = ids;
+    while let Some(id) = pending.pop() {
+        if builder.faces[id].is_some() && !builder.outside[id].is_empty() {
+            let new = builder.grow(id);
+            pending.extend(new.into_iter().filter(|n| !builder.outside[*n].is_empty()));
+        }
+    }
+    let faces = sorted(builder.faces.iter().flatten().map(|f| f.v).collect());
     Some(Hull { points: points.to_vec(), faces })
 }
 
@@ -385,6 +465,90 @@ mod tests {
         assert!((farthest_pair(&flat) - 5.0).abs() < 1e-12);
         assert_eq!(farthest_pair(&[[1.0, 1.0, 1.0]]), 0.0);
         assert_eq!(farthest_pair(&[]), 0.0);
+    }
+
+    /// The first version of the hull, kept as a reference: every point is tested against every
+    /// face, which is simple and right but far too slow for the point clouds of real masks
+    /// (16 s for a blobby mask of 100 000 voxels).
+    fn reference_hull(points: &[P]) -> Option<(f64, f64, Vec<P>)> {
+        if points.len() < 4 {
+            return None;
+        }
+        let (lo, hi) = points.iter().fold(([f64::MAX; 3], [f64::MIN; 3]), |(lo, hi), p| {
+            (std::array::from_fn(|i| lo[i].min(p[i])), std::array::from_fn(|i| hi[i].max(p[i])))
+        });
+        let eps = 1e-9 * norm(sub(hi, lo));
+        let s = simplex(points, eps)?;
+        let sum = s.iter().fold([0.0; 3], |a, i| [a[0] + points[*i][0], a[1] + points[*i][1], a[2] + points[*i][2]]);
+        let centre = [sum[0] / 4.0, sum[1] / 4.0, sum[2] / 4.0];
+        let mut faces: Vec<Face> =
+            [[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]].map(|f| Face::new(points, f.map(|j| s[j]), centre)).to_vec();
+        for p in 0..points.len() {
+            let at = points[p];
+            let (seen, kept): (Vec<Face>, Vec<Face>) = faces.iter().copied().partition(|f| f.height(at) > eps);
+            if seen.is_empty() {
+                continue;
+            }
+            let edges: HashSet<(usize, usize)> =
+                seen.iter().flat_map(|f| (0..3).map(|j| (f.v[j], f.v[(j + 1) % 3]))).collect();
+            faces = kept;
+            for (a, b) in edges.iter().filter(|(a, b)| !edges.contains(&(*b, *a))) {
+                faces.push(Face::through(points, [*a, *b, p]));
+            }
+        }
+        let hull = Hull { points: points.to_vec(), faces: faces.iter().map(|f| f.v).collect() };
+        Some((hull.volume(), hull.area(), hull.vertices()))
+    }
+
+    // covers 18.7-a, 18.7-c
+    #[test]
+    fn the_fast_hull_equals_the_reference_on_lattice_clouds_with_many_coplanar_points() {
+        use ferrum_domain::{Dims3, MaskRegion};
+
+        use crate::mesh::marching_cubes;
+        for (seed, keep) in [(1u64, 0.55), (2, 0.62), (3, 0.7)] {
+            let mut s = seed;
+            // blobby masks: value noise on a coarse lattice, kept where high
+            let coarse: Vec<f64> = (0..10 * 10 * 10).map(|_| random(&mut s)).collect();
+            let at =
+                |x: usize, y: usize, z: usize| coarse[(x / 4).min(9) + 10 * ((y / 4).min(9) + 10 * (z / 4).min(9))];
+            let jitter: Vec<f64> = (0..36 * 36 * 24).map(|_| random(&mut s)).collect();
+            let r = MaskRegion::from_grid(Dims3 { x: 36, y: 36, z: 24 }, |n| {
+                let (i, j, k) = (n % 36, (n / 36) % 36, n / (36 * 36));
+                at(i, j, k) + 0.3 * jitter[n] > keep + 0.3
+            })
+            .unwrap();
+            let mesh = marching_cubes(&r, glam::Vec3::new(0.8, 0.8, 2.5));
+            let mut points: Vec<P> = mesh.triangles.iter().flatten().copied().collect();
+            points
+                .sort_unstable_by(|a, b| a[0].total_cmp(&b[0]).then(a[1].total_cmp(&b[1])).then(a[2].total_cmp(&b[2])));
+            points.dedup();
+            assert!(points.len() > 2000, "{} points: the cloud should be big enough to matter", points.len());
+            let fast = convex_hull(&points).unwrap();
+            let (volume, area, corners) = reference_hull(&points).unwrap();
+            assert!((fast.volume() - volume).abs() < 1e-6 * volume, "seed {seed}: {} != {volume}", fast.volume());
+            assert!((fast.area() - area).abs() < 1e-6 * area, "seed {seed}: {} != {area}", fast.area());
+            // points on a facet may or may not be kept as corners: what matters is that the farthest
+            // pair, which the 3D diameter takes from the corners, is the same
+            let widest = |v: &[P]| {
+                v.iter()
+                    .enumerate()
+                    .flat_map(|(n, a)| v[n + 1..].iter().map(move |b| norm(sub(*a, *b))))
+                    .fold(0.0, f64::max)
+            };
+            assert!((widest(&fast.vertices()) - widest(&corners)).abs() < 1e-9);
+            assert!(fast.vertices().len() <= corners.len());
+            // and it is a hull: closed, outward, every point inside
+            let mut edges = HashSet::new();
+            for f in &fast.faces {
+                for j in 0..3 {
+                    assert!(edges.insert((f[j], f[(j + 1) % 3])));
+                }
+                let face = Face::through(&fast.points, *f);
+                assert!(points.iter().all(|p| face.height(*p) < 1e-7));
+            }
+            assert!(edges.iter().all(|(a, b)| edges.contains(&(*b, *a))));
+        }
     }
 
     // covers 18.7-c
