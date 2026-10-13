@@ -1,4 +1,6 @@
 #![allow(missing_docs, clippy::expect_used, clippy::unwrap_used)]
+//! covers 18.12-c
+//!
 //! Cost of the profiles on a 512 x 512 x 300 CT with a roundish segment of
 //! about 100 000 voxels (the budget of Stage 18 is 2 s for `clinical`).
 //! Single-threaded, as the library is. The parts are measured with profiles

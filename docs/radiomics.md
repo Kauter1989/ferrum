@@ -109,9 +109,27 @@ pub struct Input<'a> {
 | IVH | on the voxel values, not binned: V_x = share of voxels ≥ min + x % of the range; I_x = the ⌈x·N/100⌉-th largest value (the highest value that x % of the volume reaches, as in dose-volume histograms); the curve is V at 0, 1, … 100 % of the range | definitions checked by hand on a ramp and on 15 voxels (rounding up) |
 | HU-range shares | half-open ranges `[lo, hi)`, two binary searches on the sorted values; overlapping, empty or non-finite ranges are `bad_request`; touching ranges are fine; the share outside all ranges is reported so that shares sum to 1; defaults (−1000, −500, −100, 0, 100, 300, 1000) are documented and marked as defaults, not as clinical thresholds | none |
 
-Performance is an estimate (≤ 2 s for the `clinical` profile on a 100 000
-voxel segment) until PR 6 measures it with a benchmark in
-`crates/ferrum-radiomics/benches`.
+**Measured (L13)** with `cargo bench -p ferrum-radiomics` (release build,
+one thread, 4-core cloud container, 2026-10-13): a 512 × 512 × 300 CT-like
+volume and a roundish segment of 102 897 voxels. The budget was 2 s.
+
+| Profile or part | Time (median of 10) |
+|---|---|
+| `clinical` 0.3 (everything) | **607 ms** |
+| `quick` 0.1 | 12 ms |
+| mesh, area, compactness, principal axes | 5.3 ms |
+| mesh + convex hull, solidity, convexity | 470 ms |
+| maximum 3D diameter | 45 ms |
+| connectivity (pieces, cavities, Euler) | 13 ms |
+| distribution, IVH, ranges (sort once) | 4.0 ms |
+
+The convex hull is three quarters of the total: the mesh of a 100 000-voxel
+ball has about 40 000 distinct vertices and the incremental hull tests each
+against the faces. The budget is met with a factor of 3, so it is not
+optimised; if a larger segment needs it, the first step is to drop the
+vertices that cannot be corners before the hull (for example those inside
+the hull of the axis extremes). A segment of several million voxels was
+not measured.
 
 ### 3.3 Profiles
 
@@ -185,7 +203,7 @@ CPU renderer.
   need `ResultStore` to grow a method. To be checked at the start of
   PR 2; if it does, that becomes the PR's one extra surface.
 - **Panel blocking.** A large segment may take seconds. The panel uses
-  the job queue; the 2 s budget is an estimate.
+  the job queue; the 2 s budget is met (607 ms for 100 000 voxels, §3.2).
 - **Assumption:** only CT is supported. For other modalities the
   geometry commands still work and the intensity features are refused.
 
@@ -245,11 +263,11 @@ reference). No criterion draws pixels in the renderer, so there is no
 | 18.10-c | `distribution.rs::the_curve_never_rises_whatever_the_values` (pseudo-random sets of 1 to 400 values, fixed seed; not proptest) | test |
 | 18.11-a | `distribution.rs::range_shares_are_half_open_and_sum_to_one_with_the_outside`, `tests.rs::hu_ranges_are_recorded_and_the_shares_with_the_outside_sum_to_one` | test |
 | 18.11-b | `params.rs::parameters_are_checked_and_ranges_may_touch_but_not_overlap`, `tests.rs::bad_parameters_are_refused_…`, `crates/ferrum-agent/tests/metrics.rs::nonsense_parameters_are_bad_requests_with_a_hint` | test |
-| 18.11-c | `ui.rs::hu_ranges_come_from_the_interface_fields`; defaults documented | test, manual |
+| 18.11-c | `ui.rs::the_clinical_card_groups_the_features_shows_the_ranges_and_applies_the_settings` (types into the bin-width field, applies, reads the result; nonsense is shown with its reason and the old parameters stay), `metrics_card.rs::the_fields_become_parameters_and_nonsense_is_refused_with_the_reason`, `ferrum-app/tests/metrics.rs` (`the_bin_width_and_ranges_of_the_card_are_set_validated_and_used`, `a_second_request_is_not_mistaken_for_the_first`); defaults documented and marked on the card | test |
 | 18.11-d | `tests.rs::hu_ranges_are_recorded_…`, the agent contract test (ranges as given, `default` flag, note) | test |
-| 18.12-a | `ui.rs::clinical_card_groups_by_family_with_tooltips` | test, manual |
+| 18.12-a | `ui.rs::the_clinical_card_groups_the_features_…`, `metrics_card.rs::the_rows_of_the_clinical_profile_…` (25 shape and 6 connectivity rows with units), `…every_row_carries_the_definition_of_its_feature`, `the_range_table_has_a_line_per_range_and_one_for_the_rest`; a person looks at the card on a real study (field test) | test, manual |
 | 18.12-b | as 18.4-a to 18.4-d for `clinical`: `commands.json` freshness, `cli.rs::segment_metrics_flags_become_parameters` (`--bin-width`, `--hu-range`), `mcp.rs` parity, `privacy.rs` | test |
-| 18.12-c | `crates/ferrum-radiomics/benches/profiles.rs`, the number goes into the docs | test |
+| 18.12-c | `crates/ferrum-radiomics/benches/profiles.rs`; the numbers are in §3.2 (`clinical` 607 ms for 102 897 voxels on a 512 × 512 × 300 volume) | bench |
 | Stage success: values agree with pyradiomics on MSD Task09 spleen | a field script (not committed) run on the user's machine, differences explained in the PR | field |
 
 Every criterion of Stage 18 has at least one row.
