@@ -1568,6 +1568,7 @@ name = "ferrum-radiomics"
 version = "0.3.0"
 dependencies = [
  "approx",
+ "criterion",
  "ferrum-domain",
  "glam",
  "proptest",

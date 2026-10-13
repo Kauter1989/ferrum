@@ -43,6 +43,10 @@ pub struct MetricsState {
     skipped_for: Option<u64>,
     /// The person wants to change the declared image type.
     reask: bool,
+    /// Bin width and HU ranges the card is computed with.
+    params: Params,
+    /// Requests made so far.
+    serial: u64,
 }
 
 fn unit_message(unit: &ValueUnit) -> String {
@@ -131,6 +135,22 @@ impl Viewer {
         }
     }
 
+    /// The parameters (histogram bin width, HU ranges) that metrics are
+    /// computed with.
+    pub fn metrics_params(&self) -> &Params {
+        &self.metrics.params
+    }
+
+    /// Sets the parameters of the metrics. Nonsense (a bin width that is
+    /// not positive, ranges that overlap) is refused and the old
+    /// parameters stay. The figures on the card are out of date until the
+    /// segment is measured again.
+    pub fn set_metrics_params(&mut self, params: Params) -> Result<(), String> {
+        params.validate().map_err(|e| e.to_string())?;
+        self.metrics.params = params;
+        Ok(())
+    }
+
     /// The voxels of segment `label`.
     fn segment_region(&self, label: u8) -> Result<MaskRegion, String> {
         let set = self.segments.set.as_ref().ok_or("there are no segments")?;
@@ -145,7 +165,7 @@ impl Viewer {
         let region = self.segment_region(label)?;
         let d = self.dataset.as_ref().ok_or("no image is loaded")?;
         let input = Input { region: &region, volume: &d.volume, unit: self.value_unit() };
-        compute(&input, profile, &Params::default()).map_err(|e| e.to_string())
+        compute(&input, profile, &self.metrics.params).map_err(|e| e.to_string())
     }
 
     /// Starts measuring segment `label` in the background. A profile with
@@ -155,11 +175,13 @@ impl Viewer {
         let region = self.segment_region(label)?;
         let d = self.dataset.as_ref().ok_or("no image is loaded")?;
         let (volume, dataset_revision) = (d.volume.clone(), d.revision);
+        self.metrics.serial += 1;
         let request = MetricsRequest {
             dataset_revision,
             segments_revision: self.segments.set.as_ref().map_or(0, SegmentationSet::revision),
             label,
             profile: profile.name,
+            serial: self.metrics.serial,
         };
         let unit = self.value_unit();
         if profile.needs_unit() && !unit.is_known() {
@@ -167,7 +189,7 @@ impl Viewer {
             return Ok(());
         }
         self.metrics.entry = Some((request, MetricsOutcome::Pending));
-        self.jobs.metrics(volume, region, unit, profile, request);
+        self.jobs.metrics(volume, region, unit, profile, self.metrics.params.clone(), request);
         Ok(())
     }
 

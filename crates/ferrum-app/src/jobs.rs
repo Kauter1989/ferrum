@@ -62,6 +62,9 @@ pub struct MetricsRequest {
     pub label: u8,
     /// Name of the profile.
     pub profile: &'static str,
+    /// Number of the request: two requests for the same segment (say with
+    /// other parameters) are never mistaken for each other.
+    pub serial: u64,
 }
 
 /// Events emitted by jobs.
@@ -229,11 +232,12 @@ impl JobQueue {
         region: MaskRegion,
         unit: ValueUnit,
         profile: &'static Profile,
+        params: Params,
         request: MetricsRequest,
     ) {
         self.spawn_compute(move || {
             let input = Input { region: &region, volume: &volume, unit };
-            let result = compute(&input, profile, &Params::default()).map(Box::new);
+            let result = compute(&input, profile, &params).map(Box::new);
             JobEvent::Metrics { request, result }
         });
     }

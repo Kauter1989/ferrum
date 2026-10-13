@@ -11,7 +11,7 @@ use ferrum_domain::{
     AnnotationReport, AnnotationSet, Dims3, LoadedSeries, ProgressSink, RepositoryError, ResultStore, ReviewDecision,
     SegmentationSet, SeriesDescriptor, SeriesMetadata, Volume, VolumeRepository, VoxelBox,
 };
-use ferrum_radiomics::{ValueUnit, QUICK};
+use ferrum_radiomics::{HuRange, Params, ValueUnit, CLINICAL, QUICK};
 use glam::{UVec3, Vec3};
 
 /// One series of 12 x 12 x 12 voxels of 1 x 1 x 2 mm whose value is
@@ -244,4 +244,58 @@ fn an_unknown_image_type_explains_instead_of_guessing() {
     let empty = v.add_segment("Empty").unwrap();
     assert!(v.request_segment_metrics(empty, &QUICK).unwrap_err().contains("no voxels"));
     assert!(Viewer::new(Arc::new(Repo { modality: "CT" })).request_segment_metrics(1, &QUICK).is_err());
+}
+
+// covers 18.9-c, 18.11-c, 18.11-d
+#[test]
+fn the_bin_width_and_ranges_of_the_card_are_set_validated_and_used() {
+    let mut v = open("");
+    let label = with_block(&mut v);
+    v.declare_modality("CT").unwrap();
+    assert_eq!(v.metrics_params(), &Params::default());
+
+    let own = Params {
+        bin_width: 100.0,
+        hu_ranges: Some(vec![HuRange::new(-250.0, -50.0), HuRange::new(-50.0, 150.0)]),
+        ..Params::default()
+    };
+    v.set_metrics_params(own.clone()).unwrap();
+    assert_eq!(v.metrics_params(), &own);
+    // the same numbers on the calling thread and in the background, and the parameters are in the result
+    let direct = v.segment_metrics(label, &CLINICAL).unwrap();
+    v.request_segment_metrics(label, &CLINICAL).unwrap();
+    v.wait_idle();
+    let MetricsOutcome::Ready(r) = v.segment_metrics_view(label).unwrap().outcome else { panic!() };
+    assert_eq!(**r, direct);
+    assert_eq!(r.params, own);
+    assert_eq!(r.bin_width, Some(100.0));
+    let shares = r.hu_ranges.as_ref().unwrap();
+    assert!(!shares.is_default);
+    assert_eq!(
+        shares.ranges.iter().map(|s| s.voxels).collect::<Vec<_>>(),
+        [32, 32].map(|n| n as u64),
+        "[-250, -50): -200 and -100; [-50, 150): 0 and 100"
+    );
+
+    // nonsense is refused and the old parameters stay
+    let bad =
+        Params { hu_ranges: Some(vec![HuRange::new(0.0, 100.0), HuRange::new(50.0, 150.0)]), ..Params::default() };
+    assert!(v.set_metrics_params(bad).unwrap_err().contains("overlap"));
+    assert!(v.set_metrics_params(Params { bin_width: 0.0, ..Params::default() }).is_err());
+    assert_eq!(v.metrics_params(), &own);
+}
+
+// covers 18.4-e
+#[test]
+fn a_second_request_is_not_mistaken_for_the_first() {
+    let mut v = open("");
+    let label = with_block(&mut v);
+    v.declare_modality("CT").unwrap();
+    v.request_segment_metrics(label, &CLINICAL).unwrap();
+    // other parameters before the first answer arrives: only the second request is kept
+    v.set_metrics_params(Params { bin_width: 500.0, ..Params::default() }).unwrap();
+    v.request_segment_metrics(label, &CLINICAL).unwrap();
+    v.wait_idle();
+    let MetricsOutcome::Ready(r) = v.segment_metrics_view(label).unwrap().outcome else { panic!() };
+    assert_eq!(r.bin_width, Some(500.0));
 }
