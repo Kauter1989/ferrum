@@ -40,6 +40,33 @@ fn segment() -> MaskRegion {
     .expect("segment")
 }
 
+/// A ragged, speckled region like a region grown on real tissue and cut to a box (the masks of
+/// the field test: 19 to 36 pieces, hundreds of cavities, a frayed surface). `radius` is in
+/// voxels: 29 gives about 100 000 voxels, 60 about 900 000.
+fn ragged_segment(radius: f32) -> MaskRegion {
+    let c = Vec3::new(256.0, 256.0, 150.0);
+    let hash = |i: usize, j: usize, k: usize| {
+        let mut h = (i as u64) << 40 ^ (j as u64) << 20 ^ k as u64;
+        h = h.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (h >> 29);
+        h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        (h >> 40) as f32 / (1u64 << 24) as f32
+    };
+    MaskRegion::from_grid(DIMS, |n| {
+        let (i, j, k) = (n % 512, (n / 512) % 512, n / (512 * 512));
+        let p = Vec3::new(i as f32, j as f32, k as f32) - c;
+        let d = p.length() - radius * (1.0 + 0.15 * (p.x * 0.11).sin() * (p.y * 0.07).cos());
+        let r = hash(i, j, k);
+        if d < -3.0 {
+            r > 0.003 // a few holes inside
+        } else if d < 4.0 {
+            r > 0.35 // a frayed rim
+        } else {
+            d < 14.0 && r > 0.985 // speckles outside
+        }
+    })
+    .expect("segment")
+}
+
 const fn only(features: &'static [&'static str]) -> Profile {
     Profile { name: "part", version: "0", summary: "a part of clinical", features, ivh_curve: false, hu_ranges: false }
 }
@@ -69,6 +96,25 @@ fn benches(c: &mut Criterion) {
         g.bench_function(name, |b| b.iter(|| compute(black_box(&input), profile, &params).expect("metrics")));
     }
     g.finish();
+
+    for (radius, name) in [(29.0, "ragged_100k"), (60.0, "ragged_900k")] {
+        let r = ragged_segment(radius);
+        println!("{name}: {} voxels", r.count());
+        let input = Input { region: &r, volume: &v, unit: ValueUnit::Hu };
+        let mut g = c.benchmark_group(format!("profiles_512x512x300_{name}"));
+        g.sample_size(10);
+        for (part, profile) in [
+            ("clinical", &CLINICAL),
+            ("part_mesh_and_axes", &MESH),
+            ("part_mesh_and_hull", &HULL),
+            ("part_diameter", &DIAMETER),
+            ("part_topology", &TOPOLOGY),
+            ("part_distribution", &DISTRIBUTION),
+        ] {
+            g.bench_function(part, |b| b.iter(|| compute(black_box(&input), profile, &params).expect("metrics")));
+        }
+        g.finish();
+    }
 }
 
 criterion_group!(profiles, benches);
