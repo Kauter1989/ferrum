@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use ferrum_app::{FilterKind, GpuSink, GpuSyncState, InputKind, ToolKind, ToolOutcome, ViewMode, Viewer};
+use ferrum_domain::{storage_histogram, AUTO_WINDOW_BINS};
 use ferrum_domain::{
     Annotation, AnnotationSet, Dims3, LabelMap, LoadedSeries, ProgressSink, Provenance, RenderMode, RepositoryError,
     ReviewStatus, Rgba8, SeriesDescriptor, SeriesMetadata, SliceAxis, SliceKey, StudyInfo, Timestamp, TransferFunction,
@@ -514,6 +515,20 @@ fn picking_uses_the_segment_overlay() {
     assert!(v.pick(Vec2::ZERO, 1.0).is_none());
     v.set_segments_shown(false);
     assert_eq!(v.pick(Vec2::ZERO, 1.0), Some(before));
+}
+
+#[test]
+fn without_a_stored_window_the_app_and_the_agent_choose_the_same_one() {
+    // covers 2.7-h
+    let mut viewer = Viewer::new(FakeRepo::new(1));
+    let volume = phantom(Dims3::new(24, 24, 20));
+    let expected = WindowLevel::auto(volume.range(), &storage_histogram(volume.data(), AUTO_WINDOW_BINS));
+    let metadata = SeriesMetadata { modality: "MR".into(), ..SeriesMetadata::default() };
+    viewer.install(LoadedSeries { volume, metadata });
+    assert_eq!(viewer.slices.window, expected);
+    // 0.5 % ends in the bin of 0 (upper edge 1000/256), 99.5 % in the bin of 1000.
+    assert!((viewer.slices.window.lower() - 3.90625).abs() < 1e-3, "{:?}", viewer.slices.window);
+    assert!((viewer.slices.window.upper() - 1000.0).abs() < 1e-3, "{:?}", viewer.slices.window);
 }
 
 #[test]

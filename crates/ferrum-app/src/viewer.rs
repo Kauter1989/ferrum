@@ -386,11 +386,7 @@ impl Viewer {
     }
 
     fn auto_window_for(d: &Dataset) -> WindowLevel {
-        let lo = d.histogram.percentile(0.005);
-        let hi = d.histogram.percentile(0.995).max(lo + 1e-3);
-        let r = d.volume.range();
-        let (a, b) = (r.denormalize(lo), r.denormalize(hi));
-        WindowLevel::new((a + b) * 0.5, b - a)
+        WindowLevel::auto(d.volume.range(), d.histogram.counts())
     }
 
     /// Processes finished background work. Call once per frame.

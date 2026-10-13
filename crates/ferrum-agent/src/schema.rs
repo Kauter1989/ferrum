@@ -81,7 +81,7 @@ fn view_slice() -> (&'static str, Value) {
                     "slice_number": integer(1, "1-based slice number"),
                     "at": point("the slice through this point (instead of slice_number)"),
                     "window": {
-                        "description": "window preset or explicit window (default: the series' own)",
+                        "description": "window preset or explicit window (default: the series' own, else 0.5–99.5 % of the voxel values, as in the desktop app)",
                         "oneOf": [
                             { "type": "string", "enum": ["full_range", "brain", "soft_tissue", "lung", "bone"] },
                             obj(json!({ "center": number("window centre"), "width": number("window width") }), &["center", "width"]),
@@ -99,7 +99,7 @@ fn view_slice() -> (&'static str, Value) {
 
 fn window_param() -> Value {
     json!({
-        "description": "window preset or explicit window (default: the series' own)",
+        "description": "window preset or explicit window (default: the series' own, else 0.5–99.5 % of the voxel values, as in the desktop app)",
         "oneOf": [
             { "type": "string", "enum": ["full_range", "brain", "soft_tissue", "lung", "bone"] },
             obj(json!({ "center": number("window centre"), "width": number("window width") }), &["center", "width"]),

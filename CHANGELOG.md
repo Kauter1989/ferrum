@@ -10,6 +10,7 @@ follow [Semantic Versioning](https://semver.org/).
 
 - A DICOM series with several images at one slice position (MR echoes, diffusion b-values, dynamic phases, PET frames) was silently stacked from whichever file came first at each position, which could mix two volumes. The loader now takes the first image at every position by Temporal Position Identifier, Echo Number, b-value, Acquisition Number, Trigger Time and Instance Number, and says that one volume of several is shown.
 - The loaders now say what they could not show as stored: a 4D NIfTI file (volume 1 of N), irregular slice gaps (a missing slice), slices ordered without image positions or frames of a multi-frame file (spacing taken from the header), and a missing pixel spacing (1 mm assumed). The warnings appear once in the desktop app after loading and stay under **Info**; the agent's `study open` and `study info` carry them in `warnings`.
+- Agent renders of a series that stores no window (NIfTI, most MR and PET) used the full value range, so a few bright voxels left the image dark. They now use the same 0.5–99.5 % window as the desktop app, from one implementation in `ferrum-domain`.
 - `clinical` took 3 s for a real mask of 83 000 voxels and 87 s for 893 000 (found in the field test on the MSD spleen): the convex hull tested every point against every face. It now keeps the points outside each face (Quickhull); a blobby mask of 100 000 voxels takes 0.19 s instead of 16.7 s, a mask of a million voxels 1.3 to 2.5 s. Volume, area and the 3D diameter are unchanged.
 
 ### Added

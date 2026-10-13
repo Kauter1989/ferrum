@@ -7,7 +7,7 @@
 
 use std::path::Path;
 
-use ferrum_domain::{SegmentStyle, SliceAxis, Volume, WindowLevel, WindowPreset};
+use ferrum_domain::{storage_histogram, SegmentStyle, SliceAxis, Volume, WindowLevel, WindowPreset, AUTO_WINDOW_BINS};
 use glam::{DVec2, DVec3};
 use serde_json::{json, Value};
 
@@ -83,10 +83,16 @@ impl Layout {
     }
 }
 
+/// The window the desktop app opens a series with when the data stores
+/// none: 0.5 to 99.5 percent of the voxels.
+fn auto_window(v: &Volume) -> WindowLevel {
+    WindowLevel::auto(v.range(), &storage_histogram(v.data(), AUTO_WINDOW_BINS))
+}
+
 pub(super) fn window(study: &Study, p: &Params) -> Result<WindowLevel, AgentError> {
     let range = study.volume.range();
     match p.get("window") {
-        None => Ok(study.metadata.default_window.unwrap_or_else(|| WindowPreset::FullRange.window(range))),
+        None => Ok(study.metadata.default_window.unwrap_or_else(|| auto_window(&study.volume))),
         Some(Value::String(name)) => WindowPreset::ALL
             .iter()
             .find(|w| w.label().eq_ignore_ascii_case(name) || w.label().replace(' ', "_").eq_ignore_ascii_case(name))
