@@ -126,6 +126,10 @@ pub struct SeriesMetadata {
     pub study: StudyInfo,
     /// What was opened: the folder of a DICOM series or the NIfTI file.
     pub source: PathBuf,
+    /// What the reader could not show as stored, in plain words (several
+    /// images per slice position, a 4D file, irregular or assumed spacing).
+    /// Never holds identifiers.
+    pub warnings: Vec<String>,
 }
 
 /// The DICOM modality code (`CT`, `MR`, …) that `text` stands for, in upper

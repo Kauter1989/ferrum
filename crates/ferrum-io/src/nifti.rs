@@ -43,6 +43,9 @@ pub struct NiftiHeader {
     /// RAS world position of the centre of voxel `(0, 0, 0)`; zero when the
     /// file has no orientation.
     pub origin: Vec3,
+    /// Number of 3D volumes in the file (`dim[4] × … × dim[7]`); only the
+    /// first is read.
+    pub volumes: u64,
 }
 
 /// RAS ↔ LPS (the conversion is its own inverse).
@@ -244,6 +247,7 @@ impl NiftiHeader {
             description: String::from_utf8_lossy(&desc_bytes[..end]).into_owned(),
             axes,
             origin: if origin.is_finite() { origin } else { Vec3::ZERO },
+            volumes: (4..=7).map(|i| u64::from(d(i))).product(),
         })
     }
 
@@ -509,6 +513,7 @@ impl VolumeRepository for NiftiRepository {
         progress.report(0.1, "Reading NIfTI");
         let (volume, h) = read_nifti(path)?;
         progress.report(1.0, "Volume loaded");
+        let warnings = load_warnings(&h);
         let attributes = vec![
             ("Format".into(), "NIfTI-1".into()),
             ("Datatype".into(), h.datatype.to_string()),
@@ -524,8 +529,21 @@ impl VolumeRepository for NiftiRepository {
                 attributes,
                 study: ferrum_domain::StudyInfo::default(),
                 source: path.clone(),
+                warnings,
             },
         })
+    }
+}
+
+/// What the reader could not show as stored.
+fn load_warnings(h: &NiftiHeader) -> Vec<String> {
+    if h.volumes > 1 {
+        vec![format!(
+            "the file holds {} volumes (4D: time points, b-values, echoes or channels); volume 1 of {} is shown",
+            h.volumes, h.volumes
+        )]
+    } else {
+        Vec::new()
     }
 }
 
@@ -569,6 +587,33 @@ mod tests {
         assert_eq!(s[0].dims, Dims3::new(5, 4, 3));
         let l = repo.load(&s[0], &NoProgress).unwrap();
         assert_eq!(l.volume.dims(), Dims3::new(5, 4, 3));
+        assert!(l.metadata.warnings.is_empty(), "a 3D file loads without warnings");
+    }
+
+    #[test]
+    fn a_4d_file_shows_its_first_volume_and_says_so() {
+        // covers 2.7-e
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dwi.nii");
+        write_nifti(&sample_volume(), &path).unwrap();
+        // Turn it into 4D with 3 volumes: dim[0] = 4, dim[4] = 3, the
+        // first volume's voxels stored three times.
+        let mut bytes = std::fs::read(&path).unwrap();
+        let h = NiftiHeader::parse(&bytes, &path).unwrap();
+        bytes[40..42].copy_from_slice(&4i16.to_le_bytes());
+        bytes[48..50].copy_from_slice(&3i16.to_le_bytes());
+        let body = bytes[h.vox_offset..].to_vec();
+        bytes.extend_from_slice(&body);
+        bytes.extend_from_slice(&body);
+        std::fs::write(&path, &bytes).unwrap();
+        let repo = NiftiRepository;
+        let s = repo.scan(&[path], &NoProgress).unwrap();
+        let l = repo.load(&s[0], &NoProgress).unwrap();
+        assert_eq!(l.volume.dims(), Dims3::new(5, 4, 3));
+        assert_eq!(l.volume.physical(1, 0, 0), sample_volume().physical(1, 0, 0));
+        assert_eq!(l.metadata.warnings.len(), 1, "{:?}", l.metadata.warnings);
+        assert!(l.metadata.warnings[0].contains("holds 3 volumes"), "{:?}", l.metadata.warnings);
+        assert!(l.metadata.warnings[0].contains("volume 1 of 3 is shown"), "{:?}", l.metadata.warnings);
     }
 
     #[test]

@@ -643,11 +643,36 @@ impl ViewerApp {
             });
     }
 
+    /// Says once after loading what the reader could not show as stored;
+    /// the list stays in the **Info** tab.
+    fn load_warnings_dialog(&mut self, ctx: &egui::Context) {
+        if !self.viewer.load_warnings_unseen() {
+            return;
+        }
+        let mut dismiss = false;
+        egui::Window::new("Loaded with warnings")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(Align2::CENTER_TOP, [0.0, 72.0])
+            .show(ctx, |ui| {
+                ui.set_max_width(440.0);
+                for w in self.viewer.load_warnings() {
+                    ui.colored_label(theme::WARN, format!("{} {w}", icon::WARNING));
+                }
+                ui.label(RichText::new("Shown again under Info → Series information.").size(12.0).color(TEXT_DIM));
+                dismiss = ui.button("OK").clicked();
+            });
+        if dismiss {
+            self.viewer.dismiss_load_warnings();
+        }
+    }
+
     fn dialogs(&mut self, ctx: &egui::Context) {
         if let Some(series) = self.viewer.series_choice.clone() {
             self.series_dialog(ctx, series);
         }
         crate::ui::metrics_card::modality_dialog(ctx, &mut self.viewer, &mut self.modality_dialog);
+        self.load_warnings_dialog(ctx);
         if self.viewer.pending_text.is_some() {
             let mut close = None;
             egui::Window::new("Annotation text").collapsible(false).anchor(Align2::CENTER_CENTER, [0.0, 0.0]).show(

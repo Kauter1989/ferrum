@@ -251,6 +251,8 @@ pub struct Viewer {
     pub pending_text: Option<(SliceKey, Vec2)>,
     workspace: Option<review::WorkspaceSession>,
     pending_workspace: Option<Arc<dyn ferrum_domain::ResultStore>>,
+    /// The load warnings of the dataset have not been dismissed yet.
+    load_warnings_unseen: bool,
 }
 
 impl Viewer {
@@ -276,6 +278,7 @@ impl Viewer {
             pending_text: None,
             workspace: None,
             pending_workspace: None,
+            load_warnings_unseen: false,
         }
     }
 
@@ -284,6 +287,25 @@ impl Viewer {
     /// The loaded dataset.
     pub fn dataset(&self) -> Option<&Dataset> {
         self.dataset.as_ref()
+    }
+
+    /// What the reader could not show as stored in the loaded series
+    /// (several images per slice position, a 4D file, irregular or assumed
+    /// spacing); empty without a dataset.
+    pub fn load_warnings(&self) -> &[String] {
+        self.dataset.as_ref().map_or(&[], |d| d.metadata.warnings.as_slice())
+    }
+
+    /// Whether the load warnings are still to be shown to the person (once
+    /// after each load, until [`Viewer::dismiss_load_warnings`]).
+    pub fn load_warnings_unseen(&self) -> bool {
+        self.load_warnings_unseen && !self.load_warnings().is_empty()
+    }
+
+    /// The person has read the load warnings; they stay in the series
+    /// information.
+    pub fn dismiss_load_warnings(&mut self) {
+        self.load_warnings_unseen = false;
     }
 
     /// Starts scanning files/directories.
@@ -325,6 +347,7 @@ impl Viewer {
         let revision = self.bump_revision();
         let LoadedSeries { volume, metadata } = loaded;
         let window = metadata.default_window;
+        self.load_warnings_unseen = !metadata.warnings.is_empty();
         let dataset = Dataset::new(volume, metadata, revision);
         let dims = dataset.volume.dims().as_uvec3();
         self.slices = SliceState {

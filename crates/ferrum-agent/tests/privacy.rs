@@ -18,6 +18,8 @@ const SECRETS: [&str; 9] =
     ["DOE^JANE", "JANE", "MRN-4711", "19700101", "ACC-0815", "20240428", "St Example Hospital", STUDY_UID, SERIES_UID];
 
 /// 16 × 16 × 8 CT in HU with a bright block, and patient data in the header.
+/// The last slice is 4 mm from its neighbour instead of 2, so that loading
+/// warns (covers 2.7-f).
 fn write_ct(dir: &Path) {
     std::fs::create_dir_all(dir).unwrap();
     for k in 0..8u32 {
@@ -49,7 +51,7 @@ fn write_ct(dir: &Path) {
             text(tags::STUDY_DESCRIPTION, VR::LO, "Chest"),
             text(tags::SERIES_DESCRIPTION, VR::LO, "Axial 2.0"),
             text(tags::INSTANCE_NUMBER, VR::IS, &(k + 1).to_string()),
-            text(tags::IMAGE_POSITION_PATIENT, VR::DS, &format!("-8\\-8\\{}", f64::from(k) * 2.0)),
+            text(tags::IMAGE_POSITION_PATIENT, VR::DS, &format!("-8\\-8\\{}", f64::from(k + k / 7) * 2.0)),
             text(tags::IMAGE_ORIENTATION_PATIENT, VR::DS, "1\\0\\0\\0\\1\\0"),
             text(tags::PIXEL_SPACING, VR::DS, "1\\1"),
             text(tags::SLICE_THICKNESS, VR::DS, "2"),
@@ -124,6 +126,7 @@ fn outputs_contain_no_identifiers() {
         scan(&format!("envelope of {}", e["provenance"]["command"]), &clean.to_string(), &mut found);
     }
     assert_eq!(envelopes[2]["data"]["value_unit"], "HU", "a real CT series");
+    assert!(envelopes[1]["warnings"].to_string().contains("slice spacing is irregular"), "{:#}", envelopes[1]);
     for sub in ["renders", "export"] {
         for entry in std::fs::read_dir(ws.join(sub)).unwrap() {
             let path = entry.unwrap().path();

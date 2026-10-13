@@ -164,6 +164,30 @@ fn probe_stats_and_measurements_have_known_answers() {
 }
 
 #[test]
+fn a_4d_file_opens_with_a_warning() {
+    // covers 2.7-e, 2.7-f
+    let f = fixture(AgentConfig::default());
+    let path = f.data.join("phantom.nii");
+    ferrum_io::write_nifti(&phantom(), &path).unwrap();
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes[40..42].copy_from_slice(&4i16.to_le_bytes());
+    bytes[48..50].copy_from_slice(&2i16.to_le_bytes());
+    let body = bytes[352..].to_vec();
+    bytes.extend_from_slice(&body);
+    std::fs::write(&path, bytes).unwrap();
+    let warned = |env: &Value| {
+        env["warnings"].as_array().unwrap().iter().any(|w| w.as_str().unwrap().contains("volume 1 of 2 is shown"))
+    };
+    let env = f.run("study open", json!({ "path": path }));
+    assert_eq!(env["data"]["dims"], json!([40, 40, 30]));
+    assert!(warned(&env), "{env:#}");
+    assert!(warned(&f.run("study info", json!({}))), "study info repeats it");
+    // a 3D file has no such warning
+    let g = fixture(AgentConfig::default());
+    assert!(!warned(&g.run("study open", json!({ "path": g.data.join("phantom.nii.gz") }))));
+}
+
+#[test]
 fn slice_renders_map_pixels_back_to_voxels() {
     let f = fixture(AgentConfig::default());
     f.open();

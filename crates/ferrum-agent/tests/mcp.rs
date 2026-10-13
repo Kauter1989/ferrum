@@ -16,6 +16,18 @@ fn phantom(path: &Path, value: f32) {
     ferrum_io::write_nifti(&Volume::from_physical(dims, Vec3::new(1.0, 1.0, 2.0), &values).unwrap(), path).unwrap();
 }
 
+/// [`phantom`] as an uncompressed 4D file of 2 volumes, so that loading
+/// warns (covers 2.7-f).
+fn phantom_4d(path: &Path, value: f32) {
+    phantom(path, value);
+    let mut bytes = std::fs::read(path).unwrap();
+    bytes[40..42].copy_from_slice(&4i16.to_le_bytes());
+    bytes[48..50].copy_from_slice(&2i16.to_le_bytes());
+    let body = bytes[352..].to_vec();
+    bytes.extend_from_slice(&body);
+    std::fs::write(path, bytes).unwrap();
+}
+
 /// The session both transports run.
 fn script(ws: &str, src: &Path) -> Vec<(&'static str, Value)> {
     vec![
@@ -89,8 +101,8 @@ fn call(server: &mut McpServer, id: u64, command: &str, args: &Value) -> Value {
 #[test]
 fn mcp_and_command_line_give_the_same_json() {
     let dir = tempfile::tempdir().unwrap();
-    let src = dir.path().join("p.nii.gz");
-    phantom(&src, 400.0);
+    let src = dir.path().join("p.nii");
+    phantom_4d(&src, 400.0);
     let (cli_ws, mcp_ws) = (dir.path().join("cli"), dir.path().join("mcp"));
     let agent = Agent::default();
     let mut server = McpServer::new(Agent::default());
@@ -101,6 +113,10 @@ fn mcp_and_command_line_give_the_same_json() {
         let result = call(&mut server, i as u64, command, &b);
         let via_mcp = &result["structuredContent"];
         assert_eq!(comparable(&direct, &cli_root), comparable(via_mcp, &mcp_root), "{command}");
+        if command.starts_with("study ") && direct["ok"] == true {
+            let w = direct["warnings"].to_string();
+            assert!(w.contains("volume 1 of 2 is shown"), "{command}: {w}");
+        }
         assert_eq!(result["isError"], direct["ok"] != true);
         let text: Value = serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
         assert_eq!(&text, via_mcp, "text and structured content agree");

@@ -781,3 +781,47 @@ fn the_clinical_card_groups_the_features_shows_the_ranges_and_applies_the_settin
     h.get_by_label_contains("Ranges as you set them");
     assert!(h.query_by_label_contains("Default ranges for orientation").is_none());
 }
+
+#[test]
+fn load_warnings_are_shown_once_and_kept_in_the_series_information() {
+    // covers 2.7-g
+    let dir = tempfile::tempdir().unwrap();
+    // The phantom as a 4D file of 2 volumes.
+    let path = phantom_file(dir.path());
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes[40..42].copy_from_slice(&4i16.to_le_bytes());
+    bytes[48..50].copy_from_slice(&2i16.to_le_bytes());
+    let body = bytes[352..].to_vec();
+    bytes.extend_from_slice(&body);
+    std::fs::write(&path, bytes).unwrap();
+    let repo = Arc::new(ferrum_io::CompositeRepository::default());
+    let mut app = ViewerApp::new(None, repo, vec![path]);
+    app.viewer.wait_idle();
+    app.viewer.declare_modality("MR").unwrap();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1200.0, 800.0))
+        .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
+    h.run();
+    h.get_by_label("Loaded with warnings");
+    assert_eq!(h.get_all_by_label_contains("volume 1 of 2 is shown").count(), 1);
+    h.get_by_label("OK").click();
+    h.run();
+    assert!(h.query_by_label("Loaded with warnings").is_none(), "dismissed");
+    assert!(!h.state().viewer.load_warnings_unseen());
+    h.get_by_label("Info").click();
+    h.run();
+    h.get_by_label("Series information");
+    h.get_by_label_contains("volume 1 of 2 is shown");
+}
+
+#[test]
+fn a_3d_file_opens_without_a_warning_window() {
+    // covers 2.7-g
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1200.0, 800.0))
+        .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), loaded_app(dir.path(), None));
+    h.run();
+    assert!(h.query_by_label("Loaded with warnings").is_none());
+    assert!(h.state().viewer.load_warnings().is_empty());
+}

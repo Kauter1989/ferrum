@@ -30,6 +30,8 @@ pub struct SyntheticSlice {
     pub photometric: &'static str,
     pub frames: u32,
     pub include_position: bool,
+    /// Echo Numbers, written when set.
+    pub echo: Option<i32>,
 }
 
 impl SyntheticSlice {
@@ -53,6 +55,7 @@ impl SyntheticSlice {
             photometric: "MONOCHROME2",
             frames: 1,
             include_position: true,
+            echo: None,
         }
     }
 
@@ -103,6 +106,9 @@ impl SyntheticSlice {
                 PrimitiveValue::from(self.frames.to_string()),
             ));
             elements.push(DataElement::new(tags::SPACING_BETWEEN_SLICES, VR::DS, PrimitiveValue::from("1.25")));
+        }
+        if let Some(e) = self.echo {
+            elements.push(DataElement::new(tags::ECHO_NUMBERS, VR::IS, PrimitiveValue::from(e.to_string())));
         }
         if let Some((c, w)) = self.window {
             elements.push(DataElement::new(tags::WINDOW_CENTER, VR::DS, PrimitiveValue::from(ds(&[c]))));
