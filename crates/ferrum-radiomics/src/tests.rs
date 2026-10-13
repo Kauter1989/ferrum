@@ -255,8 +255,9 @@ fn clinical_adds_to_quick_without_changing_what_quick_says() {
     for f in &quick.features {
         assert_eq!(c.get(f.feature.id), Some(f), "{} differs between the profiles", f.feature.id);
     }
-    assert_eq!((c.profile, c.profile_version), ("clinical", "0.1"));
+    assert_eq!((c.profile, c.profile_version), ("clinical", "0.2"));
     assert!(c.features.len() > quick.features.len());
+    assert!(quick.warnings.is_empty(), "quick does not look at the connectivity");
     assert_eq!(c.get("shape.surface_area_mm2").unwrap().unit, "mm2");
     // shape does not need the unit, so quick's refusal is the only reason clinical is refused too
     assert!(matches!(
@@ -267,4 +268,88 @@ fn clinical_adds_to_quick_without_changing_what_quick_says() {
         ),
         Err(MetricsError::UnitUnknown { .. })
     ));
+}
+
+/// A box of voxels as a list of cells.
+fn cuboid(lo: [u32; 3], hi: [u32; 3]) -> Vec<(u32, u32, u32)> {
+    (lo[2]..hi[2]).flat_map(|k| (lo[1]..hi[1]).flat_map(move |j| (lo[0]..hi[0]).map(move |i| (i, j, k)))).collect()
+}
+
+// covers 18.2-c
+#[test]
+fn the_3d_diameter_of_the_block_is_its_space_diagonal() {
+    let r = clinical(&block(), &phantom());
+    // 4 x 4 x 4 voxels of 1 x 1 x 2 mm: the centres span 3, 3 and 3 steps
+    assert!((num(&r, "size.max_diameter_mm") - 54f64.sqrt()).abs() < 1e-9);
+    // the axial long axis is shorter: the 3D diameter is the larger of the two
+    assert!(num(&r, "size.max_diameter_mm") > num(&r, "size.long_axis_mm"));
+}
+
+// covers 18.7-a, 18.7-b
+#[test]
+fn a_box_is_its_own_hull() {
+    let r = clinical(&block(), &phantom());
+    assert!((num(&r, "shape.solidity") - 1.0).abs() < 1e-9);
+    assert!((num(&r, "shape.convexity") - 1.0).abs() < 1e-9);
+    assert!((num(&r, "shape.hull_volume_ml") - num(&r, "shape.mesh_volume_ml")).abs() < 1e-12);
+    assert!((num(&r, "shape.hull_area_mm2") - num(&r, "shape.surface_area_mm2")).abs() < 1e-9);
+    assert_eq!(r.get("shape.hull_volume_ml").unwrap().unit, "mL");
+    assert_eq!(r.get("shape.hull_area_mm2").unwrap().unit, "mm2");
+}
+
+// covers 18.7-a, 18.7-b
+#[test]
+fn two_voxels_apart_have_a_hull_known_by_hand() {
+    // voxels of 1 x 1 x 2 mm at i = 2 and i = 5. Each is an octahedron with
+    // half axes 0.5, 0.5 and 1 mm (volume 1/3 mm³, area 3 mm²). The hull is
+    // a prism of length 3 whose cross-section is the diamond (area 1 mm²,
+    // perimeter 4 * sqrt(1.25) mm), closed by two half octahedra.
+    let r = clinical(&cells(&[(2, 5, 5), (5, 5, 5)]), &phantom());
+    let hull_volume = 3.0 + 1.0 / 3.0;
+    assert!((num(&r, "shape.mesh_volume_ml") * 1000.0 - 2.0 / 3.0).abs() < 1e-12);
+    assert!((num(&r, "shape.hull_volume_ml") * 1000.0 - hull_volume).abs() < 1e-12);
+    assert!((num(&r, "shape.solidity") - 0.2).abs() < 1e-12);
+    assert!((num(&r, "shape.hull_area_mm2") - (12.0 * 1.25f64.sqrt() + 3.0)).abs() < 1e-12);
+    // two pieces: the hull surface is larger than the surface of the pieces
+    assert!((num(&r, "shape.convexity") - (5f64.sqrt() + 0.5)).abs() < 1e-12);
+    assert_eq!(num(&r, "size.max_diameter_mm"), 3.0);
+    assert_eq!(num(&r, "topology.components"), 2.0);
+}
+
+// covers 18.8-a, 18.8-b, 18.8-c, 18.8-d
+#[test]
+fn a_hollow_box_reports_its_cavity_and_warns() {
+    let v = phantom();
+    let mut hollow = cuboid([2, 2, 2], [8, 8, 8]);
+    hollow.retain(|c| !cuboid([4, 4, 4], [6, 6, 6]).contains(c));
+    let r = clinical(&cells(&hollow), &v);
+    assert_eq!(num(&r, "topology.components"), 1.0);
+    assert_eq!(num(&r, "topology.largest_component_share"), 1.0);
+    assert_eq!(num(&r, "topology.holes"), 1.0);
+    // 8 voxels of 1 x 1 x 2 mm
+    assert_eq!(num(&r, "topology.hole_volume_mm3"), 16.0);
+    assert_eq!(num(&r, "topology.euler_number"), 2.0);
+    assert_eq!(num(&r, "topology.border_sides"), 0.0);
+    assert_eq!(r.warnings.len(), 1);
+    assert!(r.warnings[0].starts_with("has_holes: 1 cavities of 8 voxels"), "{:?}", r.warnings);
+    // the cavity surface is inside the mesh: its volume is that of the box minus that of the cavity
+    let outer = clinical(&cells(&cuboid([2, 2, 2], [8, 8, 8])), &v);
+    let inner = clinical(&cells(&cuboid([4, 4, 4], [6, 6, 6])), &v);
+    let expected = num(&outer, "shape.mesh_volume_ml") - num(&inner, "shape.mesh_volume_ml");
+    assert!((num(&r, "shape.mesh_volume_ml") - expected).abs() < 1e-12);
+    assert!((num(&r, "shape.solidity") - expected / num(&outer, "shape.mesh_volume_ml")).abs() < 1e-12);
+}
+
+// covers 18.8-d
+#[test]
+fn a_piece_far_away_and_the_image_border_each_give_their_warning() {
+    let v = phantom();
+    let mut cut = cuboid([0, 3, 3], [4, 6, 6]);
+    cut.extend(cuboid([7, 7, 7], [10, 9, 9]));
+    let r = clinical(&cells(&cut), &v);
+    assert_eq!((num(&r, "topology.components"), num(&r, "topology.border_sides")), (2.0, 1.0));
+    let codes: Vec<&str> = r.warnings.iter().map(|w| w.split(':').next().unwrap()).collect();
+    assert_eq!(codes, ["fragmented", "touches_border"]);
+    // the mask is not touched by a warning: the same segment measured again is identical
+    assert_eq!(clinical(&cells(&cut), &v), r);
 }

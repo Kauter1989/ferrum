@@ -79,8 +79,8 @@ pub const QUICK: Profile = Profile {
 /// segment.
 pub const CLINICAL: Profile = Profile {
     name: "clinical",
-    version: "0.1",
-    summary: "Size, shape (surface, compactness, principal axes) and first-order statistics of the voxel values.",
+    version: "0.2",
+    summary: "Size, shape (surface, compactness, principal axes, convex hull), connectivity (pieces, cavities, Euler number) and first-order statistics of the voxel values.",
     features: &[
         "size.voxels",
         "size.volume_mm3",
@@ -93,6 +93,7 @@ pub const CLINICAL: Profile = Profile {
         "size.centroid_z_mm",
         "size.long_axis_mm",
         "size.short_axis_mm",
+        "size.max_diameter_mm",
         "size.largest_slice_axial",
         "size.largest_slice_coronal",
         "size.largest_slice_sagittal",
@@ -117,6 +118,16 @@ pub const CLINICAL: Profile = Profile {
         "shape.least_axis_dir_x",
         "shape.least_axis_dir_y",
         "shape.least_axis_dir_z",
+        "shape.hull_volume_ml",
+        "shape.hull_area_mm2",
+        "shape.solidity",
+        "shape.convexity",
+        "topology.components",
+        "topology.largest_component_share",
+        "topology.holes",
+        "topology.hole_volume_mm3",
+        "topology.euler_number",
+        "topology.border_sides",
         "intensity.mean",
         "intensity.std",
         "intensity.min",
@@ -175,7 +186,7 @@ mod tests {
         }
         assert!(CLINICAL.features.len() > QUICK.features.len());
         assert!(CLINICAL.features().any(|f| f.family == crate::feature::Family::Shape));
-        assert_eq!(Profile::by_name("clinical").unwrap().version, "0.1");
+        assert_eq!(Profile::by_name("clinical").unwrap().version, "0.2");
     }
 
     #[test]

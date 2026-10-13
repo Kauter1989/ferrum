@@ -89,7 +89,9 @@ pub fn metrics(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
         "method": "from the label map and the voxel values; extents are voxel counts × spacing, the centroid is the \
                    mean of the voxel centres in LPS millimetres, percentiles are nearest rank, std is the population \
                    standard deviation; shape: area and volume of a marching-cubes surface mesh, principal axes from \
-                   the population covariance of the voxel centres in millimetres; six significant digits",
+                   the population covariance of the voxel centres in millimetres, convex hull of the mesh vertices; \
+                   maximum 3D diameter between voxel centres; connectivity: 26-connected pieces, 6-connected \
+                   cavities, Euler characteristic of the closed voxels; six significant digits",
     }));
     for w in &result.warnings {
         out = out.warn(w.clone());

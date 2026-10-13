@@ -291,7 +291,7 @@ fn the_clinical_profile_adds_the_shape_with_known_axes_and_says_why_a_direction_
     f.open(Some("ct"));
     let quick = f.ok("segment metrics", json!({ "segment": 1 }));
     let c = f.ok("segment metrics", json!({ "segment": 1, "profile": "clinical" }));
-    assert_eq!((c["profile"]["name"].as_str(), c["profile"]["version"].as_str()), (Some("clinical"), Some("0.1")));
+    assert_eq!((c["profile"]["name"].as_str(), c["profile"]["version"].as_str()), (Some("clinical"), Some("0.2")));
     for (id, v) in quick["features"].as_object().unwrap() {
         assert_eq!(&c["features"][id], v, "{id} is the same in both profiles");
     }
@@ -324,4 +324,43 @@ fn the_clinical_profile_adds_the_shape_with_known_axes_and_says_why_a_direction_
     assert!((1.03..1.09).contains(&(area / analytic)), "area {area} against {analytic}");
     // 4 a / sqrt(5) = 14.31 mm; measured 14.23 on 2 mm slices: within 1 %
     close(value(&ball, "shape.major_axis_mm"), 4.0 * 8.0 / 5.0_f64.sqrt(), 0.15, "ball axis 4 a / sqrt(5)");
+}
+
+// covers 18.2-c, 18.7-a, 18.8-a, 18.8-b, 18.8-c, 18.8-d
+#[test]
+fn the_clinical_profile_adds_diameter_hull_and_connectivity() {
+    let f = fixture();
+    f.open(Some("ct"));
+    let cube = f.run("segment metrics", json!({ "segment": 1, "profile": "clinical" }));
+    assert_eq!(cube["ok"], true, "{cube:#}");
+    let c = &cube["data"];
+    // 6 x 6 x 6 voxels of 1 x 1 x 2 mm: the centres span 5 steps on each axis
+    close(value(c, "size.max_diameter_mm"), 150f64.sqrt(), 1e-3, "space diagonal");
+    // a box is its own hull
+    close(value(c, "shape.solidity"), 1.0, 1e-5, "solidity");
+    close(value(c, "shape.convexity"), 1.0, 1e-5, "convexity");
+    close(value(c, "shape.hull_volume_ml"), value(c, "shape.mesh_volume_ml"), 1e-5, "hull volume");
+    assert_eq!(c["features"]["shape.hull_area_mm2"]["unit"], "mm2");
+    for (id, expected) in [
+        ("topology.components", 1.0),
+        ("topology.largest_component_share", 1.0),
+        ("topology.holes", 0.0),
+        ("topology.hole_volume_mm3", 0.0),
+        ("topology.euler_number", 1.0),
+    ] {
+        assert_eq!(value(c, id), expected, "{id}");
+    }
+    let warnings = cube["warnings"].to_string();
+    assert!(!warnings.contains("fragmented") && !warnings.contains("has_holes"), "{warnings}");
+    // the ball: a connected body without a cavity; its hull is only a little larger than the mesh
+    let ball = f.ok("segment metrics", json!({ "segment": 2, "profile": "clinical" }));
+    assert_eq!((value(&ball, "topology.components"), value(&ball, "topology.holes")), (1.0, 0.0));
+    assert_eq!(value(&ball, "topology.euler_number"), 1.0);
+    let solidity = value(&ball, "shape.solidity");
+    assert!((0.9..=1.0).contains(&solidity), "{solidity}");
+    close(value(&ball, "size.max_diameter_mm"), 2.0 * 8.0, 1.5, "ball diameter");
+    // `quick` has no hull or connectivity, and no warnings of its own
+    let quick = f.run("segment metrics", json!({ "segment": 1 }));
+    assert!(quick["data"]["features"].get("shape.solidity").is_none());
+    assert!(quick["data"]["features"].get("size.max_diameter_mm").is_none());
 }
