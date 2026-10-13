@@ -503,9 +503,15 @@ pub enum Segment {
         ws: Ws,
         /// Segment label.
         segment: u64,
-        /// Which features to compute: quick (size, statistics) or clinical (adds shape).
+        /// Which features to compute: quick (size, statistics) or clinical (adds shape, connectivity, distribution).
         #[arg(long, default_value = "quick")]
         profile: String,
+        /// Histogram bin width in HU for entropy and uniformity (default 25).
+        #[arg(long)]
+        bin_width: Option<f64>,
+        /// A HU range MIN,MAX (half-open, repeat for several, not overlapping) to report the share of voxels in.
+        #[arg(long = "hu-range", value_parser = parse_hu_range, allow_hyphen_values = true)]
+        hu_range: Vec<[f64; 2]>,
         /// Add the definition text of every feature.
         #[arg(long)]
         describe: bool,
@@ -600,6 +606,14 @@ pub struct Decision {
 }
 
 /// `v:i,j,k`, `mm:x,y,z` or `r-0001:x,y` → JSON point.
+/// `MIN,MAX` of two numbers: a HU range.
+fn parse_hu_range(s: &str) -> Result<[f64; 2], String> {
+    let bad = || format!("HU range {s:?}: expected MIN,MAX, e.g. -100,0");
+    let (lo, hi) = s.split_once(',').ok_or_else(bad)?;
+    let num = |x: &str| x.trim().parse::<f64>().ok().filter(|v| v.is_finite()).ok_or_else(bad);
+    Ok([num(lo)?, num(hi)?])
+}
+
 pub fn parse_point(s: &str) -> Result<Value, String> {
     let (kind, rest) =
         s.split_once(':').ok_or_else(|| format!("point {s:?}: expected v:i,j,k, mm:x,y,z or r-0001:x,y"))?;
@@ -927,12 +941,14 @@ fn segment_call(s: &Segment) -> Result<(String, Value), String> {
         Segment::Shape { ws: w, segment } => {
             ("segment shape".into(), object(vec![ws(w), ("segment", Some(json!(segment)))]))
         }
-        Segment::Metrics { ws: w, segment, profile, describe } => (
+        Segment::Metrics { ws: w, segment, profile, bin_width, hu_range, describe } => (
             "segment metrics".into(),
             object(vec![
                 ws(w),
                 ("segment", Some(json!(segment))),
                 ("profile", Some(json!(profile))),
+                ("bin_width", some(*bin_width)),
+                ("hu_ranges", (!hu_range.is_empty()).then(|| json!(hu_range))),
                 ("describe", flag(*describe)),
             ]),
         ),
@@ -999,7 +1015,7 @@ mod tests {
         assert!(parse_window("a,b").is_err());
     }
 
-    // covers 18.4-b
+    // covers 18.4-b, 18.12-b
     #[test]
     fn segment_metrics_flags_become_parameters() {
         let call = |args: &[&str]| Cli::try_parse_from(args).unwrap().command.to_call().unwrap();
@@ -1019,6 +1035,31 @@ mod tests {
         );
         let (_, clinical) = call(&["ferrum-cli", "segment", "metrics", "-w", "ws", "3", "--profile", "clinical"]);
         assert_eq!(clinical["profile"], "clinical");
+        assert!(clinical.get("bin_width").is_none() && clinical.get("hu_ranges").is_none(), "nothing is sent unasked");
+        let (_, tuned) = call(&[
+            "ferrum-cli",
+            "segment",
+            "metrics",
+            "-w",
+            "ws",
+            "3",
+            "--profile",
+            "clinical",
+            "--bin-width",
+            "10",
+            "--hu-range",
+            "-100,0",
+            "--hu-range",
+            "0,100.5",
+        ]);
+        assert_eq!(tuned["bin_width"], 10.0);
+        assert_eq!(tuned["hu_ranges"], json!([[-100.0, 0.0], [0.0, 100.5]]));
+        for bad in ["100", "a,b", "1,2,3", "nan,1"] {
+            assert!(
+                Cli::try_parse_from(["ferrum-cli", "segment", "metrics", "-w", "ws", "3", "--hu-range", bad]).is_err(),
+                "{bad}"
+            );
+        }
     }
 
     #[test]

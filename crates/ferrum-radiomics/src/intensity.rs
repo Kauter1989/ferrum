@@ -58,29 +58,40 @@ pub fn region_values(region: &MaskRegion, volume: &Volume) -> Vec<f32> {
     out
 }
 
-/// Statistics of `values`; `None` if there are none. The mean is summed in
-/// the order given, so the same values in the same order always give the
-/// same bits.
+/// Statistics of `values`; `None` if there are none. The values are sorted
+/// first and summed in ascending order, so the same set of values gives the
+/// same bits whatever order it comes in.
 pub fn first_order(mut values: Vec<f32>) -> Option<FirstOrder> {
+    values.sort_by(f32::total_cmp);
+    first_order_sorted(&values)
+}
+
+/// The value at nearest rank `q` (`0..=1`) of `sorted`, which is not empty:
+/// the sorted value at index `round((N - 1) * q)`.
+pub fn nearest_rank(sorted: &[f32], q: f64) -> f64 {
+    f64::from(sorted[((sorted.len() - 1) as f64 * q).round() as usize])
+}
+
+/// [`first_order`] of values already sorted ascending (`f32::total_cmp`).
+/// The mean is summed in ascending order.
+pub fn first_order_sorted(values: &[f32]) -> Option<FirstOrder> {
     let n = values.len();
     if n == 0 {
         return None;
     }
     let mean = values.iter().map(|v| f64::from(*v)).sum::<f64>() / n as f64;
     let var = values.iter().map(|v| (f64::from(*v) - mean).powi(2)).sum::<f64>() / n as f64;
-    values.sort_by(f32::total_cmp);
-    let pct = |q: f64| f64::from(values[((n - 1) as f64 * q).round() as usize]);
     Some(FirstOrder {
         count: n as u64,
         mean,
         std: var.sqrt(),
         min: f64::from(values[0]),
         max: f64::from(values[n - 1]),
-        p5: pct(0.05),
-        p25: pct(0.25),
-        p50: pct(0.5),
-        p75: pct(0.75),
-        p95: pct(0.95),
+        p5: nearest_rank(values, 0.05),
+        p25: nearest_rank(values, 0.25),
+        p50: nearest_rank(values, 0.5),
+        p75: nearest_rank(values, 0.75),
+        p95: nearest_rank(values, 0.95),
     })
 }
 

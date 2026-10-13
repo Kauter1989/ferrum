@@ -291,7 +291,7 @@ fn the_clinical_profile_adds_the_shape_with_known_axes_and_says_why_a_direction_
     f.open(Some("ct"));
     let quick = f.ok("segment metrics", json!({ "segment": 1 }));
     let c = f.ok("segment metrics", json!({ "segment": 1, "profile": "clinical" }));
-    assert_eq!((c["profile"]["name"].as_str(), c["profile"]["version"].as_str()), (Some("clinical"), Some("0.2")));
+    assert_eq!((c["profile"]["name"].as_str(), c["profile"]["version"].as_str()), (Some("clinical"), Some("0.3")));
     for (id, v) in quick["features"].as_object().unwrap() {
         assert_eq!(&c["features"][id], v, "{id} is the same in both profiles");
     }
@@ -363,4 +363,86 @@ fn the_clinical_profile_adds_diameter_hull_and_connectivity() {
     let quick = f.run("segment metrics", json!({ "segment": 1 }));
     assert!(quick["data"]["features"].get("shape.solidity").is_none());
     assert!(quick["data"]["features"].get("size.max_diameter_mm").is_none());
+}
+
+// covers 18.9-a, 18.9-c, 18.9-d, 18.10-a, 18.11-a, 18.11-c, 18.11-d, 18.12-b
+#[test]
+fn the_clinical_profile_adds_the_distribution_the_curve_and_the_hu_ranges() {
+    let f = fixture();
+    f.open(Some("ct"));
+    let c = f.ok("segment metrics", json!({ "segment": 1, "profile": "clinical" }));
+    // the cube is one value (1000 HU): no skewness or kurtosis, and a reason
+    for id in ["intensity.skewness", "intensity.kurtosis"] {
+        let v = &c["features"][id];
+        assert!(v["value"].is_null() && v["reason"].as_str().unwrap().contains("all voxel values are equal"), "{v:#}");
+    }
+    close(value(&c, "intensity.energy"), 216.0 * 1e6, 1e3, "energy");
+    assert_eq!(c["features"]["intensity.energy"]["unit"], "HU2");
+    close(value(&c, "intensity.rms"), 1000.0, 1e-3, "rms");
+    for (id, expected) in [
+        ("intensity.mad", 0.0),
+        ("intensity.rmad", 0.0),
+        ("intensity.entropy", 0.0),
+        ("intensity.uniformity", 1.0),
+        ("intensity.ivh_v10", 1.0),
+        ("intensity.ivh_v90", 1.0),
+    ] {
+        close(value(&c, id), expected, 1e-6, id);
+    }
+    close(value(&c, "intensity.ivh_i10"), 1000.0, 1e-3, "I10");
+    // the parameters the numbers depend on are in the result
+    assert_eq!((c["params"]["bin_width"].as_f64(), c["params"]["bin_width_unit"].as_str()), (Some(25.0), Some("HU")));
+    // the curve: 101 samples, starting at 1 and never rising
+    let fraction: Vec<f64> =
+        c["ivh"]["volume_fraction"].as_array().unwrap().iter().map(|x| x.as_f64().unwrap()).collect();
+    assert_eq!((fraction.len(), c["ivh"]["intensity"].as_array().unwrap().len()), (101, 101));
+    assert!(fraction[0] == 1.0 && fraction.windows(2).all(|w| w[1] <= w[0]));
+    // the ranges: defaults are marked as such and, with the outside, add up to one
+    let r = &c["hu_ranges"];
+    assert_eq!(r["default"], true);
+    assert!(r["note"].as_str().unwrap().contains("not clinical thresholds"), "{r:#}");
+    let sum: f64 = r["ranges"].as_array().unwrap().iter().map(|x| x["fraction"].as_f64().unwrap()).sum::<f64>()
+        + r["outside"].as_f64().unwrap();
+    close(sum, 1.0, 1e-9, "shares and outside");
+    // ranges given by the caller come back as given
+    let own = f.ok(
+        "segment metrics",
+        json!({ "segment": 1, "profile": "clinical", "hu_ranges": [[900, 1100], [-50, 50]], "bin_width": 10 }),
+    );
+    let ranges = own["hu_ranges"]["ranges"].as_array().unwrap();
+    assert_eq!((own["hu_ranges"]["default"].clone(), ranges.len()), (json!(false), 2));
+    assert_eq!(
+        (ranges[0]["min"].as_f64(), ranges[0]["max"].as_f64(), ranges[0]["fraction"].as_f64()),
+        (Some(900.0), Some(1100.0), Some(1.0))
+    );
+    assert_eq!((ranges[1]["voxels"].as_u64(), own["hu_ranges"]["outside"].as_f64()), (Some(0), Some(0.0)));
+    assert_eq!(own["params"]["bin_width"].as_f64(), Some(10.0));
+    // quick has no histogram, curve or ranges
+    let quick = f.ok("segment metrics", json!({ "segment": 1 }));
+    assert!(quick.get("ivh").is_none() && quick.get("hu_ranges").is_none());
+    assert!(quick["params"].get("bin_width").is_none());
+}
+
+// covers 18.11-b
+#[test]
+fn nonsense_parameters_are_bad_requests_with_a_hint() {
+    let f = fixture();
+    f.open(Some("ct"));
+    let metrics = |extra: Value| {
+        let mut p = json!({ "segment": 1, "profile": "clinical" });
+        p.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        f.err("segment metrics", p)
+    };
+    let overlap = metrics(json!({ "hu_ranges": [[0, 100], [50, 150]] }));
+    assert_eq!(overlap["code"], "bad_request");
+    assert!(overlap["message"].as_str().unwrap().contains("overlap"), "{overlap:#}");
+    assert!(overlap["hint"].as_str().unwrap().contains("half-open"), "{overlap:#}");
+    assert_eq!(metrics(json!({ "bin_width": 0 }))["code"], "bad_request");
+    assert_eq!(metrics(json!({ "bin_width": -5 }))["code"], "bad_request");
+    assert_eq!(metrics(json!({ "bin_width": "wide" }))["code"], "bad_request");
+    for bad in [json!([[1]]), json!([[1, 2, 3]]), json!(["a"]), json!([[0, "x"]]), json!(5), json!([[5, 5]])] {
+        assert_eq!(metrics(json!({ "hu_ranges": bad.clone() }))["code"], "bad_request", "{bad}");
+    }
+    // touching ranges are fine
+    f.ok("segment metrics", json!({ "segment": 1, "profile": "clinical", "hu_ranges": [[0, 100], [100, 200]] }));
 }

@@ -15,6 +15,7 @@
 
 pub mod compute;
 pub mod diameter;
+pub mod distribution;
 pub mod error;
 pub mod feature;
 pub mod hull;
@@ -29,9 +30,10 @@ pub mod size;
 pub mod topology;
 
 pub use compute::{compute, Input};
+pub use distribution::{HuRangeShares, IvhCurve, RangeShare};
 pub use error::MetricsError;
 pub use feature::{feature_by_id, Family, Feature, Unit, FEATURES};
-pub use params::{Params, Preprocessing, ValueUnit};
+pub use params::{HuRange, Params, Preprocessing, ValueUnit, DEFAULT_BIN_WIDTH, DEFAULT_HU_RANGES};
 pub use profile::{Profile, CLINICAL, PROFILES, QUICK};
 pub use result::{FeatureValue, MetricsResult, Value};
 

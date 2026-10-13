@@ -1,5 +1,6 @@
 //! The result of a computation.
 
+use crate::distribution::{HuRangeShares, IvhCurve};
 use crate::feature::{Feature, Unit};
 use crate::params::{Params, ValueUnit};
 
@@ -58,8 +59,15 @@ pub struct MetricsResult {
     pub unit: ValueUnit,
     /// Parameters the numbers depend on.
     pub params: Params,
+    /// Histogram bin width the entropy and uniformity were computed with;
+    /// `None` if the profile has no histogram feature.
+    pub bin_width: Option<f64>,
     /// Values in the order of the profile.
     pub features: Vec<FeatureValue>,
+    /// The intensity-volume histogram, if the profile has one.
+    pub ivh: Option<IvhCurve>,
+    /// The shares of voxels in HU ranges, if the profile has them.
+    pub hu_ranges: Option<HuRangeShares>,
     /// Things worth knowing about the numbers.
     pub warnings: Vec<String>,
 }
@@ -81,6 +89,8 @@ pub(crate) fn unit_label(feature: &Feature, unit: &ValueUnit) -> String {
     match feature.unit {
         Unit::Fixed(u) => u.to_owned(),
         Unit::Value => unit.label().to_owned(),
+        Unit::ValueSquared if unit.label().is_empty() => String::new(),
+        Unit::ValueSquared => format!("{}2", unit.label()),
     }
 }
 

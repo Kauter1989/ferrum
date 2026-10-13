@@ -23,6 +23,9 @@ pub enum MetricsError {
         /// The features that need the unit.
         features: Vec<&'static str>,
     },
+    /// A parameter is out of range (bin width, HU ranges).
+    #[error("{0}")]
+    BadParameter(String),
     /// The segment has no voxels.
     #[error("the segment has no voxels")]
     EmptyRegion,

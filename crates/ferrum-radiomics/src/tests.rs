@@ -255,7 +255,7 @@ fn clinical_adds_to_quick_without_changing_what_quick_says() {
     for f in &quick.features {
         assert_eq!(c.get(f.feature.id), Some(f), "{} differs between the profiles", f.feature.id);
     }
-    assert_eq!((c.profile, c.profile_version), ("clinical", "0.2"));
+    assert_eq!((c.profile, c.profile_version), ("clinical", "0.3"));
     assert!(c.features.len() > quick.features.len());
     assert!(quick.warnings.is_empty(), "quick does not look at the connectivity");
     assert_eq!(c.get("shape.surface_area_mm2").unwrap().unit, "mm2");
@@ -352,4 +352,147 @@ fn a_piece_far_away_and_the_image_border_each_give_their_warning() {
     assert_eq!(codes, ["fragmented", "touches_border"]);
     // the mask is not touched by a warning: the same segment measured again is identical
     assert_eq!(clinical(&cells(&cut), &v), r);
+}
+
+// covers 18.9-a, 18.9-c, 18.10-a
+#[test]
+fn the_distribution_of_the_block_is_known_by_hand_and_the_bin_width_is_recorded() {
+    // four slices of 16 voxels at -200, -100, 0 and 100 HU
+    let (v, r) = (phantom(), block());
+    let c = clinical(&r, &v);
+    let unit = "HU";
+    let near = |id: &str, expected: f64| {
+        let got = num(&c, id);
+        // the phantom is stored in 16 bits: 0.02 HU per step, and energy adds that up
+        let tol = 0.05 + 1e-4 * expected.abs();
+        assert!((got - expected).abs() < tol, "{id}: {got} != {expected}");
+    };
+    // mean -50, deviations -150 -50 50 150: m2 = 12500, m3 = 0, m4 = 256 250 000
+    near("intensity.skewness", 0.0);
+    near("intensity.kurtosis", 256_250_000.0 / 156_250_000.0 - 3.0);
+    // energy 16 * (40000 + 10000 + 0 + 10000)
+    near("intensity.energy", 960_000.0 * (1.0 + 0.0));
+    near("intensity.rms", 15_000f64.sqrt());
+    near("intensity.mad", 100.0);
+    near("intensity.rmad", 100.0);
+    // four bins of a quarter each at width 25
+    near("intensity.entropy", 2.0);
+    near("intensity.uniformity", 0.25);
+    // range -200..100: V10 counts >= -170 (three slices), V90 counts >= 70 (one)
+    near("intensity.ivh_v10", 0.75);
+    near("intensity.ivh_v90", 0.25);
+    // 7th largest of 64 is 100, 58th largest is -200
+    near("intensity.ivh_i10", 100.0);
+    near("intensity.ivh_i90", -200.0);
+    assert_eq!(c.get("intensity.energy").unwrap().unit, format!("{unit}2"));
+    assert_eq!(c.get("intensity.entropy").unwrap().unit, "bits");
+    assert_eq!(c.get("intensity.uniformity").unwrap().unit, "");
+    assert_eq!(c.get("intensity.rms").unwrap().unit, "HU");
+    assert_eq!(c.bin_width, Some(25.0));
+    // quick has no histogram feature, so it records no bin width and carries no curves
+    let q = run(ValueUnit::Hu).unwrap();
+    assert!(q.bin_width.is_none() && q.ivh.is_none() && q.hu_ranges.is_none());
+}
+
+// covers 18.9-c
+#[test]
+fn a_different_bin_width_changes_the_histogram_and_is_recorded() {
+    let (v, r) = (phantom(), block());
+    let params = Params { bin_width: 500.0, ..Params::default() };
+    let c = compute(&Input { region: &r, volume: &v, unit: ValueUnit::Hu }, &CLINICAL, &params).unwrap();
+    // width 500: -200 and -100 share [-500, 0), 100 is in [0, 500), and the 0 HU slice
+    // (stored as a hair below or above 0) joins either: entropy of 3 : 1 or of 2 : 2
+    let h = num(&c, "intensity.entropy");
+    assert!((h - 0.811_278).abs() < 1e-5 || (h - 1.0).abs() < 1e-12, "{h}");
+    assert_eq!(c.bin_width, Some(500.0));
+    assert_eq!(c.params.bin_width, 500.0);
+    // the moments do not depend on the bin width
+    let d = clinical(&r, &v);
+    assert_eq!(num(&c, "intensity.energy"), num(&d, "intensity.energy"));
+    assert_eq!(num(&c, "intensity.ivh_v10"), num(&d, "intensity.ivh_v10"));
+}
+
+// covers 18.9-d
+#[test]
+fn a_constant_segment_has_no_skewness_or_kurtosis_and_says_why() {
+    // one slice of the block is constant
+    let v = phantom();
+    let slice = cells(&cuboid([2, 3, 5], [6, 7, 6]));
+    let c = clinical(&slice, &v);
+    for id in ["intensity.skewness", "intensity.kurtosis"] {
+        match &c.get(id).unwrap().value {
+            Value::Null { reason } => assert!(reason.contains("all voxel values are equal"), "{reason}"),
+            other => panic!("{id}: {other:?}"),
+        }
+    }
+    assert!((num(&c, "intensity.entropy")).abs() < 1e-12);
+    assert!((num(&c, "intensity.uniformity") - 1.0).abs() < 1e-12);
+    assert!((num(&c, "intensity.mad")).abs() < 1e-3);
+}
+
+// covers 18.10-a, 18.10-c
+#[test]
+fn the_curve_starts_at_one_never_rises_and_has_101_points() {
+    let (v, r) = (phantom(), block());
+    let c = clinical(&r, &v);
+    let curve = c.ivh.as_ref().expect("clinical carries the curve");
+    assert_eq!((curve.intensity.len(), curve.volume_fraction.len()), (101, 101));
+    assert_eq!(curve.volume_fraction[0], 1.0);
+    assert!((curve.intensity[0] + 200.0).abs() < 0.05 && (curve.intensity[100] - 100.0).abs() < 0.05);
+    assert!(curve.volume_fraction.windows(2).all(|w| w[1] <= w[0]));
+    assert_eq!(curve.volume_fraction[10], num(&c, "intensity.ivh_v10"));
+    assert_eq!(curve.volume_fraction[90], num(&c, "intensity.ivh_v90"));
+}
+
+// covers 18.11-a, 18.11-c, 18.11-d
+#[test]
+fn hu_ranges_are_recorded_and_the_shares_with_the_outside_sum_to_one() {
+    let (v, r) = (phantom(), block());
+    let given = vec![HuRange::new(-250.0, -150.0), HuRange::new(-150.0, 50.0), HuRange::new(50.0, 150.0)];
+    let params = Params { hu_ranges: Some(given.clone()), ..Params::default() };
+    let c = compute(&Input { region: &r, volume: &v, unit: ValueUnit::Hu }, &CLINICAL, &params).unwrap();
+    let shares = c.hu_ranges.as_ref().unwrap();
+    assert!(!shares.is_default);
+    assert_eq!(shares.ranges.iter().map(|s| s.range).collect::<Vec<_>>(), given, "ranges come back as given");
+    assert_eq!(shares.ranges.iter().map(|s| s.voxels).collect::<Vec<_>>(), [16, 32, 16]);
+    assert_eq!(shares.outside, 0.0);
+    // the defaults are marked as defaults, and still sum to one with the outside
+    let d = clinical(&r, &v);
+    let defaults = d.hu_ranges.as_ref().unwrap();
+    assert!(defaults.is_default);
+    assert_eq!(defaults.ranges.len(), DEFAULT_HU_RANGES.len());
+    let sum: f64 = defaults.ranges.iter().map(|s| s.fraction).sum::<f64>() + defaults.outside;
+    assert!((sum - 1.0).abs() < 1e-12, "{sum}");
+}
+
+// covers 18.11-b
+#[test]
+fn bad_parameters_are_refused_before_anything_is_computed() {
+    let (v, r) = (phantom(), block());
+    let run = |params: Params| compute(&Input { region: &r, volume: &v, unit: ValueUnit::Hu }, &CLINICAL, &params);
+    let overlap =
+        Params { hu_ranges: Some(vec![HuRange::new(0.0, 100.0), HuRange::new(50.0, 150.0)]), ..Params::default() };
+    assert!(matches!(run(overlap), Err(MetricsError::BadParameter(m)) if m.contains("overlap")));
+    assert!(matches!(run(Params { bin_width: 0.0, ..Params::default() }), Err(MetricsError::BadParameter(_))));
+    // even a profile that does not use them refuses a nonsense parameter
+    let quick = compute(
+        &Input { region: &r, volume: &v, unit: ValueUnit::Hu },
+        &QUICK,
+        &Params { bin_width: -1.0, ..Params::default() },
+    );
+    assert!(matches!(quick, Err(MetricsError::BadParameter(_))));
+}
+
+// covers 18.3-e
+#[test]
+fn the_ranges_and_the_curve_need_the_unit_like_the_other_intensity_features() {
+    let (v, r) = (phantom(), block());
+    let unknown = ValueUnit::Unknown { modality: "MR".into() };
+    let e = compute(&Input { region: &r, volume: &v, unit: unknown }, &CLINICAL, &Params::default()).unwrap_err();
+    match e {
+        MetricsError::UnitUnknown { features, .. } => {
+            assert!(features.contains(&"intensity.entropy") && features.contains(&"intensity.ivh_i10"));
+        }
+        other => panic!("{other:?}"),
+    }
 }

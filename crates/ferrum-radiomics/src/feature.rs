@@ -36,6 +36,8 @@ pub enum Unit {
     Fixed(&'static str),
     /// The unit of the voxel values of the study (`HU` for CT).
     Value,
+    /// The unit of the voxel values, squared (`HU2`).
+    ValueSquared,
 }
 
 /// One quantitative feature of a segment.
@@ -83,6 +85,12 @@ const fn topology(id: &'static str, label: &'static str, unit: &'static str, def
 
 const fn intensity(id: &'static str, label: &'static str, definition: &'static str) -> Feature {
     feature(id, label, Family::Intensity, Unit::Value, definition, true)
+}
+
+/// An intensity feature whose unit is not the unit of the values (a ratio,
+/// bits, a squared unit). It still needs the unit: it is computed from HU.
+const fn intensity_in(id: &'static str, label: &'static str, unit: Unit, definition: &'static str) -> Feature {
+    feature(id, label, Family::Intensity, unit, definition, true)
 }
 
 /// Every registered feature, in the order profiles list them.
@@ -402,6 +410,69 @@ pub const FEATURES: &[Feature] = &[
         "Interquartile range",
         "Interquartile range: intensity.p75 minus intensity.p25 (nearest-rank percentiles).",
     ),
+    intensity_in(
+        "intensity.skewness",
+        "Skewness",
+        Unit::Fixed(""),
+        "Third central moment divided by the cube of the standard deviation (population, divisor N): 0 for a symmetric distribution, positive when the tail is on the high side. Undefined when all values are equal.",
+    ),
+    intensity_in(
+        "intensity.kurtosis",
+        "Excess kurtosis",
+        Unit::Fixed(""),
+        "Fourth central moment divided by the fourth power of the standard deviation (population), minus 3: 0 for a normal distribution, positive for heavy tails. Undefined when all values are equal.",
+    ),
+    intensity_in(
+        "intensity.energy",
+        "Energy",
+        Unit::ValueSquared,
+        "Sum of the squared voxel values. It grows with the number of voxels, so compare it only between segments of the same size, or use intensity.rms.",
+    ),
+    intensity("intensity.rms", "Root mean square", "Square root of the mean of the squared voxel values: sqrt(energy / N)."),
+    intensity(
+        "intensity.mad",
+        "Mean absolute deviation",
+        "Mean of the absolute differences between the voxel values and their mean.",
+    ),
+    intensity(
+        "intensity.rmad",
+        "Robust mean absolute deviation",
+        "Mean absolute deviation, but only over the voxels between the 10th and the 90th percentile (nearest rank, both included), from the mean of those voxels: less sensitive to outliers than intensity.mad.",
+    ),
+    intensity_in(
+        "intensity.entropy",
+        "Entropy",
+        Unit::Fixed("bits"),
+        "Entropy of the histogram, minus the sum of p * log2(p) over the bins with probability p. Bins have a fixed width (the bin_width parameter, 25 HU by default) and are anchored at 0 HU: a bin is [k * width, (k + 1) * width). 0 when all values share one bin.",
+    ),
+    intensity_in(
+        "intensity.uniformity",
+        "Uniformity",
+        Unit::Fixed(""),
+        "Sum of the squared probabilities of the histogram bins (same bins as intensity.entropy): 1 when all values share one bin, smaller when they are spread over many.",
+    ),
+    intensity_in(
+        "intensity.ivh_v10",
+        "IVH V10",
+        Unit::Fixed(""),
+        "Intensity-volume histogram: fraction of the volume (0 to 1) with a value at or above 10 % of the way from the lowest to the highest value of the segment.",
+    ),
+    intensity_in(
+        "intensity.ivh_v90",
+        "IVH V90",
+        Unit::Fixed(""),
+        "Intensity-volume histogram: fraction of the volume (0 to 1) with a value at or above 90 % of the way from the lowest to the highest value of the segment.",
+    ),
+    intensity(
+        "intensity.ivh_i10",
+        "IVH I10",
+        "Intensity-volume histogram: the highest value that at least 10 % of the volume reaches or exceeds (the ceil(0.10 * N)-th largest voxel value).",
+    ),
+    intensity(
+        "intensity.ivh_i90",
+        "IVH I90",
+        "Intensity-volume histogram: the highest value that at least 90 % of the volume reaches or exceeds (the ceil(0.90 * N)-th largest voxel value).",
+    ),
 ];
 
 /// The registered feature with `id`.
@@ -450,10 +521,24 @@ mod tests {
     }
 
     #[test]
-    fn only_intensity_features_need_a_unit() {
+    fn only_intensity_features_need_a_unit_and_those_in_the_unit_of_the_values_are_intensity() {
         for f in FEATURES {
             assert_eq!(f.needs_unit, f.family == Family::Intensity, "{}", f.id);
-            assert_eq!(matches!(f.unit, Unit::Value), f.family == Family::Intensity, "{}", f.id);
+            if matches!(f.unit, Unit::Value | Unit::ValueSquared) {
+                assert_eq!(f.family, Family::Intensity, "{}", f.id);
+            }
         }
+    }
+
+    // covers 18.9-a
+    #[test]
+    fn the_distribution_features_are_registered_and_named_in_the_computation() {
+        for id in crate::distribution::IDS {
+            assert_eq!(feature_by_id(id).map(|f| f.family), Some(Family::Intensity), "{id}");
+        }
+        let entropy = feature_by_id("intensity.entropy").unwrap();
+        assert!(entropy.definition.contains("bin_width") && entropy.definition.contains("0 HU"));
+        assert!(feature_by_id("intensity.rmad").unwrap().definition.contains("10th"));
+        assert!(feature_by_id("intensity.ivh_i10").unwrap().definition.contains("ceil(0.10 * N)"));
     }
 }

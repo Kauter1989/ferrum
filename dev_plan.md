@@ -296,10 +296,10 @@ implementation shared by UI, CLI and MCP, and what is missing on top.
 
 | # | User story | Acceptance criteria |
 |---|---|---|
-| 18.9 | As a **radiologist**, I want distribution measures. | [18.9-a] Skewness, excess kurtosis, energy, RMS, MAD, rMAD, entropy and uniformity (IBSI definitions) on a fixed-bin-width histogram. [18.9-b] A hand-computed 10-voxel set gives the exact values. [18.9-c] Bin width is a parameter, defaults to 25 HU for CT, and is recorded in the result. [18.9-d] A constant region gives `null` for skewness and kurtosis, not NaN. |
-| 18.10 | As a **radiologist**, I want intensity-volume histogram metrics. | [18.10-a] V10, V90, I10, I90 and the curve. [18.10-b] A linear-ramp phantom gives exact values. [18.10-c] The curve never increases (property test). |
-| 18.11 | As a **radiologist**, I want the share of voxels in HU ranges. | [18.11-a] Configurable half-open ranges; fractions sum to 1 within 1e-12. [18.11-b] Overlapping ranges give `bad_request`. [18.11-c] The ranges are a parameter. In the desktop app they are taken from the interface fields (the person edits them); an agent passes its own ranges or leaves them out and gets the documented defaults, which are marked as defaults and not as clinical advice. [18.11-d] The ranges used are recorded in the result. |
-| 18.12 | As a **user**, I want the `clinical` profile everywhere. | [18.12-a] The card groups features by family with units and definition tooltips. [18.12-b] CLI, MCP, schema, docs and contract tests as in 18.4. [18.12-c] The benchmark of the profile on a 512×512×300 CT with a segment of 100 000 voxels is recorded; the budget is an estimate (≤ 2 s) until measured (L13). |
+| 18.9 | As a **radiologist**, I want distribution measures. | [18.9-a] Skewness, excess kurtosis, energy, RMS, MAD, rMAD (population versions, on the voxel values), entropy and uniformity (on a fixed-bin-width histogram, bins anchored at 0 HU: `[k·w, (k+1)·w)`; IBSI anchors at the ROI minimum, so entropy can differ from a strict IBSI tool and the field test will show how much). ✅ (PR 5) [18.9-b] A hand-computed 10-voxel set gives the exact values. ✅ (PR 5) [18.9-c] Bin width is a parameter, defaults to 25 HU for CT, and is recorded in the result. ✅ (PR 5) [18.9-d] A constant region gives `null` for skewness and kurtosis, not NaN. ✅ (PR 5) |
+| 18.10 | As a **radiologist**, I want intensity-volume histogram metrics. | [18.10-a] V10, V90 (fraction of the volume at or above 10 % / 90 % of the way from the lowest to the highest value), I10, I90 (the highest value that at least 10 % / 90 % of the volume reaches: the ⌈x·N/100⌉-th largest) and the curve (101 samples), all on the voxel values, not binned. ✅ (PR 5) [18.10-b] A linear-ramp phantom gives exact values. ✅ (PR 5) [18.10-c] The curve never increases (property test). ✅ (PR 5) |
+| 18.11 | As a **radiologist**, I want the share of voxels in HU ranges. | [18.11-a] Configurable half-open ranges; the fractions plus the share outside all ranges sum to 1 within 1e-12. ✅ (PR 5) [18.11-b] Overlapping ranges give `bad_request`. ✅ (PR 5) [18.11-c] The ranges are a parameter. In the desktop app they are taken from the interface fields (the person edits them); an agent passes its own ranges or leaves them out and gets the documented defaults, which are marked as defaults and not as clinical advice (agent half ✅ PR 5; the interface fields are PR 6). [18.11-d] The ranges used are recorded in the result. ✅ (PR 5) |
+| 18.12 | As a **user**, I want the `clinical` profile everywhere. | [18.12-a] The card groups features by family with units and definition tooltips. [18.12-b] CLI, MCP, schema, docs and contract tests as in 18.4. ✅ (PR 5) `clinical` stays `0.x` (now 0.3) until the field test against pyradiomics has been read; it becomes `1` with the release of Phase 3. [18.12-c] The benchmark of the profile on a 512×512×300 CT with a segment of 100 000 voxels is recorded; the budget is an estimate (≤ 2 s) until measured (L13). |
 
 **Implementation** (Phases 1–3; sizing and tasks in
 [docs/radiomics.md](docs/radiomics.md) §7–8):
@@ -309,8 +309,8 @@ implementation shared by UI, CLI and MCP, and what is missing on top.
 | 1 | `ferrum-radiomics`, registry, `quick`, `segment metrics` (3D diameter moved to PR 4) | ✅ [#50](https://github.com/Kauter1989/ferrum/pull/50) |
 | 2 | desktop modality dialog and metrics card | ✅ [#51](https://github.com/Kauter1989/ferrum/pull/51) |
 | 3 | mesh shape: area, compactness, sphericity, PCA; profile `clinical` 0.1 | ✅ [#52](https://github.com/Kauter1989/ferrum/pull/52) |
-| 4 | convex hull, 3D diameter, holes, Euler, warnings; profile `clinical` 0.2 | 🚧 in review |
-| 5 | distribution, IVH, HU ranges, `clinical` v1 in CLI and MCP | 📋 |
+| 4 | convex hull, 3D diameter, holes, Euler, warnings; profile `clinical` 0.2 | ✅ [#53](https://github.com/Kauter1989/ferrum/pull/53) |
+| 5 | distribution, IVH, HU ranges; `clinical` 0.3 complete in CLI and MCP | 🚧 in review |
 | 6 | clinical card, HU-range fields, benchmark | 📋 |
 
 **Success metrics:**
