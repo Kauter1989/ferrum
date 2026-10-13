@@ -67,6 +67,42 @@ fn ragged_segment(radius: f32) -> MaskRegion {
     .expect("segment")
 }
 
+/// A region that fills a box with blobby, connected-and-not tissue like a region grown on soft
+/// tissue and cut to a box: value noise at a scale of 5 voxels, kept where it is high. Many
+/// pieces and cavities, and pieces everywhere in the box, so the convex hull is complicated.
+fn blobby_segment(side: [u32; 3], keep: f32) -> MaskRegion {
+    let hash = |i: u32, j: u32, k: u32| {
+        let mut h = (u64::from(i) << 40) ^ (u64::from(j) << 20) ^ u64::from(k);
+        h = h.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (h >> 29);
+        h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        (h >> 40) as f32 / (1u64 << 24) as f32
+    };
+    let noise = |x: f32, y: f32, z: f32| {
+        let (i, j, k) = (x.floor(), y.floor(), z.floor());
+        let (fx, fy, fz) = (x - i, y - j, z - k);
+        let mut acc = 0.0;
+        for (dx, dy, dz) in [(0, 0, 0), (1, 0, 0), (0, 1, 0), (1, 1, 0), (0, 0, 1), (1, 0, 1), (0, 1, 1), (1, 1, 1)] {
+            let w = (if dx == 1 { fx } else { 1.0 - fx })
+                * (if dy == 1 { fy } else { 1.0 - fy })
+                * (if dz == 1 { fz } else { 1.0 - fz });
+            acc += w * hash(i as u32 + dx, j as u32 + dy, k as u32 + dz);
+        }
+        acc
+    };
+    let origin = [200u32, 200, 100];
+    MaskRegion::from_grid(DIMS, |n| {
+        let (i, j, k) = ((n % 512) as u32, ((n / 512) % 512) as u32, (n / (512 * 512)) as u32);
+        let inside = i >= origin[0]
+            && i < origin[0] + side[0]
+            && j >= origin[1]
+            && j < origin[1] + side[1]
+            && k >= origin[2]
+            && k < origin[2] + side[2];
+        inside && noise(i as f32 / 5.0, j as f32 / 5.0, k as f32 / 5.0) + 0.25 * hash(i, j, k) > keep
+    })
+    .expect("segment")
+}
+
 const fn only(features: &'static [&'static str]) -> Profile {
     Profile { name: "part", version: "0", summary: "a part of clinical", features, ivh_curve: false, hu_ranges: false }
 }
@@ -97,10 +133,15 @@ fn benches(c: &mut Criterion) {
     }
     g.finish();
 
-    for (radius, name) in [(29.0, "ragged_100k"), (60.0, "ragged_900k")] {
-        let r = ragged_segment(radius);
+    let masks: Vec<(String, MaskRegion)> = vec![
+        ("ragged_100k".into(), ragged_segment(29.0)),
+        ("ragged_900k".into(), ragged_segment(60.0)),
+        ("blobby_100k".into(), blobby_segment([70, 70, 40], 0.62)),
+        ("blobby_900k".into(), blobby_segment([140, 140, 80], 0.62)),
+    ];
+    for (name, r) in &masks {
         println!("{name}: {} voxels", r.count());
-        let input = Input { region: &r, volume: &v, unit: ValueUnit::Hu };
+        let input = Input { region: r, volume: &v, unit: ValueUnit::Hu };
         let mut g = c.benchmark_group(format!("profiles_512x512x300_{name}"));
         g.sample_size(10);
         for (part, profile) in [
