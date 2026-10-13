@@ -10,6 +10,7 @@ use std::sync::Arc;
 use egui_kittest::kittest::{NodeT, Queryable};
 use egui_kittest::Harness;
 use ferrum::ViewerApp;
+use ferrum_app::MetricsOutcome;
 use ferrum_app::{ToolKind, ViewMode};
 use ferrum_domain::{Annotation, Dims3, RenderMode, SliceAxis, SliceKey, Volume};
 use glam::Vec3;
@@ -698,4 +699,85 @@ fn the_metrics_card_explains_an_unknown_image_type_and_recovers_when_it_is_set()
     h.run();
     h.get_by_label("Mean");
     h.get_by_label("4.096 mL");
+}
+
+// covers 18.11-c, 18.12-a
+#[test]
+fn the_clinical_card_groups_the_features_shows_the_ranges_and_applies_the_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = loaded_app(dir.path(), None);
+    let label = add_tumour(&mut app);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1200.0, 6000.0))
+        .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
+    h.run();
+    h.get_by_label("Measure Tumour").click();
+    h.step();
+    h.state_mut().viewer.wait_idle();
+    h.run();
+    // the groups of the clinical profile, each with its figures and a definition on hover
+    for group in ["Size", "Shape", "Connectivity", "Intensity"] {
+        h.get_by_label(group);
+    }
+    h.get_by_label("Profile clinical 0.3 · values in HU");
+    h.get_by_label("Solidity");
+    h.get_by_label("Pieces");
+    h.get_by_label("Skewness");
+    h.get_by_label("Entropy");
+    h.get_by_label("Maximum 3D diameter");
+    // the tumour touches no side of the image; it has no cavity: no warning on the card
+    assert!(h.query_by_label_contains("⚠").is_none());
+    // the ranges and the curve
+    h.get_by_label("Share of voxels by HU range");
+    h.get_by_label_contains("Default ranges for orientation, not clinical thresholds");
+    h.get_by_label("outside these ranges");
+    h.get_by_label("Intensity-volume histogram");
+    h.get_by_label("Histogram and HU ranges");
+
+    // the settings: open, add a range, apply -> measured again with the new parameters
+    h.get_by_label("Histogram and HU ranges").click();
+    h.run();
+    h.get_by_role_and_label(egui::accesskit::Role::TextInput, "Bin width field").click();
+    h.run();
+    h.get_by_role_and_label(egui::accesskit::Role::TextInput, "Bin width field").type_text("0"); // 25 -> 250
+    h.run();
+    h.get_by_label("Apply and measure again").click();
+    h.step();
+    h.state_mut().viewer.wait_idle();
+    h.run();
+    assert_eq!(h.state().viewer.metrics_params().bin_width, 250.0, "the field is read when applying");
+    let MetricsOutcome::Ready(r) = h.state().viewer.segment_metrics_view(label).unwrap().outcome else { panic!() };
+    assert_eq!(r.bin_width, Some(250.0), "and the card was measured again with it");
+    // nonsense is shown next to the button, and the old parameters stay
+    h.get_by_role_and_label(egui::accesskit::Role::TextInput, "Bin width field").click();
+    h.run();
+    h.get_by_role_and_label(egui::accesskit::Role::TextInput, "Bin width field").type_text("x"); // 250 -> 250x
+    h.run();
+    h.get_by_label("Apply and measure again").click();
+    h.run();
+    h.get_by_label_contains("is not a number");
+    assert_eq!(h.state().viewer.metrics_params().bin_width, 250.0);
+    // back to the defaults: the fields are reset, and applying them gives the default parameters again
+    h.get_by_label("Use defaults").click();
+    h.run();
+    h.get_by_label("Apply and measure again").click();
+    h.step();
+    h.state_mut().viewer.wait_idle();
+    h.run();
+    assert_eq!(h.state().viewer.metrics_params(), &ferrum_radiomics::Params::default());
+    h.get_by_label_contains("Default ranges for orientation");
+
+    // ranges the person set are used, written as they were given, and no longer called defaults
+    let own = ferrum_radiomics::Params {
+        hu_ranges: Some(vec![ferrum_radiomics::HuRange::new(-100.0, 100.0)]),
+        ..Default::default()
+    };
+    h.state_mut().viewer.set_metrics_params(own).unwrap();
+    h.state_mut().viewer.request_segment_metrics(label, ferrum::ui::metrics_card::PROFILE).unwrap();
+    h.step();
+    h.state_mut().viewer.wait_idle();
+    h.run();
+    h.get_by_label("-100 to 100 HU");
+    h.get_by_label_contains("Ranges as you set them");
+    assert!(h.query_by_label_contains("Default ranges for orientation").is_none());
 }

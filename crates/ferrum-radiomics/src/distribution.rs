@@ -155,6 +155,8 @@ pub struct HuRangeShares {
     pub ranges: Vec<RangeShare>,
     /// Share of the voxels in none of the ranges.
     pub outside: f64,
+    /// Voxels in none of the ranges.
+    pub outside_voxels: u64,
     /// The ranges are the built-in defaults, not given by the caller.
     pub is_default: bool,
 }
@@ -177,7 +179,8 @@ pub fn hu_range_shares(sorted: &[f32], ranges: &[HuRange], is_default: bool) -> 
         })
         .collect();
     let inside: u64 = shares.iter().map(|s| s.voxels).sum();
-    HuRangeShares { ranges: shares, outside: (sorted.len() as u64 - inside) as f64 / n, is_default }
+    let outside_voxels = sorted.len() as u64 - inside;
+    HuRangeShares { ranges: shares, outside: outside_voxels as f64 / n, outside_voxels, is_default }
 }
 
 #[cfg(test)]
@@ -345,6 +348,7 @@ mod tests {
         assert_eq!(s.ranges.iter().map(|r| r.voxels).collect::<Vec<_>>(), [0, 3, 3]);
         near(s.ranges[1].fraction, 0.3, "second range");
         near(s.outside, 0.4, "outside: -1100, 100, 299, 1000");
+        assert_eq!(s.outside_voxels, 4);
         near(s.ranges.iter().map(|r| r.fraction).sum::<f64>() + s.outside, 1.0, "sum");
         assert!(!s.is_default);
         assert_eq!(s.ranges[0].range, ranges[0], "the order given is kept");

@@ -9,9 +9,14 @@
 use egui::RichText;
 use ferrum_app::{MetricsOutcome, Viewer};
 use ferrum_domain::ReviewStatus;
-use ferrum_radiomics::{Family, MetricsResult, Value, QUICK};
+use ferrum_radiomics::{
+    Family, HuRange, HuRangeShares, IvhCurve, MetricsResult, Params, Profile, Value, CLINICAL, DEFAULT_HU_RANGES,
+};
 
 use super::theme::{DANGER, SURFACE, TEXT_DIM, WARN};
+
+/// The profile the card shows.
+pub const PROFILE: &Profile = &CLINICAL;
 
 /// One line of the card.
 #[derive(Debug, Clone, PartialEq)]
@@ -125,12 +130,17 @@ fn card_body(ui: &mut egui::Ui, viewer: &mut Viewer, label: u8, name: &str, stat
             });
         }
         MetricsOutcome::Failed(why) => failed(ui, viewer, label, &why),
-        MetricsOutcome::Ready(result) => ready(ui, label, &result),
+        MetricsOutcome::Ready(result) => ready(ui, viewer, label, &result),
     }
 }
 
+/// Measures segment `label` for the card.
+pub fn measure(viewer: &mut Viewer, label: u8) {
+    request(viewer, label);
+}
+
 fn request(viewer: &mut Viewer, label: u8) {
-    if let Err(e) = viewer.request_segment_metrics(label, &QUICK) {
+    if let Err(e) = viewer.request_segment_metrics(label, PROFILE) {
         viewer.status.errors.push(e);
     }
 }
@@ -145,7 +155,7 @@ fn failed(ui: &mut egui::Ui, viewer: &mut Viewer, label: u8, why: &str) {
     }
 }
 
-fn ready(ui: &mut egui::Ui, label: u8, result: &MetricsResult) {
+fn ready(ui: &mut egui::Ui, viewer: &mut Viewer, label: u8, result: &MetricsResult) {
     ui.label(
         RichText::new(format!(
             "Profile {} {} · values in {}",
@@ -156,6 +166,9 @@ fn ready(ui: &mut egui::Ui, label: u8, result: &MetricsResult) {
         .size(11.0)
         .color(TEXT_DIM),
     );
+    for w in &result.warnings {
+        ui.label(RichText::new(format!("⚠ {w}")).size(12.0).color(WARN));
+    }
     let all = rows(result);
     for family in [Family::Size, Family::Shape, Family::Topology, Family::Intensity] {
         let lines: Vec<&CardRow> = all.iter().filter(|r| r.family == family).collect();
@@ -181,6 +194,211 @@ fn ready(ui: &mut egui::Ui, label: u8, result: &MetricsResult) {
                 });
             });
     }
+    if let Some(shares) = &result.hu_ranges {
+        hu_range_table(ui, label, shares);
+    }
+    if let Some(curve) = &result.ivh {
+        ivh_plot(ui, label, curve);
+    }
+    settings(ui, viewer, label);
+}
+
+/// One line of the table of HU ranges.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RangeRow {
+    /// The range as written, for example `-100 to 0 HU`.
+    pub range: String,
+    /// Voxels in it.
+    pub voxels: u64,
+    /// Share of the segment, as a percentage with one decimal.
+    pub share: String,
+}
+
+fn bound(x: f64) -> String {
+    if x.fract() == 0.0 {
+        format!("{x:.0}")
+    } else {
+        format!("{x}")
+    }
+}
+
+/// The lines of the table of HU ranges: one per range and the rest.
+pub fn range_rows(shares: &HuRangeShares) -> Vec<RangeRow> {
+    let mut out: Vec<RangeRow> = shares
+        .ranges
+        .iter()
+        .map(|r| RangeRow {
+            range: format!("{} to {} HU", bound(r.range.lo), bound(r.range.hi)),
+            voxels: r.voxels,
+            share: format!("{:.1} %", 100.0 * r.fraction),
+        })
+        .collect();
+    out.push(RangeRow {
+        range: "outside these ranges".to_owned(),
+        voxels: shares.outside_voxels,
+        share: format!("{:.1} %", 100.0 * shares.outside),
+    });
+    out
+}
+
+fn hu_range_table(ui: &mut egui::Ui, label: u8, shares: &HuRangeShares) {
+    egui::CollapsingHeader::new("Share of voxels by HU range")
+        .id_salt(("metrics-ranges", label))
+        .default_open(true)
+        .show(ui, |ui| {
+            let note = if shares.is_default {
+                "Default ranges for orientation, not clinical thresholds. Change them under Histogram and HU ranges."
+            } else {
+                "Ranges as you set them. Each range includes its lower value and not its upper."
+            };
+            ui.label(RichText::new(note).size(11.0).color(TEXT_DIM));
+            egui::Grid::new(("metrics-ranges-grid", label)).num_columns(3).show(ui, |ui| {
+                for row in range_rows(shares) {
+                    ui.label(RichText::new(row.range).size(12.0).color(TEXT_DIM));
+                    ui.label(RichText::new(row.voxels.to_string()).size(12.0));
+                    ui.label(RichText::new(row.share).size(12.0));
+                    ui.end_row();
+                }
+            });
+        });
+}
+
+/// The intensity-volume histogram: the share of the volume (up) at or above
+/// each value (right).
+fn ivh_plot(ui: &mut egui::Ui, label: u8, curve: &IvhCurve) {
+    egui::CollapsingHeader::new("Intensity-volume histogram").id_salt(("metrics-ivh", label)).default_open(false).show(
+        ui,
+        |ui| {
+            let (lo, hi) = (curve.intensity[0], curve.intensity[curve.intensity.len() - 1]);
+            ui.label(
+                RichText::new(format!(
+                    "Share of the volume at or above each value, from {} to {} HU.",
+                    bound(lo.round()),
+                    bound(hi.round())
+                ))
+                .size(11.0)
+                .color(TEXT_DIM),
+            );
+            let (rect, response) = ui
+                .allocate_exact_size(egui::vec2(ui.available_width().clamp(120.0, 320.0), 90.0), egui::Sense::hover());
+            let painter = ui.painter_at(rect);
+            painter.rect_filled(rect, 4.0, SURFACE);
+            let n = curve.volume_fraction.len() as f32 - 1.0;
+            let points: Vec<egui::Pos2> = curve
+                .volume_fraction
+                .iter()
+                .enumerate()
+                .map(|(i, f)| {
+                    egui::pos2(rect.left() + rect.width() * i as f32 / n, rect.bottom() - rect.height() * *f as f32)
+                })
+                .collect();
+            painter.add(egui::Shape::line(points, egui::Stroke::new(1.5, ui.visuals().selection.bg_fill)));
+            response.on_hover_text("Starts at 100 % and never rises. V10, V90, I10 and I90 are read from this curve.");
+        },
+    );
+}
+
+/// The text fields of the settings and what is wrong with them.
+#[derive(Debug, Clone, Default)]
+struct SettingsEdit {
+    loaded: bool,
+    bin_width: String,
+    ranges: Vec<(String, String)>,
+    error: Option<String>,
+}
+
+impl SettingsEdit {
+    fn from_params(params: &Params) -> Self {
+        let (ranges, _) = params.ranges();
+        Self {
+            loaded: true,
+            bin_width: bound(params.bin_width),
+            ranges: ranges.iter().map(|r| (bound(r.lo), bound(r.hi))).collect(),
+            error: None,
+        }
+    }
+}
+
+/// Parameters from the text of the fields; ranges equal to the defaults are
+/// kept as "defaults" so the result says so.
+pub fn parse_params(bin_width: &str, ranges: &[(String, String)]) -> Result<Params, String> {
+    let number = |what: &str, text: &str| {
+        text.trim()
+            .replace(',', ".")
+            .parse::<f64>()
+            .ok()
+            .filter(|x| x.is_finite())
+            .ok_or_else(|| format!("{what}: {text:?} is not a number"))
+    };
+    let mut parsed = Vec::new();
+    for (lo, hi) in ranges.iter().filter(|(lo, hi)| !(lo.trim().is_empty() && hi.trim().is_empty())) {
+        parsed.push(HuRange::new(number("range from", lo)?, number("range to", hi)?));
+    }
+    let params = Params {
+        bin_width: number("bin width", bin_width)?,
+        hu_ranges: (parsed != DEFAULT_HU_RANGES).then_some(parsed),
+        ..Params::default()
+    };
+    params.validate().map_err(|e| e.to_string())?;
+    Ok(params)
+}
+
+fn settings(ui: &mut egui::Ui, viewer: &mut Viewer, label: u8) {
+    let id = egui::Id::new(("metrics-settings", label));
+    let mut edit: SettingsEdit = ui.data_mut(|d| d.get_temp(id)).unwrap_or_default();
+    if !edit.loaded {
+        edit = SettingsEdit::from_params(viewer.metrics_params());
+    }
+    let mut apply = false;
+    egui::CollapsingHeader::new("Histogram and HU ranges").id_salt(("metrics-settings-header", label)).default_open(false).show(
+        ui,
+        |ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Bin width (HU)").size(12.0).color(TEXT_DIM))
+                    .on_hover_text("Width of a histogram bin for entropy and uniformity. Bins are [k × width, (k + 1) × width).");
+                let field = ui.add(egui::TextEdit::singleline(&mut edit.bin_width).desired_width(50.0));
+                field.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Bin width field"));
+            });
+            ui.label(RichText::new("HU ranges (from, to)").size(12.0).color(TEXT_DIM))
+                .on_hover_text("Each range includes its lower value and not its upper. Ranges must not overlap; leave a row empty to drop it.");
+            let mut remove = None;
+            for (i, (lo, hi)) in edit.ranges.iter_mut().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.add(egui::TextEdit::singleline(lo).desired_width(50.0));
+                    ui.label("to");
+                    ui.add(egui::TextEdit::singleline(hi).desired_width(50.0));
+                    if ui.small_button("Remove").on_hover_text("Drop this range").clicked() {
+                        remove = Some(i);
+                    }
+                });
+            }
+            if let Some(i) = remove {
+                edit.ranges.remove(i);
+            }
+            ui.horizontal(|ui| {
+                if ui.button("Add range").clicked() {
+                    edit.ranges.push((String::new(), String::new()));
+                }
+                if ui.button("Use defaults").clicked() {
+                    edit = SettingsEdit::from_params(&Params::default());
+                }
+            });
+            if let Some(e) = &edit.error {
+                ui.label(RichText::new(e).size(12.0).color(DANGER));
+            }
+            apply = ui.button("Apply and measure again").clicked();
+        },
+    );
+    if apply {
+        match parse_params(&edit.bin_width, &edit.ranges).and_then(|p| viewer.set_metrics_params(p)) {
+            Ok(()) => {
+                edit.error = None;
+                request(viewer, label);
+            }
+            Err(e) => edit.error = Some(e),
+        }
+    }
+    ui.data_mut(|d| d.insert_temp(id, edit));
 }
 
 /// UI-only state of the image-type dialog.
@@ -299,6 +517,64 @@ mod tests {
                 ("Image sides touched", "3"),
             ]
         );
+    }
+
+    // covers 18.11-c
+    #[test]
+    fn the_fields_become_parameters_and_nonsense_is_refused_with_the_reason() {
+        let fields = |r: &[(&str, &str)]| r.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect::<Vec<_>>();
+        let defaults: Vec<(String, String)> = DEFAULT_HU_RANGES.iter().map(|r| (bound(r.lo), bound(r.hi))).collect();
+        // the default ranges stay "default" so the result says so
+        let p = parse_params("25", &defaults).unwrap();
+        assert!(p.hu_ranges.is_none() && p.bin_width == 25.0);
+        let p = parse_params(" 12,5 ", &fields(&[("-50", "50"), ("50", "150.5"), ("", "")])).unwrap();
+        assert_eq!(p.bin_width, 12.5, "a decimal comma is read");
+        assert_eq!(
+            p.hu_ranges,
+            Some(vec![HuRange::new(-50.0, 50.0), HuRange::new(50.0, 150.5)]),
+            "empty rows are dropped"
+        );
+        for (bin, ranges, expect) in [
+            ("abc", vec![], "bin width"),
+            ("0", vec![], "bin_width"),
+            ("25", vec![("0", "x")], "range to"),
+            ("25", vec![("0", "100"), ("50", "150")], "overlap"),
+            ("25", vec![("100", "0")], "min below max"),
+            ("25", vec![("5", "")], "range to"),
+        ] {
+            let e = parse_params(bin, &fields(&ranges)).unwrap_err();
+            assert!(e.contains(expect), "{bin} {ranges:?}: {e}");
+        }
+    }
+
+    // covers 18.11-a, 18.12-a
+    #[test]
+    fn the_range_table_has_a_line_per_range_and_one_for_the_rest() {
+        use ferrum_domain::{Dims3, MaskRegion, Volume};
+        use ferrum_radiomics::{compute, Input, ValueUnit};
+        let dims = Dims3::new(8, 8, 8);
+        let values: Vec<f32> = (0..dims.voxel_count()).map(|n| if n % 64 < 32 { -50.0 } else { 50.0 }).collect();
+        let volume = Volume::from_physical(dims, glam::Vec3::ONE, &values).unwrap();
+        let region = MaskRegion::from_grid(dims, |n| n % 8 < 4 && (n / 8) % 8 < 4 && n / 64 < 4).unwrap();
+        let params =
+            Params { hu_ranges: Some(vec![HuRange::new(-100.0, 0.0), HuRange::new(0.0, 25.0)]), ..Params::default() };
+        let result =
+            compute(&Input { region: &region, volume: &volume, unit: ValueUnit::Hu }, &CLINICAL, &params).unwrap();
+        let rows = range_rows(result.hu_ranges.as_ref().unwrap());
+        // 64 voxels: the 4 x 4 x 4 corner; rows n % 64 < 32 are -50 (j < 4), so all 64 are -50
+        assert_eq!(rows.len(), 3);
+        assert_eq!((rows[0].range.as_str(), rows[0].voxels, rows[0].share.as_str()), ("-100 to 0 HU", 64, "100.0 %"));
+        assert_eq!((rows[1].range.as_str(), rows[1].voxels, rows[1].share.as_str()), ("0 to 25 HU", 0, "0.0 %"));
+        assert_eq!(
+            (rows[2].range.as_str(), rows[2].voxels, rows[2].share.as_str()),
+            ("outside these ranges", 0, "0.0 %")
+        );
+        // the rest counts the voxels in no range
+        let params = Params { hu_ranges: Some(vec![HuRange::new(0.0, 25.0)]), ..Params::default() };
+        let result =
+            compute(&Input { region: &region, volume: &volume, unit: ValueUnit::Hu }, &CLINICAL, &params).unwrap();
+        let rows = range_rows(result.hu_ranges.as_ref().unwrap());
+        assert_eq!((rows[1].voxels, rows[1].share.as_str()), (64, "100.0 %"));
     }
 
     #[test]

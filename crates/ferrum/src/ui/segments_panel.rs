@@ -128,9 +128,7 @@ fn toggle_metrics(viewer: &mut Viewer, state: &mut SegmentsPanelState, label: u8
         return;
     }
     state.metrics_for = Some(label);
-    if let Err(e) = viewer.request_segment_metrics(label, &ferrum_radiomics::QUICK) {
-        viewer.status.errors.push(e);
-    }
+    super::metrics_card::measure(viewer, label);
 }
 
 fn segment_row(ui: &mut egui::Ui, row: &SegmentSummary, state: &mut SegmentsPanelState) -> RowAction {
