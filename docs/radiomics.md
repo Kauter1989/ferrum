@@ -110,26 +110,29 @@ pub struct Input<'a> {
 | HU-range shares | half-open ranges `[lo, hi)`, two binary searches on the sorted values; overlapping, empty or non-finite ranges are `bad_request`; touching ranges are fine; the share outside all ranges is reported so that shares sum to 1; defaults (−1000, −500, −100, 0, 100, 300, 1000) are documented and marked as defaults, not as clinical thresholds | none |
 
 **Measured (L13)** with `cargo bench -p ferrum-radiomics` (release build,
-one thread, 4-core cloud container, 2026-10-13): a 512 × 512 × 300 CT-like
-volume and a roundish segment of 102 897 voxels. The budget was 2 s.
+one thread, 4-core cloud container). The budget is 2 s for a segment of
+about 100 000 voxels. The benchmark first used a smooth ball only, and the
+field test (2026-10-13, MSD spleen, masks cut to a box around the organ)
+showed what that hid: real masks have frayed rims, pieces everywhere in
+the box and hundreds of cavities, so their convex hull is complicated.
+With the first hull (every point tested against every face) a blobby mask
+of 100 000 voxels took **16.7 s** and the field masks 3 s for 83 000
+voxels and **87 s for 893 000**. The hull now keeps for each face the
+points outside it (Quickhull), and the benchmark has three shapes:
 
-| Profile or part | Time (median of 10) |
-|---|---|
-| `clinical` 0.3 (everything) | **607 ms** |
-| `quick` 0.1 | 12 ms |
-| mesh, area, compactness, principal axes | 5.3 ms |
-| mesh + convex hull, solidity, convexity | 470 ms |
-| maximum 3D diameter | 45 ms |
-| connectivity (pieces, cavities, Euler) | 13 ms |
-| distribution, IVH, ranges (sort once) | 4.0 ms |
+| Segment (512 × 512 × 300 volume) | `clinical` 0.3, before | `clinical` 0.3, now | of it, mesh + hull |
+|---|---|---|---|
+| ball, 102 897 voxels | 607 ms | **53 ms** | 27 ms |
+| ragged ball (frayed rim, speckles, holes), 127 149 voxels | 557 ms | **228 ms** | 176 ms |
+| blobby box fill (many pieces and cavities), 101 752 voxels | 16.7 s | **187 ms** | 147 ms |
+| ragged ball, 1 003 152 voxels | not measured | **1.3 s** | 0.9 s |
+| blobby box fill, 798 515 voxels | not measured | **2.5 s** | 1.6 s |
 
-The convex hull is three quarters of the total: the mesh of a 100 000-voxel
-ball has about 40 000 distinct vertices and the incremental hull tests each
-against the faces. The budget is met with a factor of 3, so it is not
-optimised; if a larger segment needs it, the first step is to drop the
-vertices that cannot be corners before the hull (for example those inside
-the hull of the axis extremes). A segment of several million voxels was
-not measured.
+The other parts are small: on the blobby 100 000-voxel mask the mesh and
+axes take 21 ms, the 3D diameter 16 ms, the connectivity 20 ms and the
+distribution 4 ms; `quick` takes 12 ms. The hull is still the largest
+part, about three quarters of the total. A segment of several million
+voxels was not measured.
 
 ### 3.3 Profiles
 
