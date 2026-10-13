@@ -365,7 +365,7 @@ fn the_clinical_profile_adds_diameter_hull_and_connectivity() {
     assert!(quick["data"]["features"].get("size.max_diameter_mm").is_none());
 }
 
-// covers 18.9-a, 18.9-c, 18.9-d, 18.10-a, 18.11-a, 18.11-c, 18.11-d
+// covers 18.9-a, 18.9-c, 18.9-d, 18.10-a, 18.11-a, 18.11-c, 18.11-d, 18.12-b
 #[test]
 fn the_clinical_profile_adds_the_distribution_the_curve_and_the_hu_ranges() {
     let f = fixture();

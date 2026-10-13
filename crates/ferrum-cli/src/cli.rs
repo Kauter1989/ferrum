@@ -1015,7 +1015,7 @@ mod tests {
         assert!(parse_window("a,b").is_err());
     }
 
-    // covers 18.4-b
+    // covers 18.4-b, 18.12-b
     #[test]
     fn segment_metrics_flags_become_parameters() {
         let call = |args: &[&str]| Cli::try_parse_from(args).unwrap().command.to_call().unwrap();
