@@ -278,6 +278,41 @@ that says so instead of editing the old one.
 - **Guard:** `workflow.rs::the_tolerance_comes_from_the_clicked_value_until_the_user_sets_it`;
   the lung row in `docs/testing.md`.
 
+### L21 — The benchmark used a smooth ball; real masks were 30 to 100 times slower (2026-10, radiomics, 18.12-c)
+
+- **Symptom:** The design budget was "`clinical` ≤ 2 s for 100 000 voxels"
+  and the PR 6 benchmark said 607 ms. The field test on the MSD spleen took
+  3 s for a mask of 83 000 voxels and 87 s for 893 000. The cause was the
+  first convex hull: every point against every face. A ball has few hull
+  faces; a real mask cut to a box (frayed rim, pieces everywhere, hundreds
+  of cavities) has many. Reproduced with a blobby synthetic mask: 16.7 s for
+  101 752 voxels.
+- **Rule:** A performance number is for the *shape* it was measured on.
+  Benchmark an algorithm whose cost depends on the shape (hull, flood fill,
+  mesh) on a smooth shape, a frayed one and a space-filling blobby one, and
+  at 10 times the stated size, before writing the number into the spec.
+- **Guard:** `crates/ferrum-radiomics/benches/profiles.rs` (ball, ragged,
+  blobby, at about 100 000 and 1 000 000 voxels); the old hull stays in the
+  tests as a reference (`the_fast_hull_equals_the_reference_on_lattice_clouds_…`);
+  `docs/radiomics.md` §3.2 names the shapes.
+
+### L22 — A field-test script proved on an isolated phantom failed on tissue that touches the organ (2026-10, radiomics field test)
+
+- **Symptom:** The first field-test script grew a spleen with the spleen's
+  own value range. On real CT every case hit the size limit (the liver,
+  kidney and muscle have the same HU), so no test ran. The dry run on a
+  phantom had passed because the phantom's cube was isolated (and L14 had
+  already named this leak).
+- **Rule:** A script for the user's machine is rehearsed on a fixture that
+  contains the confounder the real data has, not only the clean case. For
+  a region grown from an organ's own range: soft tissue of the same value
+  around it. Cut such regions to a box around the organ instead of
+  narrowing the range.
+- **Guard:** `ferrum-field-test` §2 (rehearse on a leaky fixture); the
+  script keeps a high limit and `restrict_to_box`. Related: a local branch
+  named `origin/develop` made the short name ambiguous, so scripts use full
+  ref names (`refs/remotes/origin/develop`) and check out detached.
+
 ## What worked
 
 ### W1 — Field test on the user's GPU with a throw-away script (2026-10, Stage 17)

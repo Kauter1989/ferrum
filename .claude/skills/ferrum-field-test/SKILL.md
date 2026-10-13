@@ -82,8 +82,17 @@ lives in the scratchpad, and you send it as a file.
    - the user sends them back (skill `ferrum-visual-check`, step 5).
 9. **Measure:** run `scripts/benchmark_engines.py`. It records time and
    GPU memory per step and writes `benchmark.md`.
-10. **Check the syntax.** Run `bash -n` before sending. Tell the user it
-    has not run here.
+10. **Rehearse on a fixture that has the confounder (L22).** Make a small
+    fake dataset in the same layout as the real one (for MSD: a tar with
+    `imagesTr` and `labelsTr`) and run the whole script on it with a
+    test-only switch for the build step. The fixture must contain what the
+    real data has and a clean phantom lacks: tissue of the same value
+    around the organ, ragged masks (L21). Name refs in full
+    (`refs/remotes/origin/<branch>`), because a local branch called
+    `origin/<branch>` makes the short name ambiguous.
+11. **Check the syntax.** Run `bash -n` before sending. Tell the user what
+    was rehearsed and what was not (the build, the download and the
+    user's Python are never run here).
 
 ## 3. Tell the user what to send back
 
