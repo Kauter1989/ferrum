@@ -43,6 +43,7 @@ pub fn format_value(value: &Value, unit: &str) -> String {
         "" => number,
         "mm3" => format!("{number} mm³"),
         "mm2" => format!("{number} mm²"),
+        "HU2" => format!("{number} HU²"),
         u => format!("{number} {u}"),
     }
 }
@@ -307,6 +308,8 @@ mod tests {
         assert_eq!(format_value(&Value::Number(432.0), "mm3"), "432 mm³");
         assert_eq!(format_value(&Value::Number(326.006), "mm2"), "326.01 mm²");
         assert_eq!(format_value(&Value::Number(-50.0), "HU"), "-50 HU");
+        assert_eq!(format_value(&Value::Number(960_000.0), "HU2"), "960000 HU²");
+        assert_eq!(format_value(&Value::Number(2.0), "bits"), "2 bits");
         assert_eq!(format_value(&Value::Number(111.80339), "HU"), "111.80 HU");
         assert_eq!(format_value(&Value::Null { reason: "r".into() }, "mm"), "—");
     }

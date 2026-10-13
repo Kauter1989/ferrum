@@ -3,8 +3,9 @@
 use ferrum_domain::{MaskRegion, Volume};
 
 use crate::diameter::max_diameter_mm;
+use crate::distribution::{distribution, hu_range_shares, ivh_curve, Distribution, HuRangeShares, IvhCurve, IDS};
 use crate::error::MetricsError;
-use crate::intensity::{first_order, region_values, FirstOrder};
+use crate::intensity::{first_order_sorted, region_values, FirstOrder};
 use crate::params::{Params, ValueUnit};
 use crate::profile::Profile;
 use crate::result::{unit_label, FeatureValue, MetricsResult, Value};
@@ -30,12 +31,26 @@ struct Measured {
     topology: Option<Topology>,
     diameter: Option<f64>,
     voxel_mm3: f64,
+    values: Option<Vec<f32>>,
     intensity: Option<FirstOrder>,
+    distribution: Option<Distribution>,
 }
 
 impl Measured {
-    fn new(region: &MaskRegion, volume: &Volume, profile: &Profile) -> Self {
+    fn new(region: &MaskRegion, volume: &Volume, profile: &Profile, params: &Params) -> Self {
         let has = |prefix: &str| profile.features.iter().any(|id| id.starts_with(prefix));
+        let wants_values = has("intensity.") || profile.ivh_curve || profile.hu_ranges;
+        let values = wants_values.then(|| {
+            let mut v = region_values(region, volume);
+            v.sort_by(f32::total_cmp);
+            v
+        });
+        let intensity = values.as_deref().and_then(first_order_sorted);
+        let wants_distribution = profile.features.iter().any(|id| IDS.contains(id));
+        let distribution = match (&values, &intensity) {
+            (Some(v), Some(f)) if wants_distribution => Some(distribution(v, f, params.bin_width)),
+            _ => None,
+        };
         Self {
             size: has("size.").then(|| size(region, volume)),
             shape: has("shape.").then(|| {
@@ -44,7 +59,9 @@ impl Measured {
             topology: has("topology.").then(|| topology(region, volume.dims())),
             diameter: has("size.max_diameter_mm").then(|| max_diameter_mm(region, volume.spacing())),
             voxel_mm3: voxel_mm3(volume),
-            intensity: if has("intensity.") { first_order(region_values(region, volume)) } else { None },
+            values,
+            intensity,
+            distribution,
         }
     }
 
@@ -60,7 +77,7 @@ impl Measured {
             "shape" => self.shape.as_ref().map_or_else(missing, |s| shape_value(s, id)),
             "intensity" => self.intensity.as_ref().map_or_else(
                 || Value::Null { reason: "the segment has no voxel values".to_owned() },
-                |f| intensity_value(f, id),
+                |f| intensity_value(f, self.distribution.as_ref(), id),
             ),
             _ => missing(),
         }
@@ -155,8 +172,27 @@ fn shape_value(s: &Shape3d, id: &str) -> Value {
     }
 }
 
-fn intensity_value(f: &FirstOrder, id: &str) -> Value {
+fn intensity_value(f: &FirstOrder, d: Option<&Distribution>, id: &str) -> Value {
     let number = |x: f64| Value::number(x, "not a finite number");
+    let flat = "all voxel values are equal, so the spread is zero";
+    let moment = |x: Option<f64>| x.map_or_else(|| Value::Null { reason: flat.to_owned() }, number);
+    if let Some(d) = d {
+        match id {
+            "intensity.skewness" => return moment(d.skewness),
+            "intensity.kurtosis" => return moment(d.kurtosis),
+            "intensity.energy" => return number(d.energy),
+            "intensity.rms" => return number(d.rms),
+            "intensity.mad" => return number(d.mad),
+            "intensity.rmad" => return number(d.rmad),
+            "intensity.entropy" => return number(d.entropy),
+            "intensity.uniformity" => return number(d.uniformity),
+            "intensity.ivh_v10" => return number(d.ivh_v10),
+            "intensity.ivh_v90" => return number(d.ivh_v90),
+            "intensity.ivh_i10" => return number(d.ivh_i10),
+            "intensity.ivh_i90" => return number(d.ivh_i90),
+            _ => {}
+        }
+    }
     match id {
         "intensity.mean" => number(f.mean),
         "intensity.std" => number(f.std),
@@ -189,15 +225,28 @@ fn check_unit(unit: &ValueUnit, profile: &Profile) -> Result<(), MetricsError> {
     Err(MetricsError::UnitUnknown { modality, features })
 }
 
+/// The intensity-volume histogram and the HU-range shares, for the profiles
+/// that carry them.
+fn curves(measured: &Measured, profile: &Profile, params: &Params) -> (Option<IvhCurve>, Option<HuRangeShares>) {
+    let Some(values) = measured.values.as_deref().filter(|v| !v.is_empty()) else { return (None, None) };
+    let (ranges, is_default) = params.ranges();
+    (
+        profile.ivh_curve.then(|| ivh_curve(values)),
+        profile.hu_ranges.then(|| hu_range_shares(values, &ranges, is_default)),
+    )
+}
+
 /// Computes the features of `profile` for the segment in `input`.
 ///
 /// Fails if the profile needs the unit of the voxel values and it is not
 /// known, or if the region is empty. Same input and parameters always give
 /// the same result, bit for bit.
 pub fn compute(input: &Input, profile: &Profile, params: &Params) -> Result<MetricsResult, MetricsError> {
+    params.validate()?;
     check_unit(&input.unit, profile)?;
     let region = input.region.cropped().ok_or(MetricsError::EmptyRegion)?;
-    let measured = Measured::new(&region, input.volume, profile);
+    let measured = Measured::new(&region, input.volume, profile, params);
+    let (ivh, hu_ranges) = curves(&measured, profile, params);
     let features = profile
         .features()
         .map(|feature| FeatureValue {
@@ -210,8 +259,11 @@ pub fn compute(input: &Input, profile: &Profile, params: &Params) -> Result<Metr
         profile: profile.name,
         profile_version: profile.version,
         unit: input.unit.clone(),
-        params: *params,
+        params: params.clone(),
+        bin_width: profile.features.contains(&"intensity.entropy").then_some(params.bin_width),
         features,
+        ivh,
+        hu_ranges,
         warnings: measured.topology.as_ref().map_or_else(Vec::new, warnings),
     })
 }

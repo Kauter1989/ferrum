@@ -19,6 +19,10 @@ pub struct Profile {
     pub summary: &'static str,
     /// Ids of its features, in result order.
     pub features: &'static [&'static str],
+    /// The result carries the intensity-volume histogram curve.
+    pub ivh_curve: bool,
+    /// The result carries the shares of voxels in HU ranges.
+    pub hu_ranges: bool,
 }
 
 impl Profile {
@@ -29,7 +33,7 @@ impl Profile {
 
     /// `true` if any feature of the profile needs a known unit.
     pub fn needs_unit(&self) -> bool {
-        self.features().any(|f| f.needs_unit)
+        self.ivh_curve || self.hu_ranges || self.features().any(|f| f.needs_unit)
     }
 
     /// The profile called `name`, or an error that lists the known ones.
@@ -73,14 +77,16 @@ pub const QUICK: Profile = Profile {
         "intensity.p95",
         "intensity.iqr",
     ],
+    ivh_curve: false,
+    hu_ranges: false,
 };
 
 /// Size, shape and first-order statistics: what a radiologist reads from a
 /// segment.
 pub const CLINICAL: Profile = Profile {
     name: "clinical",
-    version: "0.2",
-    summary: "Size, shape (surface, compactness, principal axes, convex hull), connectivity (pieces, cavities, Euler number) and first-order statistics of the voxel values.",
+    version: "0.3",
+    summary: "Size, shape (surface, compactness, principal axes, convex hull), connectivity (pieces, cavities, Euler number), first-order statistics and distribution of the voxel values (skewness, kurtosis, energy, deviations, histogram entropy, intensity-volume histogram) and shares of voxels in HU ranges.",
     features: &[
         "size.voxels",
         "size.volume_mm3",
@@ -139,7 +145,21 @@ pub const CLINICAL: Profile = Profile {
         "intensity.p75",
         "intensity.p95",
         "intensity.iqr",
+        "intensity.skewness",
+        "intensity.kurtosis",
+        "intensity.energy",
+        "intensity.rms",
+        "intensity.mad",
+        "intensity.rmad",
+        "intensity.entropy",
+        "intensity.uniformity",
+        "intensity.ivh_v10",
+        "intensity.ivh_v90",
+        "intensity.ivh_i10",
+        "intensity.ivh_i90",
     ],
+    ivh_curve: true,
+    hu_ranges: true,
 };
 
 /// Every registered profile.
@@ -186,7 +206,7 @@ mod tests {
         }
         assert!(CLINICAL.features.len() > QUICK.features.len());
         assert!(CLINICAL.features().any(|f| f.family == crate::feature::Family::Shape));
-        assert_eq!(Profile::by_name("clinical").unwrap().version, "0.2");
+        assert_eq!(Profile::by_name("clinical").unwrap().version, "0.3");
     }
 
     #[test]

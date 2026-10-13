@@ -105,9 +105,9 @@ pub struct Input<'a> {
 | Warnings | `fragmented` (largest piece below 95 % of the voxels), `has_holes` (one cavity or more), `touches_border` (one image side or more); thresholds are in the definition texts; they never change the mask | none |
 | Euler number | Euler characteristic of the cubical complex of the 26-connected foreground (vertices − edges + faces − cubes) | verified on a cube (1), a cube with a cavity (2) and a torus (0) |
 | First-order | mean, population std, min, max, nearest-rank percentiles, range, IQR; skewness, excess kurtosis, energy, RMS, MAD, rMAD, entropy, uniformity (IBSI definitions) | constant region → `Null` |
-| Histogram | fixed bin width (default 25 HU for CT), recorded | none |
-| IVH | V10, V90, I10, I90 and the curve on the discretised values (IBSI definitions) | definitions checked by hand on a ramp |
-| HU-range shares | half-open ranges `[lo, hi)`; overlapping ranges are `bad_request`; defaults are documented and marked as defaults | none |
+| Histogram | fixed bin width (default 25 HU for CT), recorded in the result; bins `[k·w, (k+1)·w)` anchored at 0 HU, so segments are binned alike whatever their minimum (pyradiomics also anchors at a multiple of the width; IBSI's default anchors at the ROI minimum, so entropy can differ by a few hundredths) | the anchor changes entropy and uniformity; named in the definition text and in the field test |
+| IVH | on the voxel values, not binned: V_x = share of voxels ≥ min + x % of the range; I_x = the ⌈x·N/100⌉-th largest value (the highest value that x % of the volume reaches, as in dose-volume histograms); the curve is V at 0, 1, … 100 % of the range | definitions checked by hand on a ramp and on 15 voxels (rounding up) |
+| HU-range shares | half-open ranges `[lo, hi)`, two binary searches on the sorted values; overlapping, empty or non-finite ranges are `bad_request`; touching ranges are fine; the share outside all ranges is reported so that shares sum to 1; defaults (−1000, −500, −100, 0, 100, 300, 1000) are documented and marked as defaults, not as clinical thresholds | none |
 
 Performance is an estimate (≤ 2 s for the `clinical` profile on a 100 000
 voxel segment) until PR 6 measures it with a benchmark in
@@ -236,19 +236,19 @@ reference). No criterion draws pixels in the renderer, so there is no
 | 18.8-b | `topology.rs` (`a_box_with_a_cavity_has_one_hole_of_eight_voxels_and_euler_number_two`, `separate_cavities_are_counted_and_a_tunnel_is_not_a_cavity`), `tests.rs::a_hollow_box_reports_its_cavity_and_warns` | test |
 | 18.8-c | `topology.rs` (box 1, box with a cavity 2, ring 0, two voxels sharing a corner 1) | test |
 | 18.8-d | `topology.rs` (`a_segment_at_the_edge_of_the_image_touches_the_border`, `warnings_leave_the_mask_alone`), `tests.rs::a_piece_far_away_and_the_image_border_each_give_their_warning` | test |
-| 18.9-a | `intensity.rs::distribution_measures_follow_ibsi_definitions` | test |
-| 18.9-b | `intensity.rs::ten_voxel_set_exact` | test |
-| 18.9-c | `metrics.rs::bin_width_is_recorded` | test |
-| 18.9-d | `intensity.rs::constant_region_has_null_skewness_and_kurtosis` | test |
-| 18.10-a | `intensity.rs::ivh_v10_v90_i10_i90` | test |
-| 18.10-b | `intensity.rs::ivh_of_a_linear_ramp_is_exact` | test |
-| 18.10-c | `intensity.rs::ivh_curve_never_increases` (proptest) | test |
-| 18.11-a | `intensity.rs::range_fractions_sum_to_one` | test |
-| 18.11-b | `metrics.rs::overlapping_ranges_are_bad_request` | test |
+| 18.9-a | `distribution.rs` (`ten_voxels_give_the_hand_computed_moments_and_deviations`, `…entropy_and_uniformity_for_the_bin_width`, `bins_are_anchored_at_zero_…`, `a_symmetric_set_has_no_skew_…`), `tests.rs::the_distribution_of_the_block_is_known_by_hand_…`, `feature.rs::the_distribution_features_are_registered_…` | test |
+| 18.9-b | `distribution.rs::ten_voxels_give_the_hand_computed_…` (sum 60, m2 27.2, m3 246.6, m4 4010, energy 632, MAD 3.6, rMAD 1.5; bins of 5 and of 1) | test |
+| 18.9-c | `tests.rs` (`…bin_width_is_recorded`, `a_different_bin_width_changes_the_histogram_and_is_recorded`), `params.rs::parameters_are_checked_…`, `crates/ferrum-agent/tests/metrics.rs::the_clinical_profile_adds_the_distribution_…` | test |
+| 18.9-d | `distribution.rs::a_constant_region_has_no_skewness_…`, `tests.rs::a_constant_segment_has_no_skewness_or_kurtosis_and_says_why`, the agent contract test | test |
+| 18.10-a | `distribution.rs` (`a_linear_ramp_gives_the_exact_volume_and_intensity_figures`, `the_ten_voxel_set_gives_the_ranked_intensities`, `a_fraction_of_the_volume_that_is_not_a_whole_number_of_voxels_rounds_up`), `tests.rs::the_curve_starts_at_one_never_rises_and_has_101_points` | test |
+| 18.10-b | `distribution.rs::a_linear_ramp_gives_the_exact_volume_and_intensity_figures` (0..=99 HU: V10 0.9, V90 0.1, I10 90, I90 10) | test |
+| 18.10-c | `distribution.rs::the_curve_never_rises_whatever_the_values` (pseudo-random sets of 1 to 400 values, fixed seed; not proptest) | test |
+| 18.11-a | `distribution.rs::range_shares_are_half_open_and_sum_to_one_with_the_outside`, `tests.rs::hu_ranges_are_recorded_and_the_shares_with_the_outside_sum_to_one` | test |
+| 18.11-b | `params.rs::parameters_are_checked_and_ranges_may_touch_but_not_overlap`, `tests.rs::bad_parameters_are_refused_…`, `crates/ferrum-agent/tests/metrics.rs::nonsense_parameters_are_bad_requests_with_a_hint` | test |
 | 18.11-c | `ui.rs::hu_ranges_come_from_the_interface_fields`; defaults documented | test, manual |
-| 18.11-d | `metrics.rs::ranges_are_recorded` | test |
+| 18.11-d | `tests.rs::hu_ranges_are_recorded_…`, the agent contract test (ranges as given, `default` flag, note) | test |
 | 18.12-a | `ui.rs::clinical_card_groups_by_family_with_tooltips` | test, manual |
-| 18.12-b | as 18.4-a to 18.4-d for `clinical` | test |
+| 18.12-b | as 18.4-a to 18.4-d for `clinical`: `commands.json` freshness, `cli.rs::segment_metrics_flags_become_parameters` (`--bin-width`, `--hu-range`), `mcp.rs` parity, `privacy.rs` | test |
 | 18.12-c | `crates/ferrum-radiomics/benches/profiles.rs`, the number goes into the docs | test |
 | Stage success: values agree with pyradiomics on MSD Task09 spleen | a field script (not committed) run on the user's machine, differences explained in the PR | field |
 

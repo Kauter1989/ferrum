@@ -2217,7 +2217,7 @@
     }
   },
   "segment metrics": {
-    "description": "Quantitative profile of a segment from its voxels and values: size (volume, extent, centroid in LPS mm, axial axes, largest slices), with profile clinical also shape (surface area, compactness, sphericity, principal axes and their directions), and first-order HU statistics (mean, std, min, max, percentiles, range, IQR). The result names the profile and its version and records every parameter. Intensity features need a CT study in HU: a NIfTI file without a declared modality is refused (declare it with study open --modality CT). Never read these numbers off an image.",
+    "description": "Quantitative profile of a segment from its voxels and values: size (volume, extent, centroid in LPS mm, axial axes, largest slices), with profile clinical also shape (surface area, compactness, sphericity, principal axes and their directions), and first-order HU statistics (mean, std, min, max, percentiles, range, IQR); clinical adds the distribution of the values (skewness, kurtosis, energy, deviations, histogram entropy and uniformity, intensity-volume histogram) and the share of voxels in HU ranges. The result names the profile and its version and records every parameter. Intensity features need a CT study in HU: a NIfTI file without a declared modality is refused (declare it with study open --modality CT). Never read these numbers off an image.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -2241,6 +2241,23 @@
         "describe": {
           "type": "boolean",
           "description": "add the definition text of every feature to the result"
+        },
+        "bin_width": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "histogram bin width in HU for entropy and uniformity (default 25); bins are [k * width, (k + 1) * width)"
+        },
+        "hu_ranges": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "description": "HU ranges as [min, max] pairs, half-open (min <= value < max), not overlapping, to report the share of voxels in each (profile clinical); omit for the built-in orientation ranges, which are marked as defaults and are not clinical thresholds"
         }
       },
       "required": [
