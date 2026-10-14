@@ -313,6 +313,26 @@ that says so instead of editing the old one.
   named `origin/develop` made the short name ambiguous, so scripts use full
   ref names (`refs/remotes/origin/develop`) and check out detached.
 
+### L23 — DICOM volumes were never brought into LPS; every phantom was axial (2026-10, field check of Stage 20)
+
+- **Symptom:** The DICOM reader kept the stored voxel order and only
+  recorded the direction, while renders, plane labels and tools assume
+  `+i` left, `+j` posterior, `+k` superior. A sagittal or coronal MR was
+  shown in the wrong planes, and a series with rows towards the patient's
+  right was mirrored, labelled R/L as an axial CT. It shipped for many
+  stages: every synthetic DICOM in the tests was axial with row `+x`, and
+  probe and measurements were right (they go through the direction), so
+  nothing numeric failed. NIfTI was reoriented all along.
+- **Rule:** Every reader brings volumes into the canonical frame, and its
+  tests include sagittal, coronal, reversed-row, feet-first and oblique
+  inputs, compared against an independent reader by patient position, not
+  only by voxel index.
+- **Guard:** `assemble::tests::dicom_grids_are_brought_into_lps`,
+  `dicom_integration.rs::a_sagittal_series_is_stored_in_lps`,
+  `dicom_export.rs::a_segmentation_of_a_sagittal_series_lies_on_the_lps_grid`;
+  the field check repacks a real NIfTI as sagittal and coronal DICOM and
+  requires the same MPR (W8).
+
 ## What worked
 
 ### W1 — Field test on the user's GPU with a throw-away script (2026-10, Stage 17)
@@ -389,3 +409,17 @@ that says so instead of editing the old one.
 - **Keep:** For an algorithm that depends on data, try the parameter grid
   on real cases in a scripting language first; self-test every field
   script on a phantom before sending it.
+
+### W8 — Repack one real volume in several formats and compare (2026-10, DICOM orientation)
+
+- **What:** A public T1 (OpenNeuro, CC0) was repacked with pydicom as a
+  sagittal and a coronal DICOM series with its real, slightly oblique
+  geometry, and FERRUM's renders and probes of all three were compared with
+  the NIfTI's.
+- **Outcome:** It showed the orientation bug at once (correlation 0.64 and
+  wrong planes before, 0.9999 after) and caught a mistake in the repacking
+  itself (an axis-aligned assumption on an oblique affine), because the
+  probes disagreed with the NIfTI before any FERRUM change.
+- **Keep:** When no real data of a format can be downloaded, repack real
+  data of another format with an independent library, verify the packing
+  against that library first, then compare FERRUM across the formats.
