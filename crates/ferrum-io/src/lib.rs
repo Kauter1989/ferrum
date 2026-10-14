@@ -72,10 +72,25 @@ impl VolumeRepository for CompositeRepository {
     }
 
     fn load(&self, series: &SeriesDescriptor, progress: &dyn ProgressSink) -> Result<LoadedSeries, RepositoryError> {
+        self.reader(series)?.load(series, progress)
+    }
+
+    fn volumes(
+        &self,
+        series: &SeriesDescriptor,
+        progress: &dyn ProgressSink,
+    ) -> Result<Vec<SeriesDescriptor>, RepositoryError> {
+        self.reader(series)?.volumes(series, progress)
+    }
+}
+
+impl CompositeRepository {
+    /// The repository that reads the format of `series`.
+    fn reader(&self, series: &SeriesDescriptor) -> Result<&dyn VolumeRepository, RepositoryError> {
         self.repositories
             .iter()
             .find(|r| r.name() == series.format)
-            .ok_or_else(|| RepositoryError::Unsupported(format!("format {}", series.format)))?
-            .load(series, progress)
+            .map(|r| r.as_ref())
+            .ok_or_else(|| RepositoryError::Unsupported(format!("format {}", series.format)))
     }
 }

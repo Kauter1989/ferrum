@@ -82,6 +82,14 @@ pub struct StackKey {
     pub acquisition_number: Option<i64>,
     /// Trigger Time in ms.
     pub trigger_time: Option<f64>,
+    /// Frame Reference Time in ms (start of a frame of a dynamic PET).
+    pub frame_reference_time: Option<f64>,
+    /// A derived isotropic (trace) diffusion image: Diffusion
+    /// Directionality `ISOTROPIC`, or a b-value above 0 with a zero
+    /// gradient direction.
+    pub isotropic: Option<bool>,
+    /// Complex Image Component (`MAGNITUDE`, `PHASE`, `REAL`, `IMAGINARY`).
+    pub component: Option<String>,
 }
 
 impl StackKey {
@@ -93,6 +101,9 @@ impl StackKey {
             b_value: f64_of(obj, tags::DIFFUSION_B_VALUE),
             acquisition_number: int_of(obj, tags::ACQUISITION_NUMBER),
             trigger_time: f64_of(obj, tags::TRIGGER_TIME),
+            frame_reference_time: f64_of(obj, tags::FRAME_REFERENCE_TIME),
+            isotropic: isotropic_of(obj, obj, f64_of(obj, tags::DIFFUSION_B_VALUE)),
+            component: str_of(obj, tags::COMPLEX_IMAGE_COMPONENT).filter(|c| !c.is_empty()),
         }
     }
 
@@ -111,7 +122,24 @@ impl StackKey {
             .then(float(self.b_value, other.b_value))
             .then(int(self.acquisition_number, other.acquisition_number))
             .then(float(self.trigger_time, other.trigger_time))
+            .then(float(self.frame_reference_time, other.frame_reference_time))
+            .then(self.isotropic.cmp(&other.isotropic))
     }
+}
+
+/// Whether a diffusion image is the derived isotropic (trace) image:
+/// Diffusion Directionality in `directionality`, else a zero gradient
+/// direction in `gradient` at a b-value above 0. `None` when neither says.
+pub(crate) fn isotropic_of(
+    directionality: &InMemDicomObject,
+    gradient: &InMemDicomObject,
+    b_value: Option<f64>,
+) -> Option<bool> {
+    if let Some(d) = str_of(directionality, tags::DIFFUSION_DIRECTIONALITY).filter(|d| !d.is_empty()) {
+        return Some(d.eq_ignore_ascii_case("ISOTROPIC"));
+    }
+    let g = f64s_of(gradient, tags::DIFFUSION_GRADIENT_ORIENTATION).filter(|g| g.len() >= 3)?;
+    Some(b_value.is_some_and(|b| b > 0.0) && g.iter().all(|v| v.abs() < 1e-6))
 }
 
 pub(crate) fn str_of(obj: &InMemDicomObject, tag: Tag) -> Option<String> {

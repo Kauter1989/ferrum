@@ -32,6 +32,8 @@ pub struct SyntheticSlice {
     pub include_position: bool,
     /// Echo Numbers, written when set.
     pub echo: Option<i32>,
+    /// Frame Reference Time in ms (dynamic PET), written when set.
+    pub frame_time: Option<f64>,
 }
 
 impl SyntheticSlice {
@@ -56,6 +58,7 @@ impl SyntheticSlice {
             frames: 1,
             include_position: true,
             echo: None,
+            frame_time: None,
         }
     }
 
@@ -106,6 +109,9 @@ impl SyntheticSlice {
                 PrimitiveValue::from(self.frames.to_string()),
             ));
             elements.push(DataElement::new(tags::SPACING_BETWEEN_SLICES, VR::DS, PrimitiveValue::from("1.25")));
+        }
+        if let Some(t) = self.frame_time {
+            elements.push(DataElement::new(tags::FRAME_REFERENCE_TIME, VR::DS, PrimitiveValue::from(ds(&[t]))));
         }
         if let Some(e) = self.echo {
             elements.push(DataElement::new(tags::ECHO_NUMBERS, VR::IS, PrimitiveValue::from(e.to_string())));

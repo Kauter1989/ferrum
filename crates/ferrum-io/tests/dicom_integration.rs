@@ -423,3 +423,110 @@ fn axial_series_with_reversed_rows_or_feet_first_are_stored_in_lps() {
         assert_eq!(v.physical(i, j, k).unwrap(), f32::from(phantom_value(0, 0, 0)), "{row:?} {col:?}");
     }
 }
+
+/// Writes `n` positions × `values.len()` volumes; `set` marks the volume
+/// of each slice. Volume `v` holds the phantom plus `5000 · v`.
+fn write_volumes(dir: &std::path::Path, n: u32, values: &[f64], set: impl Fn(&mut SyntheticSlice, f64)) {
+    let (rows, cols) = (4u16, 6u16);
+    for (v, &value) in values.iter().enumerate() {
+        for k in 0..n {
+            // later volumes first, with lower Instance Numbers
+            let inst = ((values.len() - 1 - v) as u32 * n + k + 1) as i32;
+            let mut s = SyntheticSlice::new(rows, cols, 100.0 + f64::from(k) * 2.0, inst);
+            set(&mut s, value);
+            s.pixels = (0..u32::from(rows) * u32::from(cols))
+                .map(|p| phantom_value(p % u32::from(cols), p / u32::from(cols), k) + 5000 * v as u16)
+                .collect();
+            s.write(&dir.join(format!("v{v}_{k}.dcm")));
+        }
+    }
+}
+
+/// Every volume of the single series of `dir`, loaded: (label, volume, warnings).
+fn load_volumes(dir: &std::path::Path) -> Vec<(ferrum_domain::SeriesDescriptor, ferrum_domain::LoadedSeries)> {
+    let repo = DicomRepository;
+    let series = repo.scan(&[dir.to_path_buf()], &NoProgress).unwrap();
+    assert_eq!(series.len(), 1, "the volumes are one series");
+    repo.volumes(&series[0], &NoProgress)
+        .unwrap()
+        .into_iter()
+        .map(|d| {
+            let l = repo.load(&d, &NoProgress).unwrap();
+            (d, l)
+        })
+        .collect()
+}
+
+fn assert_volume(v: &ferrum_domain::Volume, n: u32, offset: f32) {
+    assert_eq!(v.dims(), Dims3::new(6, 4, n));
+    for &(i, j, k) in &[(0, 0, 0), (5, 3, n - 1), (2, 1, 1)] {
+        let expected = f32::from(phantom_value(i, j, k)) + offset;
+        assert_eq!(v.physical(i, j, k).unwrap(), expected, "voxel {i},{j},{k}");
+    }
+}
+
+#[test]
+fn each_echo_loads_as_its_own_volume() {
+    // covers 20.4-a, 20.4-d
+    let dir = tempfile::tempdir().unwrap();
+    write_volumes(dir.path(), 3, &[1.0, 2.0], |s, v| s.echo = Some(v as i32));
+    let vols = load_volumes(dir.path());
+    assert_eq!(vols.len(), 2);
+    for (v, (d, l)) in vols.iter().enumerate() {
+        let info = d.volume.as_ref().unwrap();
+        assert_eq!((info.index, info.count, info.label.as_str()), (v as u32, 2, ["echo 1", "echo 2"][v]));
+        assert_eq!(info.echo_number, Some(v as i64 + 1));
+        assert!(info.complete);
+        assert_eq!(d.sources.len(), 3, "a volume holds only its own files");
+        assert_eq!(d.dims, Dims3::new(6, 4, 3));
+        assert_volume(&l.volume, 3, 5000.0 * v as f32);
+        assert_eq!(l.metadata.warnings, Vec::<String>::new(), "one volume, nothing hidden");
+        assert!(l.metadata.attributes.iter().any(|(k, val)| k == "Volume" && val.starts_with(&info.label)));
+    }
+    assert_ne!(vols[0].0.id, vols[1].0.id);
+    // the series itself still loads as before: volume 1, with the 2.7 warning
+    let repo = DicomRepository;
+    let whole = repo.load(&repo.scan(&[dir.path().to_path_buf()], &NoProgress).unwrap()[0], &NoProgress).unwrap();
+    assert_volume(&whole.volume, 3, 0.0);
+    assert!(whole.metadata.warnings[0].contains("one volume of 2 is shown"));
+}
+
+#[test]
+fn dynamic_pet_frames_load_by_frame_time() {
+    // covers 20.4-b, 20.4-d
+    let dir = tempfile::tempdir().unwrap();
+    write_volumes(dir.path(), 3, &[0.0, 30000.0, 90000.0], |s, t| s.frame_time = Some(t));
+    let vols = load_volumes(dir.path());
+    let names: Vec<_> = vols.iter().map(|(d, _)| d.volume.as_ref().unwrap().label.clone()).collect();
+    assert_eq!(names, vec!["frame 1/3, t = 0 s", "frame 2/3, t = 30 s", "frame 3/3, t = 90 s"]);
+    assert_eq!(vols[2].0.volume.as_ref().unwrap().frame_time_s, Some(90.0));
+    for (v, (_, l)) in vols.iter().enumerate() {
+        assert_volume(&l.volume, 3, 5000.0 * v as f32);
+    }
+}
+
+#[test]
+fn phases_of_an_enhanced_file_load_as_volumes() {
+    // covers 20.4-a, 20.4-d
+    let dir = tempfile::tempdir().unwrap();
+    let (rows, cols) = (4u16, 6u16);
+    let frames: Vec<EnhancedFrame> =
+        (0..4u32).rev().flat_map(|k| [(k, 2), (k, 1)]).map(|(k, t)| enhanced_frame(rows, cols, k, t, 0.0)).collect();
+    write_enhanced(&dir.path().join("mr.dcm"), rows, cols, "1.2.3.22", &frames, false);
+    let vols = load_volumes(dir.path());
+    let names: Vec<_> = vols.iter().map(|(d, _)| d.volume.as_ref().unwrap().label.clone()).collect();
+    assert_eq!(names, vec!["phase 1/2", "phase 2/2"]);
+    for (t, (d, l)) in vols.iter().enumerate() {
+        assert_eq!(d.sources.len(), 1);
+        assert_phantom_offset(&l.volume, 4, 5000.0 * t as f32);
+        assert_eq!(l.metadata.warnings, Vec::<String>::new());
+        assert_eq!(l.volume.geometry().origin, Vec3::new(0.0, 0.0, 10.0));
+    }
+}
+
+fn assert_phantom_offset(v: &ferrum_domain::Volume, n: u32, offset: f32) {
+    assert_eq!(v.dims(), Dims3::new(6, 4, n));
+    for &(i, j, k) in &[(0, 0, 0), (5, 0, 0), (0, 3, 1), (2, 3, n - 1)] {
+        assert_eq!(v.physical(i, j, k).unwrap(), f32::from(phantom_value(i, j, k)) + offset, "voxel {i},{j},{k}");
+    }
+}

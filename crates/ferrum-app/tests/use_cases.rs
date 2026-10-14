@@ -47,6 +47,7 @@ impl FakeRepo {
                     modality: "CT".into(),
                     dims,
                     sources: vec![],
+                    volume: None,
                 };
                 (d, phantom(dims))
             })

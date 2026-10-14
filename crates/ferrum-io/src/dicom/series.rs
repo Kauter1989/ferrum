@@ -3,7 +3,7 @@
 //! This module is pure: it operates on [`SliceHeader`] values only and is
 //! tested without touching the file system.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use glam::DVec3;
 
@@ -52,7 +52,7 @@ pub fn group(headers: Vec<SliceHeader>) -> Vec<(SeriesKey, Vec<SliceHeader>)> {
 
 /// One image plane of a series (a single-frame file or one frame of a
 /// multi-frame file).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PlaneRef {
     /// Index into the series' header list.
     pub header: usize,
@@ -110,12 +110,12 @@ fn fallback_spacing(headers: &[SliceHeader]) -> (f64, &'static str) {
 /// One image plane with what places it: a single-frame file, or one frame
 /// of an Enhanced multi-frame file with its own position.
 #[derive(Debug, Clone)]
-struct Image<'a> {
-    plane: PlaneRef,
-    position: DVec3,
-    orientation: Option<(DVec3, DVec3)>,
-    stack: &'a StackKey,
-    instance: Option<i64>,
+pub(crate) struct Image<'a> {
+    pub(crate) plane: PlaneRef,
+    pub(crate) position: DVec3,
+    pub(crate) orientation: Option<(DVec3, DVec3)>,
+    pub(crate) stack: &'a StackKey,
+    pub(crate) instance: Option<i64>,
 }
 
 impl Image<'_> {
@@ -127,7 +127,7 @@ impl Image<'_> {
 /// Every image of the series with a position: each frame of a file with
 /// per-frame geometry, the first frame of any other file. `None` when an
 /// image has no position.
-fn positioned_images(headers: &[SliceHeader]) -> Option<Vec<Image<'_>>> {
+pub(crate) fn positioned_images(headers: &[SliceHeader]) -> Option<Vec<Image<'_>>> {
     let mut images = Vec::new();
     for (i, h) in headers.iter().enumerate() {
         if h.frames_info.is_empty() {
@@ -155,7 +155,7 @@ fn positioned_images(headers: &[SliceHeader]) -> Option<Vec<Image<'_>>> {
 
 /// Order of two images at the same slice position: the stack key, then
 /// Instance Number, then file and frame order (missing values last).
-fn stack_order(a: &Image<'_>, b: &Image<'_>) -> std::cmp::Ordering {
+pub(crate) fn stack_order(a: &Image<'_>, b: &Image<'_>) -> std::cmp::Ordering {
     a.stack
         .order(b.stack)
         .then(a.instance.unwrap_or(i64::MAX).cmp(&b.instance.unwrap_or(i64::MAX)))
@@ -336,6 +336,38 @@ fn order_planes(headers: &[SliceHeader]) -> OrderedSeries {
         return order_frames(headers);
     }
     order_without_positions(headers)
+}
+
+/// The images of a series with positions, grouped by position along the
+/// slice normal (ascending) and, within a position, in [`stack_order`].
+/// `None` when an image has no position or the series has no orientation.
+pub(crate) fn position_groups(headers: &[SliceHeader]) -> Option<Vec<Vec<Image<'_>>>> {
+    let images = positioned_images(headers)?;
+    let n = images.iter().find_map(Image::normal)?;
+    let mut keyed: Vec<(f64, Image<'_>)> = images.into_iter().map(|im| (im.position.dot(n), im)).collect();
+    keyed.sort_by(|a, b| a.0.total_cmp(&b.0).then_with(|| stack_order(&a.1, &b.1)));
+    let mut groups: Vec<(f64, Vec<Image<'_>>)> = Vec::new();
+    for (d, im) in keyed {
+        match groups.last_mut() {
+            Some((f, g)) if (d - *f).abs() < 1e-4 => g.push(im),
+            _ => groups.push((d, vec![im])),
+        }
+    }
+    Some(groups.into_iter().map(|(_, g)| g).collect())
+}
+
+/// Orders only the images in `keep` (one volume of a multi-volume series);
+/// the whole series when they do not all have positions.
+pub fn order_selected(headers: &[SliceHeader], keep: &BTreeSet<PlaneRef>) -> OrderedSeries {
+    if let Some(images) = positioned_images(headers) {
+        let images: Vec<Image<'_>> = images.into_iter().filter(|im| keep.contains(&im.plane)).collect();
+        if let Some(n) = images.iter().find_map(Image::normal) {
+            if let Some(ordered) = order_by_position(headers, &images, n) {
+                return ordered;
+            }
+        }
+    }
+    order(headers)
 }
 
 /// Every image at one position (e.g. a cine series): stacked as slices,
