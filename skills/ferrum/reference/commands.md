@@ -17,7 +17,7 @@ underscores) and a `ferrum-cli` sub-command. The parameters are listed in
 ## Looking
 | Command | Key parameters | Returns |
 |---|---|---|
-| `view slice` | `plane`, `slice_number` or `at`, `window?`, `size?`, `overlays?` (`segments`), `segment_style?` (`outline`, `fill`, `fill_outline`), `segment_opacity?` | PNG + sidecar with `pixel_to_voxel`, `pixel_to_patient_mm` |
+| `view slice` | `plane`, `slice_number` or `at`, `window?` (default: the series' own, else 0.5–99.5 % of the values), `size?`, `overlays?` (`segments`), `segment_style?` (`outline`, `fill`, `fill_outline`), `segment_opacity?` | PNG + sidecar with `pixel_to_voxel`, `pixel_to_patient_mm` |
 | `view montage` | `plane`, `from?`, `to?`, `step?`, `columns?`, `window?` | grid of labelled slices, one mapping per tile |
 | `view mpr` | `at`, `window?` | axial, coronal and sagittal through a point, crosshair |
 | `view volume` | `mode` (`mip`, `isosurface` + `threshold`, `transfer_function` + `preset`), `view` | 3D render; no pixel mapping |

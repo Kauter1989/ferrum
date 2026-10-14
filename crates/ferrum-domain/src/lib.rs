@@ -62,4 +62,7 @@ pub use segmentation::{
 pub use slice::{SliceAxis, SliceImage, SliceView};
 pub use transfer::{ControlPoint, CtPreset, TransferFunction, TransferFunctionError};
 pub use volume::{Geometry, IntensityRange, Volume, VolumeError};
-pub use window::{WindowLevel, WindowPreset};
+pub use window::{
+    histogram_percentile, storage_bin, storage_histogram, WindowLevel, WindowPreset, AUTO_WINDOW_BINS,
+    AUTO_WINDOW_HIGH, AUTO_WINDOW_LOW,
+};

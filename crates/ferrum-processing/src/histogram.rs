@@ -1,7 +1,7 @@
 //! Intensity histogram used by the transfer function editor and for
 //! automatic windowing.
 
-use ferrum_domain::Volume;
+use ferrum_domain::{histogram_percentile, storage_bin, Volume};
 use rayon::prelude::*;
 
 /// Histogram of normalised intensities with uniform bins over `[0, 1]`.
@@ -26,7 +26,7 @@ impl Histogram {
                 || vec![0u64; bins],
                 |mut acc, chunk| {
                     for &s in chunk {
-                        acc[bin_of(s, bins)] += 1;
+                        acc[storage_bin(s, bins)] += 1;
                     }
                     acc
                 },
@@ -113,21 +113,8 @@ impl Histogram {
 
     /// Normalised intensity below which `fraction` of the samples lie.
     pub fn percentile(&self, fraction: f64) -> f32 {
-        let target = (fraction.clamp(0.0, 1.0) * self.total as f64).ceil() as u64;
-        let mut acc = 0;
-        for (i, &c) in self.counts.iter().enumerate() {
-            acc += c;
-            if acc >= target && acc > 0 {
-                return (i as f32 + 1.0) / self.counts.len() as f32;
-            }
-        }
-        1.0
+        histogram_percentile(&self.counts, fraction)
     }
-}
-
-#[inline]
-fn bin_of(sample: u16, bins: usize) -> usize {
-    ((sample as usize * bins) >> 16).min(bins - 1)
 }
 
 #[cfg(test)]

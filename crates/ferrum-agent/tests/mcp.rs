@@ -34,6 +34,8 @@ fn script(ws: &str, src: &Path) -> Vec<(&'static str, Value)> {
         ("study open", json!({ "workspace": ws, "path": src, "modality": "CT" })),
         ("study info", json!({ "workspace": ws })),
         ("view slice", json!({ "workspace": ws, "plane": "axial", "slice_number": 6, "window": "bone", "size": 48 })),
+        // covers 2.7-h: the default window is the same over both transports
+        ("view slice", json!({ "workspace": ws, "plane": "axial", "slice_number": 6, "size": 48 })),
         ("probe", json!({ "workspace": ws, "point": { "render": "r-0001", "pixel": [40, 10] } })),
         (
             "stats",
