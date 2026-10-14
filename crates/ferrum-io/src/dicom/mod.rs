@@ -2,6 +2,7 @@
 
 pub mod assemble;
 pub mod export;
+pub mod frames;
 pub mod header;
 pub mod series;
 
