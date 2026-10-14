@@ -165,6 +165,50 @@ fn orders_by_instance_number_without_positions() {
     let l = load_single(dir.path());
     assert_phantom(&l.volume, 4, 4, 4);
     assert!((l.volume.spacing().z - 2.5).abs() < 1e-6, "falls back to slice thickness");
+    // covers 2.7-d
+    assert_eq!(l.metadata.warnings.len(), 1, "{:?}", l.metadata.warnings);
+    assert!(l.metadata.warnings[0].contains("ordered by Instance Number"), "{:?}", l.metadata.warnings);
+}
+
+#[test]
+fn a_regular_series_loads_without_warnings() {
+    // covers 2.7-c
+    let dir = tempfile::tempdir().unwrap();
+    write_series(dir.path(), 6, 8, 5, 2.0, |_| {});
+    assert_eq!(load_single(dir.path()).metadata.warnings, Vec::<String>::new());
+}
+
+#[test]
+fn two_echoes_load_as_the_first_echo_with_a_warning() {
+    // covers 2.7-a, 2.7-b
+    let dir = tempfile::tempdir().unwrap();
+    let (rows, cols, n) = (4u16, 6u16, 3u32);
+    // Echo 2 is written first, with lower Instance Numbers and other values:
+    // only Echo Numbers tells the echoes apart.
+    for e in [2i32, 1] {
+        for k in 0..n {
+            let mut s = SyntheticSlice::new(rows, cols, 100.0 + f64::from(k) * 2.0, (2 - e) * n as i32 + k as i32 + 1);
+            s.echo = Some(e);
+            s.pixels = (0..u32::from(rows) * u32::from(cols))
+                .map(|p| phantom_value(p % u32::from(cols), p / u32::from(cols), k) + (e as u16 - 1) * 5000)
+                .collect();
+            s.write(&dir.path().join(format!("e{e}_{k}.dcm")));
+        }
+    }
+    let l = load_single(dir.path());
+    assert_phantom(&l.volume, u32::from(rows), u32::from(cols), n);
+    assert_eq!(l.metadata.warnings.len(), 1, "{:?}", l.metadata.warnings);
+    assert!(l.metadata.warnings[0].contains("2 images at each of its 3 slice positions"), "{:?}", l.metadata.warnings);
+}
+
+#[test]
+fn missing_pixel_spacing_is_reported() {
+    // covers 2.7-d
+    let dir = tempfile::tempdir().unwrap();
+    write_series(dir.path(), 4, 4, 3, 1.0, |s| s.pixel_spacing = [0.0, 0.0]);
+    let l = load_single(dir.path());
+    assert_eq!(l.volume.spacing().x, 1.0);
+    assert_eq!(l.metadata.warnings, vec!["the series carries no pixel spacing: 1 mm per pixel is assumed".to_string()]);
 }
 
 #[test]

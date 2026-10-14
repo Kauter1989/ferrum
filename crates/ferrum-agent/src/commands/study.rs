@@ -97,6 +97,9 @@ pub(super) fn describe(config: &AgentConfig, study: &Study) -> Output {
     });
     data["study"] = study_ids(config, m);
     let mut out = Output::new(data);
+    for w in &m.warnings {
+        out = out.warn(w.clone());
+    }
     if s.max_element() > 3.0 * s.min_element() {
         out = out.warn(format!("strongly anisotropic voxels ({:.2} × {:.2} × {:.2} mm)", s.x, s.y, s.z));
     }

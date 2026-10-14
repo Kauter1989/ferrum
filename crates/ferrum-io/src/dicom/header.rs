@@ -56,6 +56,53 @@ pub struct SliceHeader {
     pub window: Option<WindowLevel>,
     /// Photometric interpretation.
     pub photometric: Photometric,
+    /// What tells this image apart from others at the same position.
+    pub stack: StackKey,
+}
+
+/// What tells apart several images at one slice position (echoes,
+/// b-values, phases, frames of a dynamic series), in the order the loader
+/// sorts them by; a missing value sorts last.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct StackKey {
+    /// Temporal Position Identifier (phase of a dynamic series).
+    pub temporal_position: Option<i64>,
+    /// Echo Numbers (first value).
+    pub echo_number: Option<i64>,
+    /// Diffusion b-value in s/mm².
+    pub b_value: Option<f64>,
+    /// Acquisition Number.
+    pub acquisition_number: Option<i64>,
+    /// Trigger Time in ms.
+    pub trigger_time: Option<f64>,
+}
+
+impl StackKey {
+    fn of(obj: &InMemDicomObject) -> Self {
+        Self {
+            temporal_position: int_of(obj, tags::TEMPORAL_POSITION_IDENTIFIER),
+            echo_number: int_of(obj, tags::ECHO_NUMBERS),
+            b_value: f64_of(obj, tags::DIFFUSION_B_VALUE),
+            acquisition_number: int_of(obj, tags::ACQUISITION_NUMBER),
+            trigger_time: f64_of(obj, tags::TRIGGER_TIME),
+        }
+    }
+
+    /// Orders two keys field by field; a present value sorts before a
+    /// missing one.
+    pub fn order(&self, other: &Self) -> std::cmp::Ordering {
+        fn int(a: Option<i64>, b: Option<i64>) -> std::cmp::Ordering {
+            a.unwrap_or(i64::MAX).cmp(&b.unwrap_or(i64::MAX))
+        }
+        fn float(a: Option<f64>, b: Option<f64>) -> std::cmp::Ordering {
+            a.unwrap_or(f64::INFINITY).total_cmp(&b.unwrap_or(f64::INFINITY))
+        }
+        int(self.temporal_position, other.temporal_position)
+            .then(int(self.echo_number, other.echo_number))
+            .then(float(self.b_value, other.b_value))
+            .then(int(self.acquisition_number, other.acquisition_number))
+            .then(float(self.trigger_time, other.trigger_time))
+    }
 }
 
 pub(crate) fn str_of(obj: &InMemDicomObject, tag: Tag) -> Option<String> {
@@ -123,6 +170,7 @@ impl SliceHeader {
             slice_location: f64_of(obj, tags::SLICE_LOCATION),
             window,
             photometric,
+            stack: StackKey::of(obj),
         })
     }
 

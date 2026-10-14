@@ -11,7 +11,7 @@ underscores) and a `ferrum-cli` sub-command. The parameters are listed in
 | Command | Key parameters | Returns |
 |---|---|---|
 | `study scan` | `paths` | series: pseudonymised id, format, modality, dims, description |
-| `study open` | `workspace`, `path`, `series?`, `modality?` (for NIfTI, e.g. `CT`) | dims, spacing, LPS origin and direction, value unit, slice counts, window presets |
+| `study open` | `workspace`, `path`, `series?`, `modality?` (for NIfTI, e.g. `CT`) | dims, spacing, LPS origin and direction, value unit, slice counts, window presets; `warnings` when the series could not be shown as stored (one volume of several, irregular or assumed spacing) |
 | `study info` | `workspace` | the same, plus annotation and segment counts with pending reviews |
 
 ## Looking

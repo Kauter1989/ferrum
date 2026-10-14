@@ -22,7 +22,7 @@ use super::ai_panel::AiPanelState;
 use super::segmentation_panel;
 use super::segments_panel::{self, SegmentsPanelState};
 use super::tf_editor::{self, TfEditorState};
-use super::theme::{ACCENT, OVERLAY, TEXT, TEXT_DIM};
+use super::theme::{ACCENT, OVERLAY, TEXT, TEXT_DIM, WARN};
 use super::widgets::{chip, icon_slider, section_title, segmented, slider_row, tool_button};
 
 /// Tab of the settings panel.
@@ -448,6 +448,9 @@ fn details(ui: &mut egui::Ui, viewer: &Viewer) {
         return;
     };
     section_title(ui, icon::INFO, "Series information");
+    for w in viewer.load_warnings() {
+        ui.add(egui::Label::new(RichText::new(format!("{} {w}", icon::WARNING)).color(WARN)).wrap());
+    }
     let v = &d.volume;
     let dims = v.dims();
     let sp = v.spacing();

@@ -76,6 +76,7 @@ impl VolumeRepository for FakeRepo {
                 attributes: vec![],
                 study: StudyInfo { study_date: "20240428".into(), modality: "CT".into(), ..Default::default() },
                 source: PathBuf::from("/data/phantom"),
+                warnings: vec![],
             },
         })
     }
@@ -513,4 +514,21 @@ fn picking_uses_the_segment_overlay() {
     assert!(v.pick(Vec2::ZERO, 1.0).is_none());
     v.set_segments_shown(false);
     assert_eq!(v.pick(Vec2::ZERO, 1.0), Some(before));
+}
+
+#[test]
+fn load_warnings_are_shown_until_dismissed_and_kept() {
+    // covers 2.7-g
+    let mut viewer = Viewer::new(FakeRepo::new(1));
+    assert!(viewer.load_warnings().is_empty() && !viewer.load_warnings_unseen());
+    let warnings = vec!["the file holds 2 volumes".to_string()];
+    let metadata = SeriesMetadata { warnings: warnings.clone(), ..SeriesMetadata::default() };
+    viewer.install(LoadedSeries { volume: phantom(Dims3::new(8, 8, 4)), metadata });
+    assert!(viewer.load_warnings_unseen());
+    viewer.dismiss_load_warnings();
+    assert!(!viewer.load_warnings_unseen());
+    assert_eq!(viewer.load_warnings(), warnings.as_slice(), "kept with the series");
+    // the next load without warnings shows nothing
+    viewer.install(LoadedSeries { volume: phantom(Dims3::new(8, 8, 4)), metadata: SeriesMetadata::default() });
+    assert!(viewer.load_warnings().is_empty() && !viewer.load_warnings_unseen());
 }

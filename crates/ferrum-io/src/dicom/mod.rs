@@ -109,6 +109,10 @@ impl VolumeRepository for DicomRepository {
         attributes.push(("Slices".into(), ordered.planes.len().to_string()));
         attributes.push(("Slice spacing".into(), format!("{:.3} mm", ordered.slice_spacing)));
         attributes.push(("Ordering".into(), format!("{:?}", ordered.method)));
+        let mut warnings = ordered.warnings;
+        if first.pixel_spacing.is_none() {
+            warnings.push("the series carries no pixel spacing: 1 mm per pixel is assumed".into());
+        }
         Ok(LoadedSeries {
             volume,
             metadata: SeriesMetadata {
@@ -118,6 +122,7 @@ impl VolumeRepository for DicomRepository {
                 attributes,
                 study,
                 source: series_folder(&series.sources),
+                warnings,
             },
         })
     }

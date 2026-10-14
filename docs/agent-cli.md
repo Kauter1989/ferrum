@@ -62,7 +62,7 @@ workspace paths are placed under the operator's `data.workspace_root`.
 | Command | What it does |
 |---|---|
 | `study scan <paths…>` | Lists series: pseudonymised id, format, modality, dims, description |
-| `study open -w W <path> [--series S] [--modality M]` | Creates or reuses the workspace W for a series (SHA-256 of every source file) and describes it; `--modality` declares the modality of a source that carries none (NIfTI), e.g. `CT` for values in HU, and is kept in the workspace |
+| `study open -w W <path> [--series S] [--modality M]` | Creates or reuses the workspace W for a series (SHA-256 of every source file) and describes it; `--modality` declares the modality of a source that carries none (NIfTI), e.g. `CT` for values in HU, and is kept in the workspace. What the reader could not show as stored is in `warnings` (several images per slice position: one volume shown; a 4D NIfTI: volume 1 shown; irregular gaps, spacing taken from the header, no pixel spacing) |
 | `study info -w W` | Dims, spacing, LPS origin and direction, value unit, `value_range` (the range the voxels are stored over: for whole-unit CT data up to twice as wide as the data, [ADR 0012](decisions/0012-lossless-grid-storage.md); values are read back exactly), slice counts, window presets, annotation and segment counts |
 | `view slice -w W --plane P (--slice-number N \| --at POINT) [--window lung\|C,W] [--size PX] [--overlay segments [--segment-style outline\|fill\|fill_outline] [--segment-opacity A]]` | Renders a slice to `renders/r-NNNN.png` with a sidecar JSON |
 | `view montage -w W --plane P [--from N] [--to N] [--step N] [--columns N] [--window …] [--size PX]` | Several slices of one plane as a grid; every tile labelled with its slice number (default: at most 16 tiles) |
@@ -388,5 +388,9 @@ Note:
 - NIfTI files carry no modality, so their values have no unit. If you
   know the file is CT, open it with `--modality CT`; values are then
   reported in HU (`modality_source: declared`).
+- A series with several images per slice position (echoes, b-values,
+  phases, frames) and a 4D NIfTI file show one volume, with a warning;
+  choosing another volume is not supported yet. Irregular slice gaps are
+  reported, not resampled: the volume uses the median gap.
 - The command line reloads the series for each call (a CT series in about
   0.3 s); the MCP server keeps it in memory.
