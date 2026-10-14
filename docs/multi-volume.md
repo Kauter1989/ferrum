@@ -74,7 +74,10 @@ DICOM, after grouping by `SeriesKey` and building the positioned images
 5. A volume missing a position is `complete: false`: listed, opened with a
    warning, not switchable from a complete one (different grid).
 
-The volume id is `<series id>#v=<key>`, e.g. `…#v=b1000`, `…#v=t3`,
+`VolumeRepository::scan` keeps returning whole series (the same ids as
+before, so existing workspaces and callers are unchanged);
+`VolumeRepository::volumes(series)` returns one descriptor per volume, or
+the series itself. The volume id is `<series id>#v=<key>`, e.g. `…#v=b1000`, `…#v=t3`,
 `…#v=n2`. Loading a descriptor reads only that volume's files (frames for
 an Enhanced file).
 

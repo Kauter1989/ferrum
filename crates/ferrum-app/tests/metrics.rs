@@ -38,6 +38,7 @@ impl VolumeRepository for Repo {
             modality: self.modality.into(),
             dims: Dims3::new(12, 12, 12),
             sources: vec![],
+            volume: None,
         }])
     }
     fn load(&self, _: &SeriesDescriptor, _: &dyn ProgressSink) -> Result<LoadedSeries, RepositoryError> {

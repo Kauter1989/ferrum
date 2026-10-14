@@ -82,6 +82,8 @@ pub struct StackKey {
     pub acquisition_number: Option<i64>,
     /// Trigger Time in ms.
     pub trigger_time: Option<f64>,
+    /// Frame Reference Time in ms (start of a frame of a dynamic PET).
+    pub frame_reference_time: Option<f64>,
 }
 
 impl StackKey {
@@ -93,6 +95,7 @@ impl StackKey {
             b_value: f64_of(obj, tags::DIFFUSION_B_VALUE),
             acquisition_number: int_of(obj, tags::ACQUISITION_NUMBER),
             trigger_time: f64_of(obj, tags::TRIGGER_TIME),
+            frame_reference_time: f64_of(obj, tags::FRAME_REFERENCE_TIME),
         }
     }
 
@@ -111,6 +114,7 @@ impl StackKey {
             .then(float(self.b_value, other.b_value))
             .then(int(self.acquisition_number, other.acquisition_number))
             .then(float(self.trigger_time, other.trigger_time))
+            .then(float(self.frame_reference_time, other.frame_reference_time))
     }
 }
 

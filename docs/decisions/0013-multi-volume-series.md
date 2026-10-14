@@ -1,6 +1,6 @@
 # ADR 0013 — Volumes of a multi-volume series: one entry each, workspace bound to the series
 
-- **Status:** Proposed (awaiting G2)
+- **Status:** Accepted (G2, 2026-10-14)
 - **Date:** 2026-10-14
 
 ## Context
@@ -16,7 +16,10 @@ reloading the study.
 
 1. **A volume is a series descriptor.** `SeriesDescriptor` gets an optional
    `VolumeInfo` (group, index, count, label, b-value, echo time and number,
-   temporal position, frame time, completeness). `study scan` lists one
+   temporal position, frame time, completeness).
+   `VolumeRepository::volumes(series)` expands a series into its volumes;
+   `scan` keeps returning whole series, so ids, workspaces and callers
+   that do not ask for volumes are unchanged. `study scan` lists one
    entry per volume, each with the pseudonymised `group` of its series.
    Single-volume series are unchanged.
 2. **Volumes are told apart by the fields that differ at one position**

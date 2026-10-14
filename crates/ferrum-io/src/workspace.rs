@@ -522,6 +522,7 @@ mod tests {
             modality: "CT".into(),
             dims: Dims3::new(2, 2, 2),
             sources: vec![a, b],
+            volume: None,
         };
         let root = dir.path().join("ws/ct1");
         Fixture { _dir: dir, source, root, series }

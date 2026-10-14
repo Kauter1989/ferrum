@@ -5,6 +5,7 @@ pub mod export;
 pub mod frames;
 pub mod header;
 pub mod series;
+pub mod volumes;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -12,7 +13,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use dicom_dictionary_std::tags;
 use dicom_object::OpenFileOptions;
 use ferrum_domain::{
-    Dims3, LoadedSeries, ProgressSink, RepositoryError, SeriesDescriptor, SeriesMetadata, VolumeRepository,
+    Dims3, LoadedSeries, ProgressSink, RepositoryError, SeriesDescriptor, SeriesMetadata, VolumeInfo, VolumeRepository,
 };
 use rayon::prelude::*;
 
@@ -61,6 +62,7 @@ impl DicomRepository {
             modality: first.modality.clone(),
             dims: Dims3::new(first.columns, first.rows, planes as u32),
             sources: headers.iter().map(|h| h.path.clone()).collect(),
+            volume: None,
         }
     }
 }
@@ -90,16 +92,48 @@ impl VolumeRepository for DicomRepository {
         Ok(series)
     }
 
+    fn volumes(
+        &self,
+        series: &SeriesDescriptor,
+        progress: &dyn ProgressSink,
+    ) -> Result<Vec<SeriesDescriptor>, RepositoryError> {
+        if series.volume.is_some() {
+            return Ok(vec![series.clone()]);
+        }
+        let headers = Self::read_headers(&series.sources, progress)?;
+        let Some(headers) = series::group(headers).into_iter().find(|(k, _)| k.id() == series.id).map(|(_, hs)| hs)
+        else {
+            return Err(RepositoryError::NothingFound);
+        };
+        let specs = volumes::partition(&headers);
+        if specs.is_empty() {
+            return Ok(vec![series.clone()]);
+        }
+        let count = specs.len() as u32;
+        Ok(specs
+            .into_iter()
+            .enumerate()
+            .map(|(index, v)| volume_descriptor(series, &headers, &v, index as u32, count))
+            .collect())
+    }
+
     fn load(&self, series: &SeriesDescriptor, progress: &dyn ProgressSink) -> Result<LoadedSeries, RepositoryError> {
         let headers = Self::read_headers(&series.sources, &ScaledProgress::new(progress, 0.0, 0.1))?;
         // Keep only slices matching the requested series (sources may have
         // been assembled from a directory with several series).
+        let (group_id, volume_key) = split_volume_id(&series.id);
         let headers: Vec<SliceHeader> = series::group(headers)
             .into_iter()
-            .find(|(k, _)| k.id() == series.id)
+            .find(|(k, _)| k.id() == group_id)
             .map(|(_, hs)| hs)
             .ok_or(RepositoryError::NothingFound)?;
-        let ordered = series::order(&headers);
+        // One volume: only its images. Its files alone may already hold one
+        // image per position (classic files), then the whole group is it.
+        let spec = volume_key.and_then(|key| volumes::partition(&headers).into_iter().find(|v| v.key == key));
+        let ordered = match &spec {
+            Some(v) => series::order_selected(&headers, &v.members),
+            None => series::order(&headers),
+        };
         let volume = assemble::assemble(&headers, &ordered, &ScaledProgress::new(progress, 0.1, 1.0))?;
         let first = &headers[0];
         let (mut attributes, study) = OpenFileOptions::new()
@@ -110,6 +144,9 @@ impl VolumeRepository for DicomRepository {
         attributes.push(("Slices".into(), ordered.planes.len().to_string()));
         attributes.push(("Slice spacing".into(), format!("{:.3} mm", ordered.slice_spacing)));
         attributes.push(("Ordering".into(), format!("{:?}", ordered.method)));
+        if let Some(info) = &series.volume {
+            attributes.push(("Volume".into(), format!("{} ({} of {})", info.label, info.index + 1, info.count)));
+        }
         let mut warnings = ordered.warnings;
         if first.pixel_spacing.is_none() {
             warnings.push("the series carries no pixel spacing: 1 mm per pixel is assumed".into());
@@ -126,6 +163,55 @@ impl VolumeRepository for DicomRepository {
                 warnings,
             },
         })
+    }
+}
+
+/// Separator between a series id and the key of one of its volumes.
+pub const VOLUME_SEPARATOR: &str = "#v=";
+
+/// `(series id, volume key)` of a descriptor id.
+fn split_volume_id(id: &str) -> (&str, Option<&str>) {
+    match id.rsplit_once(VOLUME_SEPARATOR) {
+        Some((series, key)) => (series, Some(key)),
+        None => (id, None),
+    }
+}
+
+/// The descriptor of volume `v` (number `index` of `count`) of `series`.
+fn volume_descriptor(
+    series: &SeriesDescriptor,
+    headers: &[SliceHeader],
+    v: &volumes::VolumeSpec,
+    index: u32,
+    count: u32,
+) -> SeriesDescriptor {
+    let mut sources: Vec<PathBuf> = Vec::new();
+    for p in &v.members {
+        let path = &headers[p.header].path;
+        if !sources.contains(path) {
+            sources.push(path.clone());
+        }
+    }
+    let planes = v.members.len() as u32;
+    let k = &v.stack;
+    SeriesDescriptor {
+        id: format!("{}{VOLUME_SEPARATOR}{}", series.id, v.key),
+        description: format!("{} — {}", v.label, series.description),
+        dims: Dims3::new(series.dims.x, series.dims.y, planes),
+        sources,
+        volume: Some(VolumeInfo {
+            group: series.id.clone(),
+            index,
+            count,
+            label: v.label.clone(),
+            b_value: k.b_value,
+            echo_time_ms: k.echo_time,
+            echo_number: k.echo_number,
+            temporal_position: k.temporal_position,
+            frame_time_s: k.frame_reference_time.map(|t| t / 1000.0),
+            complete: v.complete,
+        }),
+        ..series.clone()
     }
 }
 
