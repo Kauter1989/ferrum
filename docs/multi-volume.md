@@ -63,9 +63,12 @@ DICOM, after grouping by `SeriesKey` and building the positioned images
 1. Group images by position (as `order_by_position` does).
 2. If no position holds more than one image: one descriptor, `volume: None`
    (unchanged).
-3. Otherwise find the **distinguishing fields**: those of Temporal
-   Position, Echo Number, Effective Echo Time, b-value, Trigger Time,
-   Frame Reference Time (new, classic dynamic PET) and Acquisition Number
+3. Otherwise find the **distinguishing fields**: those of Complex Image
+   Component (magnitude, phase), Temporal Position, Echo Number,
+   Effective Echo Time, b-value, Trigger Time, Frame Reference Time (new,
+   classic dynamic PET), Acquisition Number and the isotropic (trace)
+   flag of a diffusion image (Diffusion Directionality, or a zero gradient
+   direction at b > 0; Philips stores the trace last, at the same b-value)
    whose values differ between images at one position. The volume key of
    an image is the tuple of those fields; each distinct key is a volume,
    ordered by the key (`StackKey::order`).

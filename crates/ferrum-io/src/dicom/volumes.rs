@@ -14,6 +14,7 @@ use super::series::{position_groups, Image, PlaneRef};
 /// One field that can tell volumes apart, in the order volumes are sorted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Field {
+    Component,
     Temporal,
     EchoNumber,
     EchoTime,
@@ -21,9 +22,11 @@ enum Field {
     Trigger,
     FrameTime,
     Acquisition,
+    Isotropic,
 }
 
-const FIELDS: [Field; 7] = [
+const FIELDS: [Field; 9] = [
+    Field::Component,
     Field::Temporal,
     Field::EchoNumber,
     Field::EchoTime,
@@ -31,11 +34,20 @@ const FIELDS: [Field; 7] = [
     Field::Trigger,
     Field::FrameTime,
     Field::Acquisition,
+    Field::Isotropic,
 ];
+
+/// Complex Image Components in the order volumes are listed.
+const COMPONENTS: [&str; 5] = ["MAGNITUDE", "PHASE", "REAL", "IMAGINARY", "MIXED"];
 
 impl Field {
     fn value(self, k: &StackKey) -> Option<f64> {
         match self {
+            Field::Component => k
+                .component
+                .as_deref()
+                .map(|c| COMPONENTS.iter().position(|x| x.eq_ignore_ascii_case(c)).unwrap_or(COMPONENTS.len()) as f64),
+            Field::Isotropic => k.isotropic.map(|i| f64::from(u8::from(i))),
             Field::Temporal => k.temporal_position.map(|v| v as f64),
             Field::EchoNumber => k.echo_number.map(|v| v as f64),
             Field::EchoTime => k.echo_time,
@@ -48,6 +60,8 @@ impl Field {
 
     fn id_prefix(self) -> &'static str {
         match self {
+            Field::Component => "c",
+            Field::Isotropic => "iso",
             Field::Temporal => "t",
             Field::EchoNumber => "e",
             Field::EchoTime => "te",
@@ -109,6 +123,10 @@ fn label_part(f: Field, v: Option<f64>, all: &[Option<f64>]) -> String {
         return format!("{} unknown", f.id_prefix());
     };
     match f {
+        Field::Component => {
+            COMPONENTS.get(x as usize).map_or_else(|| "other component".into(), |c| c.to_ascii_lowercase())
+        }
+        Field::Isotropic => if x > 0.5 { "trace (isotropic)" } else { "" }.into(),
         Field::Temporal => {
             let (r, n) = ordinal(v, all);
             format!("phase {r}/{n}")
@@ -161,7 +179,14 @@ pub fn partition(headers: &[SliceHeader]) -> Vec<VolumeSpec> {
             )),
         }
     }
-    volumes.sort_by(|a, b| a.1.stack.order(&b.1.stack));
+    // by the distinguishing fields in their order; a missing value last
+    volumes.sort_by(|a, b| {
+        a.0.iter()
+            .zip(&b.0)
+            .map(|(x, y)| x.unwrap_or(f64::INFINITY).total_cmp(&y.unwrap_or(f64::INFINITY)))
+            .find(|o| o.is_ne())
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     let all: Vec<Vec<Option<f64>>> =
         fields.iter().map(|f| volumes.iter().map(|(t, _)| f.value(&t_stack(&fields, t))).collect()).collect();
     volumes
@@ -173,8 +198,13 @@ pub fn partition(headers: &[SliceHeader]) -> Vec<VolumeSpec> {
                 .map(|(f, v)| format!("{}{}", f.id_prefix(), v.map_or("x".into(), num)))
                 .collect::<Vec<_>>()
                 .join("-");
-            spec.label =
-                fields.iter().enumerate().map(|(i, f)| label_part(*f, t[i], &all[i])).collect::<Vec<_>>().join(", ");
+            spec.label = fields
+                .iter()
+                .enumerate()
+                .map(|(i, f)| label_part(*f, t[i], &all[i]))
+                .filter(|p| !p.is_empty())
+                .collect::<Vec<_>>()
+                .join(", ");
             split_repeats(spec, &groups, positions)
         })
         .collect()
@@ -217,6 +247,8 @@ fn t_stack(fields: &[Field], t: &[Option<f64>]) -> StackKey {
             Field::Trigger => k.trigger_time = *v,
             Field::FrameTime => k.frame_reference_time = *v,
             Field::Acquisition => k.acquisition_number = v.map(|x| x as i64),
+            Field::Component => k.component = v.and_then(|x| COMPONENTS.get(x as usize)).map(|c| (*c).to_owned()),
+            Field::Isotropic => k.isotropic = v.map(|x| x > 0.5),
         }
     }
     k
@@ -313,6 +345,32 @@ mod tests {
                 assert_eq!(hs[p.header].instance_number.unwrap() % 10, r as i64 + 1, "{}", spec.label);
             }
         }
+    }
+
+    #[test]
+    fn the_trace_image_is_not_a_direction() {
+        // covers 20.4-a: Philips stores the isotropic image last, at the same b-value
+        let hs = series(&[0.0, 1000.0, 1000.0, 1000.5], |h, v| {
+            h.stack.b_value = Some(v.floor());
+            h.stack.isotropic = Some(v.fract() > 0.0);
+        });
+        let v = partition(&hs);
+        assert_eq!(
+            labels(&v),
+            vec![
+                ("b0-iso0", "b = 0", 3, true),
+                ("b1000-iso0-n1", "b = 1000, 1/2", 3, true),
+                ("b1000-iso0-n2", "b = 1000, 2/2", 3, true),
+                ("b1000-iso1", "b = 1000, trace (isotropic)", 3, true)
+            ]
+        );
+    }
+
+    #[test]
+    fn magnitude_and_phase_are_named() {
+        // covers 20.4-a
+        let hs = series(&[1.0, 0.0], |h, v| h.stack.component = Some(["MAGNITUDE", "PHASE"][v as usize].into()));
+        assert_eq!(labels(&partition(&hs)), vec![("c0", "magnitude", 3, true), ("c1", "phase", 3, true)]);
     }
 
     #[test]

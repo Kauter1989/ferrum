@@ -12,7 +12,7 @@ use dicom_dictionary_std::tags;
 use dicom_object::{mem::InMemDicomObject, Tag};
 use glam::{DVec3, Vec2};
 
-use super::header::{f64_of, f64s_of, int_of, StackKey};
+use super::header::{f64_of, f64s_of, int_of, isotropic_of, str_of, StackKey};
 
 /// Geometry and stack key of one frame.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -81,13 +81,18 @@ fn frame_info(frame: Option<&InMemDicomObject>, shared: Option<&InMemDicomObject
     let content = group(frame, shared, tags::FRAME_CONTENT_SEQUENCE);
     let echo = group(frame, shared, tags::MR_ECHO_SEQUENCE);
     let diffusion = group(frame, shared, tags::MR_DIFFUSION_SEQUENCE);
+    let frame_type = group(frame, shared, tags::MR_IMAGE_FRAME_TYPE_SEQUENCE);
+    let b_value = diffusion.and_then(|d| f64_of(d, tags::DIFFUSION_B_VALUE));
+    let gradient = diffusion.and_then(|d| first_item(d, tags::DIFFUSION_GRADIENT_DIRECTION_SEQUENCE));
     FrameInfo {
         position: group(frame, shared, tags::PLANE_POSITION_SEQUENCE).and_then(position_of),
         orientation: group(frame, shared, tags::PLANE_ORIENTATION_SEQUENCE).and_then(orientation_of),
         stack: StackKey {
             temporal_position: content.and_then(|c| int_of(c, tags::TEMPORAL_POSITION_INDEX)),
             echo_time: echo.and_then(|e| f64_of(e, tags::EFFECTIVE_ECHO_TIME)),
-            b_value: diffusion.and_then(|d| f64_of(d, tags::DIFFUSION_B_VALUE)),
+            b_value,
+            isotropic: diffusion.and_then(|d| isotropic_of(d, gradient.unwrap_or(d), b_value)),
+            component: frame_type.and_then(|t| str_of(t, tags::COMPLEX_IMAGE_COMPONENT)).filter(|c| !c.is_empty()),
             ..StackKey::default()
         },
     }
