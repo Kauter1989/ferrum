@@ -367,3 +367,59 @@ fn loads_repository_sample_series() {
     let nonzero = v.data().iter().filter(|&&x| x > 0).count();
     assert!(nonzero > v.data().len() / 10);
 }
+
+/// Writes `n` sagittal slices (rows along +y, columns along −z) at
+/// x = 10 − 2k: the normal points to −x, so slice k = 0 is the patient's
+/// leftmost. Pixel (c, r) of slice k holds `phantom_value(c, r, k)`.
+fn write_sagittal(dir: &std::path::Path, rows: u16, cols: u16, n: u32) {
+    write_series(dir, rows, cols, n, 1.0, |s| {
+        let k = (s.instance - 1) as f64;
+        s.position = [10.0 - 2.0 * k, 0.0, 0.0];
+        s.row_dir = [0.0, 1.0, 0.0];
+        s.col_dir = [0.0, 0.0, -1.0];
+    });
+}
+
+#[test]
+fn a_sagittal_series_is_stored_in_lps() {
+    // covers 2.8-a, 2.8-b, 2.8-c
+    let dir = tempfile::tempdir().unwrap();
+    let (rows, cols, n) = (4u16, 6u16, 5u32);
+    write_sagittal(dir.path(), rows, cols, n);
+    let l = load_single(dir.path());
+    let v = &l.volume;
+    // i: left → right of the screen is the patient's right → left (+x), j: +y, k: +z
+    assert_eq!(v.dims(), Dims3::new(n, u32::from(cols), u32::from(rows)));
+    assert_eq!(v.spacing(), Vec3::new(2.0, 0.6, 0.8));
+    assert_eq!(v.geometry().direction, glam::Mat3::IDENTITY);
+    for (i, j, k) in [(0, 0, 0), (n - 1, 5, 3), (2, 1, 2), (4, 0, 3)] {
+        // canonical (i, j, k) ← slice n−1−i, column j, row rows−1−k
+        let (c, r, s) = (j, u32::from(rows) - 1 - k, n - 1 - i);
+        assert_eq!(v.physical(i, j, k).unwrap(), f32::from(phantom_value(c, r, s)), "voxel {i},{j},{k}");
+        // and it sits where the file put that pixel
+        let file = Vec3::new(10.0 - 2.0 * s as f32, 0.6 * c as f32, -0.8 * r as f32);
+        let here = v.voxel_to_patient(Vec3::new(i as f32, j as f32, k as f32));
+        assert!((here - file).length() < 1e-4, "voxel {i},{j},{k}: {here} vs {file}");
+    }
+}
+
+#[test]
+fn axial_series_with_reversed_rows_or_feet_first_are_stored_in_lps() {
+    // covers 2.8-a
+    for (row, col, step) in [([-1.0, 0.0, 0.0], [0.0, 1.0, 0.0], 1.0), ([1.0, 0.0, 0.0], [0.0, -1.0, 0.0], 1.0)] {
+        let dir = tempfile::tempdir().unwrap();
+        write_series(dir.path(), 4, 6, 3, step, |s| {
+            s.row_dir = row;
+            s.col_dir = col;
+        });
+        let v = load_single(dir.path()).volume;
+        assert_eq!(v.geometry().direction, glam::Mat3::IDENTITY, "{row:?} {col:?}");
+        assert_eq!(v.dims(), Dims3::new(6, 4, 3));
+        // the stored pixel (0, 0) of the slice at z = 100 sits at its file position
+        let target = Vec3::new(0.0, 0.0, 100.0);
+        let o = (target - v.geometry().origin) / v.spacing();
+        let (i, j, k) = (o.x.round() as u32, o.y.round() as u32, o.z.round() as u32);
+        assert!((o - o.round()).abs().max_element() < 1e-4, "{o}");
+        assert_eq!(v.physical(i, j, k).unwrap(), f32::from(phantom_value(0, 0, 0)), "{row:?} {col:?}");
+    }
+}

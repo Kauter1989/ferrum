@@ -53,7 +53,7 @@ flowchart LR
 |---|---|---|
 | `ferrum-domain` | `Volume` with its patient `Geometry`, `WindowLevel`, `TransferFunction`, `RenderSettings`, `ClipSettings`, `OrbitCamera`, slice geometry, annotations, `VoxelMask`, `LabelMap` / `SegmentationSet`, `Provenance` (author, review status, requester) on annotations and segments, mask analysis (components, shape, agreement); the `VolumeRepository` port | do I/O, know GPUs or UI |
 | `ferrum-processing` | histogram, min/max bricks, ambient occlusion, filters, resampling (rayon) | own application state |
-| `ferrum-io` | DICOM scan → series grouping → slice ordering (each frame of an Enhanced multi-frame file placed by its functional groups; one image per position; what could not be shown as stored goes to `SeriesMetadata::warnings`) → parallel decode; NIfTI read/write with reorientation to LPS; NIfTI label maps mapped onto the volume grid; `ferrum-annotations` v2 and `ferrum-segments` JSON (read and write); `ferrum-workspace` v1 directories with hashed sources and an audit log ([format](workspace-format.md)); DICOM SEG and Comprehensive 3D SR (TID 1500) export ([format](workspace-format.md#5-dicom-export)) | know about rendering or UI |
+| `ferrum-io` | DICOM scan → series grouping → slice ordering, reorientation into the LPS grid (each frame of an Enhanced multi-frame file placed by its functional groups; one image per position; what could not be shown as stored goes to `SeriesMetadata::warnings`) → parallel decode; NIfTI read/write with reorientation to LPS; NIfTI label maps mapped onto the volume grid; `ferrum-annotations` v2 and `ferrum-segments` JSON (read and write); `ferrum-workspace` v1 directories with hashed sources and an audit log ([format](workspace-format.md)); DICOM SEG and Comprehensive 3D SR (TID 1500) export ([format](workspace-format.md#5-dicom-export)) | know about rendering or UI |
 | `ferrum-render` | `FrameParams` (pure), WGSL shaders, `VolumeRenderer` (feature `gpu`), `CpuRaycaster` | own application state |
 | `ferrum-engines` | `HttpEngine` (`ferrum-engine/1` client over HTTP), `MockEngine` (region growing, no model), reference protocol server and conformance suite | know about rendering or UI |
 | `ferrum-app` | `Viewer` facade, background `JobQueue`, `ToolController`, `GpuSink` port; which tools each view mode offers (`tool_availability`, `set_view_mode`) and segment metrics (`request_segment_metrics` runs `ferrum-radiomics` as a `JobQueue` job; a result says whether it is out of date) and the modality of an image that carries none (`declare_modality`, `needs_modality`); the segmentation workflow (`segmentation_step`, the region tool: `ferrum_domain::grow_region_robust` with seed median, smoothing, opening and hole filling, run as a `JobQueue` job with a cancel flag) | depend on wgpu or egui |
@@ -170,12 +170,12 @@ is kept in sync by the GPU/CPU parity tests.
 
 | Space | Definition |
 |---|---|
-| Patient frame | LPS for every loaded volume: `+i` patient left, `+j` posterior, `+k` superior (DICOM native; NIfTI reoriented from `sform`/`qform`) |
+| Patient frame | LPS for every loaded volume: `+i` patient left, `+j` posterior, `+k` superior (DICOM and NIfTI reoriented into it: axes permuted and flipped onto the closest LPS axis, the oblique remainder kept in `direction`) |
 | Voxel `(i, j, k)` | column, row, slice; linear index `i + j·nx + k·nx·ny` |
 | Texture `t ∈ [0,1]³` | voxel centres at `(i + 0.5)/n` |
 | Model `p` | box centred at 0, longest physical side = 1: `p = (t − ½)·extent` |
 | Slice view `uv` | `u` right, `v` down; head at the top for coronal/sagittal |
 | Annotations | in-plane millimetres from the image's top-left corner |
-| Patient position | `Volume::voxel_to_patient(v) = origin + direction · (v ⊙ spacing)` (LPS, mm): DICOM Image Position/Orientation of the first ordered plane; NIfTI `sform`/`qform` carried through the reorientation |
+| Patient position | `Volume::voxel_to_patient(v) = origin + direction · (v ⊙ spacing)` (LPS, mm): DICOM Image Position/Orientation of the first ordered plane and NIfTI `sform`/`qform`, both carried through the reorientation |
 | Voxel values | one `u16` per voxel over an `IntensityRange` (`0 ↦ min`, `65535 ↦ max`). Data whose values are all multiples of a power-of-two step above the minimum (CT in whole HU) are stored exactly, with a range up to twice as wide as the data; other data use the data range ([ADR 0012](decisions/0012-lossless-grid-storage.md)) |
 | Label maps | one `u8` per voxel on the volume grid (`0` background, `1–255` segments); NIfTI label maps are permuted/flipped onto that grid using both geometries |
