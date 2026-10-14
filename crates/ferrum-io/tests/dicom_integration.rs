@@ -81,6 +81,55 @@ fn applies_rescale_and_signed_pixels() {
     assert_eq!((w.center, w.width), (40.0, 400.0));
 }
 
+// covers 18.13-a
+#[test]
+fn ct_hounsfield_units_come_back_exactly_with_rescale_and_with_halves() {
+    // a CT series: stored value 0..=4095 with intercept -1024, so -1024 to 3071 HU
+    let dir = tempfile::tempdir().unwrap();
+    write_series(dir.path(), 8, 8, 3, 1.0, |s| {
+        s.intercept = -1024.0;
+        for (p, px) in s.pixels.iter_mut().enumerate() {
+            *px = ((p as u32 * 61 + s.instance as u32 * 1009) % 4096) as u16;
+        }
+    });
+    let l = load_single(dir.path());
+    for k in 0..3u32 {
+        for j in 0..8u32 {
+            for i in 0..8u32 {
+                let stored = ((j * 8 + i) * 61 + (k + 1) * 1009) % 4096;
+                let expected = stored as f32 - 1024.0;
+                assert_eq!(l.volume.physical(i, j, k), Some(expected), "voxel ({i},{j},{k})");
+            }
+        }
+    }
+    // a slope of one half (PET-like) gives halves, which are on the grid too
+    let dir = tempfile::tempdir().unwrap();
+    write_series(dir.path(), 4, 4, 2, 1.0, |s| {
+        s.slope = 0.5;
+        for (p, px) in s.pixels.iter_mut().enumerate() {
+            *px = (p as u16 * 3 + 1) * 7;
+        }
+    });
+    let l = load_single(dir.path());
+    for j in 0..4u32 {
+        for i in 0..4u32 {
+            let expected = ((j * 4 + i) as u16 * 3 + 1) as f32 * 7.0 * 0.5;
+            assert_eq!(l.volume.physical(i, j, 1), Some(expected), "voxel ({i},{j})");
+        }
+    }
+    // a series that is inverted (MONOCHROME1) keeps the grid
+    let dir = tempfile::tempdir().unwrap();
+    write_series(dir.path(), 4, 4, 2, 1.0, |s| s.photometric = "MONOCHROME1");
+    let l = load_single(dir.path());
+    let (lo, hi) = (l.volume.range().min, l.volume.range().max);
+    for j in 0..4u32 {
+        for i in 0..4u32 {
+            let v = l.volume.physical(i, j, 0).unwrap();
+            assert_eq!(v, v.round(), "whole units stay whole when inverted: {v} in {lo}..{hi}");
+        }
+    }
+}
+
 #[test]
 fn monochrome1_is_inverted() {
     let dir = tempfile::tempdir().unwrap();
