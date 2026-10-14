@@ -9,7 +9,7 @@
 use std::collections::BTreeSet;
 
 use super::header::{SliceHeader, StackKey};
-use super::series::{position_groups, PlaneRef};
+use super::series::{position_groups, Image, PlaneRef};
 
 /// One field that can tell volumes apart, in the order volumes are sorted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -166,7 +166,7 @@ pub fn partition(headers: &[SliceHeader]) -> Vec<VolumeSpec> {
         fields.iter().map(|f| volumes.iter().map(|(t, _)| f.value(&t_stack(&fields, t))).collect()).collect();
     volumes
         .into_iter()
-        .map(|(t, mut spec)| {
+        .flat_map(|(t, mut spec)| {
             spec.key = fields
                 .iter()
                 .zip(&t)
@@ -175,8 +175,32 @@ pub fn partition(headers: &[SliceHeader]) -> Vec<VolumeSpec> {
                 .join("-");
             spec.label =
                 fields.iter().enumerate().map(|(i, f)| label_part(*f, t[i], &all[i])).collect::<Vec<_>>().join(", ");
-            spec.complete = spec.members.len() == positions;
-            spec
+            split_repeats(spec, &groups, positions)
+        })
+        .collect()
+}
+
+/// A volume that still holds several images at one position (diffusion
+/// directions at one b-value, repeated acquisitions) split by rank there:
+/// `b = 1000, 2/32`.
+fn split_repeats(spec: VolumeSpec, groups: &[Vec<Image<'_>>], positions: usize) -> Vec<VolumeSpec> {
+    let per_position: Vec<Vec<&Image<'_>>> =
+        groups.iter().map(|g| g.iter().filter(|im| spec.members.contains(&im.plane)).collect()).collect();
+    let n = per_position.iter().map(Vec::len).max().unwrap_or(0);
+    if n <= 1 {
+        let complete = spec.members.len() == positions;
+        return vec![VolumeSpec { complete, ..spec }];
+    }
+    (0..n)
+        .map(|r| {
+            let images: Vec<&Image<'_>> = per_position.iter().filter_map(|g| g.get(r).copied()).collect();
+            VolumeSpec {
+                key: format!("{}-n{}", spec.key, r + 1),
+                label: format!("{}, {}/{n}", spec.label, r + 1),
+                stack: images.first().map_or_else(|| spec.stack.clone(), |im| im.stack.clone()),
+                complete: images.len() == positions,
+                members: images.iter().map(|im| im.plane.clone()).collect(),
+            }
         })
         .collect()
 }
@@ -199,7 +223,7 @@ fn t_stack(fields: &[Field], t: &[Option<f64>]) -> StackKey {
 }
 
 /// Volume k = the k-th image at every position.
-fn by_rank(groups: &[Vec<super::series::Image<'_>>], positions: usize) -> Vec<VolumeSpec> {
+fn by_rank(groups: &[Vec<Image<'_>>], positions: usize) -> Vec<VolumeSpec> {
     let count = groups.iter().map(Vec::len).max().unwrap_or(0);
     (0..count)
         .map(|r| {
@@ -267,6 +291,28 @@ mod tests {
             labels(&phases),
             vec![("t5", "phase 1/3", 3, true), ("t7", "phase 2/3", 3, true), ("t9", "phase 3/3", 3, true)]
         );
+    }
+
+    #[test]
+    fn diffusion_directions_at_one_b_value_are_volumes_of_their_own() {
+        // covers 20.4-a: one b = 0 and three directions at b = 1000, as in real DWI
+        let hs = series(&[0.0, 1000.0, 1000.0, 1000.0], |h, v| h.stack.b_value = Some(v));
+        let v = partition(&hs);
+        assert_eq!(
+            labels(&v),
+            vec![
+                ("b0", "b = 0", 3, true),
+                ("b1000-n1", "b = 1000, 1/3", 3, true),
+                ("b1000-n2", "b = 1000, 2/3", 3, true),
+                ("b1000-n3", "b = 1000, 3/3", 3, true)
+            ]
+        );
+        // each direction holds the same rank (Instance Number order) at every position
+        for (r, spec) in v[1..].iter().enumerate() {
+            for p in &spec.members {
+                assert_eq!(hs[p.header].instance_number.unwrap() % 10, r as i64 + 1, "{}", spec.label);
+            }
+        }
     }
 
     #[test]

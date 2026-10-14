@@ -609,7 +609,13 @@ fn sidecar_names(f: &Path, count: u32) -> Vec<VolumeInfo> {
         .filter(|v: &Vec<f64>| v.len() == n);
     (0..n)
         .map(|k| match (&bvals, &frames) {
-            (Some(b), _) => VolumeInfo { label: format!("b = {}", b[k]), b_value: Some(b[k]), ..VolumeInfo::default() },
+            (Some(b), _) => {
+                // repeated b-values (diffusion directions) are numbered
+                let same = b.iter().filter(|x| **x == b[k]).count();
+                let nth = b[..=k].iter().filter(|x| **x == b[k]).count();
+                let label = if same > 1 { format!("b = {}, {nth}/{same}", b[k]) } else { format!("b = {}", b[k]) };
+                VolumeInfo { label, b_value: Some(b[k]), ..VolumeInfo::default() }
+            }
             (None, Some(t)) => VolumeInfo {
                 label: format!("frame {}/{n}, t = {} s", k + 1, t[k]),
                 frame_time_s: Some(t[k]),
@@ -759,6 +765,10 @@ mod tests {
         let info = v[1].volume.as_ref().unwrap();
         assert_eq!((v[0].volume.as_ref().unwrap().label.as_str(), info.label.as_str()), ("b = 0", "b = 1000"));
         assert_eq!(info.b_value, Some(1000.0));
+        // repeated b-values are numbered (diffusion directions)
+        std::fs::write(dir.path().join("sub-01_dwi.bval"), "1000 1000\n").unwrap();
+        let v = volumes_of(&path);
+        assert_eq!(v[1].volume.as_ref().unwrap().label, "b = 1000, 2/2");
         // a PET sidecar with frame starts, and a .bval of the wrong length is ignored
         let pet = dir.path().join("sub-01_pet.nii");
         two_volumes(&pet);

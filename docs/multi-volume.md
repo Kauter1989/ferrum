@@ -69,9 +69,12 @@ DICOM, after grouping by `SeriesKey` and building the positioned images
    whose values differ between images at one position. The volume key of
    an image is the tuple of those fields; each distinct key is a volume,
    ordered by the key (`StackKey::order`).
-4. If no field differs, the k-th image at each position (by Instance
+4. A key that still holds several images at one position (diffusion
+   directions at one b-value: real DWI has one b = 0 and 32 directions at
+   b = 1000) is split by rank there and numbered: `b = 1000, 2/32`.
+5. If no field differs, the k-th image at each position (by Instance
    Number, then file order) forms volume k (`volume k/N`).
-5. A volume missing a position is `complete: false`: listed, opened with a
+6. A volume missing a position is `complete: false`: listed, opened with a
    warning, not switchable from a complete one (different grid).
 
 `VolumeRepository::scan` keeps returning whole series (the same ids as
