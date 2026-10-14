@@ -8,6 +8,8 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Voxel values on a grid are now stored exactly ([ADR 0012](docs/decisions/0012-lossless-grid-storage.md)). A CT in whole Hounsfield units (and a series with a slope of one half) reads back as the file holds it: `probe` of a 55 HU voxel returned 55.01, a minimum of −25 was −24.9866, and a threshold at `--min 100` could miss the voxels of exactly 100 HU (found by the Stage 18 field test). The range of such a volume (`study info` `value_range`, window limits) can be up to twice as wide as the data; windows and presets are unchanged. Float images and other data not on a grid are stored as before.
+
 - `clinical` took 3 s for a real mask of 83 000 voxels and 87 s for 893 000 (found in the field test on the MSD spleen): the convex hull tested every point against every face. It now keeps the points outside each face (Quickhull); a blobby mask of 100 000 voxels takes 0.19 s instead of 16.7 s, a mask of a million voxels 1.3 to 2.5 s. Volume, area and the 3D diameter are unchanged.
 
 ### Added

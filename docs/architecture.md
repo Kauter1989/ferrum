@@ -177,4 +177,5 @@ is kept in sync by the GPU/CPU parity tests.
 | Slice view `uv` | `u` right, `v` down; head at the top for coronal/sagittal |
 | Annotations | in-plane millimetres from the image's top-left corner |
 | Patient position | `Volume::voxel_to_patient(v) = origin + direction · (v ⊙ spacing)` (LPS, mm): DICOM Image Position/Orientation of the first ordered plane; NIfTI `sform`/`qform` carried through the reorientation |
+| Voxel values | one `u16` per voxel over an `IntensityRange` (`0 ↦ min`, `65535 ↦ max`). Data whose values are all multiples of a power-of-two step above the minimum (CT in whole HU) are stored exactly, with a range up to twice as wide as the data; other data use the data range ([ADR 0012](decisions/0012-lossless-grid-storage.md)) |
 | Label maps | one `u8` per voxel on the volume grid (`0` background, `1–255` segments); NIfTI label maps are permuted/flipped onto that grid using both geometries |

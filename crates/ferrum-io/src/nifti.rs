@@ -363,7 +363,9 @@ fn volume_from_physical_par(dims: Dims3, spacing: Vec3, values: &[f32]) -> Resul
         .fold(|| (f32::INFINITY, f32::NEG_INFINITY), |(a, b), &v| (a.min(v), b.max(v)))
         .reduce(|| (f32::INFINITY, f32::NEG_INFINITY), |(a, b), (c, d)| (a.min(c), b.max(d)));
     let (min, max) = if min.is_finite() { (min, max) } else { (0.0, 1.0) };
-    let range = IntensityRange::new(min, max)?;
+    let range = IntensityRange::for_data(min, max, |min, step| {
+        values.par_iter().all(|v| IntensityRange::is_on_grid(*v, min, step))
+    })?;
     let data = values.par_iter().map(|&v| range.to_storage(v)).collect();
     Ok(Volume::new(dims, spacing, range, data)?)
 }
@@ -538,6 +540,27 @@ mod tests {
         let dims = Dims3::new(5, 4, 3);
         let vals: Vec<f32> = (0..dims.voxel_count()).map(|i| i as f32 * 10.0 - 200.0).collect();
         Volume::from_physical(dims, Vec3::new(0.5, 0.75, 2.0), &vals).unwrap()
+    }
+
+    // covers 18.13-a
+    #[test]
+    fn a_ct_in_whole_hounsfield_units_is_read_back_exactly() {
+        let dims = Dims3::new(12, 10, 8);
+        // -1000 for air, tissue around 40 with whole-unit noise, and one 1500 HU voxel
+        let mut vals: Vec<f32> = (0..dims.voxel_count()).map(|i| (40 + (i * 37 % 91) as i32 - 45) as f32).collect();
+        vals[0] = -1000.0;
+        vals[5] = 1500.0;
+        let v = Volume::from_physical(dims, Vec3::new(0.8, 0.8, 2.5), &vals).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["ct.nii", "ct.nii.gz"] {
+            let p = dir.path().join(name);
+            write_nifti(&v, &p).unwrap();
+            let (back, _) = read_nifti(&p).unwrap();
+            for (idx, expected) in vals.iter().enumerate() {
+                let (i, j, k) = ((idx % 12) as u32, ((idx / 12) % 10) as u32, (idx / 120) as u32);
+                assert_eq!(back.physical(i, j, k), Some(*expected), "{name} voxel {idx}");
+            }
+        }
     }
 
     #[test]
