@@ -391,3 +391,28 @@ decision), so that Stage 18 closes after its Phase 3.
 - Q: are explanations of the texture matrices needed? — A: mandatory, a tooltip at least (2026-10-03).
 - Q: what happens to Phases 4–6 of Stage 18? — A: they moved to this stage; the spec is confirmed again before the design (2026-10-07).
 - open: who reviews the texture texts (19.7).
+
+## Stage 20 — Multi-volume MR and PET series 📋
+
+MR and PET series often hold several volumes: echoes, diffusion
+b-values, dynamic phases, PET frames. Since 2.7 the loader shows one
+volume and says so. It still reads Enhanced multi-frame files (the format
+of current MR and PET scanners) without their per-frame geometry: frames
+are stacked in file order with the spacing from the header. This stage
+reads that geometry (20.1, a loader fix without a contract change), then
+lets a person or an agent choose which volume to show (20.2–20.3, a
+change of the agent's command set: gate G1 before design).
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 20.1 | As a **clinician** reading an Enhanced MR or PET file, I want its frames placed where the scanner put them so that distances and volumes are right. | [20.1-a] An Enhanced multi-frame file is ordered by the per-frame Image Position (Patient) (Plane Position Sequence) along the normal of its Image Orientation (Plane Orientation Sequence, shared or per frame); the slice spacing is the median gap between positions, the origin is the first plane's position. Holds for frames stored in any order. ✅ [20.1-b] Pixel spacing and slice thickness come from the Pixel Measures Sequence (shared or per frame) when the top level has none. ✅ [20.1-c] Frames at one position (several temporal positions, echoes or b-values) give one volume, chosen like 2.7-a by Temporal Position Index, Echo Numbers or Effective Echo Time, Diffusion b-value, and frame order; the load warns as in 2.7-b. ✅ [20.1-d] Per-frame rescale (Pixel Value Transformation Sequence) is applied to every frame. ✅ [20.1-e] Such a file loads without the 2.7-d warning about file order; a multi-frame file without per-frame positions keeps it. Several Enhanced files of one series are ordered together by their frames' positions. ✅ [20.1-f] The series key (orientation) is read from the functional groups, so frames of one Enhanced file are one series. ✅ |
+| 20.2 | As a **clinician**, I want to choose which volume of a multi-volume series I see (echo, b-value, phase) so that I can read the one I need. | [?] Draft, awaiting G1: the series picker lists the volumes of a series with what tells them apart (b = 1000, TE = 80 ms, phase 3/20); the chosen volume opens; the warning names the shown volume. |
+| 20.3 | As an **agent developer**, I want `study scan` and `study open` to list and open one volume of a multi-volume series so that an agent can work on a b = 1000 or a late phase. | [?] Draft, awaiting G1: `study scan` lists one entry per volume (or the volumes inside one entry); `study open --volume`; schema, `commands.json`, `docs/agent-cli.md`, contract tests; CLI and MCP identical. |
+
+**Success metrics:** an Enhanced MR or PET series from the user's scanner (field test) loads with the spacing and origin that the scanner's own viewer shows, within 0.01 mm.
+
+**Out of scope:** 4D viewing (playing phases), registration between volumes, ADC or other derived maps, NIfTI-2, PET units and SUV (a separate stage).
+
+**Clarifications:**
+- assumed (20.1): a file with per-frame positions is ordered like a series of single-frame files (2.2) and goes through the same choice of one image per position (2.7-a); no new warning kind.
+- open (20.2–20.3, G1): one scan entry per volume, or volumes inside one entry? Which attributes name a volume? Should the desktop app switch volumes without reloading?

@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use glam::DVec3;
 
-use super::header::SliceHeader;
+use super::header::{SliceHeader, StackKey};
 
 /// Key identifying slices that can be stacked into one volume: same series,
 /// same in-plane size and (approximately) the same orientation.
@@ -107,14 +107,60 @@ fn fallback_spacing(headers: &[SliceHeader]) -> (f64, &'static str) {
         .unwrap_or((1.0, "no header field (1 mm assumed)"))
 }
 
+/// One image plane with what places it: a single-frame file, or one frame
+/// of an Enhanced multi-frame file with its own position.
+#[derive(Debug, Clone)]
+struct Image<'a> {
+    plane: PlaneRef,
+    position: DVec3,
+    orientation: Option<(DVec3, DVec3)>,
+    stack: &'a StackKey,
+    instance: Option<i64>,
+}
+
+impl Image<'_> {
+    fn normal(&self) -> Option<DVec3> {
+        self.orientation.map(|(r, c)| r.cross(c).normalize_or_zero()).filter(|n| n.length() > 0.5)
+    }
+}
+
+/// Every image of the series with a position: each frame of a file with
+/// per-frame geometry, the first frame of any other file. `None` when an
+/// image has no position.
+fn positioned_images(headers: &[SliceHeader]) -> Option<Vec<Image<'_>>> {
+    let mut images = Vec::new();
+    for (i, h) in headers.iter().enumerate() {
+        if h.frames_info.is_empty() {
+            images.push(Image {
+                plane: PlaneRef { header: i, frame: 0 },
+                position: h.position?,
+                orientation: h.orientation,
+                stack: &h.stack,
+                instance: h.instance_number,
+            });
+            continue;
+        }
+        for (f, info) in h.frames_info.iter().enumerate() {
+            images.push(Image {
+                plane: PlaneRef { header: i, frame: f as u32 },
+                position: info.position?,
+                orientation: info.orientation.or(h.orientation),
+                stack: &info.stack,
+                instance: h.instance_number,
+            });
+        }
+    }
+    Some(images)
+}
+
 /// Order of two images at the same slice position: the stack key, then
-/// Instance Number, then file order (missing values last).
-fn stack_order(headers: &[SliceHeader], a: usize, b: usize) -> std::cmp::Ordering {
-    let (ha, hb) = (&headers[a], &headers[b]);
-    ha.stack
-        .order(&hb.stack)
-        .then(ha.instance_number.unwrap_or(i64::MAX).cmp(&hb.instance_number.unwrap_or(i64::MAX)))
-        .then(a.cmp(&b))
+/// Instance Number, then file and frame order (missing values last).
+fn stack_order(a: &Image<'_>, b: &Image<'_>) -> std::cmp::Ordering {
+    a.stack
+        .order(b.stack)
+        .then(a.instance.unwrap_or(i64::MAX).cmp(&b.instance.unwrap_or(i64::MAX)))
+        .then(a.plane.header.cmp(&b.plane.header))
+        .then(a.plane.frame.cmp(&b.plane.frame))
 }
 
 /// Largest deviation of a gap from the median gap that still counts as
@@ -161,16 +207,15 @@ fn several_per_position(sizes: &[usize]) -> Option<String> {
     })
 }
 
-/// Orders planes by their projection on the slice normal, one plane per
-/// position. `None` when fewer than two distinct positions exist.
-fn order_by_position(headers: &[SliceHeader], n: DVec3) -> Option<OrderedSeries> {
-    let mut keyed: Vec<(f64, usize)> =
-        headers.iter().enumerate().map(|(i, h)| (h.position.unwrap_or(DVec3::ZERO).dot(n), i)).collect();
-    keyed.sort_by(|a, b| a.0.total_cmp(&b.0).then_with(|| stack_order(headers, a.1, b.1)));
+/// Orders images by their projection on the slice normal `n`, one plane
+/// per position. `None` when fewer than two distinct positions exist.
+fn order_by_position(headers: &[SliceHeader], images: &[Image<'_>], n: DVec3) -> Option<OrderedSeries> {
+    let mut keyed: Vec<(f64, &Image<'_>)> = images.iter().map(|im| (im.position.dot(n), im)).collect();
+    keyed.sort_by(|a, b| a.0.total_cmp(&b.0).then_with(|| stack_order(a.1, b.1)));
     // One group per position: the first image of each group is shown.
-    let mut firsts: Vec<(f64, usize)> = Vec::new();
+    let mut firsts: Vec<(f64, PlaneRef)> = Vec::new();
     let mut sizes: Vec<usize> = Vec::new();
-    for &(d, i) in &keyed {
+    for &(d, im) in &keyed {
         match firsts.last() {
             Some(&(f, _)) if (d - f).abs() < 1e-4 => {
                 if let Some(s) = sizes.last_mut() {
@@ -178,7 +223,7 @@ fn order_by_position(headers: &[SliceHeader], n: DVec3) -> Option<OrderedSeries>
                 }
             }
             _ => {
-                firsts.push((d, i));
+                firsts.push((d, im.plane.clone()));
                 sizes.push(1);
             }
         }
@@ -191,7 +236,7 @@ fn order_by_position(headers: &[SliceHeader], n: DVec3) -> Option<OrderedSeries>
     let spacing = median_gap.unwrap_or_else(|| fallback_spacing(headers).0);
     let warnings = several_per_position(&sizes).into_iter().chain(irregular_gaps(&gaps, spacing)).collect();
     Some(OrderedSeries {
-        planes: firsts.into_iter().map(|(_, i)| PlaneRef { header: i, frame: 0 }).collect(),
+        planes: firsts.into_iter().map(|(_, p)| p).collect(),
         slice_spacing: spacing,
         method: OrderingMethod::Position,
         warnings,
@@ -259,50 +304,54 @@ fn order_without_positions(headers: &[SliceHeader]) -> OrderedSeries {
 }
 
 /// Orders the slices of one series. Uses the projection of Image Position
-/// (Patient) on the slice normal when available, then Instance Number,
+/// (Patient) on the slice normal when every image has one (each frame of
+/// an Enhanced multi-frame file counts as an image), then Instance Number,
 /// Slice Location, and finally file order. Several images at one position
 /// give one plane (the first by [`stack_order`]); what could not be shown
 /// as stored is listed in [`OrderedSeries::warnings`].
 pub fn order(headers: &[SliceHeader]) -> OrderedSeries {
-    // Multi-frame (or single file): frames in file order.
-    if headers.len() == 1 {
-        return order_frames(headers);
-    }
-    let mut ordered = order_files(headers);
-    let multi = headers.iter().filter(|h| h.frames > 1).count();
-    if multi > 0 {
+    let mut ordered = order_planes(headers);
+    let unread = headers.iter().filter(|h| h.frames > 1 && h.frames_info.is_empty()).count();
+    if headers.len() > 1 && unread > 0 {
         ordered.warnings.push(format!(
-            "{multi} of the series' {} files hold several frames; only the first frame of each file is read",
+            "{unread} of the series' {} files hold several frames; only the first frame of each file is read",
             headers.len()
         ));
     }
     ordered
 }
 
-/// Orders several files by their first frame.
-fn order_files(headers: &[SliceHeader]) -> OrderedSeries {
-    let normal = headers.iter().find_map(SliceHeader::normal);
-    let all_positions = headers.iter().all(|h| h.position.is_some());
-    if let (Some(n), true) = (normal, all_positions) {
-        if let Some(ordered) = order_by_position(headers, n) {
-            return ordered;
-        }
-        // Every image at one position (e.g. a cine series): stacked as
-        // slices, which they are not.
-        let mut ordered = order_without_positions(headers);
-        ordered.warnings = vec![format!(
-            "the series holds {} images at a single slice position (phases or frames); they are stacked as \
-             slices in {} order, and the slice axis is not a distance",
-            headers.len(),
-            match ordered.method {
-                OrderingMethod::InstanceNumber => "Instance Number",
-                OrderingMethod::SliceLocation => "Slice Location",
-                _ => "file",
+fn order_planes(headers: &[SliceHeader]) -> OrderedSeries {
+    if let Some(images) = positioned_images(headers).filter(|im| im.len() > 1) {
+        if let Some(n) = images.iter().find_map(Image::normal) {
+            if let Some(ordered) = order_by_position(headers, &images, n) {
+                return ordered;
             }
-        )];
-        return ordered;
+            return single_position(headers, images.len());
+        }
+    }
+    // Multi-frame (or single file) without per-frame positions: frames in
+    // file order.
+    if headers.len() == 1 {
+        return order_frames(headers);
     }
     order_without_positions(headers)
+}
+
+/// Every image at one position (e.g. a cine series): stacked as slices,
+/// which they are not.
+fn single_position(headers: &[SliceHeader], images: usize) -> OrderedSeries {
+    let mut ordered = if headers.len() == 1 { order_frames(headers) } else { order_without_positions(headers) };
+    ordered.warnings = vec![format!(
+        "the series holds {images} images at a single slice position (phases or frames); they are stacked as \
+         slices in {} order, and the slice axis is not a distance",
+        match ordered.method {
+            OrderingMethod::InstanceNumber => "Instance Number",
+            OrderingMethod::SliceLocation => "Slice Location",
+            _ => "file",
+        }
+    )];
+    ordered
 }
 
 #[cfg(test)]
@@ -330,6 +379,7 @@ pub(crate) mod tests {
             window: None,
             photometric: Photometric::Monochrome2,
             stack: Default::default(),
+            frames_info: Vec::new(),
         }
     }
 
@@ -448,6 +498,16 @@ pub(crate) mod tests {
         ];
         let o = order(&hs);
         assert_eq!(o.planes.iter().map(|p| p.header).collect::<Vec<_>>(), vec![2, 4]);
+    }
+
+    #[test]
+    fn the_shorter_echo_time_is_shown_first() {
+        // covers 20.1-c
+        let mut hs = vec![header("e", Some(0.0), None), header("e", Some(0.0), None), header("e", Some(1.0), None)];
+        hs[0].stack.echo_time = Some(80.0);
+        hs[1].stack.echo_time = Some(20.0);
+        let o = order(&hs);
+        assert_eq!(o.planes.iter().map(|p| p.header).collect::<Vec<_>>(), vec![1, 2]);
     }
 
     #[test]

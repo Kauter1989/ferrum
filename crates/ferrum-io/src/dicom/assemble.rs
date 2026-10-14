@@ -1,5 +1,6 @@
 //! Parallel decoding of pixel data and assembly of the volume.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -54,29 +55,31 @@ pub fn assemble(
         progress.report(d as f32 / n as f32, "Decoding pixel data");
     };
 
-    let planes: Vec<Vec<f32>> = if headers.len() == 1 {
-        if progress.is_cancelled() {
-            return Err(IoError::Cancelled);
-        }
-        let frames: Vec<u32> = ordered.planes.iter().map(|p| p.frame).collect();
-        let out = decode_frames(&first.path, &frames)?;
-        tick(n);
-        out
-    } else {
-        ordered
-            .planes
-            .par_iter()
-            .map(|p| {
-                if progress.is_cancelled() {
-                    return Err(IoError::Cancelled);
-                }
-                let hdr = &headers[p.header];
-                let mut v = decode_frames(&hdr.path, &[p.frame])?;
-                tick(1);
-                v.pop().ok_or_else(|| IoError::invalid(&hdr.path, "no frame decoded"))
-            })
-            .collect::<Result<_, _>>()?
-    };
+    // Each file is decoded once, with all of its frames the series uses.
+    let mut by_file: BTreeMap<usize, Vec<(usize, u32)>> = BTreeMap::new();
+    for (slot, p) in ordered.planes.iter().enumerate() {
+        by_file.entry(p.header).or_default().push((slot, p.frame));
+    }
+    let decoded: Vec<Vec<(usize, Vec<f32>)>> = by_file
+        .into_par_iter()
+        .map(|(header, wanted)| {
+            if progress.is_cancelled() {
+                return Err(IoError::Cancelled);
+            }
+            let path = &headers[header].path;
+            let frames: Vec<u32> = wanted.iter().map(|&(_, f)| f).collect();
+            let out = decode_frames(path, &frames)?;
+            if out.len() != wanted.len() {
+                return Err(IoError::invalid(path, "not every frame decoded"));
+            }
+            tick(wanted.len());
+            Ok(wanted.into_iter().map(|(slot, _)| slot).zip(out).collect())
+        })
+        .collect::<Result<_, _>>()?;
+    let mut planes: Vec<Vec<f32>> = vec![Vec::new(); n];
+    for (slot, plane) in decoded.into_iter().flatten() {
+        planes[slot] = plane;
+    }
 
     let plane_len = w as usize * h as usize;
     if let Some((i, _)) = planes.iter().enumerate().find(|(_, p)| p.len() != plane_len) {
@@ -109,16 +112,19 @@ pub fn assemble(
     let px = first.pixel_spacing.unwrap_or(glam::Vec2::ONE);
     let spacing = Vec3::new(px.x, px.y, ordered.slice_spacing.max(1e-3) as f32);
     progress.report(1.0, "Volume assembled");
-    let geometry = plane_geometry(&headers[ordered.planes[0].header]);
+    let geometry = plane_geometry(&headers[ordered.planes[0].header], ordered.planes[0].frame);
     Ok(Volume::new(dims, spacing, range, data)?.with_geometry(geometry))
 }
 
-/// Patient-space placement of a stack whose first plane is `first`: the
-/// origin is its Image Position, the `i`/`j` axes are its row/column
+/// Patient-space placement of a stack whose first plane is frame `frame`
+/// of `first`: the origin is its Image Position (per frame for an Enhanced
+/// file), the `i`/`j` axes are its row/column
 /// directions and `k` is their cross product (planes are ordered along it).
-pub fn plane_geometry(first: &SliceHeader) -> Geometry {
-    let origin = first.position.map_or(Vec3::ZERO, |p| p.as_vec3());
-    let direction = first.orientation.map_or(Mat3::IDENTITY, |(row, col)| {
+pub fn plane_geometry(first: &SliceHeader, frame: u32) -> Geometry {
+    let info = first.frames_info.get(frame as usize);
+    let origin = info.and_then(|f| f.position).or(first.position).map_or(Vec3::ZERO, |p| p.as_vec3());
+    let orientation = info.and_then(|f| f.orientation).or(first.orientation);
+    let direction = orientation.map_or(Mat3::IDENTITY, |(row, col)| {
         let (r, c) = (row.normalize_or_zero().as_vec3(), col.normalize_or_zero().as_vec3());
         Mat3::from_cols(r, c, r.cross(c).normalize_or_zero())
     });
@@ -135,11 +141,11 @@ mod tests {
         let mut h = crate::dicom::series::tests::header("1", Some(-40.0), None);
         h.position = Some(DVec3::new(-120.0, -90.0, -40.0));
         h.orientation = Some((DVec3::X, DVec3::new(0.0, 0.0, -2.0)));
-        let g = plane_geometry(&h);
+        let g = plane_geometry(&h, 0);
         assert_eq!(g.origin, Vec3::new(-120.0, -90.0, -40.0));
         assert_eq!(g.direction, Mat3::from_cols(Vec3::X, Vec3::NEG_Z, Vec3::Y));
         h.position = None;
         h.orientation = None;
-        assert_eq!(plane_geometry(&h), Geometry::default());
+        assert_eq!(plane_geometry(&h, 0), Geometry::default());
     }
 }

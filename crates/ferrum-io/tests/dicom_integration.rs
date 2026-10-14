@@ -7,7 +7,7 @@ mod common;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use common::{phantom_value, write_series, SyntheticSlice};
+use common::{phantom_value, write_enhanced, write_series, EnhancedFrame, SyntheticSlice};
 use dicom_dictionary_std::uids;
 use ferrum_domain::{Dims3, NoProgress, ProgressSink, RepositoryError, VolumeRepository};
 use ferrum_io::{CompositeRepository, DicomRepository};
@@ -221,6 +221,60 @@ fn loads_multiframe_file() {
     let l = load_single(dir.path());
     assert_phantom(&l.volume, 4, 5, 3);
     assert!((l.volume.spacing().z - 1.25).abs() < 1e-6);
+    // covers 20.1-e: without per-frame positions the file-order warning stays
+    assert_eq!(l.metadata.warnings.len(), 1, "{:?}", l.metadata.warnings);
+    assert!(l.metadata.warnings[0].contains("per-frame positions are not read"), "{:?}", l.metadata.warnings);
+}
+
+/// A frame at slice `k` (z = 10 + 2.5 k) of phase `t`: the phantom plus
+/// 5000 per later phase, stored with a per-frame intercept.
+fn enhanced_frame(rows: u16, cols: u16, k: u32, t: i32, intercept: f64) -> EnhancedFrame {
+    let (rows, cols) = (u32::from(rows), u32::from(cols));
+    EnhancedFrame {
+        position: [0.0, 0.0, 10.0 + 2.5 * f64::from(k)],
+        temporal: Some(t),
+        intercept,
+        pixels: (0..rows * cols)
+            .map(|p| {
+                let physical = f64::from(phantom_value(p % cols, p / cols, k)) + 5000.0 * f64::from(t - 1);
+                (physical - intercept) as u16
+            })
+            .collect(),
+    }
+}
+
+#[test]
+fn enhanced_frames_are_placed_by_their_own_positions() {
+    // covers 20.1-a, 20.1-b, 20.1-c, 20.1-d, 20.1-e, 20.1-f
+    let dir = tempfile::tempdir().unwrap();
+    let (rows, cols) = (4u16, 6u16);
+    // 4 positions × 2 phases, stored with phase 2 first and positions
+    // running downwards; every frame has its own intercept.
+    let mut frames = Vec::new();
+    for (n, (k, t)) in (0..4u32).rev().flat_map(|k| [(k, 2), (k, 1)]).enumerate() {
+        frames.push(enhanced_frame(rows, cols, k, t, -100.0 * (n % 3) as f64));
+    }
+    write_enhanced(&dir.path().join("mr.dcm"), rows, cols, "1.2.3.20", &frames, false);
+    let l = load_single(dir.path());
+    assert_phantom(&l.volume, u32::from(rows), u32::from(cols), 4);
+    assert_eq!(l.volume.spacing(), Vec3::new(0.9, 0.7, 2.5));
+    assert_eq!(l.volume.geometry().origin, Vec3::new(0.0, 0.0, 10.0));
+    assert_eq!(l.metadata.warnings.len(), 1, "{:?}", l.metadata.warnings);
+    assert!(l.metadata.warnings[0].contains("2 images at each of its 4 slice positions"), "{:?}", l.metadata.warnings);
+}
+
+#[test]
+fn several_enhanced_files_of_a_series_are_ordered_together() {
+    // covers 20.1-b, 20.1-e
+    let dir = tempfile::tempdir().unwrap();
+    let (rows, cols) = (4u16, 6u16);
+    let frames = |ks: [u32; 2]| ks.map(|k| enhanced_frame(rows, cols, k, 1, 0.0));
+    write_enhanced(&dir.path().join("a.dcm"), rows, cols, "1.2.3.21", &frames([2, 0]), true);
+    write_enhanced(&dir.path().join("b.dcm"), rows, cols, "1.2.3.21", &frames([3, 1]), true);
+    let l = load_single(dir.path());
+    assert_phantom(&l.volume, u32::from(rows), u32::from(cols), 4);
+    assert_eq!(l.volume.spacing(), Vec3::new(0.9, 0.7, 2.5));
+    assert_eq!(l.metadata.warnings, Vec::<String>::new());
 }
 
 #[test]

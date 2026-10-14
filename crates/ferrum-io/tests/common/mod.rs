@@ -137,3 +137,110 @@ pub fn write_series(dir: &Path, rows: u16, cols: u16, n: u32, spacing: f64, conf
         s.write(&dir.join(name));
     }
 }
+
+/// One frame of a synthetic Enhanced multi-frame file.
+#[derive(Debug, Clone)]
+pub struct EnhancedFrame {
+    pub position: [f64; 3],
+    pub temporal: Option<i32>,
+    pub intercept: f64,
+    /// Stored pixel values.
+    pub pixels: Vec<u16>,
+}
+
+fn sequence(tag: dicom_core::Tag, items: Vec<InMemDicomObject>) -> DataElement<InMemDicomObject> {
+    DataElement::new(tag, VR::SQ, dicom_core::value::DataSetSequence::from(items))
+}
+
+fn item(elements: Vec<DataElement<InMemDicomObject>>) -> InMemDicomObject {
+    InMemDicomObject::from_element_iter(elements)
+}
+
+/// Writes an Enhanced MR file: geometry only in the functional groups
+/// (Plane Position per frame; Plane Orientation and, unless
+/// `per_frame_measures`, Pixel Measures shared), per-frame rescale and
+/// Temporal Position Index. Nothing about position, orientation or pixel
+/// spacing at the top level.
+pub fn write_enhanced(
+    path: &Path,
+    rows: u16,
+    cols: u16,
+    series_uid: &str,
+    frames: &[EnhancedFrame],
+    per_frame_measures: bool,
+) {
+    let ds = |v: &[f64]| v.iter().map(|x| format!("{x}")).collect::<Vec<_>>().join("\\");
+    let text = |t, vr, v: &str| DataElement::new(t, vr, PrimitiveValue::from(v));
+    let measures = || {
+        sequence(
+            tags::PIXEL_MEASURES_SEQUENCE,
+            vec![item(vec![text(tags::PIXEL_SPACING, VR::DS, "0.7\\0.9"), text(tags::SLICE_THICKNESS, VR::DS, "2")])],
+        )
+    };
+    let mut shared = vec![sequence(
+        tags::PLANE_ORIENTATION_SEQUENCE,
+        vec![item(vec![text(tags::IMAGE_ORIENTATION_PATIENT, VR::DS, "1\\0\\0\\0\\1\\0")])],
+    )];
+    if !per_frame_measures {
+        shared.push(measures());
+    }
+    let per_frame: Vec<InMemDicomObject> = frames
+        .iter()
+        .map(|f| {
+            let mut groups = vec![
+                sequence(
+                    tags::PLANE_POSITION_SEQUENCE,
+                    vec![item(vec![text(tags::IMAGE_POSITION_PATIENT, VR::DS, &ds(&f.position))])],
+                ),
+                sequence(
+                    tags::PIXEL_VALUE_TRANSFORMATION_SEQUENCE,
+                    vec![item(vec![
+                        text(tags::RESCALE_INTERCEPT, VR::DS, &ds(&[f.intercept])),
+                        text(tags::RESCALE_SLOPE, VR::DS, "1"),
+                        text(tags::RESCALE_TYPE, VR::LO, "US"),
+                    ])],
+                ),
+            ];
+            if let Some(t) = f.temporal {
+                groups.push(sequence(
+                    tags::FRAME_CONTENT_SEQUENCE,
+                    vec![item(vec![DataElement::new(
+                        tags::TEMPORAL_POSITION_INDEX,
+                        VR::UL,
+                        PrimitiveValue::from(t as u32),
+                    )])],
+                ));
+            }
+            if per_frame_measures {
+                groups.push(measures());
+            }
+            item(groups)
+        })
+        .collect();
+    let pixels: Vec<u16> = frames.iter().flat_map(|f| f.pixels.iter().copied()).collect();
+    let elements = vec![
+        text(tags::SOP_CLASS_UID, VR::UI, uids::ENHANCED_MR_IMAGE_STORAGE),
+        text(tags::SOP_INSTANCE_UID, VR::UI, &format!("{series_uid}.{}", path.display().to_string().len())),
+        text(tags::MODALITY, VR::CS, "MR"),
+        text(tags::STUDY_INSTANCE_UID, VR::UI, "1.2.826.0.1.3680043.2.1"),
+        text(tags::SERIES_INSTANCE_UID, VR::UI, series_uid),
+        text(tags::SERIES_DESCRIPTION, VR::LO, "ENHANCED"),
+        text(tags::INSTANCE_NUMBER, VR::IS, "1"),
+        text(tags::NUMBER_OF_FRAMES, VR::IS, &frames.len().to_string()),
+        DataElement::new(tags::SAMPLES_PER_PIXEL, VR::US, PrimitiveValue::from(1u16)),
+        text(tags::PHOTOMETRIC_INTERPRETATION, VR::CS, "MONOCHROME2"),
+        DataElement::new(tags::ROWS, VR::US, PrimitiveValue::from(rows)),
+        DataElement::new(tags::COLUMNS, VR::US, PrimitiveValue::from(cols)),
+        DataElement::new(tags::BITS_ALLOCATED, VR::US, PrimitiveValue::from(16u16)),
+        DataElement::new(tags::BITS_STORED, VR::US, PrimitiveValue::from(16u16)),
+        DataElement::new(tags::HIGH_BIT, VR::US, PrimitiveValue::from(15u16)),
+        DataElement::new(tags::PIXEL_REPRESENTATION, VR::US, PrimitiveValue::from(0u16)),
+        sequence(tags::SHARED_FUNCTIONAL_GROUPS_SEQUENCE, vec![item(shared)]),
+        sequence(tags::PER_FRAME_FUNCTIONAL_GROUPS_SEQUENCE, per_frame),
+        DataElement::new(tags::PIXEL_DATA, VR::OW, PrimitiveValue::U16(pixels.into())),
+    ];
+    let obj = InMemDicomObject::from_element_iter(elements);
+    let file =
+        obj.with_meta(FileMetaTableBuilder::new().transfer_syntax(uids::EXPLICIT_VR_LITTLE_ENDIAN)).expect("meta");
+    file.write_to_file(path).expect("write enhanced dicom");
+}
