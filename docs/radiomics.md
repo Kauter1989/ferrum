@@ -271,6 +271,12 @@ reference). No criterion draws pixels in the renderer, so there is no
 | 18.12-a | `ui.rs::the_clinical_card_groups_the_features_…`, `metrics_card.rs::the_rows_of_the_clinical_profile_…` (25 shape and 6 connectivity rows with units), `…every_row_carries_the_definition_of_its_feature`, `the_range_table_has_a_line_per_range_and_one_for_the_rest`; a person looks at the card on a real study (field test) | test, manual |
 | 18.12-b | as 18.4-a to 18.4-d for `clinical`: `commands.json` freshness, `cli.rs::segment_metrics_flags_become_parameters` (`--bin-width`, `--hu-range`), `mcp.rs` parity, `privacy.rs` | test |
 | 18.12-c | `crates/ferrum-radiomics/benches/profiles.rs`; the numbers are in §3.2 (`clinical` 607 ms for 102 897 voxels on a 512 × 512 × 300 volume) | bench |
+| 18.13-a | `volume.rs::every_whole_hounsfield_unit_of_a_ct_range_is_stored_and_read_back_exactly`, `…halves_and_a_range_that_does_not_start_at_zero_are_exact_too`, `nifti.rs::a_ct_in_whole_hounsfield_units_is_read_back_exactly`, `dicom_integration.rs::ct_hounsfield_units_come_back_exactly_with_rescale_and_with_halves` | test |
+| 18.13-b | `volume.rs::data_that_are_not_on_a_grid_keep_the_data_range_and_the_old_precision`, `…a_constant_image_or_one_without_finite_values_still_has_a_range` | test |
+| 18.13-c | `volume.rs::the_range_is_at_most_twice_as_wide_as_the_data_and_never_narrower`; the whole suite, GPU parity on lavapipe included, unchanged | test |
+| 18.13-d | `crates/ferrum-agent/tests/hounsfield.rs` (`probe_returns_the_whole_unit_the_file_holds`, `metrics_of_the_block_are_the_numbers_of_the_file`) | test |
+| 18.13-e | `crates/ferrum-agent/tests/hounsfield.rs::a_threshold_at_a_whole_unit_includes_the_voxels_at_exactly_that_unit` | test |
+| 18.13-f | the field test with the updated `compare_pyradiomics.py` on the MSD spleen: the "exact" intensity features agree to 1e-6 | field |
 | Stage success: values agree with pyradiomics on MSD Task09 spleen | a field script (not committed) run on the user's machine, differences explained in the PR | field |
 
 Every criterion of Stage 18 has at least one row.

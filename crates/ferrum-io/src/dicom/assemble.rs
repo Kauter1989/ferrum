@@ -91,7 +91,10 @@ pub fn assemble(
         .fold(|| (f32::INFINITY, f32::NEG_INFINITY), |(a, b), v| (a.min(v), b.max(v)))
         .reduce(|| (f32::INFINITY, f32::NEG_INFINITY), |(a, b), (c, d)| (a.min(c), b.max(d)));
     let (min, max) = if min.is_finite() { (min, max) } else { (0.0, 1.0) };
-    let range = IntensityRange::new(min, max)?;
+    // CT in HU is a whole number of Hounsfield units: such data are stored exactly
+    let range = IntensityRange::for_data(min, max, |min, step| {
+        planes.par_iter().all(|p| p.iter().all(|v| IntensityRange::is_on_grid(*v, min, step)))
+    })?;
     let invert = first.photometric == Photometric::Monochrome1;
 
     let dims = Dims3::new(w, h, n as u32);
