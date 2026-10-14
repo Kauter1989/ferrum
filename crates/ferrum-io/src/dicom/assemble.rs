@@ -12,6 +12,7 @@ use rayon::prelude::*;
 use super::header::{Photometric, SliceHeader};
 use super::series::OrderedSeries;
 use crate::error::IoError;
+use crate::nifti::Reorientation;
 
 /// Decodes the requested `frames` of one file into physical values
 /// (Modality LUT applied). Colour images are converted to luminance.
@@ -113,7 +114,38 @@ pub fn assemble(
     let spacing = Vec3::new(px.x, px.y, ordered.slice_spacing.max(1e-3) as f32);
     progress.report(1.0, "Volume assembled");
     let geometry = plane_geometry(&headers[ordered.planes[0].header], ordered.planes[0].frame);
+    let (data, dims, spacing, geometry) = to_canonical(data, dims, spacing, geometry);
     Ok(Volume::new(dims, spacing, range, data)?.with_geometry(geometry))
+}
+
+/// The stored grid (`i` along the rows, `j` along the columns, `k` along
+/// the slice normal) brought into the canonical LPS frame, as the NIfTI
+/// reader does: axes are permuted and flipped onto the closest of `+x`
+/// left, `+y` posterior, `+z` superior. Every voxel keeps its patient
+/// position; an oblique remainder stays in the direction.
+pub fn to_canonical(
+    data: Vec<u16>,
+    dims: Dims3,
+    spacing: Vec3,
+    geometry: Geometry,
+) -> (Vec<u16>, Dims3, Vec3, Geometry) {
+    let d = geometry.direction;
+    let axes = [d.x_axis, d.y_axis, d.z_axis];
+    let r = Reorientation::between(axes, Mat3::IDENTITY);
+    if r == Reorientation::IDENTITY {
+        return (data, dims, spacing, geometry);
+    }
+    let src = [dims.x, dims.y, dims.z];
+    let mut cols = [Vec3::ZERO; 3];
+    let mut origin = geometry.origin;
+    for a in 0..3 {
+        cols[r.target[a]] = if r.flip[a] { -axes[a] } else { axes[a] };
+        if r.flip[a] {
+            origin += axes[a] * spacing[a] * src[a].saturating_sub(1) as f32;
+        }
+    }
+    let (data, dims, spacing) = r.apply(&data, dims, spacing);
+    (data, dims, spacing, Geometry { origin, direction: Mat3::from_cols(cols[0], cols[1], cols[2]) })
 }
 
 /// Patient-space placement of a stack whose first plane is frame `frame`
@@ -135,6 +167,66 @@ pub fn plane_geometry(first: &SliceHeader, frame: u32) -> Geometry {
 mod tests {
     use super::*;
     use glam::DVec3;
+
+    /// Every stored voxel keeps its value at its patient position, and the
+    /// canonical grid runs along `+x`, `+y`, `+z`.
+    fn check_canonical(row: Vec3, col: Vec3) {
+        let dims = Dims3::new(3, 4, 5);
+        let spacing = Vec3::new(0.5, 0.75, 2.0);
+        let geometry = Geometry {
+            origin: Vec3::new(-12.0, 30.0, 7.0),
+            direction: Mat3::from_cols(row, col, row.cross(col).normalize()),
+        };
+        let data: Vec<u16> = (0..dims.voxel_count() as u16).collect();
+        let (out, odims, osp, og) = to_canonical(data.clone(), dims, spacing, geometry);
+        assert_eq!(odims.voxel_count(), dims.voxel_count());
+        for (a, axis) in [og.direction.x_axis, og.direction.y_axis, og.direction.z_axis].into_iter().enumerate() {
+            assert!(axis[a] > 0.9, "axis {a} of {row} {col}: {axis}");
+        }
+        let inv = og.direction.inverse();
+        for k in 0..dims.z {
+            for j in 0..dims.y {
+                for i in 0..dims.x {
+                    let p = geometry.voxel_to_patient(Vec3::new(i as f32, j as f32, k as f32), spacing);
+                    let o = (inv * (p - og.origin)) / osp;
+                    let r = o.round();
+                    assert!((o - r).abs().max_element() < 1e-3, "{row} {col}: voxel {i},{j},{k} lands at {o}");
+                    let idx = odims.index(r.x as u32, r.y as u32, r.z as u32);
+                    assert_eq!(out[idx], data[dims.index(i, j, k)], "{row} {col}: voxel {i},{j},{k}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn dicom_grids_are_brought_into_lps() {
+        // covers 2.8-a
+        let deg = 20f32.to_radians();
+        for (row, col) in [
+            (Vec3::X, Vec3::Y),                                                // axial: unchanged
+            (Vec3::Y, Vec3::NEG_Z),                                            // sagittal, normal −x
+            (Vec3::X, Vec3::NEG_Z),                                            // coronal, normal +y
+            (Vec3::NEG_X, Vec3::Y),                                            // rows towards the right, normal −z
+            (Vec3::new(deg.cos(), deg.sin(), 0.0), Vec3::new(0.0, 0.0, -1.0)), // oblique coronal
+        ] {
+            check_canonical(row, col);
+        }
+        // the axial grid is left as it is
+        let (_, d, sp, g) = to_canonical(vec![0; 60], Dims3::new(3, 4, 5), Vec3::ONE, Geometry::default());
+        assert_eq!((d, sp, g), (Dims3::new(3, 4, 5), Vec3::ONE, Geometry::default()));
+    }
+
+    #[test]
+    fn a_sagittal_stack_becomes_x_y_z() {
+        // covers 2.8-a: 4 sagittal slices of 6 × 5 pixels → 4 × 6 × 5 voxels
+        let g = Geometry { origin: Vec3::ZERO, direction: Mat3::from_cols(Vec3::Y, Vec3::NEG_Z, Vec3::NEG_X) };
+        let (_, d, sp, og) = to_canonical(vec![0; 120], Dims3::new(6, 5, 4), Vec3::new(0.5, 0.6, 3.0), g);
+        assert_eq!(d, Dims3::new(4, 6, 5));
+        assert_eq!(sp, Vec3::new(3.0, 0.5, 0.6));
+        assert_eq!(og.direction, Mat3::IDENTITY);
+        // the last slice (k = 3, x = −9 mm) and the bottom row (j = 4, z = −2.4 mm) become the origin
+        assert_eq!(og.origin, Vec3::new(-9.0, 0.0, -2.4));
+    }
 
     #[test]
     fn geometry_comes_from_the_first_plane() {
