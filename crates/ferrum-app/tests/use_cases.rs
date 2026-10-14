@@ -523,12 +523,16 @@ fn without_a_stored_window_the_app_and_the_agent_choose_the_same_one() {
     let mut viewer = Viewer::new(FakeRepo::new(1));
     let volume = phantom(Dims3::new(24, 24, 20));
     let expected = WindowLevel::auto(volume.range(), &storage_histogram(volume.data(), AUTO_WINDOW_BINS));
+    let (min, span) = (volume.range().min, volume.range().span());
     let metadata = SeriesMetadata { modality: "MR".into(), ..SeriesMetadata::default() };
     viewer.install(LoadedSeries { volume, metadata });
     assert_eq!(viewer.slices.window, expected);
-    // 0.5 % ends in the bin of 0 (upper edge 1000/256), 99.5 % in the bin of 1000.
-    assert!((viewer.slices.window.lower() - 3.90625).abs() < 1e-3, "{:?}", viewer.slices.window);
-    assert!((viewer.slices.window.upper() - 1000.0).abs() < 1e-3, "{:?}", viewer.slices.window);
+    // 0.5 % ends in the bin of 0, 99.5 % in the bin of 1000: the window runs
+    // between their upper edges (256 bins over the stored range, ADR 0012).
+    let edge = |v: f32| min + ((((v - min) / span * 256.0).floor() + 1.0) / 256.0) * span;
+    let w = viewer.slices.window;
+    assert!((w.lower() - edge(0.0)).abs() < 1e-2 && w.lower() > 0.0, "{w:?}");
+    assert!((w.upper() - edge(1000.0)).abs() < 1e-2 && w.upper() >= 1000.0, "{w:?}");
 }
 
 #[test]

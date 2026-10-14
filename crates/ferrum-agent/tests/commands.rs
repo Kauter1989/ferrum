@@ -167,15 +167,22 @@ fn probe_stats_and_measurements_have_known_answers() {
 fn renders_without_a_stored_window_use_the_percentile_window() {
     // covers 2.7-h
     let f = fixture(AgentConfig::default());
-    f.open();
+    let range = f.open()["value_range"].clone();
+    let (min, max) = (range[0].as_f64().unwrap(), range[1].as_f64().unwrap());
+    let span = max - min;
+    // 48 000 voxels in 256 bins over the stored range (ADR 0012: it can be
+    // wider than −1000..1000). 0.5 % ends in the air bin (bin 0); 99.5 %
+    // leaves out only the 216 cube voxels and ends in the bin of the
+    // sphere's 100. The window runs between the upper edges of those bins.
+    let edge = |bin: f64| min + (bin + 1.0) * span / 256.0;
+    let (lo, hi) = (edge(0.0), edge(((100.0 - min) / span * 256.0).floor()));
+    assert!(lo < -900.0 && (95.0..110.0).contains(&hi), "{lo} {hi}");
     let r = f.ok("view slice", json!({ "plane": "axial", "slice_number": 16, "size": 40 }));
-    // 48 000 voxels from −1000 to 1000 in 256 bins of 7.8125: 0.5 % ends in
-    // the air bin (upper edge −992.1875); 99.5 % leaves out only the 216
-    // cube voxels and ends in the bin of the sphere's 100 (edge 101.5625).
-    close(&r["window"]["center"], -445.3125, 1e-3);
-    close(&r["window"]["width"], 1093.75, 1e-3);
+    close(&r["window"]["center"], (lo + hi) / 2.0, 1e-2);
+    close(&r["window"]["width"], hi - lo, 1e-2);
     let full = f.ok("view slice", json!({ "plane": "axial", "slice_number": 16, "size": 40, "window": "full_range" }));
-    assert_eq!(full["window"], json!({ "center": 0.0, "width": 2000.0 }), "an explicit window is used as given");
+    close(&full["window"]["center"], (min + max) / 2.0, 1e-2);
+    close(&full["window"]["width"], span, 1e-2);
 }
 
 #[test]
