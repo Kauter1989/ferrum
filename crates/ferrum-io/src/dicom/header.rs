@@ -97,7 +97,7 @@ impl StackKey {
         Self {
             temporal_position: int_of(obj, tags::TEMPORAL_POSITION_IDENTIFIER),
             echo_number: int_of(obj, tags::ECHO_NUMBERS),
-            echo_time: None,
+            echo_time: f64_of(obj, tags::ECHO_TIME),
             b_value: f64_of(obj, tags::DIFFUSION_B_VALUE),
             acquisition_number: int_of(obj, tags::ACQUISITION_NUMBER),
             trigger_time: f64_of(obj, tags::TRIGGER_TIME),

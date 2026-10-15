@@ -7,7 +7,7 @@ use crate::commands::{Ctx, COMMANDS};
 use crate::config::AgentConfig;
 use crate::envelope::{error_envelope, ok_envelope, AgentError, Output};
 use crate::params::Params;
-use crate::study::{generator, VolumeCache};
+use crate::study::{generator, series_key, Study, VolumeCache};
 
 /// Runs commands under one operator configuration.
 #[derive(Debug, Clone, Default)]
@@ -76,13 +76,16 @@ impl Agent {
             Err(e) => error_envelope(e),
         };
         if let Some(study) = &ctx.study {
-            let entry = json!({
+            let mut entry = json!({
                 "command": command,
                 "params": params,
                 "ok": result.is_ok(),
                 "error": result.as_ref().err().map(|e| e.code.as_str()),
                 "source_sha256": study.source_sha256,
             });
+            if let Some(v) = self.volume(study) {
+                entry["volume"] = v;
+            }
             if let Err(e) = study.workspace.append_audit(entry) {
                 log::warn!("audit log: {e}");
             }
@@ -105,13 +108,25 @@ impl Agent {
     }
 
     fn provenance(&self, ctx: &Ctx, command: &str, params: &Value) -> Value {
-        json!({
+        let mut out = json!({
             "ferrum": generator(),
             "command": command,
             "params": params,
             "source_sha256": ctx.study.as_ref().map(|s| s.source_sha256.clone()),
             "renderer": "cpu",
             "time": ferrum_domain::Timestamp::now().to_rfc3339(),
-        })
+        });
+        if let Some(v) = ctx.study.as_ref().and_then(|s| self.volume(s)) {
+            out["volume"] = v;
+        }
+        out
+    }
+
+    /// The volume the study's values come from (series key and label),
+    /// when its series holds several.
+    fn volume(&self, study: &Study) -> Option<Value> {
+        let open = study.open_volume.as_ref()?;
+        let label = open.volume.as_ref().map(|v| v.label.clone()).unwrap_or_default();
+        Some(json!({ "series": series_key(&self.config, &open.id), "label": label }))
     }
 }

@@ -69,6 +69,8 @@ pub struct VolumeCache {
 #[derive(Debug, Clone)]
 struct CachedSeries {
     series_id: String,
+    open_volume: Option<String>,
+    volumes: Vec<SeriesDescriptor>,
     stamps: Vec<(u64, Option<SystemTime>)>,
     volume: Arc<Volume>,
     metadata: Arc<SeriesMetadata>,
@@ -88,7 +90,7 @@ impl VolumeCache {
     fn get(&self, root: &Path, ws: &Workspace) -> Option<CachedSeries> {
         let e = self.entries.get(root)?;
         let src = &ws.manifest().source;
-        (e.series_id == src.series_id && e.stamps == stamps(&src.file_paths())).then(|| e.clone())
+        (e.series_id == src.series_id && e.open_volume == src.volume && e.stamps == stamps(&src.file_paths())).then(|| e.clone())
     }
 }
 
@@ -113,6 +115,14 @@ pub struct Study {
     /// SHA-256 over the source file hashes: identifies the data the
     /// results belong to.
     pub source_sha256: String,
+    /// The open volume of a multi-volume series: its descriptor (id and
+    /// [`ferrum_domain::VolumeInfo`]); `None` for a single-volume series.
+    pub open_volume: Option<SeriesDescriptor>,
+    /// Every volume of the series, when it holds several.
+    pub volumes: Vec<SeriesDescriptor>,
+    /// What `study open` chose for the caller (a default volume); repeated
+    /// as warnings, not saved.
+    pub notes: Vec<String>,
 }
 
 impl Study {
@@ -131,23 +141,48 @@ impl Study {
             return Err(AgentError::not_found(format!("{} does not exist", source.display())));
         }
         let found = scan(std::slice::from_ref(&source))?;
-        let chosen = choose_series(config, &found, series)?;
+        let choice = choose(config, &found, series)?;
+        let wanted = choice.chosen.volume.as_ref().map(|_| choice.chosen.id.clone());
+        let mut notes = Vec::new();
         if root.join(ferrum_io::workspace::files::MANIFEST).exists() {
-            let ws = Workspace::open(root)?;
+            let mut ws = Workspace::open(root)?;
             let m = &ws.manifest().source;
-            if m.path != source || m.series_id != chosen.id {
+            if m.path != source || m.series_id != choice.group.id {
                 return Err(AgentError::bad_request(format!("{} already holds another series", root.display()))
-                    .hint("use a new workspace for each series"));
+                    .hint("use a new workspace for each series; the volumes of one series share it"));
             }
-            return Self::load(config, root, cache);
+            match (&wanted, choice.defaulted) {
+                // the caller named no volume: keep the workspace's
+                (Some(_), true) if m.volume.is_some() => {}
+                (Some(id), _) if m.volume.as_ref() != Some(id) => {
+                    check_switch(&choice, m.volume.as_deref())?;
+                    ws.set_volume(Some(id))?;
+                }
+                _ => {}
+            }
+            let mut study = Self::load(config, root, cache)?;
+            if choice.defaulted && study.open_volume.is_some() {
+                notes.push(default_note(&study));
+            }
+            study.notes = notes;
+            return Ok(study);
         }
-        check_size(config, chosen)?;
-        let workspace = Workspace::create(root, &source, chosen, &generator())?;
-        let loaded = load_series(chosen)?;
+        check_size(config, &choice.chosen)?;
+        let mut workspace = Workspace::create(root, &source, &choice.group, &generator())?;
+        if let Some(id) = &wanted {
+            workspace.set_volume(Some(id))?;
+        }
+        let loaded = load_series(&choice.chosen)?;
         if let Some(c) = cache {
-            c.entries.insert(root.to_path_buf(), cached(&workspace, &loaded));
+            c.entries.insert(root.to_path_buf(), cached(&workspace, &loaded, &choice.volumes));
         }
-        Self::from_workspace(workspace, loaded.volume, loaded.metadata)
+        let mut study = Self::from_workspace(workspace, loaded.volume, loaded.metadata)?;
+        study.volumes = choice.volumes;
+        study.open_volume = wanted.and_then(|id| study.volumes.iter().find(|v| v.id == id).cloned());
+        if choice.defaulted && study.open_volume.is_some() {
+            study.notes.push(default_note(&study));
+        }
+        Ok(study)
     }
 
     /// Loads the study of the workspace at `root`, reusing a cached series
@@ -161,19 +196,37 @@ impl Study {
         let src = workspace.manifest().source.clone();
         config.check_source(&src.path)?;
         if let Some(hit) = cache.as_deref().and_then(|c| c.get(root, &workspace)) {
-            return Self::from_workspace(workspace, hit.volume, hit.metadata);
+            return Self::from_workspace(workspace, hit.volume, hit.metadata)?.with_volumes(hit.volumes, src.volume);
         }
         workspace.verify_sources()?;
         let found = scan(std::slice::from_ref(&src.path))?;
         let series = found.iter().find(|s| s.id == src.series_id).ok_or_else(|| {
             AgentError::new(ErrorCode::SourceChanged, "the workspace's series is no longer in its source")
         })?;
-        check_size(config, series)?;
-        let loaded = load_series(series)?;
+        // The open volume of a multi-volume series, else the series.
+        let volumes = match &src.volume {
+            Some(_) => volumes_of(series)?,
+            None => Vec::new(),
+        };
+        let chosen = match &src.volume {
+            Some(id) => volumes.iter().find(|v| &v.id == id).ok_or_else(|| {
+                AgentError::new(ErrorCode::SourceChanged, "the workspace's volume is no longer in its series")
+            })?,
+            None => series,
+        };
+        check_size(config, chosen)?;
+        let loaded = load_series(chosen)?;
         if let Some(c) = cache {
-            c.entries.insert(root.to_path_buf(), cached(&workspace, &loaded));
+            c.entries.insert(root.to_path_buf(), cached(&workspace, &loaded, &volumes));
         }
-        Self::from_workspace(workspace, loaded.volume, loaded.metadata)
+        Self::from_workspace(workspace, loaded.volume, loaded.metadata)?.with_volumes(volumes, src.volume)
+    }
+
+    /// Sets the series' volumes and the open one (by id).
+    fn with_volumes(mut self, volumes: Vec<SeriesDescriptor>, open: Option<String>) -> Result<Self, AgentError> {
+        self.open_volume = open.and_then(|id| volumes.iter().find(|v| v.id == id).cloned());
+        self.volumes = volumes;
+        Ok(self)
     }
 
     fn from_workspace(
@@ -195,7 +248,17 @@ impl Study {
             h.update(f.sha256.as_bytes());
         }
         let source_sha256 = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
-        Ok(Self { workspace, volume, metadata, annotations, segments, source_sha256 })
+        Ok(Self {
+            workspace,
+            volume,
+            open_volume: None,
+            volumes: Vec::new(),
+            notes: Vec::new(),
+            metadata,
+            annotations,
+            segments,
+            source_sha256,
+        })
     }
 
     /// Saves the annotations into the workspace (study identification
@@ -290,30 +353,89 @@ fn load_series(series: &SeriesDescriptor) -> Result<Loaded, AgentError> {
     Ok(Loaded { volume: Arc::new(loaded.volume), metadata: Arc::new(loaded.metadata) })
 }
 
-fn cached(ws: &Workspace, loaded: &Loaded) -> CachedSeries {
+fn cached(ws: &Workspace, loaded: &Loaded, volumes: &[SeriesDescriptor]) -> CachedSeries {
     let src = &ws.manifest().source;
     CachedSeries {
         series_id: src.series_id.clone(),
+        open_volume: src.volume.clone(),
+        volumes: volumes.to_vec(),
         stamps: stamps(&src.file_paths()),
         volume: loaded.volume.clone(),
         metadata: loaded.metadata.clone(),
     }
 }
 
-fn choose_series<'a>(
-    config: &AgentConfig,
-    found: &'a [SeriesDescriptor],
-    wanted: Option<&str>,
-) -> Result<&'a SeriesDescriptor, AgentError> {
-    match (wanted, found) {
-        (None, [one]) => Ok(one),
-        (None, _) => Err(AgentError::bad_request(format!("the source holds {} series", found.len()))
-            .hint("choose one with series (see study scan)")),
-        (Some(w), _) => found
-            .iter()
-            .find(|s| s.id == w || series_key(config, &s.id) == w)
-            .ok_or_else(|| AgentError::not_found(format!("no series {w} in the source")).hint("see study scan")),
+/// What `study open` resolved `series` to.
+struct Choice {
+    /// The series (group) the workspace is bound to.
+    group: SeriesDescriptor,
+    /// What is loaded: a volume of the group, or the group itself.
+    chosen: SeriesDescriptor,
+    /// Every volume of the group (empty for a single-volume series).
+    volumes: Vec<SeriesDescriptor>,
+    /// `true` when the caller named no volume and volume 1 was taken.
+    defaulted: bool,
+}
+
+/// The volumes of `series`; empty when it holds only one.
+pub(crate) fn volumes_of(series: &SeriesDescriptor) -> Result<Vec<SeriesDescriptor>, AgentError> {
+    let volumes = CompositeRepository::default()
+        .volumes(series, &NoProgress)
+        .map_err(|e| AgentError::internal(format!("cannot list the volumes of the series: {e}")))?;
+    Ok(if volumes.len() > 1 { volumes } else { Vec::new() })
+}
+
+/// The whole series `group`: volume 1 when it holds several.
+fn choose_group(group: &SeriesDescriptor) -> Result<Choice, AgentError> {
+    let volumes = volumes_of(group)?;
+    let chosen = volumes.first().cloned().unwrap_or_else(|| group.clone());
+    let defaulted = !volumes.is_empty();
+    Ok(Choice { group: group.clone(), chosen, volumes, defaulted })
+}
+
+/// Resolves `wanted` (a series or volume id, or its pseudonym) in `found`.
+fn choose(config: &AgentConfig, found: &[SeriesDescriptor], wanted: Option<&str>) -> Result<Choice, AgentError> {
+    let w = match (wanted, found) {
+        (None, [one]) => return choose_group(one),
+        (None, _) => {
+            return Err(AgentError::bad_request(format!("the source holds {} series", found.len()))
+                .hint("choose one with series (see study scan)"))
+        }
+        (Some(w), _) => w,
+    };
+    let named = |id: &str| id == w || series_key(config, id) == w;
+    if let Some(group) = found.iter().find(|s| named(&s.id)) {
+        return choose_group(group);
     }
+    for group in found {
+        let volumes = volumes_of(group)?;
+        if let Some(v) = volumes.iter().find(|v| named(&v.id)) {
+            let chosen = v.clone();
+            return Ok(Choice { group: group.clone(), chosen, volumes, defaulted: false });
+        }
+    }
+    Err(AgentError::not_found(format!("no series or volume {w} in the source")).hint("see study scan"))
+}
+
+/// A workspace switches only between complete volumes: they share its grid.
+fn check_switch(choice: &Choice, current: Option<&str>) -> Result<(), AgentError> {
+    let complete = |v: &SeriesDescriptor| v.volume.as_ref().is_none_or(|i| i.complete);
+    let current_complete = current.and_then(|id| choice.volumes.iter().find(|v| v.id == id)).is_none_or(complete);
+    if complete(&choice.chosen) && current_complete {
+        return Ok(());
+    }
+    Err(AgentError::bad_request("the volume lacks slices of its series and does not share the workspace's grid")
+        .hint("open it in a workspace of its own"))
+}
+
+/// The warning of a volume taken because the caller named none.
+fn default_note(study: &Study) -> String {
+    let number = study.open_volume.as_ref().and_then(|v| v.volume.as_ref()).map_or(1, |i| i.index + 1);
+    format!(
+        "no volume was named: the series holds {} volumes and volume {number} is open; open another with series \
+         set to its id (see volumes in study info or study scan); the workspace keeps segments and annotations",
+        study.volumes.len()
+    )
 }
 
 fn check_size(config: &AgentConfig, s: &SeriesDescriptor) -> Result<(), AgentError> {

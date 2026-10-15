@@ -36,8 +36,11 @@ use crate::segments::{read_segments, write_segments};
 
 /// Value of the `format` field of `workspace.json`.
 pub const WORKSPACE_FORMAT: &str = "ferrum-workspace";
-/// Version of the workspace layout.
-pub const WORKSPACE_VERSION: u32 = 1;
+/// Version of the workspace layout: 1, or 2 when the manifest names the
+/// open volume of a multi-volume series (`source.volume`, ADR 0013). A
+/// manifest without a volume is written as version 1, so older FERRUM
+/// versions keep opening it.
+pub const WORKSPACE_VERSION: u32 = 2;
 
 /// File names inside a workspace.
 pub mod files {
@@ -80,6 +83,10 @@ pub struct WorkspaceSource {
     pub format: String,
     /// Files that make up the series.
     pub files: Vec<SourceFile>,
+    /// Id of the open volume of a multi-volume series (see
+    /// `SeriesDescriptor::volume`); `None` for a single-volume series, or
+    /// a workspace made before volumes (volume 1 is shown).
+    pub volume: Option<String>,
 }
 
 impl WorkspaceSource {
@@ -108,7 +115,7 @@ impl WorkspaceManifest {
         let s = &self.source;
         let mut v = json!({
             "format": WORKSPACE_FORMAT,
-            "version": WORKSPACE_VERSION,
+            "version": if s.volume.is_some() { WORKSPACE_VERSION } else { 1 },
             "generator": self.generator,
             "created": self.created.to_rfc3339(),
             "source": {
@@ -123,6 +130,9 @@ impl WorkspaceManifest {
         if let Some(m) = &self.modality {
             v["modality"] = json!(m);
         }
+        if let Some(vol) = &s.volume {
+            v["source"]["volume"] = json!(vol);
+        }
         v
     }
 
@@ -130,7 +140,7 @@ impl WorkspaceManifest {
         if v["format"] != WORKSPACE_FORMAT {
             return Err(format!("not a {WORKSPACE_FORMAT} manifest"));
         }
-        if v["version"].as_u64() != Some(u64::from(WORKSPACE_VERSION)) {
+        if !matches!(v["version"].as_u64(), Some(n) if (1..=u64::from(WORKSPACE_VERSION)).contains(&n)) {
             return Err(format!("unsupported {WORKSPACE_FORMAT} version {}", v["version"]));
         }
         let text = |v: &Value, key: &str| v[key].as_str().map(str::to_owned).ok_or(format!("{key} is missing"));
@@ -159,6 +169,7 @@ impl WorkspaceManifest {
                 series_id: text(s, "series_id")?,
                 format: text(s, "format").unwrap_or_default(),
                 files,
+                volume: s["volume"].as_str().map(str::to_owned),
             },
             modality: v["modality"].as_str().map(str::to_owned),
         })
@@ -245,6 +256,7 @@ impl Workspace {
                 series_id: series.id.clone(),
                 format: series.format.clone(),
                 files,
+                volume: None,
             },
             modality: None,
         };
@@ -258,6 +270,16 @@ impl Workspace {
     /// NIfTI file), or clears it with `None`; saved in the manifest.
     pub fn set_modality(&mut self, modality: Option<&str>) -> Result<(), IoError> {
         self.manifest.modality = modality.map(str::to_owned);
+        let path = self.root.join(files::MANIFEST);
+        let text = serde_json::to_string_pretty(&self.manifest.to_json())
+            .map_err(|e| IoError::invalid(&path, e.to_string()))?;
+        write_atomic(&path, text.as_bytes())
+    }
+
+    /// Records the open volume of a multi-volume series (its id), or
+    /// clears it with `None`; saved in the manifest.
+    pub fn set_volume(&mut self, volume: Option<&str>) -> Result<(), IoError> {
+        self.manifest.source.volume = volume.map(str::to_owned);
         let path = self.root.join(files::MANIFEST);
         let text = serde_json::to_string_pretty(&self.manifest.to_json())
             .map_err(|e| IoError::invalid(&path, e.to_string()))?;
@@ -570,6 +592,30 @@ mod tests {
     }
 
     #[test]
+    fn the_open_volume_is_kept_with_version_2_only_when_set() {
+        // covers 20.3-f
+        let f = fixture();
+        let mut ws = Workspace::create(&f.root, &f.source, &f.series, "FERRUM test").unwrap();
+        let version = || {
+            let text = std::fs::read_to_string(f.root.join(files::MANIFEST)).unwrap();
+            serde_json::from_str::<Value>(&text).unwrap()["version"].as_u64().unwrap()
+        };
+        assert_eq!((version(), ws.manifest().source.volume.clone()), (1, None), "single volume: version 1");
+        ws.set_volume(Some("1.2.3#v=b1000")).unwrap();
+        assert_eq!(version(), 2);
+        let opened = Workspace::open(&f.root).unwrap();
+        assert_eq!(opened.manifest().source.volume.as_deref(), Some("1.2.3#v=b1000"));
+        assert_eq!(opened, ws);
+        ws.set_volume(None).unwrap();
+        assert_eq!((version(), Workspace::open(&f.root).unwrap().manifest().source.volume.clone()), (1, None));
+        // a newer layout is refused, not misread
+        let path = f.root.join(files::MANIFEST);
+        let text = std::fs::read_to_string(&path).unwrap().replace("\"version\": 1", "\"version\": 3");
+        std::fs::write(&path, text).unwrap();
+        assert!(matches!(Workspace::open(&f.root), Err(IoError::Invalid { .. })));
+    }
+
+    #[test]
     fn engine_inputs_are_saved_and_removed() {
         use ferrum_domain::{Prompt, VoxelBox};
         let f = fixture();
@@ -733,9 +779,10 @@ mod tests {
         assert!(matches!(Workspace::open(&f.source), Err(IoError::Os { .. })));
         std::fs::write(&path, "nope").unwrap();
         assert!(matches!(Workspace::open(&f.root), Err(IoError::Parse { .. })));
-        let edits: [(&str, Value); 5] = [
+        let edits: [(&str, Value); 6] = [
             ("/format", json!("x")),
-            ("/version", json!(2)),
+            ("/version", json!(3)),
+            ("/version", json!(0)),
             ("/created", json!("today")),
             ("/source/files/0/sha256", json!("abc")),
             ("/source/series_id", Value::Null),

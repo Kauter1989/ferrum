@@ -152,6 +152,15 @@ ws/ct1/
 }
 ```
 
+**Volume (version 2):** for a series of several volumes (echoes, b-values,
+phases, PET frames; [design](multi-volume.md)), `source.series_id` names
+the series and `source.volume` the open volume (`<series id>#v=<key>`).
+Such a manifest is written as version 2; one without `source.volume` stays
+version 1, and a version 1 manifest of a multi-volume series opens volume
+1. Opening another volume of the series switches `source.volume`;
+annotations and segments stay, because the volumes share the grid.
+Readers that know only version 1 refuse version 2 rather than open the wrong volume.
+
 **Modality:** the manifest may hold `"modality": "CT"`: the modality
 declared for a source that carries none (NIfTI) by `study open
 --modality`, or by the person in the desktop app's *Image type* dialog,
