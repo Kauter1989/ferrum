@@ -90,7 +90,8 @@ impl VolumeCache {
     fn get(&self, root: &Path, ws: &Workspace) -> Option<CachedSeries> {
         let e = self.entries.get(root)?;
         let src = &ws.manifest().source;
-        (e.series_id == src.series_id && e.open_volume == src.volume && e.stamps == stamps(&src.file_paths())).then(|| e.clone())
+        (e.series_id == src.series_id && e.open_volume == src.volume && e.stamps == stamps(&src.file_paths()))
+            .then(|| e.clone())
     }
 }
 

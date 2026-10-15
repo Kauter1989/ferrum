@@ -178,6 +178,12 @@ fn volumes_open_and_switch_in_one_workspace() {
     let env = f.open(Some(&group));
     assert_eq!(env["data"]["volume"]["label"], "b = 1000", "a named group keeps the open volume");
 
+    manifest_audit_and_refusals(&f);
+}
+
+/// After a switch: the manifest (version 2) and the audit name the volume;
+/// another series is refused.
+fn manifest_audit_and_refusals(f: &Fixture) {
     // the manifest is version 2 and names the volume; the audit names it too
     let manifest: Value =
         serde_json::from_str(&std::fs::read_to_string(Path::new(&f.ws).join("workspace.json")).unwrap()).unwrap();
