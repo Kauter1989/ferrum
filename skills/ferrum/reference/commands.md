@@ -10,9 +10,9 @@ underscores) and a `ferrum-cli` sub-command. The parameters are listed in
 ## Study
 | Command | Key parameters | Returns |
 |---|---|---|
-| `study scan` | `paths` | series: pseudonymised id, format, modality, dims, description |
-| `study open` | `workspace`, `path`, `series?`, `modality?` (for NIfTI, e.g. `CT`) | dims, spacing, LPS origin and direction, value unit, slice counts, window presets; `warnings` when the series could not be shown as stored (one volume of several, irregular or assumed spacing) |
-| `study info` | `workspace` | the same, plus annotation and segment counts with pending reviews |
+| `study scan` | `paths` | series: pseudonymised id, format, modality, dims, description; one entry per volume of a multi-volume series, with `group` (its series) and `volume` (`number`, `count`, `label`, `complete`, `b_value`, `echo_time_ms`, `echo_number`, `temporal_position`, `frame_time_s`) |
+| `study open` | `workspace`, `path`, `series?` (a series or volume id; another volume of the workspace's series switches to it, keeping segments and annotations), `modality?` (for NIfTI, e.g. `CT`) | dims, spacing, LPS origin and direction, value unit, slice counts, window presets; `warnings` when the series could not be shown as stored (one volume of several, irregular or assumed spacing) |
+| `study info` | `workspace` | the same, plus annotation and segment counts with pending reviews; `volume` and `volumes` of a multi-volume series (value provenance names the `volume`) |
 
 ## Looking
 | Command | Key parameters | Returns |

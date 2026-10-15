@@ -335,17 +335,17 @@ pub fn command_schema(command: &str) -> Option<(&'static str, Value)> {
     };
     Some(match command {
         "study scan" => (
-            "Lists the series in files and folders: pseudonymised id, format, modality, size, description.",
+            "Lists the series in files and folders: pseudonymised id, format, modality, size, description. A series with several volumes (echoes, b-values, phases, PET frames) gives one entry per volume, with volume (number, label, keys) and its series as group.",
             obj(json!({ "paths": { "type": "array", "items": text("a DICOM folder or file, or a NIfTI file"), "minItems": 1 } }), &["paths"]),
         ),
         "study open" => (
-            "Opens a series into a workspace (created if needed; the source files are hashed) and describes it. NIfTI files carry no modality: give modality (e.g. CT) so values are taken as Hounsfield units.",
+            "Opens a series into a workspace (created if needed; the source files are hashed) and describes it. Another volume of the series open in the workspace switches to it, keeping segments and annotations. NIfTI files carry no modality: give modality (e.g. CT) so values are taken as Hounsfield units.",
             obj(
-                json!({ "workspace": workspace(), "path": text("DICOM folder or NIfTI file"), "series": text("series from study scan, when the source holds several"), "modality": text("modality of a source that carries none (NIfTI), e.g. CT; saved in the workspace") }),
+                json!({ "workspace": workspace(), "path": text("DICOM folder or NIfTI file"), "series": text("series or volume from study scan, when the source holds several; a series with several volumes opens volume 1"), "modality": text("modality of a source that carries none (NIfTI), e.g. CT; saved in the workspace") }),
                 &["workspace", "path"],
             ),
         ),
-        "study info" => ("Describes the open study: size, spacing, patient geometry, value unit, window presets, annotation and segment counts.", ws_only()),
+        "study info" => ("Describes the open study: size, spacing, patient geometry, value unit, window presets, annotation and segment counts, and the open volume and all volumes of a multi-volume series.", ws_only()),
         "view slice" => view_slice(),
         "view montage" => views().0,
         "view mpr" => views().1,

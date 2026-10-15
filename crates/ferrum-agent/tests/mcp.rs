@@ -166,3 +166,24 @@ fn cached_series_are_never_stale() {
     assert_eq!(v["isError"], true);
     assert_eq!(v["structuredContent"]["error"]["code"], "source_changed");
 }
+
+#[test]
+fn switching_volumes_is_not_served_from_the_cache() {
+    // covers 20.3-c, 20.3-e
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("p.nii");
+    phantom_4d(&src, 400.0);
+    let ws = dir.path().join("ws").to_string_lossy().into_owned();
+    let mut server = McpServer::new(Agent::default());
+    let scan = call(&mut server, 1, "study scan", &json!({ "paths": [src] }));
+    let second = scan["structuredContent"]["data"]["series"][1]["series"].clone();
+    let probe = json!({ "workspace": ws, "point": { "voxel": [20, 0, 0] } });
+    call(&mut server, 2, "study open", &json!({ "workspace": ws, "path": src }));
+    let v = call(&mut server, 3, "probe", &probe);
+    assert_eq!(v["structuredContent"]["provenance"]["volume"]["label"], "volume 1/2");
+    call(&mut server, 4, "study open", &json!({ "workspace": ws, "path": src, "series": second }));
+    let v = call(&mut server, 5, "probe", &probe);
+    assert_eq!(v["structuredContent"]["provenance"]["volume"]["label"], "volume 2/2");
+    let direct = Agent::default().run("probe", &probe);
+    assert_eq!(comparable(&direct, &ws), comparable(&v["structuredContent"], &ws), "CLI and MCP agree");
+}
