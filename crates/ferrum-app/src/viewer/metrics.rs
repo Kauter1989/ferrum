@@ -31,6 +31,8 @@ pub struct MetricsView<'a> {
     pub outcome: &'a MetricsOutcome,
     /// The image or the segment changed since the request.
     pub stale: bool,
+    /// The volume of a multi-volume series the values come from.
+    pub volume: Option<&'a str>,
 }
 
 /// Metrics and modality state of the viewer.
@@ -47,6 +49,8 @@ pub struct MetricsState {
     params: Params,
     /// Requests made so far.
     serial: u64,
+    /// The volume the latest request measures (multi-volume series).
+    volume: Option<String>,
 }
 
 fn unit_message(unit: &ValueUnit) -> String {
@@ -183,6 +187,7 @@ impl Viewer {
             profile: profile.name,
             serial: self.metrics.serial,
         };
+        self.metrics.volume = self.current_volume_label();
         let unit = self.value_unit();
         if profile.needs_unit() && !unit.is_known() {
             self.metrics.entry = Some((request, MetricsOutcome::Failed(unit_message(&unit))));
@@ -199,7 +204,7 @@ impl Viewer {
         let d = self.dataset.as_ref()?;
         let revision = self.segments.set.as_ref().map_or(0, SegmentationSet::revision);
         let stale = request.dataset_revision != d.revision || request.segments_revision != revision;
-        Some(MetricsView { outcome, stale })
+        Some(MetricsView { outcome, stale, volume: self.metrics.volume.as_deref() })
     }
 
     /// Stores a finished job if it is the one that was asked for last.

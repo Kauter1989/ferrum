@@ -112,9 +112,12 @@ fn card_body(ui: &mut egui::Ui, viewer: &mut Viewer, label: u8, name: &str, stat
     };
     let stale = view.stale;
     let outcome = view.outcome.clone();
+    if let Some(volume) = view.volume {
+        ui.label(RichText::new(format!("Volume: {volume}")).size(12.0).color(TEXT_DIM));
+    }
     if stale {
         ui.label(
-            RichText::new("Out of date: the segment or the image changed after this was measured.")
+            RichText::new("Out of date: the segment, the image or the volume shown changed after this was measured.")
                 .size(12.0)
                 .color(WARN),
         );

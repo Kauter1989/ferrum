@@ -67,6 +67,35 @@ pub struct MetricsRequest {
     pub serial: u64,
 }
 
+/// A loaded series and its volumes.
+#[derive(Debug)]
+pub struct LoadedStudy {
+    /// The series as scanned.
+    pub series: SeriesDescriptor,
+    /// Its volumes, when it holds several (empty otherwise).
+    pub volumes: Vec<SeriesDescriptor>,
+    /// Which of `volumes` was loaded.
+    pub index: usize,
+    /// The voxels and metadata.
+    pub loaded: LoadedSeries,
+}
+
+/// Lists the volumes of `series` and loads the wanted one, else the first.
+fn load_study(
+    repo: &dyn VolumeRepository,
+    series: &SeriesDescriptor,
+    wanted: Option<&str>,
+    p: &dyn ProgressSink,
+) -> Result<Box<LoadedStudy>, RepositoryError> {
+    let mut volumes = repo.volumes(series, p)?;
+    if volumes.len() <= 1 {
+        volumes.clear();
+    }
+    let index = wanted.and_then(|id| volumes.iter().position(|v| v.id == id)).unwrap_or(0);
+    let loaded = repo.load(volumes.get(index).unwrap_or(series), p)?;
+    Ok(Box::new(LoadedStudy { series: series.clone(), volumes, index, loaded }))
+}
+
 /// Events emitted by jobs.
 #[derive(Debug)]
 pub enum JobEvent {
@@ -79,8 +108,15 @@ pub enum JobEvent {
     },
     /// Result of scanning paths.
     Scanned(Result<Vec<SeriesDescriptor>, RepositoryError>),
-    /// Result of loading a series.
-    Loaded(Result<Box<LoadedSeries>, RepositoryError>),
+    /// Result of loading a series (its first or chosen volume).
+    Loaded(Result<Box<LoadedStudy>, RepositoryError>),
+    /// Result of loading another volume of the open series.
+    VolumeLoaded {
+        /// Id of the volume's descriptor.
+        id: String,
+        /// The volume, or why it could not be read.
+        result: Result<Box<LoadedSeries>, RepositoryError>,
+    },
     /// Ambient occlusion computed for `threshold` on dataset `revision`.
     AmbientOcclusion {
         /// Dataset revision the AO belongs to.
@@ -183,9 +219,18 @@ impl JobQueue {
         self.spawn_io(move |p| JobEvent::Scanned(repo.scan(&paths, p)));
     }
 
-    /// Loads a series.
-    pub fn load(&mut self, repo: Arc<dyn VolumeRepository>, series: SeriesDescriptor) {
-        self.spawn_io(move |p| JobEvent::Loaded(repo.load(&series, p).map(Box::new)));
+    /// Loads a series: the volume `wanted` (an id) when the series holds
+    /// several and one is named, else its first volume.
+    pub fn load(&mut self, repo: Arc<dyn VolumeRepository>, series: SeriesDescriptor, wanted: Option<String>) {
+        self.spawn_io(move |p| JobEvent::Loaded(load_study(repo.as_ref(), &series, wanted.as_deref(), p)));
+    }
+
+    /// Loads one volume of the open series.
+    pub fn load_volume(&mut self, repo: Arc<dyn VolumeRepository>, volume: SeriesDescriptor) {
+        self.spawn_io(move |p| JobEvent::VolumeLoaded {
+            id: volume.id.clone(),
+            result: repo.load(&volume, p).map(Box::new),
+        });
     }
 
     /// Computes ambient occlusion.
@@ -261,7 +306,9 @@ impl JobQueue {
 
     fn account(&mut self, e: &JobEvent) {
         match e {
-            JobEvent::Scanned(_) | JobEvent::Loaded(_) => self.running_io = self.running_io.saturating_sub(1),
+            JobEvent::Scanned(_) | JobEvent::Loaded(_) | JobEvent::VolumeLoaded { .. } => {
+                self.running_io = self.running_io.saturating_sub(1)
+            }
             JobEvent::AmbientOcclusion { .. }
             | JobEvent::Filtered { .. }
             | JobEvent::Region { .. }

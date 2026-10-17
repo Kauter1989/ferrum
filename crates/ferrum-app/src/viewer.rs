@@ -22,12 +22,14 @@ mod ai;
 mod metrics;
 mod review;
 mod segments;
+mod volumes;
 mod workflow;
 
 pub use ai::{AiState, AiStatus};
 pub use metrics::{MetricsOutcome, MetricsState, MetricsView};
 pub use review::ReviewEntry;
 pub use segments::{RegionSettings, SegmentSummary, SegmentationState};
+pub use volumes::{VolumeEntry, VOLUME_CACHE_BYTES};
 pub use workflow::SegmentationStep;
 
 /// Layout of the main area.
@@ -253,6 +255,13 @@ pub struct Viewer {
     pending_workspace: Option<Arc<dyn ferrum_domain::ResultStore>>,
     /// The load warnings of the dataset have not been dismissed yet.
     load_warnings_unseen: bool,
+    /// The open series when it holds several volumes.
+    series: Option<volumes::OpenSeries>,
+    /// Volumes of the open series loaded before.
+    volume_cache: volumes::VolumeCache,
+    /// The window the viewer chose itself; while it is shown, a volume
+    /// switch replaces it with the new volume's.
+    window_followed: Option<WindowLevel>,
 }
 
 impl Viewer {
@@ -279,6 +288,9 @@ impl Viewer {
             workspace: None,
             pending_workspace: None,
             load_warnings_unseen: false,
+            series: None,
+            volume_cache: volumes::VolumeCache::default(),
+            window_followed: None,
         }
     }
 
@@ -324,7 +336,8 @@ impl Viewer {
         self.status.message = format!("Loading {}…", series.description);
         self.status.progress = Some(0.0);
         self.series_choice = None;
-        self.jobs.load(self.repo.clone(), series);
+        let wanted = self.pending_workspace.as_ref().and_then(|w| w.volume());
+        self.jobs.load(self.repo.clone(), series, wanted);
     }
 
     /// Cancels a running scan/load.
@@ -355,6 +368,8 @@ impl Viewer {
             window: window.unwrap_or_else(|| Self::auto_window_for(&dataset)),
             ..SliceState::default()
         };
+        self.follow_window(self.slices.window);
+        self.series = None;
         let settings = self.volume.settings;
         self.volume =
             VolumeViewState { settings, tf_revision: self.volume.tf_revision + 1, ..VolumeViewState::default() };
@@ -427,9 +442,16 @@ impl Viewer {
                     self.series_choice = Some(series);
                 }
             }
-            JobEvent::Loaded(Ok(loaded)) => {
+            JobEvent::Loaded(Ok(study)) => {
                 self.status.progress = None;
-                self.install(*loaded);
+                self.install_study(*study);
+            }
+            JobEvent::VolumeLoaded { id, result: Ok(loaded) } => self.finish_volume(&id, *loaded),
+            JobEvent::VolumeLoaded { result: Err(e), .. } => {
+                self.status.progress = None;
+                self.fail_volume();
+                self.status.message = format!("The volume could not be loaded: {e}");
+                self.status.errors.push(e.to_string());
             }
             JobEvent::Scanned(Err(e)) | JobEvent::Loaded(Err(e)) => {
                 self.status.progress = None;
@@ -507,6 +529,7 @@ impl Viewer {
     pub fn auto_window(&mut self) {
         if let Some(d) = &self.dataset {
             self.slices.window = Self::auto_window_for(d);
+            self.window_followed = Some(self.slices.window);
         }
     }
 

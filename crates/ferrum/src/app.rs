@@ -659,7 +659,9 @@ impl ViewerApp {
                 for w in self.viewer.load_warnings() {
                     ui.colored_label(theme::WARN, format!("{} {w}", icon::WARNING));
                 }
-                ui.label(RichText::new("Shown again under Info → Series information.").size(12.0).color(TEXT_DIM));
+                ui.label(
+                    RichText::new("Shown again under Info, in the series information.").size(12.0).color(TEXT_DIM),
+                );
                 dismiss = ui.button("OK").clicked();
             });
         if dismiss {

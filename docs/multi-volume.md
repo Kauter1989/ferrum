@@ -160,11 +160,11 @@ decodes only the chosen volume (offset `k × voxels`).
 | [20.4-b] | `dicom_integration.rs`: dynamic PET with Frame Reference Time (planned) | test |
 | [20.4-c] | `nifti.rs`: 4D with `.bval` and PET `.json` sidecars (planned) | test |
 | [20.4-d] | `dicom_integration.rs`: a volume's load decodes only its files (planned) | test |
-| [20.2-a] | `use_cases.rs` volumes and labels; `ui.rs` Volume row (planned) | test, manual |
-| [20.2-b] | `use_cases.rs::switching_keeps_the_view` (planned); field: switch time on dynamic PET | test, field |
-| [20.2-c] | `use_cases.rs` metrics out of date and named volume (planned) | test |
-| [20.2-d] | `ui.rs` grouped picker (planned) | test |
-| [20.2-e] | `use_cases.rs` incomplete volume disabled (planned) | test |
+| [20.2-a] | `crates/ferrum-app/tests/volumes.rs` (volumes and labels, a workspace's volume); `ui.rs::the_volume_row_switches_volumes` (4D NIfTI with `.bval`) | test, visual |
+| [20.2-b] | `volumes.rs::switching_keeps_the_view`, `the_cache_keeps_volumes_within_its_budget`; `viewer/volumes.rs` LRU unit test; `workspace.rs::workspace_store_keeps_the_volume_shown`; field: switch time on dynamic PET (user's machine) | test, field |
+| [20.2-c] | `volumes.rs::metrics_of_another_volume_are_out_of_date_and_named` | test |
+| [20.2-d] | `volumes.rs::a_multi_volume_series_opens_volume_1_and_lists_every_volume` (no picker: `scan` returns series, not volumes) | test |
+| [20.2-e] | `volumes.rs::a_volume_missing_slices_is_listed_but_disabled` | test |
 | [20.3-a…e] | `crates/ferrum-agent/tests/volumes.rs` (scan, open, switch, info, provenance), `mcp.rs::switching_volumes_is_not_served_from_the_cache`, `privacy.rs::volume_ids_and_labels_contain_no_identifiers` | test |
 | [20.3-f] | `workspace.rs` v1 and v2 manifests; `volumes.rs::a_version_1_workspace_opens_as_volume_1` | test |
 | all | repacked DWI and dynamic PET (W8), desktop screenshots | field, visual |

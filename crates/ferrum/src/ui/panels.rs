@@ -1,7 +1,8 @@
 //! Right-hand settings panel. Its tabs follow the view mode, so only
 //! settings that affect what is on screen are offered:
 //!
-//! - **Image** (2D, MPR): window, slices, annotations (2D) and
+//! - **Image** (2D, MPR): the volume of a multi-volume series, window,
+//!   slices, annotations (2D) and
 //!   segmentation — the guide, the region tool, the AI engine and the
 //!   segment list;
 //! - **Volume** (3D, MPR): technique, transfer function, clipping, the
@@ -119,6 +120,7 @@ fn image_settings(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelState
     let Some(volume) = viewer.dataset().map(|d| d.volume.clone()) else {
         return;
     };
+    volume_row(ui, viewer);
     section_title(ui, icon::CIRCLE_HALF, "Window level");
     ui.horizontal_wrapped(|ui| {
         if chip(ui, &format!("{} Auto", icon::SPARKLE), false).clicked() {
@@ -443,6 +445,63 @@ fn eraser(ui: &mut egui::Ui, viewer: &mut Viewer) {
     });
 }
 
+/// The volume of a multi-volume series: a list by name and ‹ › to step;
+/// a volume that cannot be shown is disabled with the reason.
+fn volume_row(ui: &mut egui::Ui, viewer: &mut Viewer) {
+    let entries = viewer.volumes();
+    let Some(current) = entries.iter().position(|e| e.current) else {
+        return;
+    };
+    section_title(ui, icon::STACK_SIMPLE, &format!("Volume ({} of {})", current + 1, entries.len()));
+    let mut chosen = None;
+    let mut step = 0;
+    ui.add_enabled_ui(!viewer.is_switching_volume(), |ui| {
+        ui.horizontal(|ui| {
+            if named(ui.button(icon::CARET_LEFT), "Previous volume").on_hover_text("Previous volume").clicked() {
+                step = -1;
+            }
+            egui::ComboBox::from_id_salt("volume")
+                .selected_text(entries[current].label.as_str())
+                .width(ui.available_width() - 32.0)
+                .show_ui(ui, |ui| {
+                    for (i, e) in entries.iter().enumerate() {
+                        let item = ui.add_enabled(e.disabled.is_none(), egui::Button::selectable(e.current, &e.label));
+                        let item = match &e.disabled {
+                            Some(why) => item.on_disabled_hover_text(format!("Cannot be shown: it {why}")),
+                            None => item,
+                        };
+                        if item.clicked() {
+                            chosen = Some(i);
+                        }
+                    }
+                });
+            if named(ui.button(icon::CARET_RIGHT), "Next volume").on_hover_text("Next volume").clicked() {
+                step = 1;
+            }
+        });
+    });
+    if viewer.is_switching_volume() {
+        ui.horizontal(|ui| {
+            ui.spinner();
+            ui.label(RichText::new("Loading the volume…").color(TEXT_DIM));
+        });
+    }
+    let result = match (chosen, step) {
+        (Some(i), _) => viewer.switch_volume(i),
+        (None, 0) => Ok(()),
+        (None, d) => viewer.step_volume(d),
+    };
+    if let Err(e) = result {
+        viewer.status.errors.push(e);
+    }
+}
+
+/// An icon button that screen readers (and the UI tests) know by `name`.
+fn named(button: egui::Response, name: &str) -> egui::Response {
+    button.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, name));
+    button
+}
+
 fn details(ui: &mut egui::Ui, viewer: &Viewer) {
     let Some(d) = viewer.dataset() else {
         return;
@@ -454,13 +513,14 @@ fn details(ui: &mut egui::Ui, viewer: &Viewer) {
     let v = &d.volume;
     let dims = v.dims();
     let sp = v.spacing();
+    let volume = viewer.current_volume_label().map(|l| ("Volume".to_string(), l));
     let rows = [
         ("Dimensions".to_string(), format!("{} × {} × {}", dims.x, dims.y, dims.z)),
         ("Spacing".to_string(), format!("{:.3} × {:.3} × {:.3} mm", sp.x, sp.y, sp.z)),
         ("Intensity range".to_string(), format!("{:.1} … {:.1}", v.range().min, v.range().max)),
     ];
     egui::Grid::new("details").num_columns(2).spacing([12.0, 6.0]).striped(false).show(ui, |ui| {
-        for (k, val) in rows.iter().chain(d.metadata.attributes.iter()) {
+        for (k, val) in volume.iter().chain(rows.iter()).chain(d.metadata.attributes.iter()) {
             ui.label(RichText::new(k).color(TEXT_DIM));
             ui.add(egui::Label::new(RichText::new(val).color(TEXT)).wrap());
             ui.end_row();
