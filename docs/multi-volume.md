@@ -165,8 +165,8 @@ decodes only the chosen volume (offset `k × voxels`).
 | [20.2-c] | `use_cases.rs` metrics out of date and named volume (planned) | test |
 | [20.2-d] | `ui.rs` grouped picker (planned) | test |
 | [20.2-e] | `use_cases.rs` incomplete volume disabled (planned) | test |
-| [20.3-a…e] | contract tests in `crates/ferrum-agent/tests` (scan, open, switch, info, provenance), `mcp.rs`, `privacy.rs` (planned) | test |
-| [20.3-f] | `workspace.rs` v1 and v2 manifests (planned) | test |
+| [20.3-a…e] | `crates/ferrum-agent/tests/volumes.rs` (scan, open, switch, info, provenance), `mcp.rs::switching_volumes_is_not_served_from_the_cache`, `privacy.rs::volume_ids_and_labels_contain_no_identifiers` | test |
+| [20.3-f] | `workspace.rs` v1 and v2 manifests; `volumes.rs::a_version_1_workspace_opens_as_volume_1` | test |
 | all | repacked DWI and dynamic PET (W8), desktop screenshots | field, visual |
 
 ## 7. Size and PR split

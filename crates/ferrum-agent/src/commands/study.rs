@@ -2,14 +2,14 @@
 
 use std::path::PathBuf;
 
-use ferrum_domain::{SeriesMetadata, SliceAxis, WindowPreset};
+use ferrum_domain::{SeriesDescriptor, SeriesMetadata, SliceAxis, VolumeInfo, WindowPreset};
 use serde_json::{json, Value};
 
 use super::Ctx;
 use crate::config::AgentConfig;
 use crate::envelope::{AgentError, Output};
 use crate::params::Params;
-use crate::study::{scan as scan_series, series_key, Study};
+use crate::study::{scan as scan_series, series_key, volumes_of, Study};
 
 /// `study scan`: lists the series in files and folders (no identifiers).
 pub fn scan(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
@@ -21,20 +21,75 @@ pub fn scan(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
             ctx.config.check_source(std::path::Path::new(s))
         })
         .collect::<Result<Vec<PathBuf>, _>>()?;
-    let series: Vec<Value> = scan_series(&paths)?
+    let mut series = Vec::new();
+    for group in scan_series(&paths)? {
+        let volumes = volumes_of(&group)?;
+        if volumes.is_empty() {
+            series.push(scan_entry(ctx.config, &group));
+        }
+        for v in &volumes {
+            let mut entry = scan_entry(ctx.config, v);
+            entry["group"] = json!(series_key(ctx.config, &group.id));
+            series.push(entry);
+        }
+    }
+    Ok(Output::new(json!({ "series": series })))
+}
+
+/// One entry of `study scan`: a series, or a volume of one.
+fn scan_entry(config: &AgentConfig, s: &SeriesDescriptor) -> Value {
+    let mut entry = json!({
+        "series": series_key(config, &s.id),
+        "format": s.format,
+        "modality": s.modality,
+        "dims": [s.dims.x, s.dims.y, s.dims.z],
+        "description": s.description,
+        "files": s.sources.len(),
+    });
+    if let Some(v) = &s.volume {
+        entry["volume"] = volume_json(v);
+    }
+    entry
+}
+
+/// A volume of a multi-volume series: its number (from 1), label and keys.
+fn volume_json(v: &VolumeInfo) -> Value {
+    let mut out = json!({ "number": v.index + 1, "count": v.count, "label": v.label, "complete": v.complete });
+    let keys = [
+        ("b_value", v.b_value.map(|x| json!(x))),
+        ("echo_time_ms", v.echo_time_ms.map(|x| json!(x))),
+        ("echo_number", v.echo_number.map(|x| json!(x))),
+        ("temporal_position", v.temporal_position.map(|x| json!(x))),
+        ("frame_time_s", v.frame_time_s.map(|x| json!(x))),
+    ];
+    for (k, x) in keys {
+        if let Some(x) = x {
+            out[k] = x;
+        }
+    }
+    out
+}
+
+/// The open volume and every volume of its series (`None` for a
+/// single-volume series), as `study open` and `study info` report them.
+fn volumes_json(config: &AgentConfig, study: &Study) -> Option<(Value, Value)> {
+    let open = study.open_volume.as_ref()?;
+    let mut current = open.volume.as_ref().map_or(json!({}), volume_json);
+    current["series"] = json!(series_key(config, &open.id));
+    let all: Vec<Value> = study
+        .volumes
         .iter()
-        .map(|s| {
-            json!({
-                "series": series_key(ctx.config, &s.id),
-                "format": s.format,
-                "modality": s.modality,
-                "dims": [s.dims.x, s.dims.y, s.dims.z],
-                "description": s.description,
-                "files": s.sources.len(),
-            })
+        .filter_map(|d| {
+            let v = d.volume.as_ref()?;
+            Some(json!({
+                "series": series_key(config, &d.id),
+                "number": v.index + 1,
+                "label": v.label,
+                "complete": v.complete,
+            }))
         })
         .collect();
-    Ok(Output::new(json!({ "series": series })))
+    Some((current, json!(all)))
 }
 
 /// `study open`: loads a series into a workspace (created if needed).
@@ -45,7 +100,10 @@ pub fn open(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     if let Some(m) = p.str("modality")? {
         study.declare_modality(m)?;
     }
-    let out = describe(ctx.config, &study);
+    let mut out = describe(ctx.config, &study);
+    for n in &study.notes {
+        out = out.warn(n.clone());
+    }
     ctx.study = Some(study);
     Ok(out)
 }
@@ -96,7 +154,14 @@ pub(super) fn describe(config: &AgentConfig, study: &Study) -> Output {
         "source_sha256": study.source_sha256,
     });
     data["study"] = study_ids(config, m);
+    if let Some((current, all)) = volumes_json(config, study) {
+        data["volume"] = current;
+        data["volumes"] = all;
+    }
     let mut out = Output::new(data);
+    if let Some(i) = study.open_volume.as_ref().and_then(|v| v.volume.as_ref()) {
+        out = out.warn(format!("volume {} of {} is shown ({})", i.index + 1, i.count, i.label));
+    }
     for w in &m.warnings {
         out = out.warn(w.clone());
     }
