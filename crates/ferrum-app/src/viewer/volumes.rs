@@ -230,10 +230,14 @@ impl Viewer {
         open.current = index;
         let id = open.volumes[index].id.clone();
         let revision = self.bump_revision();
-        let d = Dataset { revision, ..d };
+        let mut d = Dataset { revision, ..d };
+        let old_revision = self.dataset.as_ref().map(|o| o.revision);
+        self.keep_image_type(old_revision, &mut d);
         // the window follows the volume unless the person chose one
         if self.window_followed == Some(self.slices.window) {
-            let window = d.metadata.default_window.unwrap_or_else(|| Self::auto_window_for(&d));
+            // the automatic window, not the stored one: a file often stores one window for all its
+            // volumes, chosen for the first (b = 0), and a b = 1500 volume would be black under it
+            let window = Self::auto_window_for(&d);
             self.slices.window = window;
             self.window_followed = Some(window);
         }

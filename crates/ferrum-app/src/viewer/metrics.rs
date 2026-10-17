@@ -128,6 +128,19 @@ impl Viewer {
         Ok(m)
     }
 
+    /// Another volume of the series replaces the image (revision
+    /// `old_revision`): it keeps the declared modality and a "Not now".
+    pub(super) fn keep_image_type(&mut self, old_revision: Option<u64>, d: &mut crate::dataset::Dataset) {
+        if d.metadata.modality.is_empty() {
+            if let Some(m) = &self.metrics.declared {
+                d.metadata.modality = m.clone();
+            }
+        }
+        if old_revision.is_some() && self.metrics.skipped_for == old_revision {
+            self.metrics.skipped_for = Some(d.revision);
+        }
+    }
+
     /// Takes the modality a workspace holds for an image that carries none.
     pub(super) fn adopt_workspace_modality(&mut self, store: &dyn ResultStore) {
         let Some(d) = self.dataset.as_mut().filter(|d| d.metadata.modality.is_empty()) else {

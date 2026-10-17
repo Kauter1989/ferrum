@@ -463,6 +463,8 @@ fn volume_row(ui: &mut egui::Ui, viewer: &mut Viewer) {
             egui::ComboBox::from_id_salt("volume")
                 .selected_text(entries[current].label.as_str())
                 .width(ui.available_width() - 32.0)
+                // a DWI series has 30 and more volumes: show most of them without scrolling
+                .height(480.0)
                 .show_ui(ui, |ui| {
                     for (i, e) in entries.iter().enumerate() {
                         let item = ui.add_enabled(e.disabled.is_none(), egui::Button::selectable(e.current, &e.label));

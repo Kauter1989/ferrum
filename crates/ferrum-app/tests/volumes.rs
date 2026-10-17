@@ -12,7 +12,7 @@ use ferrum_app::{ViewMode, Viewer};
 use ferrum_domain::{
     Annotation, AnnotationReport, AnnotationSet, Dims3, LoadedSeries, ProgressSink, RepositoryError, ResultStore,
     ReviewDecision, SegmentationSet, SeriesDescriptor, SeriesMetadata, SliceAxis, SliceKey, Volume, VolumeInfo,
-    VolumeRepository, VoxelBox, WindowPreset,
+    VolumeRepository, VoxelBox, WindowLevel, WindowPreset,
 };
 use ferrum_radiomics::QUICK;
 use glam::{UVec3, Vec2, Vec3};
@@ -23,6 +23,10 @@ const DIMS: Dims3 = Dims3 { x: 16, y: 16, z: 12 };
 /// volume that misses two slices.
 struct Dwi {
     loads: AtomicUsize,
+    /// What the files say the modality is (empty: NIfTI, says nothing).
+    modality: &'static str,
+    /// The window the files store, the same for every volume.
+    stored_window: Option<WindowLevel>,
 }
 
 fn descriptor(id: &str, dims: Dims3) -> SeriesDescriptor {
@@ -89,13 +93,18 @@ impl VolumeRepository for Dwi {
             "dwi#v=b2000" => 100.0,
             _ => return Err(RepositoryError::NothingFound),
         };
-        let metadata = SeriesMetadata { modality: "CT".into(), description: "DWI".into(), ..Default::default() };
+        let metadata = SeriesMetadata {
+            modality: self.modality.into(),
+            description: "DWI".into(),
+            default_window: self.stored_window,
+            ..Default::default()
+        };
         Ok(LoadedSeries { volume: cube(s.dims, value), metadata })
     }
 }
 
 fn open() -> (Viewer, Arc<Dwi>) {
-    let repo = Arc::new(Dwi { loads: AtomicUsize::new(0) });
+    let repo = Arc::new(Dwi { loads: AtomicUsize::new(0), modality: "CT", stored_window: None });
     let mut v = Viewer::new(repo.clone());
     v.open_paths(vec![PathBuf::from("/data/dwi")]);
     v.wait_idle();
@@ -284,7 +293,7 @@ impl ResultStore for Store {
 #[test]
 fn a_workspace_opens_on_its_volume_and_keeps_a_switch() {
     // covers 20.2-a, 20.2-b
-    let repo = Arc::new(Dwi { loads: AtomicUsize::new(0) });
+    let repo = Arc::new(Dwi { loads: AtomicUsize::new(0), modality: "CT", stored_window: None });
     let store = Arc::new(Store { volume: Mutex::new(Some("dwi#v=b1000".into())) });
     let mut v = Viewer::new(repo);
     v.open_workspace(store.clone()).unwrap();
@@ -294,4 +303,48 @@ fn a_workspace_opens_on_its_volume_and_keeps_a_switch() {
     v.switch_volume(0).unwrap();
     v.wait_idle();
     assert_eq!(store.volume().as_deref(), Some("dwi#v=b0"), "the workspace keeps the volume shown");
+}
+
+#[test]
+fn the_image_type_said_once_holds_for_every_volume() {
+    // covers 20.2-b (found in the field check on a 4D PET NIfTI: the question came back after each switch)
+    let open_nifti = || {
+        let mut v = Viewer::new(Arc::new(Dwi { loads: AtomicUsize::new(0), modality: "", stored_window: None }));
+        v.open_paths(vec![PathBuf::from("/data/pet.nii.gz")]);
+        v.wait_idle();
+        v
+    };
+    let mut v = open_nifti();
+    assert!(v.needs_modality());
+    v.declare_modality("PT").unwrap();
+    v.switch_volume(1).unwrap();
+    v.wait_idle();
+    assert!(!v.needs_modality(), "PET was said for the series, not for one volume");
+    assert_eq!(v.dataset().unwrap().metadata.modality, "PT");
+    v.switch_volume(0).unwrap();
+    assert_eq!(v.dataset().unwrap().metadata.modality, "PT", "also for a volume from the cache");
+
+    // "Not now" holds too
+    let mut v = open_nifti();
+    v.skip_modality_prompt();
+    v.switch_volume(1).unwrap();
+    v.wait_idle();
+    assert!(!v.needs_modality());
+}
+
+#[test]
+fn a_window_stored_for_the_series_does_not_hide_the_other_volumes() {
+    // covers 20.2-b (found in the field check on a Canon Enhanced DTI: b = 1500 was black under the b = 0 window)
+    let stored = WindowLevel::new(500.0, 1000.0);
+    let repo = Dwi { loads: AtomicUsize::new(0), modality: "MR", stored_window: Some(stored) };
+    let mut v = Viewer::new(Arc::new(repo));
+    v.open_paths(vec![PathBuf::from("/data/dwi")]);
+    v.wait_idle();
+    assert_eq!(v.slices.window, stored, "the file's window is used on opening");
+    v.switch_volume(1).unwrap();
+    v.wait_idle();
+    let d = v.dataset().unwrap();
+    let auto = WindowLevel::auto(d.volume.range(), d.histogram.counts());
+    assert_eq!(v.slices.window, auto, "the window follows the volume shown");
+    assert!(v.slices.window.center < 400.0, "b = 1000 (value 400) is not left dark: {:?}", v.slices.window);
 }
