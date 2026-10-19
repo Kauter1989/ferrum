@@ -76,3 +76,8 @@ Lines are additions plus deletions. "Outcome" records what the size cost:
 |---|---|---|---|---|---|---|---|
 | 2026-10-03 | #39 | not estimated | 6 998 / 75 | ≥ 1 | 0 red | 0 so far (L1 pre-dated it) | budget derived from this |
 | 2026-10-09 | #45 | not estimated (asked as a fix; grew through three field-test rounds) | 1 480 + / 44 − / 17 | 0 recorded in this session | 1 red (L19: pushed on a truncated preflight) | 0 so far (L18: the first design failed on real CT, found by the field test before the merge) | one feature, 11 commits: algorithm, field fixes, performance, background job; sized M it would have asked for the field test before the first push |
+| 2026-10-14 | #60 | M (fix, not sized in lines) | 637 / 10 | 0 | 0 red | 0 so far (its field check found L23, a pre-existing bug) | Enhanced per-frame geometry |
+| 2026-10-14 | #61 | S–M (fix) | 252 / 8 | 0 | 0 red | 0 so far | DICOM into LPS (L23) |
+| 2026-10-15 | #62 | M / ~950 + docs, 12 files | 1 257 / 20 | 0 | 0 red | 0 so far | grew by the real-data fixes (directions, trace, magnitude/phase) found before the merge |
+| 2026-10-17 | #63 | L / ~950, 16 files (2 contracts) | 739 / 17 | 1 (auto, mid-implementation) | 0 red | 0 so far | estimate high; the compaction came in a long session that also held #62's field work |
+| 2026-10-19 | #64 | M / ~750, 9 files | 968 / 16 | 0 | 0 red | 0 so far; 2 bugs found by the desktop field check before the merge (L24) | the field check on real files, not the fake repository, found them |
