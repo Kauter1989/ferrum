@@ -496,6 +496,21 @@ impl ResultStore for WorkspaceStore {
         w.set_modality(Some(&m)).map_err(|e| e.to_string())
     }
 
+    fn volume(&self) -> Option<String> {
+        // read from the manifest on disk, so a switch made by the agent meanwhile counts
+        Workspace::open(self.workspace.root()).ok().and_then(|w| w.manifest().source.volume.clone())
+    }
+
+    fn set_volume(&self, volume: &str) -> Result<(), String> {
+        let mut w = Workspace::open(self.workspace.root()).map_err(|e| e.to_string())?;
+        if w.manifest().source.volume.as_deref() == Some(volume) {
+            return Ok(());
+        }
+        w.set_volume(Some(volume)).map_err(|e| e.to_string())?;
+        let entry = json!({ "command": "volume", "source": "desktop", "params": { "volume": volume }, "ok": true });
+        w.append_audit(entry).map_err(|e| e.to_string())
+    }
+
     fn log(&self, d: &ReviewDecision) -> Result<(), String> {
         let (kind, id) = match d.item {
             ReviewItem::Annotation(id) => ("annotation", id),
@@ -613,6 +628,21 @@ mod tests {
         let text = std::fs::read_to_string(&path).unwrap().replace("\"version\": 1", "\"version\": 3");
         std::fs::write(&path, text).unwrap();
         assert!(matches!(Workspace::open(&f.root), Err(IoError::Invalid { .. })));
+    }
+
+    #[test]
+    fn workspace_store_keeps_the_volume_shown() {
+        // covers 20.2-b
+        let f = fixture();
+        Workspace::create(&f.root, &f.source, &f.series, "t").unwrap();
+        let store = WorkspaceStore::open(&f.root, "FERRUM test").unwrap();
+        assert_eq!(store.volume(), None);
+        store.set_volume("1.2.3#v=b1000").unwrap();
+        store.set_volume("1.2.3#v=b1000").unwrap();
+        assert_eq!(store.volume().as_deref(), Some("1.2.3#v=b1000"));
+        assert_eq!(Workspace::open(&f.root).unwrap().manifest().source.volume.as_deref(), Some("1.2.3#v=b1000"));
+        let audit = std::fs::read_to_string(f.root.join(files::AUDIT)).unwrap();
+        assert_eq!(audit.lines().filter(|l| l.contains("\"command\":\"volume\"")).count(), 1, "one entry per switch");
     }
 
     #[test]

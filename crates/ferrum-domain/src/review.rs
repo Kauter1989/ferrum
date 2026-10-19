@@ -67,4 +67,16 @@ pub trait ResultStore: Send + Sync {
     fn set_modality(&self, _modality: &str) -> Result<(), String> {
         Err("this store cannot keep a modality".into())
     }
+
+    /// The open volume of a multi-volume series (the id of its
+    /// descriptor); `None` for a single-volume series, or volume 1.
+    fn volume(&self) -> Option<String> {
+        None
+    }
+
+    /// Keeps the open volume of the series; a store that cannot keep it
+    /// ignores it (the study then reopens on volume 1).
+    fn set_volume(&self, _volume: &str) -> Result<(), String> {
+        Ok(())
+    }
 }

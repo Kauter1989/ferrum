@@ -31,6 +31,8 @@ pub struct MetricsView<'a> {
     pub outcome: &'a MetricsOutcome,
     /// The image or the segment changed since the request.
     pub stale: bool,
+    /// The volume of a multi-volume series the values come from.
+    pub volume: Option<&'a str>,
 }
 
 /// Metrics and modality state of the viewer.
@@ -47,6 +49,8 @@ pub struct MetricsState {
     params: Params,
     /// Requests made so far.
     serial: u64,
+    /// The volume the latest request measures (multi-volume series).
+    volume: Option<String>,
 }
 
 fn unit_message(unit: &ValueUnit) -> String {
@@ -124,6 +128,19 @@ impl Viewer {
         Ok(m)
     }
 
+    /// Another volume of the series replaces the image (revision
+    /// `old_revision`): it keeps the declared modality and a "Not now".
+    pub(super) fn keep_image_type(&mut self, old_revision: Option<u64>, d: &mut crate::dataset::Dataset) {
+        if d.metadata.modality.is_empty() {
+            if let Some(m) = &self.metrics.declared {
+                d.metadata.modality = m.clone();
+            }
+        }
+        if old_revision.is_some() && self.metrics.skipped_for == old_revision {
+            self.metrics.skipped_for = Some(d.revision);
+        }
+    }
+
     /// Takes the modality a workspace holds for an image that carries none.
     pub(super) fn adopt_workspace_modality(&mut self, store: &dyn ResultStore) {
         let Some(d) = self.dataset.as_mut().filter(|d| d.metadata.modality.is_empty()) else {
@@ -183,6 +200,7 @@ impl Viewer {
             profile: profile.name,
             serial: self.metrics.serial,
         };
+        self.metrics.volume = self.current_volume_label();
         let unit = self.value_unit();
         if profile.needs_unit() && !unit.is_known() {
             self.metrics.entry = Some((request, MetricsOutcome::Failed(unit_message(&unit))));
@@ -199,7 +217,7 @@ impl Viewer {
         let d = self.dataset.as_ref()?;
         let revision = self.segments.set.as_ref().map_or(0, SegmentationSet::revision);
         let stale = request.dataset_revision != d.revision || request.segments_revision != revision;
-        Some(MetricsView { outcome, stale })
+        Some(MetricsView { outcome, stale, volume: self.metrics.volume.as_deref() })
     }
 
     /// Stores a finished job if it is the one that was asked for last.

@@ -333,6 +333,24 @@ that says so instead of editing the old one.
   the field check repacks a real NIfTI as sagittal and coronal DICOM and
   requires the same MPR (W8).
 
+### L24 — The fake repository carried what real files lack (2026-10, field check of 20.2)
+
+- **Symptom:** The volume switch passed every use-case test, and the
+  field check on real files found two bugs at once. A 4D PET NIfTI asked
+  for its image type again after each switch (the new volume's metadata
+  had no modality, and the declaration lived on the old one). A Canon
+  Enhanced DTI went black at b = 1500, because the file stores one window
+  for all volumes, chosen for b = 0, and the switch used it. The fake
+  repository of the tests set `modality: "CT"` and no stored window, the
+  two things real MR and PET files differ in.
+- **Rule:** A fake repository for a use case varies what real sources
+  vary: no modality (NIfTI), a stored window shared by all volumes, and
+  values on different scales per volume. Run the use case on at least one
+  real file of each kind before the PR is called done.
+- **Guard:** `crates/ferrum-app/tests/volumes.rs::the_image_type_said_once_holds_for_every_volume`,
+  `a_window_stored_for_the_series_does_not_hide_the_other_volumes`; the
+  Stage 20 field check (`dcm_qa` sets, OpenNeuro PET) with screenshots.
+
 ## What worked
 
 ### W1 — Field test on the user's GPU with a throw-away script (2026-10, Stage 17)

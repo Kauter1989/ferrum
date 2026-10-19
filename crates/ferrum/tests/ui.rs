@@ -825,3 +825,65 @@ fn a_3d_file_opens_without_a_warning_window() {
     assert!(h.query_by_label("Loaded with warnings").is_none());
     assert!(h.state().viewer.load_warnings().is_empty());
 }
+
+/// The phantom as a 4D NIfTI of two volumes, the second at a third of the
+/// first's values, with a BIDS `.bval` naming them `b = 0` and `b = 1000`.
+fn dwi_file(dir: &Path) -> PathBuf {
+    let first = phantom_file(dir);
+    let (v, _) = ferrum_io::read_nifti(&first).unwrap();
+    let dims = v.dims();
+    let mut values = Vec::with_capacity(dims.voxel_count());
+    for k in 0..dims.z {
+        for j in 0..dims.y {
+            for i in 0..dims.x {
+                values.push((v.physical(i, j, k).unwrap() / 3.0).round());
+            }
+        }
+    }
+    values[0] = 1000.0; // the same range, so the same header and scaling
+    let second = dir.join("second.nii");
+    ferrum_io::write_nifti(&Volume::from_physical(dims, v.spacing(), &values).unwrap(), &second).unwrap();
+    let mut bytes = std::fs::read(&first).unwrap();
+    let other = std::fs::read(&second).unwrap();
+    assert_eq!(bytes[..352], other[..352], "same header");
+    bytes[40..42].copy_from_slice(&4i16.to_le_bytes());
+    bytes[48..50].copy_from_slice(&2i16.to_le_bytes());
+    bytes.extend_from_slice(&other[352..]);
+    let dwi = dir.join("dwi.nii");
+    std::fs::write(&dwi, bytes).unwrap();
+    std::fs::write(dir.join("dwi.bval"), "0 1000\n").unwrap();
+    dwi
+}
+
+#[test]
+fn the_volume_row_switches_volumes() {
+    // covers 20.2-a, 20.2-b
+    let dir = tempfile::tempdir().unwrap();
+    let repo = Arc::new(ferrum_io::CompositeRepository::default());
+    let mut app = ViewerApp::new(None, repo, vec![dwi_file(dir.path())]);
+    app.viewer.wait_idle();
+    app.viewer.declare_modality("CT").unwrap();
+    let value = |app: &ViewerApp| app.viewer.dataset().unwrap().volume.physical(24, 24, 20).unwrap();
+    assert_eq!(value(&app), 1000.0);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1200.0, 800.0))
+        .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
+    h.run();
+    h.get_by_label("Volume (1 of 2)");
+    h.get_by_label("Next volume").click();
+    h.step(); // the volume loads in the background: a spinner turns meanwhile
+    h.state_mut().viewer.wait_idle();
+    h.run();
+    assert_eq!(h.state().viewer.current_volume_label().as_deref(), Some("b = 1000"));
+    assert_eq!(value(h.state()), 333.0);
+    h.get_by_label("Volume (2 of 2)");
+
+    // the list names every volume
+    h.get_by_value("b = 1000").click();
+    h.run();
+    h.get_by_label("b = 0").click();
+    h.step();
+    h.state_mut().viewer.wait_idle();
+    assert_eq!(h.state().viewer.current_volume(), Some(0));
+    assert_eq!(value(h.state()), 1000.0);
+}
