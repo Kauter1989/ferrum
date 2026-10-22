@@ -27,3 +27,5 @@ delivery steps are in `ferrum-change`.
   commit (L17). Renaming the remote branch needs `git push origin
   --delete <old>` — ask the user if the push is refused.
 - Pushing a topic branch is fine; opening a PR is `ferrum-change` §7.
+- Hook J (`ferrum_hooks.py`) blocks creating, renaming to or pushing a
+  name outside this convention.

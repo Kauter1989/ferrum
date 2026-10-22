@@ -128,14 +128,33 @@ judgement.
 | D | merging a PR, the release workflow, pushing tags | asks the user |
 | E | a push that fails `cargo fmt --check` or has a stale `commands.json` | blocked |
 | E | a push after a slice/overlay rendering change without a fresh `phantom_render.py` pass | blocked (L1) |
+| E | a push with changed Python files that fail `ruff check` or `ruff format --check` (`ruff.toml`) | blocked |
 | F | an edited `.rs` file | `rustfmt` |
+| F | an edited `.py` file | `ruff format` and safe fixes; the remaining findings come back as context |
 | G | an edited file in the change matrix | a reminder of what else must change |
 | H | session start | fresh `origin/develop`, branch status, lesson titles, environment |
 | I | context compaction | logged to `.claude/state/compactions.log` for `ferrum-size` |
+| J | creating, renaming or pushing a branch whose name breaks skill `new-branch` (e.g. `claude/…`) | blocked |
 
 `FERRUM_SKIP_PREPUSH=1 git push …` skips only E, and only in an
 emergency. Run `python3 .claude/hooks/test_hooks.py` after changing a
-hook.
+hook (CI runs it in the job `python-lint`).
+
+### Review agents
+
+Two read-only subagents in `.claude/agents/` review a branch before it
+is pushed for a PR (`ferrum-change` §6):
+- `code-reviewer`: correctness, layering, the rendering rule, matrix
+  follow-ups, tests that can fail, the quality budget. Run it on every
+  PR.
+- `security-reviewer`: crafted files, paths outside configured roots,
+  identifier leaks, engines and bridges, MCP inputs, dependencies. Run
+  it when a change touches readers, `ferrum-agent`/`ferrum-cli`, the MCP
+  server, engines, bridges, workspaces, exports, configuration or
+  dependencies.
+
+Fix their blocking findings before the push, or answer them in the PR
+body.
 
 ## Conventions
 
