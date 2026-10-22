@@ -159,9 +159,17 @@ def visual_hash(root: str) -> str:
 
 
 # ------------------------------------------------------------------ bash parsing
+HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1[^\n]*\n.*?^\s*\2\s*$", re.S | re.M)
+
+
+def without_heredocs(command: str) -> str:
+    """The command with here-document bodies removed: their lines are data, not commands."""
+    return HEREDOC.sub(lambda m: m.group(0).split("\n", 1)[0].split("<<", 1)[0], command)
+
+
 def segments(command: str):
     """Shell command split into simple commands (tokens), roughly."""
-    for part in re.split(r"&&|\|\||;|\n|\|", command):
+    for part in re.split(r"&&|\|\||;|\n|\|", without_heredocs(command)):
         try:
             toks = shlex.split(part, comments=True)
         except ValueError:

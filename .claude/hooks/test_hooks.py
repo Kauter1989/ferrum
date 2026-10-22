@@ -272,6 +272,17 @@ class BranchNames(unittest.TestCase):  # J
             self.assertIsNone(self.r.bash(cmd), cmd)
         self.assertEqual(decision(self.r.bash("git checkout -b claude/y 2>&1")), "deny")
 
+    def test_heredoc_bodies_are_data(self):
+        cmd = (
+            "cat > SKILL.md <<'EOF'\n"
+            "  git switch -c <type>/<description> origin/develop\n"
+            "  git push origin develop\n"
+            "EOF\n"
+            "git checkout -b feat/y origin/develop"
+        )
+        self.assertIsNone(self.r.bash(cmd))
+        self.assertEqual(decision(self.r.bash("cat <<EOF > x\nnote\nEOF\ngit checkout -b claude/y")), "deny")
+
     def test_pushing_a_harness_named_branch_is_denied(self):
         sh(self.r.path, "git", "checkout", "-q", "-b", "claude/session-x")
         self.assertEqual(decision(self.r.bash("FERRUM_SKIP_PREPUSH=1 git push")), "deny")
