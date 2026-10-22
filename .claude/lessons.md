@@ -375,6 +375,27 @@ that says so instead of editing the old one.
 - **Rule:** The source of truth for FERRUM's rules is `origin/develop`,
   never a session branch.
 
+### L26 — Hook J read heredoc bodies and redirections as git arguments (2026-10, review agents and hooks)
+
+- **Symptom:** On its first real use, the new branch-name hook J
+  blocked two harmless commands in this session:
+  - `git push … 2>&1 | tail`: `2>&1` was read as a branch name;
+  - writing a skill file through a heredoc: an example line inside it,
+    `git switch -c <type>/<description> origin/develop`, was parsed as a
+    command.
+- **Root cause:** `segments()` in `.claude/hooks/ferrum_hooks.py` split
+  the whole command text at newlines, including here-document bodies,
+  and kept redirection tokens as arguments. Hooks A and B had the same
+  blind spot, but it never mattered to them.
+- **Why it was missed:** Every hook test used a one-line command without
+  redirections or heredocs, unlike the commands sessions actually run.
+- **Fix:** `without_heredocs()` and `without_redirections()` run before
+  the command is split (#66).
+- **Guard:** `test_redirections_are_not_branch_names` and
+  `test_heredoc_bodies_are_data` in `.claude/hooks/test_hooks.py`.
+- **Rule:** Hook tests include the command shapes sessions actually
+  use: pipes, redirections, heredocs, `&&` chains, `git -C`.
+
 ## What worked
 
 ### W1 — Field test on the user's GPU with a throw-away script (2026-10, Stage 17)
