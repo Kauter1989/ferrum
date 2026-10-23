@@ -7,6 +7,7 @@ Builds throw-away git repositories (with a bare origin) in a temp dir.
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -20,8 +21,9 @@ def sh(cwd, *args):
 
 
 def run_hook(name, payload):
-    out = subprocess.run([sys.executable, HOOKS, name], input=json.dumps(payload),
-                         capture_output=True, text=True, timeout=120)
+    out = subprocess.run(
+        [sys.executable, HOOKS, name], input=json.dumps(payload), capture_output=True, text=True, timeout=120
+    )
     assert out.returncode == 0, out.stderr
     return json.loads(out.stdout)["hookSpecificOutput"] if out.stdout.strip() else None
 
@@ -83,8 +85,13 @@ class ProtectedBranches(unittest.TestCase):  # A
         self.assertIsNone(self.r.bash("git checkout -b feat/y origin/develop && git commit -m x"))
 
     def test_push_to_protected_refspecs_is_denied(self):
-        for cmd in ("git push origin develop", "git push origin HEAD:main", "git push origin +feat/x:refs/heads/develop",
-                    "git push --all origin", "cd . && git -C . push -u origin develop"):
+        for cmd in (
+            "git push origin develop",
+            "git push origin HEAD:main",
+            "git push origin +feat/x:refs/heads/develop",
+            "git push --all origin",
+            "cd . && git -C . push -u origin develop",
+        ):
             self.assertEqual(decision(self.r.bash(cmd)), "deny", cmd)
 
     def test_bare_push_from_develop_is_denied(self):
@@ -140,8 +147,9 @@ class AdrsAppendOnly(unittest.TestCase):  # C
         self.r.close()
 
     def edit(self, tool, **ti):
-        return run_hook("guard-edit", {"tool_name": tool, "tool_input": {"file_path": self.adr, **ti},
-                                       "cwd": self.r.path})
+        return run_hook(
+            "guard-edit", {"tool_name": tool, "tool_input": {"file_path": self.adr, **ti}, "cwd": self.r.path}
+        )
 
     def test_rewriting_a_merged_adr_is_denied(self):
         self.assertEqual(decision(self.edit("Edit", old_string="Decision.", new_string="Other.")), "deny")
@@ -152,20 +160,45 @@ class AdrsAppendOnly(unittest.TestCase):  # C
         self.assertIsNone(self.edit("Write", content="# ADR 1\n\nDecision.\n\n## Amendment\n"))
 
     def test_new_adr_passes(self):
-        out = run_hook("guard-edit", {"tool_name": "Write", "cwd": self.r.path, "tool_input": {
-            "file_path": os.path.join(self.r.path, "docs/decisions/0002-new.md"), "content": "x"}})
+        out = run_hook(
+            "guard-edit",
+            {
+                "tool_name": "Write",
+                "cwd": self.r.path,
+                "tool_input": {"file_path": os.path.join(self.r.path, "docs/decisions/0002-new.md"), "content": "x"},
+            },
+        )
         self.assertIsNone(out)
 
 
 class AskUser(unittest.TestCase):  # D
     def test_merge_and_release_ask(self):
-        self.assertEqual(decision(run_hook("ask-release", {"tool_name": "mcp__github__merge_pull_request",
-                                                           "tool_input": {"pullNumber": 41}})), "ask")
-        self.assertEqual(decision(run_hook("ask-release", {"tool_name": "mcp__github__actions_run_trigger",
-                                                           "tool_input": {"workflow_id": "release.yml",
-                                                                          "inputs": {"tag": "v0.4.0"}}})), "ask")
-        self.assertIsNone(run_hook("ask-release", {"tool_name": "mcp__github__actions_run_trigger",
-                                                   "tool_input": {"workflow_id": "ci.yml"}}))
+        self.assertEqual(
+            decision(
+                run_hook(
+                    "ask-release", {"tool_name": "mcp__github__merge_pull_request", "tool_input": {"pullNumber": 41}}
+                )
+            ),
+            "ask",
+        )
+        self.assertEqual(
+            decision(
+                run_hook(
+                    "ask-release",
+                    {
+                        "tool_name": "mcp__github__actions_run_trigger",
+                        "tool_input": {"workflow_id": "release.yml", "inputs": {"tag": "v0.4.0"}},
+                    },
+                )
+            ),
+            "ask",
+        )
+        self.assertIsNone(
+            run_hook(
+                "ask-release",
+                {"tool_name": "mcp__github__actions_run_trigger", "tool_input": {"workflow_id": "ci.yml"}},
+            )
+        )
 
     def test_pushing_tags_asks(self):
         r = Repo()
@@ -187,6 +220,7 @@ class VisualMarker(unittest.TestCase):  # E2
             self.assertIn("phantom_render.py", out["permissionDecisionReason"])
             sys.path.insert(0, os.path.dirname(HOOKS))
             import ferrum_hooks
+
             with open(os.path.join(ferrum_hooks.state_dir(r.path), "visual-check.json"), "w") as f:
                 json.dump({"hash": ferrum_hooks.visual_hash(r.path)}, f)
             self.assertIsNone(r.bash("git push -u origin feat/x"))
@@ -194,6 +228,98 @@ class VisualMarker(unittest.TestCase):  # E2
             self.assertEqual(decision(r.bash("git push -u origin feat/x")), "deny")
         finally:
             r.close()
+
+
+class BranchNames(unittest.TestCase):  # J
+    def setUp(self):
+        self.r = Repo()
+
+    def tearDown(self):
+        self.r.close()
+
+    def test_conventional_names_pass(self):
+        for cmd in (
+            "git checkout -b feat/robust-region-growing origin/develop",
+            "git switch -c fix/42-slice-scroll-off-by-one origin/develop",
+            "git branch docs/development-plan",
+            "git branch -m chore/release-0.4.0",
+            "git switch -c release/0.4.0 origin/develop",
+            "git branch -d claude/old-name",
+            "FERRUM_SKIP_PREPUSH=1 git push origin --delete claude/old-name",
+            "FERRUM_SKIP_PREPUSH=1 git push origin :claude/old-name",
+        ):
+            self.assertIsNone(self.r.bash(cmd), cmd)
+
+    def test_unconventional_names_are_denied(self):
+        for cmd in (
+            "git checkout -b claude/wizardly-knuth origin/develop",
+            "git switch -c Feature/Thing",
+            "git branch feat_x",
+            "git branch -m feat/x feature/x",
+            "git checkout -b feat/",
+            "FERRUM_SKIP_PREPUSH=1 git push -u origin HEAD:claude/x",
+        ):
+            out = self.r.bash(cmd)
+            self.assertEqual(decision(out), "deny", cmd)
+            self.assertIn("new-branch", out["permissionDecisionReason"])
+
+    def test_redirections_are_not_branch_names(self):
+        for cmd in (
+            "FERRUM_SKIP_PREPUSH=1 git push -u origin feat/x 2>&1 | tail -1",
+            "FERRUM_SKIP_PREPUSH=1 git push -u origin feat/x > push.log 2>/dev/null",
+            "git checkout -b feat/y origin/develop >/dev/null 2>&1",
+        ):
+            self.assertIsNone(self.r.bash(cmd), cmd)
+        self.assertEqual(decision(self.r.bash("git checkout -b claude/y 2>&1")), "deny")
+
+    def test_heredoc_bodies_are_data(self):
+        cmd = (
+            "cat > SKILL.md <<'EOF'\n"
+            "  git switch -c <type>/<description> origin/develop\n"
+            "  git push origin develop\n"
+            "EOF\n"
+            "git checkout -b feat/y origin/develop"
+        )
+        self.assertIsNone(self.r.bash(cmd))
+        self.assertEqual(decision(self.r.bash("cat <<EOF > x\nnote\nEOF\ngit checkout -b claude/y")), "deny")
+
+    def test_pushing_a_harness_named_branch_is_denied(self):
+        sh(self.r.path, "git", "checkout", "-q", "-b", "claude/session-x")
+        self.assertEqual(decision(self.r.bash("FERRUM_SKIP_PREPUSH=1 git push")), "deny")
+
+
+class Ruff(unittest.TestCase):  # F, E3
+    def setUp(self):
+        if not shutil.which("ruff"):
+            self.skipTest("ruff not installed")
+        self.r = Repo()
+        self.r.write("ruff.toml", 'line-length = 120\n[lint]\nselect = ["E", "F", "I", "S"]\n')
+
+    def tearDown(self):
+        self.r.close()
+
+    def test_edit_formats_fixes_and_reports_the_rest(self):
+        p = self.r.write("scripts/a.py", "import sys, os\nx=1\ndef f(s):\n    return eval(s)\n")
+        out = run_hook("post-edit", {"tool_name": "Write", "tool_input": {"file_path": p}, "cwd": self.r.path})
+        self.assertIn("S307", out["additionalContext"])
+        with open(p) as f:
+            text = f.read()
+        self.assertIn("x = 1", text)
+        self.assertNotIn("import sys", text)
+
+    def test_clean_edit_says_nothing(self):
+        p = self.r.write("scripts/b.py", "X = 1\n")
+        self.assertIsNone(
+            run_hook("post-edit", {"tool_name": "Write", "tool_input": {"file_path": p}, "cwd": self.r.path})
+        )
+
+    def test_push_with_a_dirty_changed_python_file_is_denied(self):
+        self.r.write("scripts/c.py", "x=eval('1')\n")
+        sh(self.r.path, "git", "add", "-A")
+        sh(self.r.path, "git", "commit", "-q", "-m", "py")
+        out = self.r.bash("git push -u origin feat/x")
+        self.assertEqual(decision(out), "deny")
+        self.assertIn("ruff", out["permissionDecisionReason"])
 
 
 class Reminders(unittest.TestCase):  # F, G, H, I

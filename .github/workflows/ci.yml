@@ -110,3 +110,27 @@ jobs:
           pip install highdicom
           cargo test -p ferrum-io --test dicom_export
           python scripts/validate_dicom_export.py "$FERRUM_DICOM_EXPORT_DIR"
+
+  python-lint:
+    # ruff (ruff.toml) on the Python files a pull request changes; older files
+    # are brought in line when they are touched (docs/quality.md). Also runs
+    # the Claude Code hook tests, which cover the same rules locally.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install ruff
+        run: pipx install ruff==0.16.9
+      - name: ruff on changed Python files
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          mapfile -t files < <(git diff --name-only --diff-filter=ACMR "$BASE_SHA"...HEAD -- '*.py')
+          if (( ${#files[@]} == 0 )); then echo "No Python files changed."; exit 0; fi
+          printf '%s\n' "${files[@]}"
+          ruff check "${files[@]}"
+          ruff format --check "${files[@]}"
+      - name: Claude Code hook tests
+        run: python3 .claude/hooks/test_hooks.py
