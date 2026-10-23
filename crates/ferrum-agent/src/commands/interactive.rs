@@ -14,8 +14,6 @@
 //!   the operator's `roi_margin_mm`, unless the call gives `roi` or asks
 //!   for the `whole_volume`.
 
-use std::time::Duration;
-
 use ferrum_domain::analysis::{self, MaskRegion};
 use ferrum_domain::{
     EngineInfo, Geometry, Prompt, Provenance, ReviewStatus, SegmentationEngine, SliceAxis, Timestamp, Volume, VoxelBox,
@@ -33,7 +31,7 @@ use crate::config::AgentConfig;
 use crate::envelope::{AgentError, ErrorCode, Output};
 use crate::params::Params;
 use crate::points::{nearest_voxel, parse_plane, resolve, PointInput};
-use crate::sessions::{CachedSession, GpuLock, SessionKey};
+use crate::sessions::{gpu_lease, CachedSession, SessionKey};
 use crate::study::{generator, Study, VolumeCache};
 
 fn bad(msg: impl Into<String>) -> AgentError {
@@ -400,7 +398,8 @@ fn choose_roi(
 /// The engine's mask of the object as a region of the full grid.
 struct EngineResult {
     mask: Option<MaskRegion>,
-    session: CachedSession,
+    /// The open session, or `None` once closed (engines of a GPU group).
+    session: Option<CachedSession>,
 }
 
 fn session_key(study: &Study, plan: &Plan, label: u8, created: Option<Timestamp>) -> SessionKey {
@@ -446,7 +445,7 @@ fn run_engine(
         }
         None => None,
     };
-    Ok(EngineResult { mask, session: s })
+    Ok(EngineResult { mask, session: Some(s) })
 }
 
 /// Voxels of `mask` that belong to segments other than `label`.
@@ -531,9 +530,7 @@ fn save_input(study: &Study, plan: &Plan, label: u8) -> Result<(), AgentError> {
 fn take_cached(cache: Option<&mut &mut VolumeCache>, config: &AgentConfig, key: &SessionKey) -> Option<CachedSession> {
     let c = cache?;
     if let Some(group) = config.gpu_group(&key.engine) {
-        let others: Vec<String> =
-            config.gpu_groups.iter().filter(|(g, _)| g == group).flat_map(|(_, l)| l.clone()).collect();
-        c.engines.close_engines(&others);
+        c.engines.close_engines(&config.gpu.members(group));
         return None;
     }
     c.engines.take(key)
@@ -542,7 +539,7 @@ fn take_cached(cache: Option<&mut &mut VolumeCache>, config: &AgentConfig, key: 
 /// `segment interactive`: see the module documentation.
 pub fn interactive(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     ctx.study(p)?;
-    let Ctx { config, study, cache, .. } = ctx;
+    let Ctx { config, study, cache, progress } = ctx;
     let study = study.as_mut().ok_or_else(|| AgentError::internal("study not loaded"))?;
     let plan = plan(study, config, p)?;
     let previous = plan.target.map(|l| region(&study.segments, l));
@@ -550,9 +547,20 @@ pub fn interactive(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     // a new object's session is cached under its label once it exists; before that nothing matches
     let key = session_key(study, &plan, plan.target.unwrap_or(0), if plan.seeded { None } else { created });
     let cached = take_cached(cache.as_mut(), config, &key);
-    let result = {
-        let _gpu = GpuLock::acquire(config, &plan.url, Duration::from_secs(config.engine_job_timeout_s))?;
-        run_engine(study, &plan, cached, key)?
+    let in_group = config.gpu_group(&plan.url).is_some();
+    let (result, gpu_warning) = {
+        let mut report = |f: f64, m: &str| {
+            if let Some(p) = progress.as_deref_mut() {
+                p(f, m);
+            }
+        };
+        let gpu = gpu_lease(config, &plan.url, &format!("ferrum-agent {}", plan.info.name), None, &mut report)?;
+        let mut r = run_engine(study, &plan, cached, key)?;
+        if in_group {
+            // closed (its GPU memory freed) before the lease is released
+            r.session = None;
+        }
+        (r, gpu.and_then(|l| l.warning().map(str::to_owned)))
     };
     if result.mask.is_none() && plan.target.is_none() {
         return Ok(research_warning(
@@ -565,8 +573,7 @@ pub fn interactive(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     let label = write(study, p, &plan, result.mask.as_ref())?;
     study.save_segments()?;
     save_input(study, &plan, label)?;
-    if let Some(c) = cache.as_mut().filter(|_| config.gpu_group(&plan.url).is_none()) {
-        let mut s = result.session;
+    if let (Some(c), Some(mut s)) = (cache.as_mut().filter(|_| !in_group), result.session) {
         s.key.label = label;
         s.key.created = study.segments.segment(label).and_then(|x| x.provenance.created);
         c.engines.put(s);
@@ -588,7 +595,7 @@ pub fn interactive(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
         "checks": checks,
         "engine": info_json(config, &plan.url, &plan.info),
     }));
-    for w in warnings {
+    for w in warnings.into_iter().chain(gpu_warning) {
         out = out.warn(w);
     }
     if !plan.info.capabilities.deterministic {

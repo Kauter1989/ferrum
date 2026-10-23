@@ -1,6 +1,6 @@
 # ADR 0015 — GPU leases shared with processes outside FERRUM
 
-- **Status:** Proposed (awaiting G2)
+- **Status:** Accepted (G2, 2026-10-23)
 - **Date:** 2026-10-23
 
 ## Context
@@ -24,7 +24,8 @@ Design: [docs/gpu-sharing.md](../gpu-sharing.md).
 
 1. **A protocol and a crate.** `ferrum-gpu-lock/1` is a documented
    protocol. The new crate `ferrum-gpu-lock` (MIT OR Apache-2.0, no FERRUM
-   dependency, only `libc` on Unix) implements it for FERRUM and for Rust
+   dependency; only the safe `rustix` on Unix, for the effective user id)
+   implements it for FERRUM and for Rust
    hosts. It is a leaf below `ferrum-engines` and `ferrum-agent`.
 2. **Leases, not a mutex.**
    - Each holder holds an OS lock on its own record file and declares a

@@ -17,7 +17,7 @@ use super::Ctx;
 use crate::config::AgentConfig;
 use crate::envelope::{AgentError, ErrorCode, Output};
 use crate::params::Params;
-use crate::sessions::GpuLock;
+use crate::sessions::gpu_lease;
 
 /// Environment variable with the engine's bearer token (never in files).
 pub const TOKEN_ENV: &str = "FERRUM_ENGINE_TOKEN";
@@ -176,14 +176,22 @@ fn wait_for_job(ctx: &mut Ctx, session: &mut dyn InteractiveSession, job: &str) 
     }
 }
 
-/// Runs the job and returns the engine's label map.
-fn run_job(ctx: &mut Ctx, p: &Params, url: &str, labels: Option<&[String]>) -> Result<Vec<u16>, AgentError> {
+/// Runs the job and returns the engine's label map, with the GPU lease's
+/// warning if it had one.
+fn run_job(
+    ctx: &mut Ctx,
+    p: &Params,
+    url: &str,
+    labels: Option<&[String]>,
+) -> Result<(Vec<u16>, Option<String>), AgentError> {
     let modality = match p.str("modality")? {
         Some(m) => m.to_owned(),
         None => ctx.study(p)?.metadata.modality.clone(),
     };
     let volume = ctx.study(p)?.volume.clone();
-    let _gpu = GpuLock::acquire(ctx.config, url, Duration::from_secs(ctx.config.engine_job_timeout_s))?;
+    let config = ctx.config;
+    let gpu = gpu_lease(config, url, &format!("ferrum-agent {url}"), None, &mut |f, m| ctx.report(f, m))?;
+    let gpu_warning = gpu.as_ref().and_then(|l| l.warning().map(str::to_owned));
     let mut session = engine(url).open_session(&volume, &modality).map_err(engine_error)?;
     let job = session.start_job(labels).map_err(engine_error)?;
     let status = wait_for_job(ctx, session.as_mut(), &job)?;
@@ -193,7 +201,11 @@ fn run_job(ctx: &mut Ctx, p: &Params, url: &str, labels: Option<&[String]>) -> R
             format!("the job {}: {}", status.state.as_str(), status.message),
         ));
     }
-    session.label_map().map_err(engine_error)
+    let values = session.label_map().map_err(engine_error)?;
+    // the engine session closes (and frees its GPU memory) before the lease
+    drop(session);
+    drop(gpu);
+    Ok((values, gpu_warning))
 }
 
 /// Engine values present in `values`, with the number of their voxels that
@@ -222,7 +234,7 @@ pub fn auto(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     if !info.capabilities.automatic {
         return Err(AgentError::bad_request(format!("{} has no automatic segmentation", info.name)));
     }
-    let values = run_job(ctx, p, &url, labels.as_deref())?;
+    let (values, gpu_warning) = run_job(ctx, p, &url, labels.as_deref())?;
     let config = ctx.config;
     let study = ctx.study(p)?;
     let present = present_values(&values, study.segments.labels().data());
@@ -265,6 +277,9 @@ pub fn auto(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
         })
         .collect();
     let mut out = Output::new(json!({ "segments": segments, "engine": info_json(config, &url, &info) }));
+    if let Some(w) = gpu_warning {
+        out = out.warn(w);
+    }
     if segments.is_empty() {
         out = out.warn("the engine found none of the requested structures");
     }

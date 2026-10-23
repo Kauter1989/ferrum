@@ -39,8 +39,8 @@ field run rather than assumed.
 ### 3.1 `ferrum-gpu-lock` (new crate)
 
 A small crate, MIT OR Apache-2.0, with no FERRUM dependency. Its only
-dependency is `libc` on Unix (the effective user id; already in
-`Cargo.lock`). It implements the protocol `ferrum-gpu-lock/1` (§4.1), so the
+dependency is the safe `rustix` on Unix (the effective user id; the
+workspace denies `unsafe`, so `libc` is not used; already in `Cargo.lock`). It implements the protocol `ferrum-gpu-lock/1` (§4.1), so the
 harness, written in Rust, uses it directly, and a process in another
 language follows §4.1.
 
@@ -235,22 +235,81 @@ and a test checks that it is absent from both.
 | Desktop UI | waiting state and Cancel in the AI panel | `cargo test -p ferrum --test ui`; use case in `Viewer` |
 | `ferrum-domain` port | `EngineObserver`, `SegmentationEngine::observe` (default no-op) | `docs/architecture.md` ports table |
 
-### 4.1 `ferrum-gpu-lock/1` in brief (PR 1 adds the full text to this section)
+### 4.1 Protocol `ferrum-gpu-lock/1`
+
+A process outside FERRUM that is not written in Rust follows this text.
+A Rust process uses the crate `ferrum-gpu-lock`.
+
+**Files.** `<lock dir>` is §3.2, and `<group>` is the group name with
+characters other than ASCII letters, digits and `-` replaced by `_`.
 
 ```
-<lock dir>/<group>/admission.lock          exclusive OS lock, held only while deciding
-<lock dir>/<group>/holder-<pid>-<rand>.json  exclusive OS lock held for the holder's lifetime
-{ "protocol": "ferrum-gpu-lock/1", "holder": "llama-server", "pid": 4242,
-  "kind": "resident", "lease_mib": 6144, "since": "2026-10-23T15:00:00Z" }
+<lock dir>/<group>/admission.lock        taken (exclusive) only while one holder is admitted
+<lock dir>/<group>/holder-<id>.lock      exclusive OS lock, held for the holder's lifetime
+<lock dir>/<group>/holder-<id>.json      the holder's record (never locked, so it can be read on Windows)
 ```
 
-- **OS lock:** `flock(LOCK_EX)` on Unix, `LockFileEx` on Windows (what
-  `std::fs::File::try_lock` uses).
-- **Release:** unlock, close, delete. A holder file whose lock can be
-  taken is stale and may be deleted by anyone admitted to the group.
-- **Not supported:** network file systems, and locks shared between a
-  container and the host unless both see the same directory as the same
-  user.
+`<id>` is unique on the machine; the crate uses `<pid>-<nanoseconds>-<counter>`.
+
+**Record** (one JSON object; the crate writes one line; readers accept any
+whitespace):
+
+```json
+{"protocol":"ferrum-gpu-lock/1","holder":"llama-server","pid":4242,"kind":"resident","lease_mib":6144,"since_unix_s":1792789468}
+```
+
+- `kind` is `resident` (a process that stays on the card, such as a model
+  server) or `engine` (one engine call).
+- `lease_mib` is the GPU memory held, or `null` for the whole group.
+- The record names no study, path or patient.
+
+**OS lock.** `flock(fd, LOCK_EX)` on Unix, and `LockFileEx` with
+`LOCKFILE_EXCLUSIVE_LOCK` on Windows. This is what Rust's
+`File::lock`/`try_lock` use, and Python's `fcntl.flock`.
+
+**To join a group:**
+1. Create the directories if missing (mode 0700). Refuse a directory or
+   file that is a symlink, that is owned by another user, or (for a
+   directory) that group or others can write.
+2. Open `admission.lock` (create, mode 0600) and take its lock (blocking).
+3. For every `holder-*.lock`, try its lock without blocking:
+   - if the lock is free, its holder is dead: release it, then delete
+     the `.json` and the `.lock`;
+   - if it is taken, read the `.json` (at most 4 KiB). A record that
+     cannot be read counts as `lease_mib: null`.
+4. Decide with the live holders and the capacity of the group (§3.1,
+   [`decide`](../crates/ferrum-gpu-lock/src/lib.rs)).
+5. **Admitted:** create `holder-<id>.lock` (create-new, mode 0600), take
+   its lock, write `holder-<id>.json` (create-new, mode 0600), then
+   release `admission.lock`.
+6. **Not admitted:** release `admission.lock`, wait about 200 ms, and go
+   back to step 2 until the timeout.
+
+**To leave:** delete the `.json`, close the `.lock` (which releases the
+OS lock), then delete the `.lock`. A crash at any point leaves a lock
+that is free, which the next admission cleans up.
+
+**Python sketch of the lease a model server holds:**
+
+```python
+import fcntl, json, os, time
+d = os.path.join(os.environ["XDG_RUNTIME_DIR"], "ferrum", "gpu", "card")
+os.makedirs(d, mode=0o700, exist_ok=True)
+with open(os.path.join(d, "admission.lock"), "a+") as adm:
+    fcntl.flock(adm, fcntl.LOCK_EX)          # steps 3–4 omitted: assume the group admits us
+    hid = f"{os.getpid()}-{time.time_ns()}-0"
+    lock = open(os.path.join(d, f"holder-{hid}.lock"), "x")
+    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    with open(os.path.join(d, f"holder-{hid}.json"), "x") as rec:
+        json.dump({"protocol": "ferrum-gpu-lock/1", "holder": "llama-server", "pid": os.getpid(),
+                   "kind": "resident", "lease_mib": 6144, "since_unix_s": int(time.time())}, rec)
+# … keep `lock` open while the server runs
+```
+
+**Not supported:**
+- network file systems;
+- a container and its host sharing a group, unless both see the same
+  directory as the same user.
 
 ## 5. Risks and assumptions
 
@@ -285,7 +344,7 @@ and a test checks that it is absent from both.
 | Criterion | Verified by | Level |
 |---|---|---|
 | [23.1-a] | `docs/gpu-sharing.md` §4.1 review; `ferrum-gpu-lock` doc tests of the record format | test, manual |
-| [23.1-b] | `ferrum-gpu-lock` builds with only `libc`; `cargo tree -p ferrum-gpu-lock` check in a test; `ferrum-agent` has no `GpuLock` left | test |
+| [23.1-b] | `ferrum-gpu-lock` builds with only `rustix`; `cargo tree -p ferrum-gpu-lock` check in a test; `ferrum-agent` has no `GpuLock` left | test |
 | [23.1-c] | `dir_check_refuses_other_owner_symlink_and_group_writable` (unit, injected metadata); `refuses_world_writable_dir` (real dir, 0777); `default_dir_never_tmp` | test |
 | [23.1-d] | `two_processes_holder_then_segment_auto` (holder child process, mock engine, wait then success ≤ 1 s after release); `killed_holder_is_stale` (`SIGKILL`) | test |
 | [23.1-e] | `wait_timeout_names_holder` (envelope); MCP progress notification during the wait (`mcp.rs` test) | test |

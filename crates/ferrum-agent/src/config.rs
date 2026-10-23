@@ -17,6 +17,9 @@
 //!
 //! [network]
 //! engines = ["http://127.0.0.1:8765"]   # segmentation engines the agent may use
+//! gpu_groups = { card = ["http://127.0.0.1:8765"] }   # engines sharing a GPU
+//! gpu_capacity_mib = { card = 11264 }   # leases of a group must fit
+//! gpu_peaks_mib = { "http://127.0.0.1:8765" = 6000 }  # GPU memory of one call
 //!
 //! [limits]
 //! max_render_px = 1024
@@ -30,6 +33,8 @@
 //! the envelope then carries a warning.
 
 use std::path::{Path, PathBuf};
+
+use ferrum_engines::gpu::GpuSettings;
 
 use crate::envelope::{AgentError, ErrorCode};
 
@@ -62,9 +67,10 @@ pub struct AgentConfig {
     pub engines: Vec<String>,
     /// Longest wait for an automatic segmentation job, in seconds.
     pub engine_job_timeout_s: u64,
-    /// Engines that share a GPU: group name → engine URLs. FERRUM runs one
-    /// engine call of a group at a time, across processes.
-    pub gpu_groups: Vec<(String, Vec<String>)>,
+    /// Engines that share a GPU: groups, capacities, expected peaks and the
+    /// lock directory (`docs/gpu-sharing.md`). Engine calls of a group take
+    /// a lease first, across processes.
+    pub gpu: GpuSettings,
     /// Most prompts one interactive object may take.
     pub max_prompts_per_object: u64,
     /// Margin around the prompts of the region uploaded to an interactive
@@ -90,7 +96,7 @@ impl Default for AgentConfig {
             allow_harness_confirmation: false,
             engines: Vec::new(),
             engine_job_timeout_s: 900,
-            gpu_groups: Vec::new(),
+            gpu: GpuSettings::default(),
             max_prompts_per_object: 8,
             roi_margin_mm: 48.0,
             allow_research_only: true,
@@ -115,6 +121,7 @@ impl AgentConfig {
                 c.set(section, key, v)?;
             }
         }
+        c.gpu.validate().map_err(invalid)?;
         Ok(c)
     }
 
@@ -148,13 +155,7 @@ impl AgentConfig {
             ("limits", "max_voxels") => self.max_voxels = positive()?.unsigned_abs(),
             ("review", "allow_harness_confirmation") => self.allow_harness_confirmation = boolean()?,
             ("network", "engines") => self.engines = urls(v, &what)?,
-            ("network", "gpu_groups") => {
-                let t = v.as_table().ok_or_else(|| invalid(format!("{what} must be a table of URL lists")))?;
-                self.gpu_groups = t
-                    .iter()
-                    .map(|(g, l)| Ok::<_, AgentError>((g.clone(), urls(l, &format!("{what}.{g}"))?)))
-                    .collect::<Result<_, _>>()?;
-            }
+            ("network", k) if self.gpu.set(k, v).map_err(invalid)? => {}
             ("limits", "max_prompts_per_object") => self.max_prompts_per_object = positive()?.unsigned_abs(),
             ("limits", "roi_margin_mm") => {
                 self.roi_margin_mm = v
@@ -173,7 +174,7 @@ impl AgentConfig {
 
     /// The GPU group of an engine URL, if the operator put it in one.
     pub fn gpu_group(&self, url: &str) -> Option<&str> {
-        self.gpu_groups.iter().find(|(_, l)| l.iter().any(|u| u == url)).map(|(g, _)| g.as_str())
+        self.gpu.group(url)
     }
 
     /// Reads a configuration file.
@@ -263,6 +264,8 @@ mod tests {
             [network]
             engines = ["http://127.0.0.1:8765"]
             gpu_groups = { card = ["http://127.0.0.1:8765/", "http://127.0.0.1:8766"] }
+            gpu_capacity_mib = { card = 11264 }
+            gpu_peaks_mib = { "http://127.0.0.1:8765" = 6000 }
             [limits]
             max_render_px = 512
             max_voxels = 1000
@@ -283,6 +286,7 @@ mod tests {
         assert_eq!(c.gpu_group("http://127.0.0.1:8766"), Some("card"));
         assert_eq!(c.gpu_group("http://127.0.0.1:8765"), Some("card"), "trailing slashes are trimmed");
         assert_eq!(c.gpu_group("http://127.0.0.1:9"), None);
+        assert_eq!((c.gpu.capacity("card"), c.gpu.operator_peak("http://127.0.0.1:8765")), (Some(11264), Some(6000)));
         assert_eq!((c.max_prompts_per_object, c.roi_margin_mm, c.allow_research_only), (4, 20.0, false));
         assert!(AgentConfig::default().is_default);
     }
@@ -300,6 +304,8 @@ mod tests {
             "[privacy]\nsalt = 1",
             "[network]\ngpu_groups = [1]",
             "[network]\ngpu_groups = { a = [1] }",
+            "[network]\ngpu_capacity_mib = { nope = 1 }",
+            "[network]\ngpu_lock_dir = \"relative\"",
             "[limits]\nroi_margin_mm = -1",
             "[limits]\nallow_research_only = 1",
             "data = 1",

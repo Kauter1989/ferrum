@@ -213,6 +213,9 @@ salt = "site-secret"
 [network]
 engines = ["http://127.0.0.1:8765", "http://127.0.0.1:8766"]   # segmentation engines the agent may use
 gpu_groups = { gpu0 = ["http://127.0.0.1:8765", "http://127.0.0.1:8766"] }  # engines sharing a GPU: one call at a time
+gpu_capacity_mib = { gpu0 = 11264 }   # optional: leases of the group must fit (a model server can stay)
+gpu_peaks_mib = { "http://127.0.0.1:8765" = 6000 }   # optional: GPU memory of one call (whole engine process)
+gpu_lock_dir = "/run/user/1000/ferrum/gpu"   # optional; default per user (docs/gpu-sharing.md)
 
 [limits]
 max_render_px = 1024
@@ -294,8 +297,21 @@ Label bridges. The scenarios they serve, step by step, are in
 
 **One GPU, several engines:**
 - `network.gpu_groups` names engines that share a GPU. FERRUM runs one
-  engine call of a group at a time, across processes (a lock file per
-  group in the temporary folder), waiting up to `engine_job_timeout_s`.
+  engine call of a group at a time, across processes, waiting up to
+  `engine_job_timeout_s` and reporting the wait as MCP progress ("waiting
+  for GPU group gpu0: llama-server (pid 4242) holds 6144 MiB; this call
+  needs 6000 MiB").
+- The lock is a lease of `ferrum-gpu-lock/1` in a per-user directory
+  (`$XDG_RUNTIME_DIR/ferrum/gpu`, else `~/.cache/ferrum/gpu`; never `/tmp`).
+  Another process, such as a model server, can join the group with the
+  crate `ferrum-gpu-lock` or by following the protocol
+  ([gpu-sharing.md](gpu-sharing.md)).
+- With `network.gpu_capacity_mib`, an engine call runs next to other
+  holders when its expected peak fits. Its peak is
+  `network.gpu_peaks_mib`, raised (never lowered) by the engine's own
+  `limits.expected_peak_mib`. Without a capacity, a group admits one holder
+  at a time; without a peak, a call takes the whole group. A group that
+  stays full gives `engine_unavailable` naming its holders.
 - On a 12 GB card, nnInteractive and the full TotalSegmentator model fit
   only in turn; the bridges free their GPU memory between calls
   ([ai-demo.md](ai-demo.md#one-gpu-for-all-engines)).
