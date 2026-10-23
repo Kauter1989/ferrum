@@ -52,6 +52,18 @@ When CI is green, merge it with a merge commit.
 
 ## 3. PR `develop` → `main`
 
+- **ADR numbers stay unique.** Check that the merge leaves each number
+  once in `docs/decisions/`
+  (`git ls-tree --name-only origin/main docs/decisions/` against `develop`).
+  - **Open for the next release:** `main` has
+    `0011-generative-ui-view-host.md` (PR #48). `develop` holds the same
+    draft as `0014-generative-ui-view-host.md` because 0011 is the
+    radiomics ADR there. A plain merge keeps `main`'s file as a
+    duplicate. Before the release PR, merge `origin/main` into a branch
+    from `develop`, delete `0011-generative-ui-view-host.md` there, and
+    merge that PR into `develop`. After the release, check that `main`
+    has only `0011-radiomics-crate.md` and `0014-generative-ui-view-host.md`.
+    Then remove this item.
 - **Title:** "Release X.Y.Z".
 - **Body:** the user-visible changes grouped as in the CHANGELOG, and
   the PRs it contains.

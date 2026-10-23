@@ -88,9 +88,11 @@ runs, in CI order:
 
 Notes:
 - **Hooks catch some of this before you do** (`CLAUDE.md`, *Hooks*):
-  - `rustfmt` runs after each edit;
-  - the push is blocked on fmt, a stale schema or a missing visual
-    check;
+  - `rustfmt` runs after each edit of a `.rs` file, and `ruff format`
+    plus safe fixes after each edit of a `.py` file (`ruff.toml`);
+  - the push is blocked on fmt, a stale schema, a missing visual
+    check, or ruff findings in changed Python files;
+  - branch names that break skill `new-branch` are blocked;
   - commits on `develop`/`main` and data files are blocked.
 
   The hooks do not run clippy or the tests: `preflight.sh` does.
@@ -121,6 +123,18 @@ Ask of every hunk:
 - what input breaks it;
 - which side or axis it ignores;
 - what the docs now say that is no longer true.
+
+Then run the review agents (`.claude/agents/`) on the branch:
+- `code-reviewer` for every PR;
+- `security-reviewer` when the change touches:
+  - readers;
+  - `ferrum-agent`, `ferrum-cli` or the MCP server;
+  - engines or bridges;
+  - workspaces or exports;
+  - configuration or dependencies.
+
+Fix their blocking findings, or answer them in the PR body under
+*Review*.
 
 Fix what you find before pushing. Never claim a check ran when it
 did not.
