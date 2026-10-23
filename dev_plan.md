@@ -474,6 +474,7 @@ starts with its spec at gate G1. Sizes follow `ferrum-size`.
 | 4 | Stage 22 — PET/CT fusion (below) | stage, L, new ADR | the main way PET is read; needs a second volume in `Dataset` and `GpuSink` |
 | 5 | Stage 16 — the rest: 16.1 confirm all, 16.2 export only confirmed, 16.3 provenance of a corrected segment, 16.4 annotation mode | stage, M per story | open since Stage 16; 16.5–16.6 are done |
 | 6 | Stage 19 — reproducible radiomics and comparison (IBSI, textures, change over time) | stage, XL, G1 again | waits for the release of Stage 18 (its own rule); MR normalisation joins it |
+| 7 | Interactive view host for generative UI ([ADR 0014](docs/decisions/0014-generative-ui-view-host.md), draft): the agent mounts a FERRUM view in the conversation and the person works in it directly | stage, size after G1/G2 | a new direction (merged in #67); its priority against 3–6 is the user's call |
 
 ### Backlog (feature or small, any time)
 
