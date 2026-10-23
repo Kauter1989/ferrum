@@ -459,6 +459,75 @@ switch time and GPU memory on a real GPU.
 
 ---
 
+## Stage 23 — GPU sharing with an external model server 📋 (spec at G1)
+
+Medical Harness runs its language model locally as a `llama-server`
+sidecar on the same 12 GB card as FERRUM's engines
+([#68](https://github.com/Kauter1989/ferrum/issues/68); P0 for the
+harness's Demo 2: live segmentation next to a resident model). What exists:
+- `network.gpu_groups` runs one engine call of a group at a time through
+  an advisory file lock (`GpuLock` in `ferrum-agent/src/sessions.rs`).
+  The file is in the shared temporary folder (`/tmp/ferrum-gpu-<group>.lock`),
+  so another local user can pre-create or hold it. The format is
+  undocumented, and the lock is a mutex that cannot tell a resident model
+  from a heavy engine.
+- The desktop app's AI tools (`ferrum-app/src/viewer/ai.rs`) do not take
+  the lock at all.
+- The nnInteractive bridge already frees the image and empties PyTorch's
+  cache when a session closes (`NnInteractiveBackend.release`), but nobody
+  has measured it. §2 of [agent-segmentation.md](docs/agent-segmentation.md)
+  still lists that as to do. The weights and the CUDA context stay loaded
+  (part of the ~2.3 GB baseline), and nothing can unload them.
+
+This stage lets a process outside FERRUM hold part of the card, makes
+FERRUM wait for room instead of running out of memory, and lets idle
+bridges give their memory back. It touches the engine protocol, the agent
+command set, the bridges and the desktop app, so it is gated and split
+into PRs.
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 23.1 | As a **harness developer**, I want a documented GPU-group lock that my own process can take so that my model server and FERRUM's engines never use the card at the same time beyond its size. | [23.1-a] `docs/gpu-sharing.md` specifies the protocol `ferrum-gpu-lock/1`: directory, file names per group and holder, the OS lock used (`flock` on Unix, `LockFileEx` on Windows), the holder record (holder name, process id, leased MiB, start time; no study data), how to acquire and release, the timeout, and stale holders. [23.1-b] A permissive crate `ferrum-gpu-lock` (MIT OR Apache-2.0, standard library only, no other FERRUM crate) implements it, and `ferrum-agent` uses it instead of its own `GpuLock` [?Q1]. [23.1-c] The lock directory is per user: `$XDG_RUNTIME_DIR/ferrum/gpu` on Linux, `%LOCALAPPDATA%\ferrum\gpu` on Windows, or `network.gpu_lock_dir`; it is created with mode 0700 [?Q7 when `XDG_RUNTIME_DIR` is unset]. A directory or lock file owned by another user, or a directory that group or others can write, is refused with an error that names the path; FERRUM never falls back to `/tmp`. [23.1-d] Two-process test: an external holder holds the group; `segment auto` (mock engine) waits and succeeds within 1 s after the holder releases. When the holder is killed (`SIGKILL`) instead, the call goes ahead within 1 s. [23.1-e] A wait longer than `engine_job_timeout_s` ends with `engine_unavailable`, naming the holder and its lease; over MCP the wait reports progress ("waiting for GPU group card: llama-server holds 6 144 MiB"). [23.1-f] A group without a capacity (23.2-d) behaves as today: one holder at a time, external holders included. |
+| 23.2 | As an **operator**, I want a holder to declare how much of the card it holds so that FERRUM runs an engine next to a resident model when it fits, and waits when it does not. | [23.2-a] A holder takes a lease of N MiB. An engine call of the group goes ahead only when the leases of the live holders plus its expected peak fit in the group's capacity; otherwise it waits as in 23.1-d/e. FERRUM's own engine calls of a group still run one at a time (rule 1 of §2) [?Q2]. [23.2-b] The expected peak of an engine comes from the operator (`network.gpu_peaks_mib`) and from the engine's `GET /v1/info` (`limits.expected_peak_mib`, optional, additive to `ferrum-engine/1`). The engine's value may raise the operator's but never lower it (the effective peak is the larger). An engine with neither takes the whole group. [23.2-c] Test: capacity 12 000 MiB with a 6 000 MiB lease. A call with a 7 000 MiB peak waits, then goes ahead once the lease is released; a call with a 4 000 MiB peak goes ahead at once. [23.2-d] The capacity of a group is set by the operator (`network.gpu_capacity_mib`). An expected peak larger than the capacity runs only when the group has no other holder, with a warning. [23.2-e] Lock records and outputs pass the identifier scan; no study path, UID or name is written to the lock directory. |
+| 23.3 | As a **clinician** using the desktop app's AI tools, I want them to take the same GPU group as the agent so that the viewer never starts an engine next to a model that leaves no room [?Q4]. | [23.3-a] The desktop app reads the operator's `[network]` GPU settings from the same configuration file as the agent and takes the lease for an engine of a group before every request that may use the GPU. [23.3-b] While it waits, the AI panel shows "Waiting for GPU: held by <holder>" with Cancel. Cancel releases nothing it does not hold, and the request is not sent. [23.3-c] UI test: an external holder makes the panel show the waiting state, and releasing it lets the request run. |
+| 23.4 | As an **operator**, I want idle bridges to give their GPU memory back, completely when asked, and to see what each bridge holds, so that a 12 GB card has room for TotalSegmentator `total` (about 10 GB guided) next to a resident model. | [23.4-a] After the last session of the nnInteractive bridge closes (`DELETE` or TTL expiry), the bridge's GPU memory falls to its weights-only level ± 200 MiB, measured with `nvidia-smi --query-compute-apps` on the user's card (field). A bridge unit test checks that both paths drop the image and empty the cache. [23.4-b] A bridge that supports it reports `capabilities.unload: true` and serves `POST /v1/unload` (additive to `ferrum-engine/1`, in the conformance suite). The endpoint is refused with `busy` while a session or job is active. Afterwards the bridge holds no GPU memory at all (no CUDA context, measured), and its next session reloads the model; the reload time is measured and documented [?Q3]. [23.4-c] `engine unload [--engine URL \| --group G]` asks every idle bridge (of the group) to unload. The output lists, per engine, `unloaded`, `busy` or `unsupported`; it never stops a running job. CLI and MCP give identical JSON, and the schema, `commands.json`, docs and contract tests are updated. [23.4-d] `GET /v1/info` may report `resident_mib` (optional), and `engine list` shows it per engine marked as reported by the engine. The docs say that a holder checks free memory itself (NVML) instead of trusting it (point 7 of #68). |
+| 23.5 | As an **operator**, I want a measured recipe for a 12 GB card with an LLM sidecar so that I can size the model and the engines without trying. | [23.5-a] `scripts/benchmark_engines.py --external-holder "<command>" --lease-mib N` starts the holder, samples GPU memory during every step, and reports the combined peak and the time each call waited. [23.5-b] Field run on the user's card with the harness's `llama-server` and nnInteractive plus TotalSegmentator: 20 engine calls in Demo 2's order without CUDA out-of-memory errors. The table goes to §2 of agent-segmentation.md and the recipe to `docs/gpu-sharing.md`; numbers are measured or marked as estimates (L13). [23.5-c] Rule 2 of §2 is updated to what the bridge does, and a new ADR (0015) records the lock protocol, the crate and the lease. [23.5-d] An operator without the harness can wrap a sidecar: `ferrum-cli gpu hold --group G --lease-mib N -- <command>` holds the lease while the command runs and releases it when the command exits [?Q5]. |
+
+**Success metrics:** on the user's 12 GB card, with `llama-server`
+holding the harness's model [?Q6: model, quantisation, context, measured
+VRAM], Demo 2's sequence (interactive lesion, refinement, `total` on two
+organs) runs 20 engine calls with no CUDA out-of-memory errors. Idle
+nnInteractive returns to its weights-only level within 2 s of the last
+`DELETE`.
+
+**Out of scope:** scheduling across machines or several GPUs per group,
+MIG/MPS, AMD/ROCm and Apple GPUs (the lease is still honoured, but
+nothing is measured there), NVML inside FERRUM, starting or stopping
+`llama-server` (its lifecycle stays with the harness), preempting a
+running engine job.
+
+**Clarifications:** (open, gate G1)
+- [?Q1] A crate, or only a documented protocol?
+- [?Q2] Leases for external holders, and FERRUM's own calls still one at a time?
+- [?Q3] Full unload through a worker child process in the bridge, refused while busy?
+- [?Q4] Should the desktop app take part in this stage?
+- [?Q5] Should `ferrum-cli gpu hold` (wrapper for operators without the harness) be in this stage?
+- [?Q6] Hardware and model facts for the field run.
+- [?Q7] Lock directory when `XDG_RUNTIME_DIR` is unset.
+
+**Size (preliminary, `ferrum-size`):** XL. Contract surfaces: the new lock
+protocol, `ferrum-engine/1` (peak, resident memory, unload), the agent
+command set (`engine unload`, `engine list`, `gpu hold`), the bridges'
+Python API and the desktop UI. Proposed split, each PR M–L:
+1. `ferrum-gpu-lock` crate, protocol doc, ADR 0015, `ferrum-agent` on the
+   crate, per-user directory, leases, waiting with progress (23.1, 23.2).
+2. Protocol additions with conformance, bridge unload (worker process),
+   `engine unload` and `resident_mib` (23.4), then a field test.
+3. Desktop participation, `gpu hold`, the benchmark and the recipe (23.3,
+   23.5), then the field run of the success metric.
+
+---
+
 ## Roadmap
 
 Updated 2026-10-19, after Stage 20. Order is a proposal; each stage
@@ -475,6 +544,7 @@ starts with its spec at gate G1. Sizes follow `ferrum-size`.
 | 5 | Stage 16 — the rest: 16.1 confirm all, 16.2 export only confirmed, 16.3 provenance of a corrected segment, 16.4 annotation mode | stage, M per story | open since Stage 16; 16.5–16.6 are done |
 | 6 | Stage 19 — reproducible radiomics and comparison (IBSI, textures, change over time) | stage, XL, G1 again | waits for the release of Stage 18 (its own rule); MR normalisation joins it |
 | 7 | Interactive view host for generative UI ([ADR 0014](docs/decisions/0014-generative-ui-view-host.md), draft): the agent mounts a FERRUM view in the conversation and the person works in it directly | stage, size after G1/G2 | a new direction (merged in #67); its priority against 3–6 is the user's call |
+| 8 | Stage 23 — GPU sharing with an external model server (above, [#68](https://github.com/Kauter1989/ferrum/issues/68)) | stage, XL, 3 PRs | P0 for Medical Harness's Demo 2 (a resident local model on the same 12 GB card); its order against 1–7 is the user's call |
 
 ### Backlog (feature or small, any time)
 
