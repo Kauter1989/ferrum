@@ -3,7 +3,10 @@
 This is the working plan for FERRUM, a reusable visualisation core for
 medical imaging ([vision](docs/vision.md)). Stages 1–13 built the viewer.
 Stage 14 opens it to AI segmentation engines, and Stage 15 makes it an
-agent skill.
+agent skill. Stages 16–20 add annotation datasets, agent segmentation
+scenarios, quantitative profiles of segments and multi-volume MR and PET
+series. What comes next, in order, is in the [Roadmap](#roadmap) at the
+end.
 
 Each stage groups features as user stories with acceptance criteria.
 Status legend: ✅ done · 🚧 in progress · 📋 planned.
@@ -202,8 +205,8 @@ app. Agents propose and clinicians confirm
 
 ## Next stages 📋
 
-Future stages are added here as they are planned (e.g. "Stage 15 — …"),
-with user stories and acceptance criteria in the same format.
+Stages planned but not started, and stages in progress. Their order and
+the backlog of smaller tasks are in the [Roadmap](#roadmap) at the end.
 
 ## Stage 16 — Annotated datasets 📋
 
@@ -245,7 +248,7 @@ corrections, follow-up, dataset pre-labelling — on a single 12 GB GPU
 | 17.6 | As an **operator**, I want measured VRAM and times on a 12 GB card so that I can plan the hardware. | Benchmark per engine and scenario; the table in the design filled in. ✅ `scripts/benchmark_engines.py`; measured on an RTX 3080 12 GB (WSL 2): nnInteractive ~1 s per prompt, ~5.4 GB; TotalSegmentator 45–52 s, ~2.2 GB for two organs. |
 | 17.7 | As an **agent developer**, I want to correct an existing segment with an engine so that imported or proposed labels can be fixed. | `from_segment` (lasso seeds from the mask) and scribble/lasso prompts in the agent; phantom test. ✅ lassos and scribbles as points on one slice; seeds do not count against the prompt limit. |
 
-## Stage 18 — Segmentation post-processing: quantitative profiles 📋
+## Stage 18 — Segmentation post-processing: quantitative profiles ✅
 
 Quantitative description of a segment: geometry, shape and HU intensity.
 The user picks a **profile**, not individual metrics; a result always
@@ -323,7 +326,12 @@ implementation shared by UI, CLI and MCP, and what is missing on top.
 | 3 | mesh shape: area, compactness, sphericity, PCA; profile `clinical` 0.1 | ✅ [#52](https://github.com/Kauter1989/ferrum/pull/52) |
 | 4 | convex hull, 3D diameter, holes, Euler, warnings; profile `clinical` 0.2 | ✅ [#53](https://github.com/Kauter1989/ferrum/pull/53) |
 | 5 | distribution, IVH, HU ranges; `clinical` 0.3 complete in CLI and MCP | ✅ [#54](https://github.com/Kauter1989/ferrum/pull/54) |
-| 6 | clinical card, HU-range fields, benchmark | 🚧 in review |
+| 6 | clinical card, HU-range fields, benchmark | ✅ [#55](https://github.com/Kauter1989/ferrum/pull/55) |
+| — | field-test fixes (Quickhull, HU ranges) | ✅ [#56](https://github.com/Kauter1989/ferrum/pull/56) |
+| — | lossless grid storage (18.13, [ADR 0012](docs/decisions/0012-lossless-grid-storage.md)) | ✅ [#57](https://github.com/Kauter1989/ferrum/pull/57) |
+
+Open: 18.13-f (pyradiomics against FERRUM on the "exact" intensity
+features, MSD spleen) waits for the next field run on the user's machine.
 
 **Success metrics:**
 - Every feature of Phases 1–3 matches an analytic or hand-computed value on a phantom, exactly or within the stated tolerance.
@@ -394,7 +402,7 @@ decision), so that Stage 18 closes after its Phase 3.
 - Q: what happens to Phases 4–6 of Stage 18? — A: they moved to this stage; the spec is confirmed again before the design (2026-10-07).
 - open: who reviews the texture texts (19.7).
 
-## Stage 20 — Multi-volume MR and PET series 📋
+## Stage 20 — Multi-volume MR and PET series ✅
 
 MR and PET series often hold several volumes: echoes, diffusion
 b-values, dynamic phases, PET frames. Since 2.7 the loader shows one
@@ -431,6 +439,83 @@ change of the agent's command set: gate G1 before design).
 | Task | Criteria | PR | State |
 |---|---|---|---|
 | 20.1 Enhanced per-frame geometry | 20.1-a…f | [#60](https://github.com/Kauter1989/ferrum/pull/60) | ✅ |
-| 20.4.1–20.4.2 partition volumes (DICOM, NIfTI) | 20.4-a…d | 1 | ✅ |
-| 20.3.1–20.3.3 agent and workspace | 20.3-a…f | 2 | ✅ |
-| 20.2.1–20.2.2 desktop switching | 20.2-a…e | 3 | ✅ |
+| 20.4.1–20.4.2 partition volumes (DICOM, NIfTI) | 20.4-a…d | [#62](https://github.com/Kauter1989/ferrum/pull/62) | ✅ |
+| 20.3.1–20.3.3 agent and workspace | 20.3-a…f | [#63](https://github.com/Kauter1989/ferrum/pull/63) | ✅ |
+| 20.2.1–20.2.2 desktop switching | 20.2-a…e | [#64](https://github.com/Kauter1989/ferrum/pull/64) | ✅ |
+| fix: DICOM brought into LPS (2.8), found by the 20.1 field check | 2.8 | [#61](https://github.com/Kauter1989/ferrum/pull/61) | ✅ |
+
+**Field check (2026-10-15 and 2026-10-17, public data):** volumes named
+and matched against dcm2niix (r = 1.0) on the `dcm_qa` sets: Siemens
+multi-echo, Philips and Canon DTI (classic and Enhanced, with the trace
+image), Philips magnitude and phase, Philips fMRI phases; a 33-frame
+OpenNeuro PET NIfTI named from its BIDS sidecar. Agent: scan, open, switch
+and provenance on the same data. Desktop: switching in 0.01 s (DICOM) and
+1.1–1.3 s per new PET frame (the `.nii.gz` is decompressed), 0 s from the
+cache. The desktop check found two bugs, fixed in #64 (lesson L24).
+
+**Open (field, user's machine):** the success metric (an Enhanced series
+from the user's scanner within 0.01 mm of the scanner's viewer), and the
+switch time and GPU memory on a real GPU.
+
+---
+
+## Roadmap
+
+Updated 2026-10-19, after Stage 20. Order is a proposal; each stage
+starts with its spec at gate G1. Sizes follow `ferrum-size`.
+
+### Next
+
+| # | What | Kind | Why now |
+|---|---|---|---|
+| 1 | Release 0.4.0: Stages 18 and 20, loader warnings (2.7), DICOM in LPS (2.8), lossless HU (18.13) since 0.3.0 | release (`ferrum-release`) | `develop` holds a large unreleased change set; the user decides |
+| 2 | Field test on the user's machine: Stage 20 on a scanner's Enhanced MR or PET (success metric, 0.01 mm), switch time and VRAM on the GPU; 18.13-f against pyradiomics | field test (`ferrum-field-test`) | the open criteria of Stages 18 and 20 can only be closed there |
+| 3 | Stage 21 — PET quantification (below) | stage, L | from the MR/PET assessment (2026-10-14): without units and SUV a PET study has no usable numbers |
+| 4 | Stage 22 — PET/CT fusion (below) | stage, L, new ADR | the main way PET is read; needs a second volume in `Dataset` and `GpuSink` |
+| 5 | Stage 16 — the rest: 16.1 confirm all, 16.2 export only confirmed, 16.3 provenance of a corrected segment, 16.4 annotation mode | stage, M per story | open since Stage 16; 16.5–16.6 are done |
+| 6 | Stage 19 — reproducible radiomics and comparison (IBSI, textures, change over time) | stage, XL, G1 again | waits for the release of Stage 18 (its own rule); MR normalisation joins it |
+| 7 | Interactive view host for generative UI ([ADR 0014](docs/decisions/0014-generative-ui-view-host.md), draft): the agent mounts a FERRUM view in the conversation and the person works in it directly | stage, size after G1/G2 | a new direction (merged in #67); its priority against 3–6 is the user's call |
+
+### Backlog (feature or small, any time)
+
+- **Faster PET frame switch:** a 4D `.nii.gz` is decompressed from the
+  start for every frame (1.1 s for 586 MB); decompress once into a
+  temporary cache, or read uncompressed `.nii` directly.
+- **GPU texture reuse:** a volume switch creates a new 3D texture; reuse
+  it when dims and format match (measure on a real GPU first, L13).
+- **Volume count in the series picker:** the scan descriptor does not carry
+  it; reading volumes per series during the scan costs time on large
+  folders.
+- **Siemens mosaic:** classic Siemens EPI/DWI stores a slice grid in one
+  image; it is read as one large slice (field note of 20.4).
+- **Vendor b-values:** classic DWI that stores b in private tags is named
+  `volume k/N`; a vendor dictionary would name it (raw tag literals stay
+  forbidden, so it needs a named-constant table).
+- **Window presets per modality:** the HU presets are offered for MR and
+  PET too (from the MR/PET assessment); hide them or offer percentile and
+  SUV windows (part of Stage 21 if not done before).
+- **GUI localisation:** recorded as a separate task in Stage 18.
+
+### Stage 21 — PET quantification 📋 (draft; criteria at G1)
+
+| # | User story (draft) |
+|---|---|
+| 21.1 | As a **nuclear medicine physician**, I want PET values in Bq/ml and SUV (body weight; later lean body mass) from the DICOM PET module (units, decay correction, radiopharmaceutical dose and time, half-life, patient weight), refused with the reason when data are missing, so that numbers mean what they say. |
+| 21.2 | As a **physician**, I want SUVmax, SUVpeak (1 cm³ sphere), SUVmean, MTV and TLG of a segment, and thresholds at 41 % of SUVmax and at SUV ≥ 2.5, so that a PET report needs no other tool. |
+| 21.3 | As a **reader**, I want PET colour maps (inverted grey, hot/inferno) and SUV windows (0–5, 0–10, 0–15) in slices and MIP, with HU presets hidden for PET and MR; a shader change with CPU parity and a visual check (L1). |
+| 21.4 | As an **agent developer**, I want `value_unit` = `SUVbw` or `Bq/ml` in the agent with the PET metrics in `segment metrics`, identical over CLI and MCP, and identifiers (weight, dose times) kept out of outputs unless allowed. |
+
+Out of scope (draft): kinetic modelling, Patlak, partial-volume correction,
+SUV for non-DICOM PET without a sidecar that names the units.
+
+### Stage 22 — PET/CT fusion 📋 (draft; criteria and ADR at G1/G2)
+
+| # | User story (draft) |
+|---|---|
+| 22.1 | As a **reader**, I want a PET volume shown in colour over a CT of the same study on the common LPS geometry, with opacity and its own window, marked "not registered" (no alignment is claimed, as in 19.9-b). |
+| 22.2 | As a **reader**, I want the probe and the segment metrics to read the volume I choose (CT in HU, PET in SUV) under the same cursor. |
+| 22.3 | As an **agent developer**, I want `view slice` and `view mpr` to render the overlay so that an agent sees what the person sees. |
+
+Architecture (to decide in an ADR): a second volume in `Dataset` and
+`GpuSink`, resampling to the base grid, and the rendering rule (shader and
+CPU raycaster both).
