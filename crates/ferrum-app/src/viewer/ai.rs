@@ -57,7 +57,7 @@ enum Command {
 }
 
 enum Event {
-    Info(Result<EngineInfo, EngineError>),
+    Info(Result<Box<EngineInfo>, EngineError>),
     Opened {
         revision: u64,
         result: Result<(), EngineError>,
@@ -148,7 +148,7 @@ fn mask_after(
 
 fn run_worker(engine: &dyn SegmentationEngine, cancel: &AtomicBool, rx: &Receiver<Command>, tx: &Sender<Event>) {
     let mut session: Option<Box<dyn InteractiveSession>> = None;
-    let _ = tx.send(Event::Info(engine.info()));
+    let _ = tx.send(Event::Info(engine.info().map(Box::new)));
     let no_session = || EngineError::Protocol("no session".into());
     for cmd in rx {
         let event = match cmd {
@@ -469,7 +469,7 @@ impl Viewer {
         match event {
             Event::Info(Ok(info)) if info.capabilities.interactive || info.capabilities.automatic => {
                 self.status.message = format!("Connected to {} {}", info.name, info.version);
-                self.ai.info = Some(info);
+                self.ai.info = Some(*info);
                 self.ai.status = AiStatus::Connected;
             }
             Event::Info(Ok(info)) => {
