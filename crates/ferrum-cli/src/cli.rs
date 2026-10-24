@@ -1080,6 +1080,16 @@ mod tests {
     }
 
     #[test]
+    // covers 17.8-d
+    fn segment_measurements_become_calls() {
+        let call = |args: &[&str]| Cli::try_parse_from(args).unwrap().command.to_call().unwrap();
+        let (_, p) = call(&["ferrum-cli", "segment", "shape", "-w", "ws", "1", "--solid-min", "-300"]);
+        assert_eq!(p["solid_min"], -300.0);
+        let (name, p) = call(&["ferrum-cli", "segment", "distance", "-w", "ws", "3", "--to", "5"]);
+        assert_eq!((name.as_str(), p["segment"].as_u64(), p["to"].as_u64()), ("segment distance", Some(3), Some(5)));
+    }
+
+    #[test]
     fn command_lines_become_calls() {
         let call = |args: &[&str]| Cli::try_parse_from(args).unwrap().command.to_call().unwrap();
         let (name, p) = call(&["ferrum-cli", "measure", "distance", "-w", "ws", "v:0,0,0", "mm:1,2,3"]);
@@ -1183,11 +1193,6 @@ mod tests {
         let (_, p) = call(&["ferrum-cli", "segment", "components", "-w", "ws", "1", "--split"]);
         assert_eq!(p["split"], true);
         assert_eq!(call(&["ferrum-cli", "segment", "shape", "-w", "ws", "1"]).0, "segment shape");
-        // covers 17.8-d
-        let (_, p) = call(&["ferrum-cli", "segment", "shape", "-w", "ws", "1", "--solid-min", "-300"]);
-        assert_eq!(p["solid_min"], -300.0);
-        let (name, p) = call(&["ferrum-cli", "segment", "distance", "-w", "ws", "3", "--to", "5"]);
-        assert_eq!((name.as_str(), p["segment"].as_u64(), p["to"].as_u64()), ("segment distance", Some(3), Some(5)));
         assert_eq!(call(&["ferrum-cli", "engine", "list"]).0, "engine list");
         let (name, p) = call(&["ferrum-cli", "run", "probe", "--params", r#"{"workspace":"w"}"#]);
         assert_eq!((name.as_str(), p["workspace"].as_str()), ("probe", Some("w")));
