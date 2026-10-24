@@ -33,7 +33,7 @@ use std::path::Path;
 use ferrum_domain::analysis::MaskRegion;
 use ferrum_domain::{ReviewStatus, Timestamp};
 use ferrum_io::annotations::annotation_report_json;
-use serde_json::{json, Value};
+use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use crate::config::AgentConfig;
