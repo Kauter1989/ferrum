@@ -5,10 +5,13 @@
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
+use std::time::Duration;
 
 use egui::{Color32, RichText};
 use egui_phosphor::light as icon;
 use ferrum_app::{AiStatus, Viewer};
+use ferrum_domain::SegmentationEngine;
+use ferrum_engines::gpu::{GatedEngine, GpuSettings};
 use ferrum_engines::{HttpConfig, HttpEngine};
 
 use super::theme::{ACCENT, DANGER, TEXT, TEXT_DIM};
@@ -16,6 +19,9 @@ use super::widgets::segmented;
 
 /// Engine URL used when `FERRUM_ENGINE_URL` is not set.
 pub const DEFAULT_ENGINE_URL: &str = "http://127.0.0.1:8765";
+
+/// Longest wait for a shared GPU; the person can cancel sooner.
+const GPU_WAIT: Duration = Duration::from_secs(3600);
 
 /// UI-only state of the section.
 #[derive(Debug, Clone)]
@@ -26,6 +32,9 @@ pub struct AiPanelState {
     pub selected: BTreeSet<String>,
     /// Filter of the structure list.
     pub filter: String,
+    /// The operator's GPU groups (`[network]` of `$FERRUM_AGENT_CONFIG`, as
+    /// the agent reads them), or why they could not be read.
+    pub gpu: Result<GpuSettings, String>,
 }
 
 impl Default for AiPanelState {
@@ -34,8 +43,27 @@ impl Default for AiPanelState {
             url: std::env::var("FERRUM_ENGINE_URL").unwrap_or_else(|_| DEFAULT_ENGINE_URL.to_owned()),
             selected: BTreeSet::new(),
             filter: String::new(),
+            gpu: operator_gpu_settings(),
         }
     }
+}
+
+/// The GPU settings of the operator configuration the agent uses; none
+/// (every engine ungated) without `FERRUM_AGENT_CONFIG`.
+fn operator_gpu_settings() -> Result<GpuSettings, String> {
+    match std::env::var_os("FERRUM_AGENT_CONFIG") {
+        Some(path) => GpuSettings::load_network(std::path::Path::new(&path)),
+        None => Ok(GpuSettings::default()),
+    }
+}
+
+/// The engine at `url`; an engine of a GPU group takes the group's lease
+/// for each session (Stage 23), like the agent's calls.
+fn engine_at(url: &str, gpu: &GpuSettings) -> Arc<dyn SegmentationEngine> {
+    // the access token comes from the environment, never from the UI
+    let token = std::env::var("FERRUM_ENGINE_TOKEN").ok().filter(|t| !t.is_empty());
+    let http = Arc::new(HttpEngine::new(HttpConfig { token, ..HttpConfig::new(url) }));
+    Arc::new(GatedEngine::new(http, gpu.clone(), url, GPU_WAIT))
 }
 
 fn status_line(viewer: &Viewer) -> (Color32, String) {
@@ -64,11 +92,14 @@ fn connection(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut AiPanelState) 
             }
         } else if ui.button(format!("{} Connect", icon::PLUGS_CONNECTED)).clicked() {
             let url = state.url.trim().to_owned();
-            // the access token comes from the environment, never from the UI
-            let token = std::env::var("FERRUM_ENGINE_TOKEN").ok().filter(|t| !t.is_empty());
-            viewer.connect_engine(Arc::new(HttpEngine::new(HttpConfig { token, ..HttpConfig::new(&url) })), &url);
+            match &state.gpu {
+                Ok(gpu) => viewer.connect_engine(engine_at(&url, gpu), &url),
+                // never run an engine of a group ungated: the operator's settings are broken
+                Err(e) => viewer.status.errors.push(format!("GPU settings in FERRUM_AGENT_CONFIG: {e}")),
+            }
         }
     });
+    waiting(ui, viewer);
     let (color, text) = status_line(viewer);
     ui.horizontal_wrapped(|ui| {
         let (dot, _) = ui.allocate_exact_size(egui::vec2(10.0, 14.0), egui::Sense::hover());
@@ -87,6 +118,18 @@ fn connection(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut AiPanelState) 
             ui.label(RichText::new(&info.license).size(11.0).color(TEXT_DIM));
         }
     }
+}
+
+/// "Waiting for GPU" while another process holds the group, with Cancel.
+fn waiting(ui: &mut egui::Ui, viewer: &mut Viewer) {
+    let Some(note) = viewer.ai().waiting().map(str::to_owned) else { return };
+    ui.horizontal_wrapped(|ui| {
+        ui.spinner();
+        ui.label(RichText::new(format!("Waiting for GPU: {note}")).size(12.0).color(ACCENT));
+        if ui.button(format!("{} Cancel", icon::X_CIRCLE)).on_hover_text("Do not send the request").clicked() {
+            viewer.ai_cancel_wait();
+        }
+    });
 }
 
 fn tools(ui: &mut egui::Ui, viewer: &mut Viewer) {

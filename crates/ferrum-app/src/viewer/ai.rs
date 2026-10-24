@@ -477,6 +477,18 @@ impl Viewer {
         }
     }
 
+    /// Removes the current object's segment if it holds no voxels: its
+    /// prompt was never sent.
+    fn drop_empty_target(&mut self) {
+        let empty = |t: u8| self.segmentation().set().is_some_and(|s| s.voxel_count(t) == 0);
+        if let Some(t) = self.ai.target.filter(|t| empty(*t)) {
+            self.ai.target = None;
+            if let Err(e) = self.remove_segment(t) {
+                self.status.errors.push(e.to_string());
+            }
+        }
+    }
+
     /// Applies finished engine work. Called from [`Viewer::poll`].
     pub(super) fn poll_ai(&mut self) {
         while let Some(event) = self.ai.worker.as_ref().and_then(|w| w.rx.try_recv().ok()) {
@@ -539,6 +551,7 @@ impl Viewer {
                     self.ai.session_revision = None;
                     self.ai.status = AiStatus::Connected;
                     self.status.message = format!("AI segmentation: {m}");
+                    self.drop_empty_target();
                 }
                 Err(e) => {
                     self.ai.session_revision = None;

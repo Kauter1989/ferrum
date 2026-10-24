@@ -186,7 +186,9 @@ impl GatedEngine {
         let holder = format!("ferrum desktop: {}", info.name);
         let observer = self.observer.lock().ok().and_then(|o| o.clone());
         let mut on_wait = |w: &Wait| {
-            let note = format!("GPU group {}: {}", w.group, describe_holders(w.held));
+            let held = describe_holders(w.held);
+            let held = if held.is_empty() { "another process is taking a lease".to_owned() } else { held };
+            let note = format!("{held} (group {})", w.group);
             observer.as_ref().is_none_or(|o| o.waiting(&note))
         };
         self.settings.acquire(&self.url, &holder, info.expected_peak_mib, self.timeout, &mut on_wait).map_err(|e| {

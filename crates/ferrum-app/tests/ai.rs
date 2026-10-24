@@ -396,14 +396,15 @@ fn a_full_gpu_group_makes_the_viewer_wait_and_cancel_sends_nothing() {
     };
     wait_for(&mut v, &|v| v.ai().waiting().is_some());
     let note = v.ai().waiting().unwrap().to_owned();
-    assert!(note.starts_with("GPU group card: llama-server (pid "), "{note}");
-    assert!(note.ends_with("holds 6000 MiB"), "{note}");
+    assert!(note.starts_with("llama-server (pid "), "{note}");
+    assert!(note.ends_with("holds 6000 MiB (group card)"), "{note}");
     v.ai_cancel_wait();
     v.wait_ai_idle();
     assert!(v.ai().waiting().is_none());
     assert_eq!(counting.sessions.load(Ordering::SeqCst), 0, "cancelled: no session was opened");
     assert_eq!(*v.ai().status(), AiStatus::Connected, "still connected after Cancel");
     assert!(v.status.message.contains("stopped waiting for the GPU"), "{}", v.status.message);
+    assert_eq!((v.ai().target(), v.segment_summaries().len()), (None, 0), "no empty AI segment is left");
 
     // once the holder leaves, the next prompt runs and the session holds the lease
     drop(held);
