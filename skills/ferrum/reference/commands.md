@@ -52,7 +52,8 @@ underscores) and a `ferrum-cli` sub-command. The parameters are listed in
 ## Segmentation engines
 | Command | Key parameters | Returns |
 |---|---|---|
-| `engine list` | — | every allowed engine: reachable, name, modes, `research_only`, `gpu_group` |
+| `engine list` | — | every allowed engine: reachable, name, modes, `research_only`, `gpu_group`, `unload`, `resident_mib` (reported by the engine), `expected_peak_mib` |
+| `engine unload` | `engine` or `group` | asks idle engines to free their GPU memory: per engine `unloaded`, `busy` (open sessions; nothing is stopped), `unsupported`, `unreachable`. Use it when a heavier engine or another program needs the card; the next call reloads the model |
 | `engine info` | `engine?` | capabilities (prompts, labels), `deterministic`, `research_only`, licence |
 | `segment interactive` | `prompts` (`point`, `box`, `scribble`/`lasso` with `points` on one slice), `name?`, `segment?` + `append?`/`undo?`, `from_segment?`, `roi?`/`whole_volume?`, `min_ml?`/`max_ml?`, `modality?`, `agent?`, `engine?` | the segment (new or refined), `revision`, `roi`, `checks` |
 | `segment auto` | `labels?`, `name_prefix?`, `modality?`, `agent?`, `engine?` | one segment per structure found, each with `checks` |

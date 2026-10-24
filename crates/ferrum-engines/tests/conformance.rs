@@ -82,9 +82,39 @@ fn conformance(base: &str, token: Option<String>) {
     if caps.automatic {
         automatic_round(session.as_mut(), &info, &volume);
     }
-    drop(session);
+    unload_round(base, &token, &engine, session, &info, &volume);
     if caps.interactive && caps.deterministic && info.supports(PromptKind::Point) {
         replay_round(&engine, &volume);
+    }
+}
+
+/// `POST /v1/unload` (Stage 23): refused with `busy` while a session is
+/// open; once idle the engine unloads, and the next session loads the model
+/// again. An engine without `capabilities.unload` need not serve it.
+// covers 23.4-b
+fn unload_round(
+    base: &str,
+    token: &Option<String>,
+    engine: &HttpEngine,
+    open: Box<dyn InteractiveSession>,
+    info: &EngineInfo,
+    volume: &Volume,
+) {
+    let url = format!("{base}/v1/unload");
+    if !info.capabilities.unload {
+        drop(open);
+        assert!(matches!(engine.unload(), Err(EngineError::Unsupported(_) | EngineError::Busy { .. })));
+        return;
+    }
+    let (status, code, _) = raw("POST", &url, token, None);
+    assert_eq!((status, code.as_str()), (503, "busy"), "unload is refused while a session is open");
+    assert!(matches!(engine.unload(), Err(EngineError::Busy { .. })));
+    drop(open);
+    let (status, _, _) = raw("POST", &url, token, None);
+    assert_eq!(status, 204, "an idle engine unloads");
+    let mut again = engine.open_session(volume, "CT").expect("the model loads again after unload");
+    if info.capabilities.interactive && info.supports(PromptKind::Point) {
+        again.prompt(&Prompt::Point { positive: true, voxel: UVec3::new(20, 20, 12) }).expect("prompt after reload");
     }
 }
 
@@ -257,6 +287,7 @@ impl SegmentationEngine for Limited {
         i.capabilities.automatic = false;
         i.max_voxels = 50_000;
         i.research_only = true;
+        i.capabilities.unload = false; // an engine from before Stage 23
         Ok(i)
     }
 
@@ -300,6 +331,10 @@ impl SegmentationEngine for AutomaticOnly {
 
     fn open_session(&self, v: &Volume, m: &str) -> Result<Box<dyn InteractiveSession>, EngineError> {
         self.0.open_session(v, m)
+    }
+
+    fn unload(&self) -> Result<(), EngineError> {
+        self.0.unload()
     }
 }
 

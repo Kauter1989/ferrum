@@ -102,6 +102,7 @@ impl Router {
                 Ok(info) => Reply::json(200, &wire::info_to_json(&info)),
                 Err(e) => Reply::error(&e),
             },
+            ("POST", ["v1", "unload"]) => self.unload(),
             ("POST", ["v1", "sessions"]) => self.create(req.body),
             ("PUT", ["v1", "sessions", id, "volume"]) => self.upload(id, req.body),
             ("POST", ["v1", "sessions", id, "prompts"]) => self.prompt(id, req.body),
@@ -142,6 +143,20 @@ impl Router {
                 self.job(&job, |s| s.cancel_job(&job).map(|()| Reply::empty()))
             }
             _ => Reply::code(404, "not_found", &format!("no route for {} {path}", req.method)),
+        }
+    }
+
+    /// `POST /v1/unload`: refused with `busy` while sessions are open.
+    fn unload(&mut self) -> Reply {
+        if !self.sessions.is_empty() {
+            let mut r = Reply::error(&EngineError::Busy { retry_after_s: 5 });
+            r.headers.push(("Retry-After", "5".into()));
+            return r;
+        }
+        match self.engine.unload() {
+            Ok(()) => Reply::empty(),
+            Err(EngineError::Unsupported(_)) => Reply::code(404, "not_found", "this engine cannot unload"),
+            Err(e) => Reply::error(&e),
         }
     }
 
