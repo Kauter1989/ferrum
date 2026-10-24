@@ -59,7 +59,7 @@ fn lease_error(e: LockError, timeout: Duration, dir: &str) -> AgentError {
         }
         LockError::Timeout { group, held } => AgentError::new(
             ErrorCode::EngineUnavailable,
-            format!("GPU group {group} stayed full for {} s: {}", timeout.as_secs(), describe_holders(&held)),
+            format!("GPU group {group} stayed full for {} s: {}", timeout.as_secs(), describe_holders(held)),
         )
         .hint(format!(
             "engines of one GPU group run one at a time, and next to other holders only when their leases fit \
