@@ -35,7 +35,8 @@ fn external_holder() {
         lease_mib: Some(6000),
         capacity_mib: Some(CAPACITY),
     };
-    let lease = LockDir::at(PathBuf::from(dir)).unwrap().acquire(&req, Duration::ZERO, &mut |_| true).unwrap();
+    // it waits rather than tries once: the parent polls `holders`, which takes the admission lock briefly
+    let lease = LockDir::at(PathBuf::from(dir)).unwrap().acquire(&req, Duration::from_secs(15), &mut |_| true).unwrap();
     let mut line = String::new();
     let _ = std::io::stdin().read_line(&mut line);
     drop(lease);
