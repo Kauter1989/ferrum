@@ -583,6 +583,46 @@ fn percentile(sorted: &[f64], q: f64) -> f64 {
     sorted[((sorted.len() - 1) as f64 * q).round() as usize]
 }
 
+/// The closest pair of voxels from a mask to the surface of another.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Nearest {
+    /// Distance between the two voxel centres in millimetres.
+    pub mm: f64,
+    /// The voxel of the first mask (grid index).
+    pub from: UVec3,
+    /// The surface voxel of the second mask (grid index).
+    pub to: UVec3,
+}
+
+/// The smallest distance (mm, between voxel centres) from the voxels of
+/// `from` to the surface voxels of `to` (voxels of `to` with a 6-neighbour
+/// outside it), with the two voxels; `None` when `to` is empty. Exact: an
+/// Euclidean distance transform of the surface over the union of both
+/// boxes. Only surface voxels of `from` need checking: from any inner voxel
+/// a step towards the target stays inside and comes closer. Ties go to the
+/// first voxel in grid order. Works whether `from` lies outside, touches or
+/// lies inside `to` (a lesion inside a lung: the distance to its border).
+pub fn distance_to_surface(from: &MaskRegion, to: &MaskRegion, spacing: Vec3) -> Option<Nearest> {
+    let bx = from.bx.union(to.bx);
+    let target = to.expanded(bx);
+    let seeds: Vec<bool> = (0..target.inside.len()).map(|n| target.is_surface(n)).collect();
+    let d2 = squared_edt(&seeds, bx.size(), spacing);
+    let s = bx.size();
+    let index = |g: UVec3| g.x as usize + s.x as usize * (g.y as usize + s.y as usize * g.z as usize);
+    let a = (0..from.inside.len())
+        .filter(|n| from.is_surface(*n))
+        .map(|n| from.bx.min + from.local_of(n))
+        .filter(|g| d2[index(*g - bx.min)].is_finite())
+        .min_by(|p, q| d2[index(*p - bx.min)].total_cmp(&d2[index(*q - bx.min)]))?;
+    let sp = spacing.as_dvec3();
+    let mm = |p: UVec3| ((p.as_dvec3() - a.as_dvec3()) * sp).length();
+    let b = (0..target.inside.len())
+        .filter(|n| seeds[*n])
+        .map(|n| bx.min + target.local_of(n))
+        .min_by(|p, q| mm(*p).total_cmp(&mm(*q)))?;
+    Some(Nearest { mm: mm(b), from: a, to: b })
+}
+
 /// Distances (mm, sorted) from every surface voxel of `from` to the nearest
 /// surface voxel of `to`, via an exact Euclidean distance transform over
 /// the union of both boxes.
@@ -679,6 +719,65 @@ mod tests {
             (i as f32 - c[0]).powi(2) + (j as f32 - c[1]).powi(2) + (k as f32 - c[2]).powi(2) <= r * r
         })
         .unwrap()
+    }
+
+    fn cuboid(dims: Dims3, lo: [u32; 3], hi: [u32; 3]) -> MaskRegion {
+        MaskRegion::from_box_mask(
+            VoxelBox::new(UVec3::from(lo), UVec3::from(hi)),
+            &vec![1; VoxelBox::new(UVec3::from(lo), UVec3::from(hi)).voxel_count()],
+        )
+        .map(|r| r.expanded(VoxelBox::full(dims)).cropped().unwrap())
+        .unwrap()
+    }
+
+    /// Brute force over every voxel pair, for the oracle.
+    fn brute_force(from: &MaskRegion, to: &MaskRegion, sp: Vec3) -> f64 {
+        let surface: Vec<UVec3> =
+            (0..to.inside.len()).filter(|n| to.is_surface(*n)).map(|n| to.bx.min + to.local_of(n)).collect();
+        (0..from.inside.len())
+            .filter(|n| from.inside[*n])
+            .map(|n| from.bx.min + from.local_of(n))
+            .flat_map(|a| surface.iter().map(move |b| ((b.as_dvec3() - a.as_dvec3()) * sp.as_dvec3()).length()))
+            .fold(f64::INFINITY, f64::min)
+    }
+
+    // covers 17.8-a
+    #[test]
+    fn distance_between_boxes_at_a_known_gap() {
+        let dims = Dims3::new(30, 12, 12);
+        let sp = Vec3::new(0.7, 0.8, 2.5);
+        let a = cuboid(dims, [2, 2, 2], [6, 8, 6]); // x 2..=5
+        let b = cuboid(dims, [10, 4, 3], [14, 6, 5]); // x 10..=13: 4 empty voxels between
+        let d = distance_to_surface(&a, &b, sp).unwrap();
+        assert!((d.mm - 5.0 * f64::from(sp.x)).abs() < 1e-9, "{d:?}");
+        assert_eq!((d.from.x, d.to.x), (5, 10));
+        assert_eq!(d.from.y, d.to.y);
+        // along z the 2.5 mm slices count: a gap of 2 slices is 3 × 2.5 mm
+        let c = cuboid(dims, [3, 3, 8], [5, 5, 10]);
+        let e = distance_to_surface(&a, &c, sp).unwrap();
+        assert!((e.mm - 3.0 * 2.5).abs() < 1e-9, "{e:?}");
+        assert_eq!((e.from.z, e.to.z), (5, 8));
+        // symmetric for disjoint masks, and equal to the brute force
+        assert!((distance_to_surface(&b, &a, sp).unwrap().mm - d.mm).abs() < 1e-9);
+        assert!((brute_force(&a, &b, sp) - d.mm).abs() < 1e-9);
+    }
+
+    // covers 17.8-a
+    #[test]
+    fn distance_from_a_sphere_inside_a_sphere_to_its_surface() {
+        let dims = Dims3::new(40, 40, 24);
+        let sp = Vec3::new(0.6, 0.6, 1.5);
+        let outer = ball(dims, [20.0, 20.0, 12.0], 11.0);
+        let inner = ball(dims, [23.0, 20.0, 12.0], 3.0);
+        let d = distance_to_surface(&inner, &outer, sp).unwrap();
+        assert!((d.mm - brute_force(&inner, &outer, sp)).abs() < 1e-9, "{d:?}");
+        assert!(d.mm > 0.0 && inner.contains(d.from) && outer.contains(d.to));
+        // the closest border lies on the side the inner sphere is shifted to
+        assert!(d.to.x > 23, "{d:?}");
+        // touching or overlapping masks are 0 mm apart
+        let touching = ball(dims, [20.0, 20.0, 12.0], 2.0);
+        assert_eq!(distance_to_surface(&outer, &outer, sp).unwrap().mm, 0.0);
+        assert!(distance_to_surface(&touching, &outer, sp).unwrap().mm > 0.0);
     }
 
     #[test]

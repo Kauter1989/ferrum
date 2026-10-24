@@ -263,8 +263,26 @@ fn mask_schema(command: &str) -> Option<(&'static str, Value)> {
     let label = || integer(1, "segment label");
     Some(match command {
         "segment shape" => (
-            "Shape of a segment from its voxels: volume, extent in mm, slice ranges and largest slices, axial long and short axis with end points, border contact, components and, for segments named left or right, the side it lies on. Measure segments with this, never from images.",
-            obj(json!({ "workspace": workspace(), "segment": label() }), &["workspace", "segment"]),
+            "Shape of a segment from its voxels: volume, extent in mm, slice ranges and largest slices, axial long and short axis with end points, border contact, components and, for segments named left or right, the side it lies on. With solid_min, also the axial long and short axis, volume and share of the segment's voxels at or above that value (the solid part of a part-solid lesion); the caller chooses the threshold, and the result is a measurement, not a classification. Measure segments with this, never from images.",
+            obj(
+                json!({
+                    "workspace": workspace(),
+                    "segment": label(),
+                    "solid_min": { "type": "number", "description": "measure the voxels of the segment with a value at or above this (HU on CT), e.g. the solid part of a part-solid lesion; no default" },
+                }),
+                &["workspace", "segment"],
+            ),
+        ),
+        "segment distance" => (
+            "Shortest distance in mm from a segment to the surface of another (e.g. a lesion to the pleura or a fissure), from their voxels: the two closest voxel centres with voxel and LPS mm coordinates, whether the segment lies inside the other and how many voxels they share, and an uncertainty of one voxel spacing. 0 mm when they touch. Measure distances between structures with this, not with picked points.",
+            obj(
+                json!({
+                    "workspace": workspace(),
+                    "segment": label(),
+                    "to": integer(1, "label of the segment whose surface the distance is measured to"),
+                }),
+                &["workspace", "segment", "to"],
+            ),
         ),
         "segment metrics" => (
             "Quantitative profile of a segment from its voxels and values: size (volume, extent, centroid in LPS mm, axial axes, largest slices), with profile clinical also shape (surface area, compactness, sphericity, principal axes and their directions), and first-order HU statistics (mean, std, min, max, percentiles, range, IQR); clinical adds the distribution of the values (skewness, kurtosis, energy, deviations, histogram entropy and uniformity, intensity-volume histogram) and the share of voxels in HU ranges. The result names the profile and its version and records every parameter. Intensity features need a CT study in HU: a NIfTI file without a declared modality is refused (declare it with study open --modality CT). Never read these numbers off an image.",
