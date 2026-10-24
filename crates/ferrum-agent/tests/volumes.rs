@@ -248,3 +248,36 @@ fn a_version_1_workspace_opens_as_volume_1() {
     let manifest: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     assert_eq!(manifest["version"], 2, "now names its volume");
 }
+
+#[test]
+fn a_decision_is_bound_to_the_open_volume() {
+    // covers 16.7-a, 16.7-c
+    use ferrum_agent::decisions::{record, revision, Decision, Item, Verdict};
+    let f = fixture();
+    let scan = f.ok("study scan", json!({ "paths": [f.src] }));
+    let ids: Vec<String> =
+        scan["data"]["series"].as_array().unwrap().iter().map(|e| e["series"].as_str().unwrap().to_owned()).collect();
+    f.open(Some(&ids[0]));
+    let a = f.ok(
+        "annotate add",
+        json!({ "kind": "distance", "plane": "axial", "agent": "a",
+                "points": [{ "voxel": [4, 8, 3] }, { "voxel": [12, 8, 3] }] }),
+    );
+    let item = Item::Annotation(a["data"]["annotation"]["id"].as_u64().unwrap());
+    let config = AgentConfig::default();
+    let ws = PathBuf::from(&f.ws);
+    let shown = revision(&config, &ws, item, None).unwrap();
+    f.open(Some(&ids[1]));
+    let now = revision(&config, &ws, item, None).unwrap();
+    assert_ne!(now, shown, "the same annotation on another volume is another item to decide on");
+    let decide =
+        |rev| Decision { item, verdict: Verdict::Confirm, person: "Dr. K. Example", revision: rev, shown_sha256: &now };
+    let e = record(&config, &ws, &decide(&shown), None).unwrap_err();
+    assert_eq!(e.code.as_str(), "source_changed");
+    record(&config, &ws, &decide(&now), None).unwrap();
+    let audit = std::fs::read_to_string(f.root.join("ws/audit.jsonl")).unwrap();
+    let last: Value = serde_json::from_str(audit.lines().last().unwrap()).unwrap();
+    assert_eq!(last["source"], "host");
+    assert_eq!(last["volume"], json!({ "series": ids[1], "label": "b = 1000" }), "like an agent command's entry");
+    assert_eq!(last["source_sha256"].as_str().map(str::len), Some(64));
+}
