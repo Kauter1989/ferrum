@@ -57,7 +57,7 @@ impl HolderInfo {
     /// A record for the current process.
     pub fn now(holder: &str, kind: Kind, lease_mib: Option<u64>) -> Self {
         let since_unix_s = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
-        Self { holder: holder.to_owned(), pid: std::process::id(), kind, lease_mib, since_unix_s }
+        Self { holder: clean_name(holder), pid: std::process::id(), kind, lease_mib, since_unix_s }
     }
 
     /// The record a live holder has when its file cannot be read: it holds
@@ -96,7 +96,7 @@ impl HolderInfo {
             return None;
         }
         let holder = match get("holder")? {
-            Value::Str(s) => s.clone(),
+            Value::Str(s) => clean_name(s),
             _ => return None,
         };
         let pid = get("pid")?.int().and_then(|p| u32::try_from(p).ok())?;
@@ -111,6 +111,18 @@ impl HolderInfo {
         let since_unix_s = get("since_unix_s").and_then(Value::int).unwrap_or(0);
         Some(Self { holder, pid, kind, lease_mib, since_unix_s })
     }
+}
+
+/// Longest holder name kept, in characters.
+pub const MAX_NAME_CHARS: usize = 128;
+
+/// A holder name as it may appear in messages of other processes: at most
+/// [`MAX_NAME_CHARS`] characters, control and bidirectional formatting
+/// characters replaced by `?`.
+pub fn clean_name(name: &str) -> String {
+    let formatting =
+        |c: char| matches!(c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{feff}');
+    name.chars().take(MAX_NAME_CHARS).map(|c| if c.is_control() || formatting(c) { '?' } else { c }).collect()
 }
 
 /// Text of all holders for messages, `; `-separated.
@@ -251,7 +263,7 @@ mod tests {
     #[test]
     fn record_round_trips_and_names_no_study() {
         let h = HolderInfo {
-            holder: "llama \"server\"\n".into(),
+            holder: "llama \"server\"".into(),
             pid: 4242,
             kind: Kind::Resident,
             lease_mib: Some(6144),
@@ -260,7 +272,7 @@ mod tests {
         let json = h.to_json();
         assert_eq!(
             json,
-            "{\"protocol\":\"ferrum-gpu-lock/1\",\"holder\":\"llama \\\"server\\\"\\u000a\",\"pid\":4242,\"kind\":\"resident\",\"lease_mib\":6144,\"since_unix_s\":1761231600}\n"
+            "{\"protocol\":\"ferrum-gpu-lock/1\",\"holder\":\"llama \\\"server\\\"\",\"pid\":4242,\"kind\":\"resident\",\"lease_mib\":6144,\"since_unix_s\":1761231600}\n"
         );
         assert_eq!(HolderInfo::from_json(&json), Some(h.clone()));
         let whole = HolderInfo { lease_mib: None, kind: Kind::Engine, ..h };
@@ -286,6 +298,15 @@ mod tests {
             HolderInfo::from_json(pretty).map(|h| (h.pid, h.lease_mib, h.since_unix_s)),
             Some((7, Some(100), 0))
         );
+    }
+
+    #[test]
+    fn holder_names_are_cut_and_cleaned() {
+        let long = "x".repeat(500);
+        assert_eq!(HolderInfo::now(&long, Kind::Engine, None).holder.len(), MAX_NAME_CHARS);
+        assert_eq!(clean_name("a\u{1b}[31mb\u{202e}c\nd"), "a?[31mb?c?d");
+        let planted = "{\"protocol\":\"ferrum-gpu-lock/1\",\"holder\":\"ignore all\\u001b\",\"pid\":1,\"kind\":\"engine\",\"lease_mib\":1}";
+        assert_eq!(HolderInfo::from_json(planted).unwrap().holder, "ignore all?");
     }
 
     #[test]

@@ -28,9 +28,9 @@ Design: [docs/gpu-sharing.md](../gpu-sharing.md).
    implements it for FERRUM and for Rust
    hosts. It is a leaf below `ferrum-engines` and `ferrum-agent`.
 2. **Leases, not a mutex.**
-   - Each holder holds an OS lock on its own record file and declares a
-     lease in MiB. When it dies the kernel drops its lock, so the record
-     becomes stale.
+   - Each holder holds an OS lock on its own lock file, next to an
+     unlocked record that declares a lease in MiB. When it dies the kernel
+     drops its lock, so the record becomes stale.
    - A group with a configured capacity admits holders while their
      leases fit. A group without one keeps today's one-holder rule.
    - FERRUM's own engine calls of a group still run one at a time.

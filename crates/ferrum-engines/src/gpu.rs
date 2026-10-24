@@ -18,7 +18,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-pub use ferrum_gpu_lock::{describe_holders, HolderInfo, Kind, Lease, LockDir, LockError, Request, Wait};
+pub use ferrum_gpu_lock::{default_path, describe_holders, HolderInfo, Kind, Lease, LockDir, LockError, Request, Wait};
 
 /// The `[network]` GPU settings of the operator configuration.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -91,6 +91,10 @@ impl GpuSettings {
     /// Checks references between the keys (they may come in any order): a
     /// capacity names a group, a peak names an engine of a group.
     pub fn validate(&self) -> Result<(), String> {
+        let all: Vec<&String> = self.groups.iter().flat_map(|(_, l)| l).collect();
+        if let Some(u) = all.iter().enumerate().find(|(n, u)| all[..*n].contains(u)).map(|(_, u)| u) {
+            return Err(format!("network.gpu_groups lists {u} in more than one group"));
+        }
         if let Some((g, _)) = self.capacity_mib.iter().find(|(g, _)| !self.groups.iter().any(|(n, _)| n == g)) {
             return Err(format!("network.gpu_capacity_mib names {g}, which is not in network.gpu_groups"));
         }
@@ -205,6 +209,7 @@ mod tests {
             ("[network]\ngpu_lock_dir = \"relative\"", "absolute path"),
             ("[network]\ngpu_groups = [1]", "table of URL lists"),
             ("[network]\ngpu_groups = { a = [1] }", "list of URLs"),
+            ("[network]\ngpu_groups = { a = [\"http://x\"], b = [\"http://x/\"] }", "more than one group"),
         ] {
             let e = parse(bad).unwrap_err();
             assert!(e.contains(says), "{bad}: {e}");

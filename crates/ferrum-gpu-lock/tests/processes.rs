@@ -221,3 +221,61 @@ fn created_directories_are_private() {
     }
     drop(lease);
 }
+
+// covers 23.1-e
+#[test]
+fn a_kept_admission_lock_cannot_outlast_the_timeout() {
+    let tmp = TempDir::new();
+    let dir = LockDir::at(&tmp.0).unwrap();
+    assert!(dir.holders("g").unwrap().is_empty());
+    let other = std::fs::OpenOptions::new().write(true).open(tmp.0.join("g").join("admission.lock")).unwrap();
+    other.lock().unwrap(); // another process (here another handle) never lets go
+    let start = Instant::now();
+    let r = dir.acquire(&req(Kind::Engine, None, None), Duration::from_millis(500), &mut |_| true);
+    assert!(start.elapsed() < Duration::from_secs(2), "{:?}", start.elapsed());
+    let err = r.unwrap_err();
+    assert!(err.to_string().contains("kept its admission lock"), "{err}");
+    drop(other);
+    assert!(try_once(&dir, &req(Kind::Engine, None, None)).is_ok());
+}
+
+// covers 23.1-c
+#[cfg(unix)]
+#[test]
+fn a_fifo_planted_as_record_does_not_stall_the_group() {
+    let tmp = TempDir::new();
+    let dir = LockDir::at(&tmp.0).unwrap();
+    let held = try_once(&dir, &req(Kind::Resident, Some(10), Some(12_000))).unwrap();
+    let record = std::fs::read_dir(tmp.0.join("g"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| p.extension().is_some_and(|e| e == "json"))
+        .unwrap();
+    std::fs::remove_file(&record).unwrap();
+    let made = Command::new("mkfifo").arg(&record).status().unwrap();
+    assert!(made.success());
+    let start = Instant::now();
+    let r = dir.acquire(&req(Kind::Engine, Some(1), Some(12_000)), Duration::from_millis(300), &mut |_| true);
+    assert!(start.elapsed() < Duration::from_secs(2), "{:?}", start.elapsed());
+    match r {
+        Err(LockError::Timeout { held, .. }) => assert_eq!(held[0].lease_mib, None, "unreadable: the whole group"),
+        other => panic!("{other:?}"),
+    }
+    drop(held);
+}
+
+#[test]
+fn a_leaving_holder_is_not_reported() {
+    let tmp = TempDir::new();
+    let dir = LockDir::at(&tmp.0).unwrap();
+    let held = try_once(&dir, &req(Kind::Resident, Some(10), Some(12_000))).unwrap();
+    // the moment between removing the record and unlocking, frozen
+    for e in std::fs::read_dir(tmp.0.join("g")).unwrap() {
+        let p = e.unwrap().path();
+        if p.extension().is_some_and(|e| e == "json") {
+            std::fs::remove_file(p).unwrap();
+        }
+    }
+    assert!(dir.holders("g").unwrap().is_empty());
+    drop(held);
+}

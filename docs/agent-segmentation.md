@@ -402,8 +402,9 @@ allow_research_only = true            # (new) false: research-only engines are `
 ```
 
 - The allow-list stays as it is. `gpu_groups` serialises engine calls
-  with an advisory lock file per group in the temporary folder, so
-  separate CLI processes and the MCP server respect it too.
+  across processes, so separate CLI processes and the MCP server respect
+  it too. Since Stage 23 it is a lease in a per-user directory that
+  processes outside FERRUM can join ([gpu-sharing.md](gpu-sharing.md)).
 - `allow_research_only = false` restricts agents to engines whose licence
   allows the site's use.
 

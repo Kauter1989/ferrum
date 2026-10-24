@@ -181,7 +181,7 @@ fn wait_for_job(ctx: &mut Ctx, session: &mut dyn InteractiveSession, job: &str) 
 fn run_job(
     ctx: &mut Ctx,
     p: &Params,
-    url: &str,
+    (url, name): (&str, &str),
     labels: Option<&[String]>,
 ) -> Result<(Vec<u16>, Option<String>), AgentError> {
     let modality = match p.str("modality")? {
@@ -190,7 +190,7 @@ fn run_job(
     };
     let volume = ctx.study(p)?.volume.clone();
     let config = ctx.config;
-    let gpu = gpu_lease(config, url, &format!("ferrum-agent {url}"), None, &mut |f, m| ctx.report(f, m))?;
+    let gpu = gpu_lease(config, url, &format!("ferrum-agent: {name}"), None, &mut |f, m| ctx.report(f, m))?;
     let gpu_warning = gpu.as_ref().and_then(|l| l.warning().map(str::to_owned));
     let mut session = engine(url).open_session(&volume, &modality).map_err(engine_error)?;
     let job = session.start_job(labels).map_err(engine_error)?;
@@ -234,7 +234,7 @@ pub fn auto(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     if !info.capabilities.automatic {
         return Err(AgentError::bad_request(format!("{} has no automatic segmentation", info.name)));
     }
-    let (values, gpu_warning) = run_job(ctx, p, &url, labels.as_deref())?;
+    let (values, gpu_warning) = run_job(ctx, p, (&url, &info.name), labels.as_deref())?;
     let config = ctx.config;
     let study = ctx.study(p)?;
     let present = present_values(&values, study.segments.labels().data());

@@ -44,21 +44,31 @@ pub fn gpu_lease(
         progress(0.0, &format!("waiting for GPU group {}: {}; {needs}", w.group, describe_holders(w.held)));
         true
     };
-    config.gpu.acquire(url, holder, manifest_peak, timeout, &mut on_wait).map_err(|e| lease_error(e, timeout))
+    let dir = || match &config.gpu.lock_dir {
+        Some(d) => d.display().to_string(),
+        None => ferrum_engines::gpu::default_path().map_or_else(|| "none".into(), |d| d.display().to_string()),
+    };
+    config.gpu.acquire(url, holder, manifest_peak, timeout, &mut on_wait).map_err(|e| lease_error(e, timeout, &dir()))
 }
 
-fn lease_error(e: LockError, timeout: Duration) -> AgentError {
-    match e {
+fn lease_error(e: LockError, timeout: Duration, dir: &str) -> AgentError {
+    match &e {
+        LockError::Timeout { held, .. } if held.is_empty() => {
+            AgentError::new(ErrorCode::EngineUnavailable, e.to_string())
+                .hint(format!("another process keeps the admission lock in {dir}; it must hold it only to decide"))
+        }
         LockError::Timeout { group, held } => AgentError::new(
             ErrorCode::EngineUnavailable,
             format!("GPU group {group} stayed full for {} s: {}", timeout.as_secs(), describe_holders(&held)),
         )
-        .hint(
+        .hint(format!(
             "engines of one GPU group run one at a time, and next to other holders only when their leases fit \
-             network.gpu_capacity_mib; try again when the holders are done",
-        ),
-        other => AgentError::internal(other.to_string())
-            .hint("the GPU lock directory (network.gpu_lock_dir) must belong to this user and be closed to others"),
+                 network.gpu_capacity_mib; try again when the holders are done (lock directory {dir}; every \
+                 process sharing the card must use the same one)"
+        )),
+        other => AgentError::internal(other.to_string()).hint(format!(
+            "the GPU lock directory {dir} (network.gpu_lock_dir) must belong to this user and be closed to others"
+        )),
     }
 }
 

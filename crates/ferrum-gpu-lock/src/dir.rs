@@ -53,6 +53,8 @@ pub struct Meta {
     pub mode: u32,
     /// A directory.
     pub is_dir: bool,
+    /// A regular file.
+    pub is_file: bool,
     /// A symbolic link (not followed).
     pub is_symlink: bool,
 }
@@ -62,8 +64,11 @@ pub fn unsafe_reason(meta: Meta, euid: u32, want_dir: bool) -> Option<String> {
     if meta.is_symlink {
         return Some("is a symbolic link".into());
     }
-    if meta.is_dir != want_dir {
-        return Some(if want_dir { "is not a directory".into() } else { "is not a regular file".into() });
+    if want_dir && !meta.is_dir {
+        return Some("is not a directory".into());
+    }
+    if !want_dir && !meta.is_file {
+        return Some("is not a regular file".into());
     }
     if meta.uid != euid {
         return Some(format!("is owned by user {} instead of the current user {euid}", meta.uid));
@@ -74,7 +79,7 @@ pub fn unsafe_reason(meta: Meta, euid: u32, want_dir: bool) -> Option<String> {
     None
 }
 
-/// Checks an existing path.
+/// Checks an existing path (not following a symbolic link).
 pub fn check(path: &Path, want_dir: bool) -> Result<(), LockError> {
     let md = std::fs::symlink_metadata(path).map_err(|e| LockError::io(path, e))?;
     if let Some(reason) = reason_for(&md, want_dir) {
@@ -83,10 +88,26 @@ pub fn check(path: &Path, want_dir: bool) -> Result<(), LockError> {
     Ok(())
 }
 
+/// Checks a file that is already open: the handle, not the path, so the
+/// path cannot be swapped between the check and the use.
+pub fn check_open(file: &File, path: &Path) -> Result<(), LockError> {
+    let md = file.metadata().map_err(|e| LockError::io(path, e))?;
+    if let Some(reason) = reason_for(&md, false) {
+        return Err(LockError::Unsafe { path: path.to_path_buf(), reason });
+    }
+    Ok(())
+}
+
 #[cfg(unix)]
 fn reason_for(md: &std::fs::Metadata, want_dir: bool) -> Option<String> {
     use std::os::unix::fs::MetadataExt;
-    let meta = Meta { uid: md.uid(), mode: md.mode(), is_dir: md.is_dir(), is_symlink: md.file_type().is_symlink() };
+    let meta = Meta {
+        uid: md.uid(),
+        mode: md.mode(),
+        is_dir: md.is_dir(),
+        is_file: md.is_file(),
+        is_symlink: md.file_type().is_symlink(),
+    };
     unsafe_reason(meta, rustix::process::geteuid().as_raw(), want_dir)
 }
 
@@ -94,7 +115,8 @@ fn reason_for(md: &std::fs::Metadata, want_dir: bool) -> Option<String> {
 fn reason_for(md: &std::fs::Metadata, want_dir: bool) -> Option<String> {
     // Windows: %LOCALAPPDATA% is private to the user by its ACL; only the
     // kind of the path is checked.
-    let meta = Meta { uid: 0, mode: 0, is_dir: md.is_dir(), is_symlink: md.file_type().is_symlink() };
+    let meta =
+        Meta { uid: 0, mode: 0, is_dir: md.is_dir(), is_file: md.is_file(), is_symlink: md.file_type().is_symlink() };
     unsafe_reason(meta, 0, want_dir)
 }
 
@@ -128,17 +150,33 @@ fn create_private_dir(path: &Path) -> Result<(), LockError> {
 }
 
 /// Opens a file of the lock directory for writing, creating it (mode 0600)
-/// when `create` is set, and checks the opened path.
+/// when `create` is set. It never follows a symbolic link and never blocks
+/// (a FIFO planted under the name cannot stall the caller); check the
+/// handle with [`check_open`].
 pub fn open_file(path: &Path, create: bool) -> io::Result<File> {
     let mut o = OpenOptions::new();
     o.read(true).write(true).create(create).truncate(false);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        o.mode(0o600).custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32);
-    }
+    no_follow(&mut o);
     o.open(path)
 }
+
+/// Opens a record for reading, like [`open_file`].
+pub fn open_read(path: &Path) -> io::Result<File> {
+    let mut o = OpenOptions::new();
+    o.read(true);
+    no_follow(&mut o);
+    o.open(path)
+}
+
+#[cfg(unix)]
+fn no_follow(o: &mut OpenOptions) {
+    use std::os::unix::fs::OpenOptionsExt;
+    let flags = rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK;
+    o.mode(0o600).custom_flags(flags.bits() as i32);
+}
+
+#[cfg(not(unix))]
+fn no_follow(_: &mut OpenOptions) {}
 
 /// Creates a new file (fails if it exists).
 pub fn create_new(path: &Path) -> io::Result<File> {
@@ -159,7 +197,7 @@ mod tests {
     const ME: u32 = 1000;
 
     fn dir(uid: u32, mode: u32) -> Meta {
-        Meta { uid, mode, is_dir: true, is_symlink: false }
+        Meta { uid, mode, is_dir: true, is_file: false, is_symlink: false }
     }
 
     // covers 23.1-c
@@ -172,10 +210,12 @@ mod tests {
         assert!(unsafe_reason(dir(ME, 0o40720), ME, true).unwrap().contains("written by other users"));
         let link = Meta { is_symlink: true, ..dir(ME, 0o40700) };
         assert!(unsafe_reason(link, ME, true).unwrap().contains("symbolic link"));
-        let file = Meta { is_dir: false, ..dir(ME, 0o100600) };
+        let file = Meta { is_dir: false, is_file: true, ..dir(ME, 0o100600) };
         assert_eq!(unsafe_reason(file, ME, false), None);
         assert!(unsafe_reason(file, ME, true).unwrap().contains("not a directory"));
         assert!(unsafe_reason(Meta { uid: 1001, ..file }, ME, false).unwrap().contains("owned by user 1001"));
+        let fifo = Meta { is_file: false, ..file };
+        assert!(unsafe_reason(fifo, ME, false).unwrap().contains("not a regular file"), "FIFOs and devices too");
     }
 
     // covers 23.1-c

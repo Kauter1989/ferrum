@@ -459,7 +459,7 @@ switch time and GPU memory on a real GPU.
 
 ---
 
-## Stage 23 — GPU sharing with an external model server 📋 (G1 ✅; design at G2)
+## Stage 23 — GPU sharing with an external model server 🚧 (G1 ✅, G2 ✅; PR 1 of 3)
 
 Medical Harness runs its language model locally as a `llama-server`
 sidecar on the same 12 GB card as FERRUM's engines

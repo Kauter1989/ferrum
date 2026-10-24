@@ -34,7 +34,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 pub use dir::{default_path, default_path_from, group_name, unsafe_reason, Meta};
-pub use record::{describe_holders, HolderInfo, Kind, MAX_RECORD_BYTES};
+pub use record::{clean_name, describe_holders, HolderInfo, Kind, MAX_NAME_CHARS, MAX_RECORD_BYTES};
 
 /// Protocol identifier written into every record.
 pub const PROTOCOL: &str = "ferrum-gpu-lock/1";
@@ -154,6 +154,9 @@ impl std::fmt::Display for LockError {
             Self::NoDirectory => write!(f, "no GPU lock directory: neither XDG_RUNTIME_DIR nor HOME is set"),
             Self::Unsafe { path, reason } => write!(f, "GPU lock path {} {reason}", path.display()),
             Self::Io { path, error } => write!(f, "GPU lock path {}: {error}", path.display()),
+            Self::Timeout { group, held } if held.is_empty() => {
+                write!(f, "GPU group {group}: another process kept its admission lock")
+            }
             Self::Timeout { group, held } => {
                 write!(f, "GPU group {group} stayed full: {}", describe_holders(held))
             }
@@ -203,11 +206,21 @@ impl LockDir {
         Ok(path)
     }
 
-    /// The live holders of `group`; stale records are removed.
+    /// The live holders of `group`; stale records are removed. Gives
+    /// `Timeout` (with no holders) when another process keeps the
+    /// admission lock for longer than two seconds.
     pub fn holders(&self, group: &str) -> Result<Vec<HolderInfo>, LockError> {
         let gdir = self.group_dir(group)?;
-        let _admission = admission(&gdir)?;
-        scan(&gdir)
+        let start = Instant::now();
+        loop {
+            if let Some(_admission) = try_admission(&gdir)? {
+                return scan(&gdir);
+            }
+            if start.elapsed() >= Duration::from_secs(2) {
+                return Err(LockError::Timeout { group: group.to_owned(), held: Vec::new() });
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 
     /// Waits until `req` is admitted, `timeout` has passed, or `on_wait`
@@ -221,13 +234,17 @@ impl LockDir {
         let gdir = self.group_dir(req.group)?;
         let start = Instant::now();
         loop {
-            let held = {
-                let _admission = admission(&gdir)?;
-                let held = scan(&gdir)?;
-                if let Decision::Admit { warning } = decide(&held, req) {
-                    return Lease::create(&gdir, req, warning);
+            // the admission lock is only tried, so a process that keeps it
+            // cannot make the caller wait past its timeout
+            let held = match try_admission(&gdir)? {
+                Some(_admission) => {
+                    let held = scan(&gdir)?;
+                    if let Decision::Admit { warning } = decide(&held, req) {
+                        return Lease::create(&gdir, req, warning);
+                    }
+                    held
                 }
-                held
+                None => Vec::new(),
             };
             let waited = start.elapsed();
             if waited >= timeout {
@@ -241,13 +258,17 @@ impl LockDir {
     }
 }
 
-/// Takes the group's admission lock (blocking; held for one decision).
-fn admission(gdir: &Path) -> Result<File, LockError> {
+/// Tries the group's admission lock (held for one decision); `None` while
+/// another process holds it.
+fn try_admission(gdir: &Path) -> Result<Option<File>, LockError> {
     let path = gdir.join("admission.lock");
     let file = dir::open_file(&path, true).map_err(|e| LockError::io(&path, e))?;
-    dir::check(&path, false)?;
-    file.lock().map_err(|e| LockError::io(&path, e))?;
-    Ok(file)
+    dir::check_open(&file, &path)?;
+    match file.try_lock() {
+        Ok(()) => Ok(Some(file)),
+        Err(TryLockError::WouldBlock) => Ok(None),
+        Err(TryLockError::Error(e)) => Err(LockError::io(&path, e)),
+    }
 }
 
 /// Live holders of a group directory; removes stale ones. Call it only
@@ -274,12 +295,12 @@ fn scan(gdir: &Path) -> Result<Vec<HolderInfo>, LockError> {
 
 /// The holder of `lock_path` if it is alive; a stale pair is removed.
 fn live_holder(lock_path: &Path, record_path: &Path) -> Result<Option<HolderInfo>, LockError> {
-    dir::check(lock_path, false)?;
     let file = match dir::open_file(lock_path, false) {
         Ok(f) => f,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(LockError::io(lock_path, e)),
     };
+    dir::check_open(&file, lock_path)?;
     match file.try_lock() {
         Ok(()) => {
             drop(file);
@@ -287,6 +308,9 @@ fn live_holder(lock_path: &Path, record_path: &Path) -> Result<Option<HolderInfo
             remove(lock_path)?;
             Ok(None)
         }
+        // a locked file whose record is gone belongs to a holder that is leaving
+        // (records are created under the admission lock, so it is never one arriving)
+        Err(TryLockError::WouldBlock) if !record_path.exists() => Ok(None),
         Err(TryLockError::WouldBlock) => Ok(Some(read_record(record_path))),
         Err(TryLockError::Error(e)) => Err(LockError::io(lock_path, e)),
     }
@@ -294,9 +318,10 @@ fn live_holder(lock_path: &Path, record_path: &Path) -> Result<Option<HolderInfo
 
 fn read_record(path: &Path) -> HolderInfo {
     let read = || -> Option<HolderInfo> {
-        dir::check(path, false).ok()?;
+        let file = dir::open_read(path).ok()?;
+        dir::check_open(&file, path).ok()?;
         let mut text = String::new();
-        File::open(path).ok()?.take(MAX_RECORD_BYTES + 1).read_to_string(&mut text).ok()?;
+        file.take(MAX_RECORD_BYTES + 1).read_to_string(&mut text).ok()?;
         if text.len() as u64 > MAX_RECORD_BYTES {
             return None;
         }

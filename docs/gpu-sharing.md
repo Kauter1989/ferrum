@@ -1,6 +1,6 @@
 # GPU sharing with an external model server (Stage 23)
 
-Design of [Stage 23](../dev_plan.md#stage-23--gpu-sharing-with-an-external-model-server--spec-at-g1)
+Design of Stage 23 in [dev_plan.md](../dev_plan.md)
 ([#68](https://github.com/Kauter1989/ferrum/issues/68)). Decision record:
 [ADR 0015](decisions/0015-gpu-lease-protocol.md).
 
@@ -11,7 +11,7 @@ Medical Harness runs a local language model (`llama-server`) on the same
 
 | What | Where | Gap |
 |---|---|---|
-| GPU groups: one engine call of a group at a time, across processes | `GpuLock` in `crates/ferrum-agent/src/sessions.rs`, used by `segment auto` (`commands/engine.rs`) and `segment interactive` (`commands/interactive.rs`) | lock file in the shared temporary folder (`/tmp/ferrum-gpu-<group>.lock`); undocumented; a mutex with no notion of size; the wait has no progress |
+| GPU groups: one engine call of a group at a time, across processes | before this stage: `GpuLock` in `crates/ferrum-agent/src/sessions.rs`, used by `segment auto` (`commands/engine.rs`) and `segment interactive` (`commands/interactive.rs`) | lock file in the shared temporary folder (`/tmp/ferrum-gpu-<group>.lock`); undocumented; a mutex with no notion of size; the wait has no progress |
 | Desktop AI tools | `crates/ferrum-app/src/viewer/ai.rs` (worker thread), wired in `crates/ferrum/src/ui/ai_panel.rs` | take no GPU lock at all |
 | nnInteractive bridge frees the image on close | `NnInteractiveBackend.release` (`bridges/ferrum_bridges/nninteractive.py`) | not measured; weights and CUDA context stay (≈ 2 GB); nothing can unload them |
 | Engine manifest | `GET /v1/info` (`docs/engine-protocol.md` §3) | says nothing about GPU memory |
@@ -59,7 +59,7 @@ pub struct Request<'a> {
     pub lease_mib: Option<u64>,             // None: the whole group
     pub capacity_mib: Option<u64>,          // None: one holder at a time (today's rule)
 }
-pub struct Wait { pub held: Vec<HolderInfo>, pub waited: Duration }
+pub struct Wait<'a> { pub group: &'a str, pub held: &'a [HolderInfo], pub waited: Duration }
 
 impl LockDir {
     /// Blocks until admitted, `timeout` elapsed, or `on_wait` returns false (cancel).
@@ -70,8 +70,9 @@ impl LockDir {
 pub struct Lease { /* releases on drop */ }
 ```
 
-**Admission (one decision, under the group's admission lock):**
-1. List `holder-*.json`. A file whose OS lock can be taken belongs to a
+**Admission (one decision, under the group's admission lock, which is
+only tried, so a process that keeps it cannot outlast the timeout):**
+1. List `holder-*.lock`. A file whose OS lock can be taken belongs to a
    dead holder: delete it (stale). An OS lock is released by the kernel
    when its process dies, so `SIGKILL` cannot leave the group locked.
 2. With the live holders `H` and the request `R`:
@@ -143,12 +144,16 @@ says.
 ### 3.4 Who takes a lease
 
 - **Agent** (`segment auto`, `segment interactive`): `GpuLock` is
-  replaced by `ferrum_engines::gpu::GpuGate::acquire(settings, url, info, timeout, progress)`.
-  The lease is held for the call, as today. MCP progress shows the wait
-  ("waiting for GPU group card: llama-server holds 6 144 of 11 264 MiB;
-  this call needs 6 000 MiB"). The timeout gives `engine_unavailable`
-  naming the holders and their leases (23.1-e). Engine sessions of a group
-  are still not cached between MCP calls.
+  replaced by `ferrum_agent::sessions::gpu_lease`, over
+  `ferrum_engines::gpu::GpuSettings::acquire`. The lease is held for the
+  call, and the engine session is closed before the lease is released.
+  MCP progress shows the wait ("waiting for GPU group card: llama-server
+  (pid 4242) holds 6144 MiB; this call needs 6000 MiB"). The timeout gives
+  `engine_unavailable` naming the holders, their leases and the lock
+  directory (23.1-e). The holder name is `ferrum-agent: <engine name>`, cut
+  to 128 characters with control characters replaced, as every holder
+  name is. Engine sessions of a group are still not cached between MCP
+  calls.
 - **Desktop:** `ferrum_engines::gpu::GatedEngine` wraps any
   `SegmentationEngine`. It takes a lease in `open_session`, and in
   `start_job` for automatic jobs, and keeps it until the session is
@@ -294,9 +299,11 @@ that is free, which the next admission cleans up.
 ```python
 import fcntl, json, os, time
 d = os.path.join(os.environ["XDG_RUNTIME_DIR"], "ferrum", "gpu", "card")
-os.makedirs(d, mode=0o700, exist_ok=True)
+os.umask(0o077)                              # every level must be 0700: makedirs' mode is the leaf's only
+os.makedirs(d, exist_ok=True)
 with open(os.path.join(d, "admission.lock"), "a+") as adm:
     fcntl.flock(adm, fcntl.LOCK_EX)          # steps 3–4 omitted: assume the group admits us
+    # hold the admission lock only to decide, never while the server runs
     hid = f"{os.getpid()}-{time.time_ns()}-0"
     lock = open(os.path.join(d, f"holder-{hid}.lock"), "x")
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -306,7 +313,18 @@ with open(os.path.join(d, "admission.lock"), "a+") as adm:
 # … keep `lock` open while the server runs
 ```
 
+Records and lock files must be regular files. Open them with
+`O_NOFOLLOW | O_NONBLOCK`, and check the opened handle rather than the
+path. A record that is anything else counts as holding the whole group.
+
 **Not supported:**
+- processes of one user that see different lock directories. A process
+  started without `XDG_RUNTIME_DIR` (cron, `sudo -u`, some SSH sessions, a
+  container) uses `~/.cache/ferrum/gpu`; one started with it uses
+  `/run/user/<uid>/ferrum/gpu` (on WSLg, GUI apps get
+  `/mnt/wslg/runtime-dir`). Each would be admitted alone. Set
+  `network.gpu_lock_dir` for every participant when in doubt; FERRUM's
+  wait and timeout messages name the directory in use;
 - network file systems;
 - a container and its host sharing a group, unless both see the same
   directory as the same user.
@@ -353,7 +371,7 @@ with open(os.path.join(d, "admission.lock"), "a+") as adm:
 | [23.2-b] | `peak_from_manifest_raises_never_lowers`; `no_peak_takes_whole_group` | test |
 | [23.2-c] | `lease_6000_blocks_7000_admits_4000` (capacity 12 000) | test |
 | [23.2-d] | `peak_over_capacity_runs_alone_with_warning` | test |
-| [23.2-e] | holder records and wait errors in `tests/privacy.rs` scan | test |
+| [23.2-e] | `gpu_sharing.rs::lock_records_name_no_study` (no workspace or source path in the records of an engine call); holder names are engine names or operator names, cut and cleaned (`record.rs::holder_names_are_cut_and_cleaned`) | test |
 | [23.3-a] | `gated_engine_takes_lease_on_open_and_job` (ferrum-engines); desktop config load test | test |
 | [23.3-b] | `viewer_reports_waiting_and_cancel_sends_nothing` (ferrum-app, mock engine + external holder) | test |
 | [23.3-c] | UI test `ai_panel_shows_waiting_for_gpu`; a person checks the panel with a real holder | test, manual |

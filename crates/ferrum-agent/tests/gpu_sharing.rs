@@ -15,7 +15,9 @@ use std::time::{Duration, Instant};
 
 use ferrum_agent::mcp::McpServer;
 use ferrum_agent::{Agent, AgentConfig};
-use ferrum_domain::{EngineError, EngineInfo, InteractiveSession, SegmentationEngine, Volume};
+use ferrum_domain::{
+    EngineError, EngineInfo, InteractiveSession, JobStatus, Prompt, PromptResult, SegmentationEngine, Volume, VoxelBox,
+};
 use ferrum_engines::gpu::{Kind, LockDir, Request};
 use ferrum_engines::{EngineServer, MockEngine};
 use serde_json::{json, Value};
@@ -40,22 +42,68 @@ fn external_holder() {
 }
 
 /// The mock engine; it copies the lock records it can see when a session
-/// opens (the agent holds its lease by then).
-struct Peeking(MockEngine, PathBuf, Arc<Mutex<Vec<String>>>);
+/// opens (the agent holds its lease by then), and notes when a session
+/// closes whether a lease was still held (it must be: the engine's memory is
+/// freed before the lease is given back).
+struct Peeking(MockEngine, PathBuf, Arc<Mutex<Vec<String>>>, Arc<Mutex<Vec<bool>>>);
+
+fn records(locks: &Path) -> Vec<String> {
+    std::fs::read_dir(locks.join("card"))
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+                .map(|e| std::fs::read_to_string(e.path()).unwrap_or_default())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// A session that reports, when dropped, whether a lease was held.
+struct Watched(Box<dyn InteractiveSession>, PathBuf, Arc<Mutex<Vec<bool>>>);
+
+impl Drop for Watched {
+    fn drop(&mut self) {
+        let held = records(&self.1).iter().any(|r| r.contains("ferrum-agent"));
+        self.2.lock().unwrap().push(held);
+    }
+}
+
+impl InteractiveSession for Watched {
+    fn prompt(&mut self, prompt: &Prompt) -> Result<PromptResult, EngineError> {
+        self.0.prompt(prompt)
+    }
+    fn mask(&mut self, bx: VoxelBox) -> Result<Vec<u8>, EngineError> {
+        self.0.mask(bx)
+    }
+    fn undo(&mut self) -> Result<PromptResult, EngineError> {
+        self.0.undo()
+    }
+    fn reset(&mut self) -> Result<(), EngineError> {
+        self.0.reset()
+    }
+    fn start_job(&mut self, labels: Option<&[String]>) -> Result<String, EngineError> {
+        self.0.start_job(labels)
+    }
+    fn job_status(&mut self, job: &str) -> Result<JobStatus, EngineError> {
+        self.0.job_status(job)
+    }
+    fn cancel_job(&mut self, job: &str) -> Result<(), EngineError> {
+        self.0.cancel_job(job)
+    }
+    fn label_map(&mut self) -> Result<Vec<u16>, EngineError> {
+        self.0.label_map()
+    }
+}
 
 impl SegmentationEngine for Peeking {
     fn info(&self) -> Result<EngineInfo, EngineError> {
         self.0.info()
     }
     fn open_session(&self, volume: &Volume, modality: &str) -> Result<Box<dyn InteractiveSession>, EngineError> {
-        if let Ok(entries) = std::fs::read_dir(self.1.join("card")) {
-            for e in entries.flatten() {
-                if e.path().extension().is_some_and(|x| x == "json") {
-                    self.2.lock().unwrap().push(std::fs::read_to_string(e.path()).unwrap_or_default());
-                }
-            }
-        }
-        self.0.open_session(volume, modality)
+        self.2.lock().unwrap().extend(records(&self.1));
+        let s = self.0.open_session(volume, modality)?;
+        Ok(Box::new(Watched(s, self.1.clone(), self.3.clone())))
     }
 }
 
@@ -67,6 +115,7 @@ struct Fixture {
     src: PathBuf,
     locks: PathBuf,
     records: Arc<Mutex<Vec<String>>>,
+    closed_with_lease: Arc<Mutex<Vec<bool>>>,
 }
 
 impl Fixture {
@@ -75,11 +124,12 @@ impl Fixture {
         let src = ferrum_agent::evals::write_phantoms(&dir.path().join("in")).unwrap().remove(0);
         let locks = dir.path().join("gpu");
         let records = Arc::new(Mutex::new(Vec::new()));
-        let engine = Peeking(MockEngine::default(), locks.clone(), records.clone());
+        let closed_with_lease = Arc::new(Mutex::new(Vec::new()));
+        let engine = Peeking(MockEngine::default(), locks.clone(), records.clone(), closed_with_lease.clone());
         let server = EngineServer::start(Arc::new(engine), "127.0.0.1:0", None).unwrap();
         let url = server.url();
         let ws = dir.path().join("ws").to_string_lossy().into_owned();
-        Self { _dir: dir, _server: server, url, ws, src, locks, records }
+        Self { _dir: dir, _server: server, url, ws, src, locks, records, closed_with_lease }
     }
 
     /// An agent whose engine needs 7 000 MiB of the 12 000 MiB group `card`.
@@ -202,7 +252,7 @@ fn lock_records_name_no_study() {
     let records = f.records.lock().unwrap().clone();
     assert_eq!(records.len(), 1, "the agent held its lease while the session was open");
     let r = &records[0];
-    assert!(r.contains("\"holder\":\"ferrum-agent FERRUM mock engine\""), "{r}");
+    assert!(r.contains("\"holder\":\"ferrum-agent: FERRUM mock engine\""), "{r}");
     let leaks = [f.ws.as_str(), &f.src.to_string_lossy(), &file_name(&f.src)];
     assert!(leaks.iter().all(|l| !r.contains(*l)), "{r}");
     assert!(LockDir::at(&f.locks).unwrap().holders("card").unwrap().is_empty(), "released after the call");
@@ -210,4 +260,28 @@ fn lock_records_name_no_study() {
 
 fn file_name(p: &Path) -> String {
     p.file_name().unwrap().to_string_lossy().into_owned()
+}
+
+#[test]
+fn engine_sessions_close_before_the_lease_is_released() {
+    let f = Fixture::new();
+    let agent = f.agent(30);
+    assert_eq!(agent.run("study open", &json!({ "workspace": f.ws, "path": f.src }))["ok"], true);
+    let auto = agent.run("segment auto", &json!({ "workspace": f.ws }));
+    assert_eq!(auto["ok"], true, "{auto:#}");
+    let point = json!({ "type": "point", "point": { "voxel": [14, 20, 15] }, "positive": true });
+    let mut server = McpServer::new(agent);
+    let call = json!({ "name": "ferrum_segment_interactive", "arguments": { "workspace": f.ws, "prompts": [point] } });
+    let reply = server.handle(&json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": call })).unwrap();
+    assert_eq!(reply["result"]["isError"], false, "{reply:#}");
+    // the server drops a session when the client deletes it; give it a moment
+    let start = Instant::now();
+    while f.closed_with_lease.lock().unwrap().len() < 2 && start.elapsed() < Duration::from_secs(5) {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(
+        *f.closed_with_lease.lock().unwrap(),
+        [true, true],
+        "auto, then interactive (MCP): both closed under the lease"
+    );
 }
