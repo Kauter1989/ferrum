@@ -201,8 +201,18 @@ fn engine_schema(command: &str) -> Option<(&'static str, Value)> {
             obj(json!({ "engine": engine_param() }), &[]),
         ),
         "engine list" => (
-            "Every engine the operator allows: whether it answers, name, version, modes, research_only and GPU group.",
+            "Every engine the operator allows: whether it answers, name, version, modes, research_only, GPU group, whether it can unload, and the GPU memory it reports holding (resident_mib, advisory) and expects per call (expected_peak_mib).",
             obj(json!({}), &[]),
+        ),
+        "engine unload" => (
+            "Asks idle engines to unload their model and free all of their GPU memory, so another program (a local model server) or a heavier engine has room on a shared card. Give engine (one URL) or group (every engine of a GPU group); without either, the default engine. Each engine answers unloaded, busy (it has open sessions or jobs: nothing is stopped), unsupported, unreachable or error (with the message). The next session loads the model again, which takes time. Never touches results.",
+            obj(
+                json!({
+                    "engine": engine_param(),
+                    "group": { "type": "string", "description": "a GPU group of the operator configuration (network.gpu_groups)" },
+                }),
+                &[],
+            ),
         ),
         "segment interactive" => (
             "Prompts an interactive engine (points, boxes, scribbles, lassos). A new object becomes a segment proposed by the engine; segment refines an object made earlier (append adds to its stored prompts, undo drops the last); from_segment redoes a segment you made, seeded with lassos from its mask. Only a region around the prompts is uploaded. The result carries quality checks.",

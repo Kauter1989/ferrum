@@ -31,7 +31,6 @@ import multiprocessing
 import os
 import tempfile
 import time
-from typing import Optional
 
 import numpy as np
 
@@ -41,7 +40,7 @@ LPS_TO_RAS = np.diag([-1.0, -1.0, 1.0])
 
 
 def affine_ras(spacing: tuple, origin: tuple, direction: list) -> np.ndarray:
-    """4×4 voxel→RAS affine of a grid indexed ``(i, j, k)``.
+    """4 x 4 voxel→RAS affine of a grid indexed ``(i, j, k)``.
 
     ``direction`` holds the LPS unit vectors of the ``i``, ``j`` and ``k``
     axes as rows (as sent in the protocol)."""
@@ -53,7 +52,7 @@ def affine_ras(spacing: tuple, origin: tuple, direction: list) -> np.ndarray:
 
 
 class TotalSegmentatorSession(BackendSession):
-    def __init__(self, backend: "TotalSegmentatorBackend", volume: np.ndarray, spacing, origin, direction):
+    def __init__(self, backend: TotalSegmentatorBackend, volume: np.ndarray, spacing, origin, direction):
         self.backend = backend
         self.volume = volume
         self.affine = affine_ras(spacing, origin, direction)
@@ -109,7 +108,7 @@ class TotalSegmentatorBackend(Backend):
         task: str = "total",
         device: str = "gpu",
         fast: bool = False,
-        license_number: Optional[str] = None,
+        license_number: str | None = None,
         isolate: bool = True,
     ):
         from totalsegmentator.config import set_config_key, setup_totalseg
@@ -150,6 +149,13 @@ class TotalSegmentatorBackend(Backend):
         if not self.isolate:
             return self.run(image, roi_subset)
         return run_in_child(self.options(roi_subset), image, progress, f"TotalSegmentator {self.task}")
+
+    def can_unload(self) -> bool:
+        """With isolated jobs the bridge holds no GPU memory between jobs."""
+        return self.isolate
+
+    def unload(self) -> None:
+        """Nothing to free: each job's child process gave its memory back."""
 
     def info(self) -> dict:
         try:

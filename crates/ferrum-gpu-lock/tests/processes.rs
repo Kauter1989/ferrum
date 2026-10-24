@@ -279,3 +279,33 @@ fn a_leaving_holder_is_not_reported() {
     assert!(dir.holders("g").unwrap().is_empty());
     drop(held);
 }
+
+/// `flock` belongs to the open file: a process forked by another thread keeps
+/// a copy of every descriptor until it `exec`s. Locks must be released
+/// explicitly, or a released group looks held for that moment.
+#[cfg(unix)]
+#[test]
+fn locks_released_while_other_threads_spawn_processes() {
+    use std::sync::atomic::AtomicBool;
+    let tmp = TempDir::new();
+    let dir = LockDir::at(&tmp.0).unwrap();
+    let stop = std::sync::Arc::new(AtomicBool::new(false));
+    let spawner = {
+        let stop = stop.clone();
+        std::thread::spawn(move || {
+            while !stop.load(Ordering::Relaxed) {
+                let _ = Command::new("true").status();
+            }
+        })
+    };
+    let mut refused = 0;
+    for _ in 0..400 {
+        match try_once(&dir, &req(Kind::Engine, None, None)) {
+            Ok(lease) => drop(lease),
+            Err(_) => refused += 1,
+        }
+    }
+    stop.store(true, Ordering::Relaxed);
+    spawner.join().unwrap();
+    assert_eq!(refused, 0, "a released lock was still held by a forked child");
+}
