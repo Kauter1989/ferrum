@@ -38,7 +38,7 @@ use sha2::{Digest, Sha256};
 
 use crate::config::AgentConfig;
 use crate::envelope::{AgentError, ErrorCode};
-use crate::study::{Study, VolumeCache};
+use crate::study::{series_key, Study, VolumeCache};
 
 /// Tag of the revision encoding; a change of the encoding changes it.
 pub const REVISION_FORMAT: &str = "ferrum-review-revision/1";
@@ -130,14 +130,20 @@ pub fn record(
     let shown = check_hash("shown_sha256", d.shown_sha256)?;
     let revision = check_hash("revision", d.revision)?;
     let root = config.resolve_workspace(workspace)?;
-    let _lock = lock(&root)?;
+    if !root.join(ferrum_io::workspace::files::MANIFEST).exists() {
+        // no lock file in a directory that is not a workspace
+        return Err(AgentError::new(ErrorCode::NoStudy, format!("{} is not a workspace", root.display())));
+    }
+    let _lock = DecisionLock::take(&root)?;
     let mut study = Study::load(config, &root, cache)?;
     if item_revision(config, &study, d.item)? != revision {
         return Err(AgentError::new(
             ErrorCode::SourceChanged,
             format!("{} changed since it was shown; nothing was recorded", d.item.describe()),
         )
-        .hint("show the item again, read its new revision, and let the person decide on that"));
+        .hint(
+            "show the item again (reopen it in the host), read its new revision, and let the person decide on that",
+        ));
     }
     refuse_decided(&study, d.item)?;
     let status = match d.verdict {
@@ -150,17 +156,19 @@ pub fn record(
         Item::Segment(label) => ("segment", u64::from(label)),
     };
     let command = if status == ReviewStatus::Confirmed { "review confirm" } else { "review reject" };
-    let volume = study.open_volume.as_ref().and_then(|v| v.volume.as_ref()).map(|v| v.label.clone());
     let mut entry = json!({
         "time": time.to_rfc3339(),
         "command": command,
         "source": "host",
-        "params": {
-            kind: id, "by": person, "revision": revision, "shown_sha256": shown,
-            "source_sha256": study.source_sha256, "volume": volume,
-        },
+        "params": { kind: id, "by": person, "revision": revision, "shown_sha256": shown },
         "ok": true,
+        "source_sha256": study.source_sha256,
     });
+    // the same object as an agent command's entry
+    if let Some(open) = &study.open_volume {
+        let label = open.volume.as_ref().map(|v| v.label.clone()).unwrap_or_default();
+        entry["volume"] = json!({ "series": series_key(config, &open.id), "label": label });
+    }
     // the audit entry first: a decision is never in the workspace without it
     study.workspace.append_audit(entry.clone())?;
     if let Err(e) = apply(config, &mut study, d.item, status, &person, time) {
@@ -172,17 +180,29 @@ pub fn record(
     Ok(Recorded { item: d.item, status, person, revision, shown_sha256: shown, time })
 }
 
-/// Holds the workspace's decision lock (released when dropped).
-fn lock(root: &Path) -> Result<std::fs::File, AgentError> {
-    let path = root.join(LOCK_FILE);
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(&path)
-        .map_err(|e| AgentError::internal(format!("{}: {e}", path.display())))?;
-    file.lock().map_err(|e| AgentError::internal(format!("{}: {e}", path.display())))?;
-    Ok(file)
+/// The workspace's decision lock, unlocked explicitly when dropped: a child
+/// process forked meanwhile by another thread keeps the open file, and with
+/// it the lock, until it execs (lesson L27).
+struct DecisionLock(std::fs::File);
+
+impl DecisionLock {
+    fn take(root: &Path) -> Result<Self, AgentError> {
+        let path = root.join(LOCK_FILE);
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .map_err(|e| AgentError::internal(format!("{}: {e}", path.display())))?;
+        file.lock().map_err(|e| AgentError::internal(format!("{}: {e}", path.display())))?;
+        Ok(Self(file))
+    }
+}
+
+impl Drop for DecisionLock {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
 }
 
 /// Someone has decided already: a second decision would overwrite theirs.
@@ -195,13 +215,14 @@ fn refuse_decided(study: &Study, item: Item) -> Result<(), AgentError> {
     if p.is_pending() {
         return Ok(());
     }
-    let by = p.reviewed_by.as_deref().unwrap_or("someone");
-    let when = p.reviewed.map(|t| format!(" at {}", t.to_rfc3339())).unwrap_or_default();
-    Err(AgentError::new(
-        ErrorCode::Forbidden,
-        format!("{} is already {} by {by}{when}; nothing was recorded", item.describe(), p.status.as_str()),
-    )
-    .hint("a decision is not overwritten; the item must be proposed again (changed) before anyone decides on it"))
+    let state = match (&p.reviewed_by, p.reviewed) {
+        (Some(by), Some(t)) => format!("already {} by {by} at {}", p.status.as_str(), t.to_rfc3339()),
+        (Some(by), None) => format!("already {} by {by}", p.status.as_str()),
+        // a person drew it: made confirmed, without a review
+        (None, _) => format!("drawn by a person ({})", p.status.as_str()),
+    };
+    Err(AgentError::new(ErrorCode::Forbidden, format!("{} is {state}; nothing was recorded", item.describe()))
+        .hint("a decision is not overwritten; to decide again, reopen the item for review in the desktop app"))
 }
 
 fn apply(

@@ -211,17 +211,17 @@ can refine the object later by replaying them
 - The agent interface writes one line per command (command, parameters,
   outputs, hashes). Review decisions are logged there too.
 - A decision a host recorded through `ferrum_agent::decisions` (16.7) has
-  `"source": "host"` and, in `params`, the item (`segment` or
-  `annotation`), `by` (the name the host gave), `revision` (the item's
-  revision when it was shown), `shown_sha256` (the host's hash of what it
-  showed), `source_sha256` and `volume` (the label of the open volume of a
-  multi-volume series, else `null`). The entry is written before the
-  decision; if writing the decision then fails, a second entry with
-  `"ok": false` follows. `.decisions.lock` in the workspace serialises
-  decisions of several hosts.
+  `"source": "host"`; `params` holds the item (`segment` or `annotation`),
+  `by` (the name the host gave), `revision` (the item's revision when it
+  was shown) and `shown_sha256` (the host's hash of what it showed). Like
+  an agent command's entry, it has `source_sha256` and, for a multi-volume
+  series, `volume` (`{"series", "label"}`) at the top level. The entry is
+  written before the decision; if writing the decision then fails, a
+  second entry with `"ok": false` follows. `.decisions.lock` in the
+  workspace serialises decisions of several hosts.
 
   ```json
-  {"time":"…","command":"review confirm","source":"host","params":{"segment":3,"by":"Dr. K. Example","revision":"9a…","shown_sha256":"5f…","source_sha256":"c1…","volume":null},"ok":true}
+  {"time":"…","command":"review confirm","source":"host","params":{"segment":3,"by":"Dr. K. Example","revision":"9a…","shown_sha256":"5f…"},"ok":true,"source_sha256":"c1…"}
   ```
 
 **Item revision (`ferrum-review-revision/1`):** SHA-256 over, in order,

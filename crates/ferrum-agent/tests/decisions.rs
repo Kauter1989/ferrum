@@ -120,7 +120,8 @@ fn a_decision_on_what_was_shown_is_recorded_with_both_hashes() {
     assert_eq!(f.status(a), "rejected");
     let last = audit(&f.ws).pop().unwrap();
     assert_eq!(last["command"], "review reject");
-    assert_eq!(last["params"]["source_sha256"].as_str().map(str::len), Some(64), "tied to the data");
+    assert_eq!(last["source_sha256"].as_str().map(str::len), Some(64), "tied to the data");
+    assert!(last.get("volume").is_none(), "a single-volume series names no volume");
 }
 
 // covers 16.7-c
@@ -182,6 +183,19 @@ fn a_stale_revision_records_nothing() {
 
 // covers 16.7-c
 #[test]
+fn a_changed_annotation_records_nothing() {
+    let f = Fixture::new();
+    let item = Item::Annotation(f.annotation);
+    let shown = revision(&f.config, &f.ws, item, None).unwrap();
+    ok(&f.agent, "annotate rename", json!({ "workspace": f.ws, "id": f.annotation, "name": "renamed" }));
+    let e = record(&f.config, &f.ws, &f.decide(item, Verdict::Reject, &shown), None).unwrap_err();
+    assert_eq!(e.code.as_str(), "source_changed");
+    assert_eq!(f.status(item), "proposed");
+    assert!(audit(&f.ws).is_empty());
+}
+
+// covers 16.7-c
+#[test]
 fn bad_input_is_refused() {
     let f = Fixture::new();
     let item = Item::Segment(f.segment);
@@ -199,6 +213,13 @@ fn bad_input_is_refused() {
     assert_eq!(code(f.decide(item, Verdict::Confirm, "zz")), "bad_request");
     assert_eq!(code(f.decide(Item::Segment(200), Verdict::Confirm, &rev)), "not_found");
     assert_eq!(code(f.decide(Item::Annotation(999), Verdict::Confirm, &rev)), "not_found");
+    let empty = f.ws.join("not-a-workspace");
+    std::fs::create_dir_all(&empty).unwrap();
+    assert_eq!(
+        record(&f.config, &empty, &f.decide(item, Verdict::Confirm, &rev), None).unwrap_err().code.as_str(),
+        "no_study"
+    );
+    assert!(!empty.join(".decisions.lock").exists(), "no lock file outside a workspace");
     assert_eq!(f.status(item), "proposed");
     // an uppercase hash is the same hash
     let upper = rev.to_ascii_uppercase();
