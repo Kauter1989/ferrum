@@ -3,6 +3,7 @@
 //! A second process is this test binary run again with
 //! `FERRUM_GPU_LOCK_TEST_HOLDER=<dir>`: its `holder_child` test then holds
 //! group `g` until its stdin closes.
+#![allow(missing_docs, clippy::unwrap_used, clippy::expect_used)]
 
 use std::io::Write;
 use std::path::{Path, PathBuf};

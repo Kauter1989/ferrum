@@ -1,5 +1,6 @@
 //! The crate stays usable on its own: no FERRUM crate and nothing but
 //! `rustix` (Unix) among its dependencies (ADR 0015 §1).
+#![allow(missing_docs, clippy::unwrap_used, clippy::expect_used)]
 
 // covers 23.1-b
 #[test]
