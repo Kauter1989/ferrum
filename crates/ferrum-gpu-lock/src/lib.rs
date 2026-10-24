@@ -258,14 +258,27 @@ impl LockDir {
     }
 }
 
+/// A held OS lock that is released explicitly when dropped. Closing alone is
+/// not enough: `flock` belongs to the open file, and a child process that
+/// another thread forks at that moment keeps a copy of the descriptor until
+/// it `exec`s, which would keep the lock.
+#[derive(Debug)]
+struct Held(File);
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
+}
+
 /// Tries the group's admission lock (held for one decision); `None` while
 /// another process holds it.
-fn try_admission(gdir: &Path) -> Result<Option<File>, LockError> {
+fn try_admission(gdir: &Path) -> Result<Option<Held>, LockError> {
     let path = gdir.join("admission.lock");
     let file = dir::open_file(&path, true).map_err(|e| LockError::io(&path, e))?;
     dir::check_open(&file, &path)?;
     match file.try_lock() {
-        Ok(()) => Ok(Some(file)),
+        Ok(()) => Ok(Some(Held(file))),
         Err(TryLockError::WouldBlock) => Ok(None),
         Err(TryLockError::Error(e)) => Err(LockError::io(&path, e)),
     }
@@ -303,6 +316,7 @@ fn live_holder(lock_path: &Path, record_path: &Path) -> Result<Option<HolderInfo
     dir::check_open(&file, lock_path)?;
     match file.try_lock() {
         Ok(()) => {
+            let _ = file.unlock(); // see Held
             drop(file);
             remove(record_path)?;
             remove(lock_path)?;
@@ -385,7 +399,9 @@ impl Drop for Lease {
         // the record goes first: a scanner that finds the lock file unlocked
         // removes what is left, so the order cannot leave a live-looking pair
         let _ = std::fs::remove_file(&self.record_path);
-        self.lock = None;
+        if let Some(lock) = self.lock.take() {
+            let _ = lock.unlock(); // see Held
+        }
         let _ = std::fs::remove_file(&self.lock_path);
     }
 }

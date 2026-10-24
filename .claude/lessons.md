@@ -396,6 +396,29 @@ that says so instead of editing the old one.
 - **Rule:** Hook tests include the command shapes sessions actually
   use: pipes, redirections, heredocs, `&&` chains, `git -C`.
 
+### L27 — A released file lock stayed held by a child another thread forked (2026-10, Stage 23 PR 2 CI)
+
+- **Symptom:** On CI, `leases_share_the_capacity_through_files` found its
+  group "busy" right after the only holder had left: a zero-timeout
+  attempt gave a timeout with no holders. Locally it passed every time.
+- **Root cause:** `flock` belongs to the open file description, not to
+  the descriptor. Dropping a `File` only closes our descriptor. When
+  another thread forks a child at that moment (the parallel process
+  tests, the bridge's workers, the agent's subprocesses), the child holds
+  a copy of every descriptor until it `exec`s, so the lock outlives our
+  `drop`.
+- **Why it was missed:** The race needs a fork in the same few
+  microseconds. The tests that fork ran next to it only by chance, on CI's
+  slower runner.
+- **Fix:** Locks are unlocked explicitly before the file is closed
+  (`Held` guard for `admission.lock`, `Lease::drop`, stale checks).
+- **Guard:** `locks_released_while_other_threads_spawn_processes` in
+  `crates/ferrum-gpu-lock/tests/processes.rs` fails three times out of
+  three without the fix.
+- **Rule:** Never rely on closing a file to release a `flock`/`File::lock`
+  in a process that may spawn children: unlock explicitly. A test that
+  passes locally and fails once on CI is a race to reproduce, not a flake.
+
 ## What worked
 
 ### W1 — Field test on the user's GPU with a throw-away script (2026-10, Stage 17)
