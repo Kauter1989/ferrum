@@ -424,7 +424,7 @@ pub fn error_status(e: &EngineError) -> (u16, &'static str) {
         EngineError::TooLarge(_) => (413, "too_large"),
         EngineError::Unsupported(_) => (422, "unsupported_prompt"),
         EngineError::Busy { .. } => (503, "busy"),
-        EngineError::Unreachable(_) | EngineError::Internal(_) => (500, "internal"),
+        EngineError::Unreachable(_) | EngineError::Internal(_) | EngineError::Cancelled(_) => (500, "internal"),
     }
 }
 

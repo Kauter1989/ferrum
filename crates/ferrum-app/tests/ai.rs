@@ -351,3 +351,72 @@ fn automatic_jobs_report_progress_and_can_be_cancelled() {
     assert!(matches!(v.ai().status(), AiStatus::Failed(m) if m.contains("out of memory")));
     v.ai_cancel_job(); // no job: nothing happens
 }
+
+// covers 23.3-a, 23.3-b
+#[test]
+fn a_full_gpu_group_makes_the_viewer_wait_and_cancel_sends_nothing() {
+    use ferrum_engines::gpu::{GatedEngine, GpuSettings, Kind, LockDir, Request};
+
+    let dir = tempfile::tempdir().unwrap();
+    let locks = dir.path().join("gpu");
+    let url = "http://mock.invalid".to_owned();
+    let settings = GpuSettings {
+        groups: vec![("card".into(), vec![url.clone()])],
+        capacity_mib: vec![("card".into(), 12_000)],
+        peaks_mib: vec![(url.clone(), 7000)],
+        lock_dir: Some(locks.clone()),
+    };
+    let held = LockDir::at(&locks)
+        .unwrap()
+        .acquire(
+            &Request {
+                group: "card",
+                holder: "llama-server",
+                kind: Kind::Resident,
+                lease_mib: Some(6000),
+                capacity_mib: Some(12_000),
+            },
+            std::time::Duration::ZERO,
+            &mut |_| true,
+        )
+        .unwrap();
+    let counting = Arc::new(Counting { sessions: AtomicUsize::new(0), interactive: true });
+    let gated = GatedEngine::new(counting.clone(), settings, &url, std::time::Duration::from_secs(30));
+    let mut v = viewer();
+    v.connect_engine(Arc::new(gated), &url);
+    v.wait_ai_idle();
+    assert!(v.ai_prompt(Prompt::Point { positive: true, voxel: CENTRE }));
+    let wait_for = |v: &mut Viewer, f: &dyn Fn(&Viewer) -> bool| {
+        let start = std::time::Instant::now();
+        while !f(v) {
+            assert!(start.elapsed().as_secs() < 10, "timed out");
+            v.poll();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    };
+    wait_for(&mut v, &|v| v.ai().waiting().is_some());
+    let note = v.ai().waiting().unwrap().to_owned();
+    assert!(note.starts_with("GPU group card: llama-server (pid "), "{note}");
+    assert!(note.ends_with("holds 6000 MiB"), "{note}");
+    v.ai_cancel_wait();
+    v.wait_ai_idle();
+    assert!(v.ai().waiting().is_none());
+    assert_eq!(counting.sessions.load(Ordering::SeqCst), 0, "cancelled: no session was opened");
+    assert_eq!(*v.ai().status(), AiStatus::Connected, "still connected after Cancel");
+    assert!(v.status.message.contains("stopped waiting for the GPU"), "{}", v.status.message);
+
+    // once the holder leaves, the next prompt runs and the session holds the lease
+    drop(held);
+    assert!(v.ai_prompt(Prompt::Point { positive: true, voxel: CENTRE }));
+    v.wait_ai_idle();
+    assert_eq!(counting.sessions.load(Ordering::SeqCst), 1);
+    let dir_now = LockDir::at(&locks).unwrap();
+    assert_eq!(dir_now.holders("card").unwrap().len(), 1, "the open session holds the lease");
+    assert!(dir_now.holders("card").unwrap()[0].holder.starts_with("ferrum desktop: "));
+    v.disconnect_engine();
+    let start = std::time::Instant::now();
+    while !dir_now.holders("card").unwrap().is_empty() {
+        assert!(start.elapsed().as_secs() < 10, "the lease outlived the session");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}

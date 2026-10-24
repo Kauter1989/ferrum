@@ -83,7 +83,9 @@ pub fn engine_error(e: EngineError) -> AgentError {
         EngineError::TooLarge(_) => AgentError::new(ErrorCode::Limit, msg)
             .hint("segment interactive uploads a region of interest; leave out whole_volume or give a smaller roi"),
         EngineError::BadRequest(_) | EngineError::Unsupported(_) => AgentError::bad_request(msg),
-        EngineError::Protocol(_) | EngineError::NotFound | EngineError::Internal(_) => AgentError::internal(msg),
+        EngineError::Protocol(_) | EngineError::NotFound | EngineError::Internal(_) | EngineError::Cancelled(_) => {
+            AgentError::internal(msg)
+        }
     }
 }
 

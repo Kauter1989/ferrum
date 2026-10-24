@@ -16,7 +16,13 @@
 //! ```
 
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+use ferrum_domain::{
+    EngineError, EngineInfo, EngineObserver, InteractiveSession, JobStatus, Prompt, PromptResult, SegmentationEngine,
+    Volume, VoxelBox,
+};
 
 pub use ferrum_gpu_lock::{default_path, describe_holders, HolderInfo, Kind, Lease, LockDir, LockError, Request, Wait};
 
@@ -133,6 +139,118 @@ impl GpuSettings {
             capacity_mib: self.capacity(group),
         };
         self.lock_dir()?.acquire(&req, timeout, on_wait).map(Some)
+    }
+}
+
+impl GpuSettings {
+    /// The `[network]` GPU settings of an operator configuration file, for
+    /// the desktop app (the agent's `AgentConfig` reads the same keys); other
+    /// sections and keys are left to their owners.
+    pub fn load_network(path: &std::path::Path) -> Result<Self, String> {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        let table: toml::Table = text.parse().map_err(|e: toml::de::Error| e.message().to_owned())?;
+        let mut s = Self::default();
+        if let Some(network) = table.get("network").and_then(toml::Value::as_table) {
+            for (k, v) in network {
+                s.set(k, v)?;
+            }
+        }
+        s.validate()?;
+        Ok(s)
+    }
+}
+
+/// An engine of a GPU group, as the desktop app uses it: opening a session
+/// takes the group's lease and the session holds it until it is dropped,
+/// because an open interactive session keeps its image on the GPU. While
+/// the lease waits, the [`EngineObserver`] hears who holds the group and may
+/// stop the wait.
+pub struct GatedEngine {
+    inner: Arc<dyn SegmentationEngine>,
+    settings: GpuSettings,
+    url: String,
+    timeout: Duration,
+    observer: Mutex<Option<Arc<dyn EngineObserver>>>,
+}
+
+impl GatedEngine {
+    /// `inner` reached at `url`, gated by `settings` (no-op when the URL is in
+    /// no group); a wait longer than `timeout` fails.
+    pub fn new(inner: Arc<dyn SegmentationEngine>, settings: GpuSettings, url: &str, timeout: Duration) -> Self {
+        let url = url.trim_end_matches('/').to_owned();
+        Self { inner, settings, url, timeout, observer: Mutex::new(None) }
+    }
+
+    fn lease(&self) -> Result<Option<Lease>, EngineError> {
+        let info = self.inner.info()?;
+        let holder = format!("ferrum desktop: {}", info.name);
+        let observer = self.observer.lock().ok().and_then(|o| o.clone());
+        let mut on_wait = |w: &Wait| {
+            let note = format!("GPU group {}: {}", w.group, describe_holders(w.held));
+            observer.as_ref().is_none_or(|o| o.waiting(&note))
+        };
+        self.settings.acquire(&self.url, &holder, info.expected_peak_mib, self.timeout, &mut on_wait).map_err(|e| {
+            match e {
+                LockError::Cancelled => EngineError::Cancelled("stopped waiting for the GPU".into()),
+                other => EngineError::Internal(other.to_string()),
+            }
+        })
+    }
+}
+
+impl SegmentationEngine for GatedEngine {
+    fn info(&self) -> Result<EngineInfo, EngineError> {
+        self.inner.info()
+    }
+
+    fn open_session(&self, volume: &Volume, modality: &str) -> Result<Box<dyn InteractiveSession>, EngineError> {
+        let lease = self.lease()?;
+        let session = self.inner.open_session(volume, modality)?;
+        Ok(Box::new(GatedSession { session, _lease: lease }))
+    }
+
+    fn unload(&self) -> Result<(), EngineError> {
+        self.inner.unload()
+    }
+
+    fn observe(&self, observer: Arc<dyn EngineObserver>) {
+        if let Ok(mut o) = self.observer.lock() {
+            *o = Some(observer);
+        }
+    }
+}
+
+/// A session holding its group's lease. Fields drop in order: the session
+/// closes (freeing the engine's memory) before the lease is released.
+struct GatedSession {
+    session: Box<dyn InteractiveSession>,
+    _lease: Option<Lease>,
+}
+
+impl InteractiveSession for GatedSession {
+    fn prompt(&mut self, prompt: &Prompt) -> Result<PromptResult, EngineError> {
+        self.session.prompt(prompt)
+    }
+    fn mask(&mut self, bx: VoxelBox) -> Result<Vec<u8>, EngineError> {
+        self.session.mask(bx)
+    }
+    fn undo(&mut self) -> Result<PromptResult, EngineError> {
+        self.session.undo()
+    }
+    fn reset(&mut self) -> Result<(), EngineError> {
+        self.session.reset()
+    }
+    fn start_job(&mut self, labels: Option<&[String]>) -> Result<String, EngineError> {
+        self.session.start_job(labels)
+    }
+    fn job_status(&mut self, job: &str) -> Result<JobStatus, EngineError> {
+        self.session.job_status(job)
+    }
+    fn cancel_job(&mut self, job: &str) -> Result<(), EngineError> {
+        self.session.cancel_job(job)
+    }
+    fn label_map(&mut self) -> Result<Vec<u16>, EngineError> {
+        self.session.label_map()
     }
 }
 

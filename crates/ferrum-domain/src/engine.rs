@@ -6,6 +6,8 @@
 //! only the vocabulary and the traits, so the application can drive any
 //! engine — remote, mock or future in-process — the same way.
 
+use std::sync::Arc;
+
 use glam::UVec3;
 use thiserror::Error;
 
@@ -272,6 +274,10 @@ pub enum EngineError {
     /// Any other engine-side failure.
     #[error("engine error: {0}")]
     Internal(String),
+    /// The caller stopped the request before it was sent (e.g. while it
+    /// waited for a shared GPU).
+    #[error("cancelled: {0}")]
+    Cancelled(String),
 }
 
 /// State of an automatic segmentation job.
@@ -341,6 +347,20 @@ pub trait SegmentationEngine: Send + Sync {
     fn unload(&self) -> Result<(), EngineError> {
         Err(EngineError::Unsupported("unload".into()))
     }
+
+    /// Registers who hears that a call waits (e.g. for room on a shared
+    /// GPU) and may stop the wait. Engines that never wait ignore it.
+    fn observe(&self, observer: Arc<dyn EngineObserver>) {
+        let _ = observer;
+    }
+}
+
+/// Hears that an engine call is waiting before it starts (Stage 23: a GPU
+/// group held by another process). Returning `false` stops the wait; the
+/// call then fails without being sent.
+pub trait EngineObserver: Send + Sync {
+    /// The call waits; `note` says for what (e.g. who holds the GPU).
+    fn waiting(&self, note: &str) -> bool;
 }
 
 /// A session on one uploaded volume. Interactive engines refine one target
