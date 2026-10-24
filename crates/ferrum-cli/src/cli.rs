@@ -496,6 +496,19 @@ pub enum Segment {
         ws: Ws,
         /// Segment label.
         segment: u64,
+        /// Also measure the voxels at or above this value (e.g. HU of the solid part of a lesion).
+        #[arg(long, allow_hyphen_values = true)]
+        solid_min: Option<f64>,
+    },
+    /// Shortest distance from a segment to the surface of another, with the closest points.
+    Distance {
+        #[command(flatten)]
+        ws: Ws,
+        /// Segment label.
+        segment: u64,
+        /// Label of the segment whose surface is measured to.
+        #[arg(long)]
+        to: u64,
     },
     /// Quantitative profile of a segment: size and first-order HU statistics.
     Metrics {
@@ -938,8 +951,12 @@ fn segment_call(s: &Segment) -> Result<(String, Value), String> {
                 ("modality", some(modality.clone())),
             ]),
         ),
-        Segment::Shape { ws: w, segment } => {
-            ("segment shape".into(), object(vec![ws(w), ("segment", Some(json!(segment)))]))
+        Segment::Shape { ws: w, segment, solid_min } => (
+            "segment shape".into(),
+            object(vec![ws(w), ("segment", Some(json!(segment))), ("solid_min", some(*solid_min))]),
+        ),
+        Segment::Distance { ws: w, segment, to } => {
+            ("segment distance".into(), object(vec![ws(w), ("segment", Some(json!(segment))), ("to", Some(json!(to)))]))
         }
         Segment::Metrics { ws: w, segment, profile, bin_width, hu_range, describe } => (
             "segment metrics".into(),
@@ -1060,6 +1077,16 @@ mod tests {
                 "{bad}"
             );
         }
+    }
+
+    #[test]
+    // covers 17.8-d
+    fn segment_measurements_become_calls() {
+        let call = |args: &[&str]| Cli::try_parse_from(args).unwrap().command.to_call().unwrap();
+        let (_, p) = call(&["ferrum-cli", "segment", "shape", "-w", "ws", "1", "--solid-min", "-300"]);
+        assert_eq!(p["solid_min"], -300.0);
+        let (name, p) = call(&["ferrum-cli", "segment", "distance", "-w", "ws", "3", "--to", "5"]);
+        assert_eq!((name.as_str(), p["segment"].as_u64(), p["to"].as_u64()), ("segment distance", Some(3), Some(5)));
     }
 
     #[test]

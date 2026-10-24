@@ -90,6 +90,7 @@ pub const COMMANDS: &[(&str, Command)] = &[
     ("segment interactive", interactive::interactive),
     ("segment auto", engine::auto),
     ("segment shape", masks::shape),
+    ("segment distance", masks::distance),
     ("segment metrics", metrics::metrics),
     ("segment components", masks::components),
     ("segment compare", masks::compare),
