@@ -210,6 +210,15 @@ can refine the object later by replaying them
   when missing.
 - The agent interface writes one line per command (command, parameters,
   outputs, hashes). Review decisions are logged there too.
+- A decision a host recorded through `ferrum_agent::decisions` (16.7) has
+  `"source": "host"` and, in `params`, the item (`segment` or
+  `annotation`), `by` (the person the host authenticated), `revision` (the
+  item's SHA-256 when it was shown) and `shown_sha256` (the host's hash of
+  what it showed):
+
+  ```json
+  {"time":"…","command":"review confirm","source":"host","params":{"segment":3,"by":"Dr. K. Example","revision":"9a…","shown_sha256":"5f…"},"ok":true}
+  ```
 
 **Privacy:**
 - The manifest holds paths and hashes only.
