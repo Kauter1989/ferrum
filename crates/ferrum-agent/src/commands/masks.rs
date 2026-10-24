@@ -152,7 +152,7 @@ fn solid_json(study: &Study, r: &MaskRegion, min: f64) -> Value {
                   classification";
     let total = r.count();
     let Some(solid) = MaskRegion::from_box_mask(r.bx, &mask) else {
-        return json!({ "min_value": min, "voxels": 0, "volume_ml": 0.0, "share": 0.0, "long_axis": null, "short_axis": null, "method": method });
+        return json!({ "min_value": min, "voxels": 0, "volume_ml": 0.0, "share": 0.0, "long_axis": null, "short_axis": null, "axes_slice_number": null, "method": method });
     };
     let s = analysis::shape(&solid, vol.dims(), vol.spacing());
     json!({
@@ -167,8 +167,10 @@ fn solid_json(study: &Study, r: &MaskRegion, min: f64) -> Value {
     })
 }
 
-/// `segment distance`: the smallest distance from a segment to the surface
-/// of another, with the two closest voxels.
+/// `segment distance`: the smallest distance from a segment to the outer
+/// surface of another (its holes filled, so a lesion inside a lung is
+/// measured to the lung's border, not to the wall of its own hole), with
+/// the two closest voxels.
 pub fn distance(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     let study = ctx.study(p)?;
     let a = segment_label(study, p, "segment")?;
@@ -179,16 +181,11 @@ pub fn distance(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     let empty = |l: u8| AgentError::bad_request(format!("segment {l} has no voxels"));
     let ra = region(&study.segments, a).ok_or_else(|| empty(a))?;
     let rb = region(&study.segments, b).ok_or_else(|| empty(b))?;
+    let filled = analysis::fill_holes(&rb, |_| true);
     let sp = study.volume.spacing();
-    let near = analysis::distance_to_surface(&ra, &rb, sp)
+    let near = analysis::distance_to_surface(&ra, &filled, sp)
         .ok_or_else(|| AgentError::internal(format!("segment {b} has no surface")))?;
-    let overlap = (0..ra.bx.voxel_count())
-        .map(|n| {
-            let s = ra.size();
-            ra.bx.min + UVec3::new(n as u32 % s.x, (n as u32 / s.x) % s.y, n as u32 / (s.x * s.y))
-        })
-        .filter(|g| ra.contains(*g) && rb.contains(*g))
-        .count() as u64;
+    let inside = analysis::is_within(&ra, &filled);
     let vol = &study.volume;
     Ok(Output::new(json!({
         "segment": segment_json(study, a),
@@ -199,12 +196,12 @@ pub fn distance(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
             "to": describe(vol, near.to.as_dvec3()),
             "uncertainty_mm": round(f64::from(sp.max_element()), 3),
         },
-        "overlap_voxels": overlap,
-        "inside": overlap == ra.count(),
+        "inside": inside,
         "method": "from the label maps: the shortest distance between the centre of a voxel of segment and the centre \
-                   of a surface voxel of to (a voxel of to with a face neighbour outside it), exact (Euclidean distance \
-                   transform with the voxel spacing); 0 mm when they touch; uncertainty ± one voxel spacing (the \
-                   largest)",
+                   of a voxel on the outer surface of to (to with its enclosed holes filled; a surface voxel has a face \
+                   neighbour outside it or lies on the volume border), exact (Euclidean distance transform with the \
+                   voxel spacing); neighbouring voxels are one voxel spacing apart; inside: segment lies within to \
+                   with its holes filled; uncertainty ± one voxel spacing (the largest)",
     })))
 }
 

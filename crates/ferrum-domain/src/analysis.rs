@@ -583,6 +583,11 @@ fn percentile(sorted: &[f64], q: f64) -> f64 {
     sorted[((sorted.len() - 1) as f64 * q).round() as usize]
 }
 
+/// `true` if every voxel of `a` is a voxel of `b`.
+pub fn is_within(a: &MaskRegion, b: &MaskRegion) -> bool {
+    (0..a.inside.len()).filter(|n| a.inside[*n]).all(|n| b.contains(a.bx.min + a.local_of(n)))
+}
+
 /// The closest pair of voxels from a mask to the surface of another.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Nearest {
@@ -598,10 +603,12 @@ pub struct Nearest {
 /// `from` to the surface voxels of `to` (voxels of `to` with a 6-neighbour
 /// outside it), with the two voxels; `None` when `to` is empty. Exact: an
 /// Euclidean distance transform of the surface over the union of both
-/// boxes. Only surface voxels of `from` need checking: from any inner voxel
-/// a step towards the target stays inside and comes closer. Ties go to the
-/// first voxel in grid order. Works whether `from` lies outside, touches or
-/// lies inside `to` (a lesion inside a lung: the distance to its border).
+/// boxes, read at every voxel of `from` (the surface of `from` alone is not
+/// enough: when `to` lies inside `from`, the answer is 0 at an inner voxel).
+/// Ties go to the first voxel in grid order. Works whether `from` lies
+/// outside, touches, contains or lies inside `to` (a lesion inside a lung:
+/// the distance to its border). Voxels of `to` on the volume border count
+/// as surface.
 pub fn distance_to_surface(from: &MaskRegion, to: &MaskRegion, spacing: Vec3) -> Option<Nearest> {
     let bx = from.bx.union(to.bx);
     let target = to.expanded(bx);
@@ -610,7 +617,7 @@ pub fn distance_to_surface(from: &MaskRegion, to: &MaskRegion, spacing: Vec3) ->
     let s = bx.size();
     let index = |g: UVec3| g.x as usize + s.x as usize * (g.y as usize + s.y as usize * g.z as usize);
     let a = (0..from.inside.len())
-        .filter(|n| from.is_surface(*n))
+        .filter(|n| from.inside[*n])
         .map(|n| from.bx.min + from.local_of(n))
         .filter(|g| d2[index(*g - bx.min)].is_finite())
         .min_by(|p, q| d2[index(*p - bx.min)].total_cmp(&d2[index(*q - bx.min)]))?;
@@ -774,10 +781,14 @@ mod tests {
         assert!(d.mm > 0.0 && inner.contains(d.from) && outer.contains(d.to));
         // the closest border lies on the side the inner sphere is shifted to
         assert!(d.to.x > 23, "{d:?}");
-        // touching or overlapping masks are 0 mm apart
-        let touching = ball(dims, [20.0, 20.0, 12.0], 2.0);
+        // a mask containing the other reaches its surface: 0 mm
         assert_eq!(distance_to_surface(&outer, &outer, sp).unwrap().mm, 0.0);
-        assert!(distance_to_surface(&touching, &outer, sp).unwrap().mm > 0.0);
+        let contains = distance_to_surface(&outer, &inner, sp).unwrap();
+        assert_eq!(contains.mm, 0.0, "{contains:?}");
+        assert_eq!(contains.from, contains.to);
+        assert_eq!(brute_force(&outer, &inner, sp), 0.0);
+        let inner_small = ball(dims, [20.0, 20.0, 12.0], 2.0);
+        assert!(distance_to_surface(&inner_small, &outer, sp).unwrap().mm > 0.0);
     }
 
     #[test]

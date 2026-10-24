@@ -274,7 +274,7 @@ fn mask_schema(command: &str) -> Option<(&'static str, Value)> {
             ),
         ),
         "segment distance" => (
-            "Shortest distance in mm from a segment to the surface of another (e.g. a lesion to the pleura or a fissure), from their voxels: the two closest voxel centres with voxel and LPS mm coordinates, whether the segment lies inside the other and how many voxels they share, and an uncertainty of one voxel spacing. 0 mm when they touch. Measure distances between structures with this, not with picked points.",
+            "Shortest distance in mm from a segment to the surface of another (e.g. a lesion to the pleura or a fissure), from their voxels: the two closest voxel centres with voxel and LPS mm coordinates, whether the segment lies inside the other, and an uncertainty of one voxel spacing. The other segment's holes are filled first, so a lesion inside a lung segment is measured to the lung's border. Measure distances between structures with this, not with picked points.",
             obj(
                 json!({
                     "workspace": workspace(),

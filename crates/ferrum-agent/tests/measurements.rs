@@ -55,6 +55,12 @@ fn ok(agent: &Agent, command: &str, params: Value) -> Value {
 
 impl Fixture {
     fn new(modality: Option<&str>) -> Self {
+        Self::with(modality, false)
+    }
+
+    /// With `core_first`, the solid core is a segment of its own, made
+    /// first, so the lesion's segment has a hole where the core is.
+    fn with(modality: Option<&str>, core_first: bool) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("lesion.nii.gz");
         write_volume(&src);
@@ -69,6 +75,9 @@ impl Fixture {
             let p = json!({ "workspace": ws, "seed": { "voxel": seed }, "min": min, "max": max, "name": name, "agent": "a" });
             ok(&agent, "segment threshold", p)["data"]["segment"]["label"].as_u64().unwrap()
         };
+        if core_first {
+            threshold([9, 14, 7], 0.0, 100.0, "core");
+        }
         let lesion = threshold([6, 11, 6], -700.0, 200.0, "lesion");
         let block = threshold([22, 15, 7], 250.0, 400.0, "block");
         Self { _dir: dir, ws, agent, lesion, block }
@@ -96,7 +105,7 @@ fn distance_to_a_surface_at_a_known_gap() {
     assert_eq!(data["distance"]["from"]["voxel_index"][0], 14);
     assert_eq!(data["distance"]["to"]["voxel_index"][0], 20);
     assert_eq!(data["distance"]["uncertainty_mm"], 2.0, "the largest spacing");
-    assert_eq!((data["inside"].as_bool(), data["overlap_voxels"].as_u64()), (Some(false), Some(0)));
+    assert_eq!(data["inside"], false);
     assert_eq!(data["segment"]["label"].as_u64(), Some(f.lesion));
     assert_eq!(data["to"]["label"].as_u64(), Some(f.block));
     let back = ok(&f.agent, "segment distance", f.params(json!({ "segment": f.block, "to": f.lesion })));
@@ -156,4 +165,21 @@ fn a_threshold_on_values_not_known_as_hu_warns() {
     assert_eq!(s["data"]["solid"]["voxels"], 48);
     let w = s["warnings"].as_array().unwrap();
     assert!(w.iter().any(|w| w.as_str().unwrap().contains("not known to be HU")), "{w:?}");
+}
+
+// covers 17.8-a
+#[test]
+fn a_segment_in_a_hole_of_another_is_measured_to_its_outer_surface() {
+    // as a nodule inside a lung segment: the core is segment 1, the lesion around it has a hole there
+    let f = Fixture::with(Some("CT"), true);
+    let core = 1;
+    let within = ok(&f.agent, "segment distance", f.params(json!({ "segment": core, "to": f.lesion })));
+    let d = &within["data"];
+    assert_eq!(d["inside"], true, "{d:#}");
+    // core z 6..=8, lesion z 5..=9 at 2 mm: one slice to the outer surface (x and y are 3 × 0.8 mm away)
+    assert!((mm(&d["distance"]) - 2.0).abs() < 1e-6, "{d:#}");
+    assert!(d["method"].as_str().unwrap().contains("holes filled"));
+    let around = ok(&f.agent, "segment distance", f.params(json!({ "segment": f.lesion, "to": core })));
+    assert_eq!(around["data"]["inside"], false);
+    assert!((mm(&around["data"]["distance"]) - 0.8).abs() < 1e-6, "neighbouring voxels: one spacing");
 }
