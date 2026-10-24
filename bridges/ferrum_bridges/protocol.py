@@ -25,7 +25,6 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Optional
 
 import numpy as np
 from fastapi import FastAPI, Request, Response
@@ -44,7 +43,7 @@ DTYPES = {"int16": "<i2", "uint16": "<u2", "float32": "<f4"}
 class ProtocolError(Exception):
     """An error with an HTTP status and a protocol error code."""
 
-    def __init__(self, status: int, code: str, message: str, retry_after: Optional[int] = None):
+    def __init__(self, status: int, code: str, message: str, retry_after: int | None = None):
         super().__init__(message)
         self.status = status
         self.code = code
@@ -66,7 +65,7 @@ class Session:
     modality: str
     origin: tuple = (0.0, 0.0, 0.0)
     direction: tuple = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
-    backend: Optional[BackendSession] = None
+    backend: BackendSession | None = None
     revision: int = 0
     last_used: float = field(default_factory=time.monotonic)
 
@@ -80,7 +79,7 @@ def to_zyx_box(lo: list, hi: list) -> ZyxBox:
     return [[lo[2], hi[2]], [lo[1], hi[1]], [lo[0], hi[0]]]
 
 
-def from_zyx_box(b: Optional[ZyxBox]) -> Optional[dict]:
+def from_zyx_box(b: ZyxBox | None) -> dict | None:
     if b is None:
         return None
     (z0, z1), (y0, y1), (x0, x1) = b
@@ -94,7 +93,7 @@ def _ints(value, n: int, what: str) -> list:
 
 
 def _check_box(lo: list, hi: list, dims: tuple) -> None:
-    if any(a >= b for a, b in zip(lo, hi)) or any(b > d for b, d in zip(hi, dims)):
+    if any(a >= b for a, b in zip(lo, hi, strict=True)) or any(b > d for b, d in zip(hi, dims, strict=True)):
         raise bad_request(f"box {lo}..{hi} is empty or outside the volume {list(dims)}")
 
 
@@ -111,6 +110,9 @@ class Engine:
     # ------------------------------------------------------------------ helpers
     def info(self) -> dict:
         b = self.backend.info()
+        limits = {"max_voxels": b.get("max_voxels", 0), "session_ttl_s": self.ttl}
+        if b.get("expected_peak_mib") is not None:
+            limits["expected_peak_mib"] = int(b["expected_peak_mib"])
         return {
             "protocol": PROTOCOL,
             "name": b["name"],
@@ -124,12 +126,14 @@ class Engine:
                 "planar_boxes_only": b.get("planar_boxes_only", False),
                 "undo": b.get("undo", False),
                 "deterministic": b.get("deterministic", True),
+                "unload": bool(b.get("unload", False)) or self.backend.can_unload(),
             },
             "modalities": b.get("modalities", []),
             "labels": b.get("labels", []),
             "research_only": b.get("research_only", False),
             "license": b.get("license", ""),
-            "limits": {"max_voxels": b.get("max_voxels", 0), "session_ttl_s": self.ttl},
+            "limits": limits,
+            **({"resident_mib": int(b["resident_mib"])} if b.get("resident_mib") is not None else {}),
         }
 
     def _expire(self) -> None:
@@ -202,7 +206,7 @@ class Engine:
         )
         entry.revision = 0
 
-    def _result(self, entry: Session, changed: Optional[ZyxBox]) -> dict:
+    def _result(self, entry: Session, changed: ZyxBox | None) -> dict:
         if changed is not None:
             entry.revision += 1
         return {"revision": entry.revision, "changed": from_zyx_box(changed), "empty": entry.backend.is_empty()}
@@ -220,28 +224,28 @@ class Engine:
         b = entry.backend
         if kind == "point":
             v = _ints(body.get("voxel"), 3, "voxel")
-            if any(c >= d for c, d in zip(v, dims)):
+            if any(c >= d for c, d in zip(v, dims, strict=True)):
                 raise bad_request(f"point {v} is outside the volume {list(dims)}")
             return self._result(entry, b.point((v[2], v[1], v[0]), positive))
         lo, hi = _ints(body.get("min"), 3, "min"), _ints(body.get("max"), 3, "max")
         _check_box(lo, hi, dims)
         zyx = to_zyx_box(lo, hi)
         if kind == "box":
-            if info.get("planar_boxes_only") and all(h - l > 1 for l, h in zip(lo, hi)):
+            if info.get("planar_boxes_only") and all(hi_ - lo_ > 1 for lo_, hi_ in zip(lo, hi, strict=True)):
                 raise ProtocolError(422, "unsupported_prompt", "only planar boxes (one voxel thick) are supported")
             return self._result(entry, b.box(zyx, positive))
         try:
             raw = base64.b64decode(body.get("mask") or "", validate=True)
         except ValueError as e:
             raise bad_request(f"mask: {e}") from e
-        shape = tuple(h - l for l, h in zyx)
+        shape = tuple(hi_ - lo_ for lo_, hi_ in zyx)
         if len(raw) != shape[0] * shape[1] * shape[2]:
             raise bad_request(f"mask has {len(raw)} values, the box has {shape[0] * shape[1] * shape[2]} voxels")
         mask = (np.frombuffer(raw, dtype=np.uint8).reshape(shape) != 0).astype(np.uint8)
         fn = b.scribble if kind == "scribble" else b.lasso
         return self._result(entry, fn(mask, zyx, positive))
 
-    def mask(self, sid: str, box: Optional[str]) -> tuple:
+    def mask(self, sid: str, box: str | None) -> tuple:
         entry = self._get(sid)
         if box is None:
             lo, hi = [0, 0, 0], list(entry.dims)
@@ -273,7 +277,7 @@ class Engine:
         self._automatic()
         entry = self._get(sid)
         labels = body.get("labels")
-        if labels is not None and (not isinstance(labels, list) or not all(isinstance(l, str) for l in labels)):
+        if labels is not None and (not isinstance(labels, list) or not all(isinstance(name, str) for name in labels)):
             raise bad_request("labels must be an array of strings or null")
         try:
             job = entry.backend.start_job(labels)
@@ -318,8 +322,20 @@ class Engine:
         self._get(sid, need_volume=False)
         self._close(sid)
 
+    def unload(self) -> None:
+        """``POST /v1/unload``: refused while sessions are open (Stage 23)."""
+        self._expire()
+        if not self.backend.can_unload():
+            raise ProtocolError(404, "not_found", "this engine cannot unload")
+        if self.sessions:
+            raise ProtocolError(503, "busy", f"{len(self.sessions)} session(s) open", retry_after=5)
+        try:
+            self.backend.unload()
+        except RuntimeError as e:
+            raise ProtocolError(503, "busy", str(e), retry_after=5) from e
 
-def create_app(backend: Backend, token: Optional[str] = None, session_ttl_s: int = 3600) -> FastAPI:
+
+def create_app(backend: Backend, token: str | None = None, session_ttl_s: int = 3600) -> FastAPI:
     """FastAPI application serving ``ferrum-engine/1`` for ``backend``."""
     app = FastAPI(title="FERRUM engine bridge", docs_url=None, redoc_url=None, openapi_url=None)
     engine = Engine(backend, session_ttl_s)
@@ -383,6 +399,11 @@ def create_app(backend: Backend, token: Optional[str] = None, session_ttl_s: int
     def info():
         return locked(engine.info)
 
+    @app.post("/v1/unload", status_code=204)
+    def unload():
+        locked(engine.unload)
+        return Response(status_code=204)
+
     @app.post("/v1/sessions", status_code=201)
     async def create(request: Request):
         body = await body_json(request)
@@ -400,7 +421,7 @@ def create_app(backend: Backend, token: Optional[str] = None, session_ttl_s: int
         return locked(engine.prompt, sid, body)
 
     @app.get("/v1/sessions/{sid}/mask")
-    def mask(sid: str, request: Request, box: Optional[str] = None):
+    def mask(sid: str, request: Request, box: str | None = None):
         data, revision = locked(engine.mask, sid, box)
         headers = {"X-Ferrum-Revision": str(revision)}
         if len(data) > 1024 and "gzip" in request.headers.get("accept-encoding", ""):

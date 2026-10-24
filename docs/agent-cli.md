@@ -310,8 +310,8 @@ Label bridges. The scenarios they serve, step by step, are in
   ([gpu-sharing.md](gpu-sharing.md)).
 - With `network.gpu_capacity_mib`, an engine call runs next to other
   holders when its expected peak fits. Its peak is
-  `network.gpu_peaks_mib`; once engines report `limits.expected_peak_mib`
-  (Stage 23, PR 2), their value can raise it but never lower it. Without a capacity, a group admits one holder
+  `network.gpu_peaks_mib`; an engine that reports
+  `limits.expected_peak_mib` can raise it but never lower it. Without a capacity, a group admits one holder
   at a time; without a peak, a call takes the whole group. A group that
   stays full gives `engine_unavailable` naming its holders.
 - On a 12 GB card, nnInteractive and the full TotalSegmentator model fit

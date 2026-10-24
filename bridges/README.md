@@ -23,11 +23,15 @@ docker compose --profile sequential up --build      # every bridge on one GPU (c
 `compose.yml` runs the bridges on one GPU (e.g. a 12 GB RTX 3080 Ti) with
 the profiles `interactive`, `automatic`, `mixed` and `sequential`; see
 [One GPU for all engines](../docs/ai-demo.md#one-gpu-for-all-engines).
+Idle bridges give their GPU memory back with `ferrum-cli engine unload`
+(`POST /v1/unload`), for example before a local model server or a heavier
+engine needs the card ([gpu-sharing.md](../docs/gpu-sharing.md)).
 
 | Part | Role |
 |---|---|
 | `ferrum_bridges/protocol.py` | protocol server (FastAPI): sessions, prompts, jobs, errors; engine independent |
 | `ferrum_bridges/backends.py` | backend interface, job runner and the model-free fake |
+| `ferrum_bridges/worker.py` | `WorkerBackend`: a backend in a child process, so `POST /v1/unload` frees all of its GPU memory, CUDA context included (nnInteractive by default; `--in-process` turns it off) |
 | `ferrum_bridges/nninteractive.py` | nnInteractive 2.6 adapter (frees the image when a session closes; `--deterministic`) |
 | `ferrum_bridges/totalsegmentator.py` | TotalSegmentator 2.18 adapter (geometry → NIfTI affine, telemetry off, one child process per job) |
 | `ferrum_bridges/monailabel.py` | MONAI Label 0.8 client adapter (sessions, `/infer` with the click history) |

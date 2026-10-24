@@ -8,15 +8,13 @@ backends also run jobs that produce a ``uint16`` label map.
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from typing import List, Optional, Tuple
-
 import threading
 import uuid
+from abc import ABC, abstractmethod
 
 import numpy as np
 
-ZyxBox = List[List[int]]
+ZyxBox = list[list[int]]
 
 
 class Unsupported(Exception):
@@ -27,13 +25,13 @@ def slicer(b: ZyxBox) -> tuple:
     return tuple(slice(lo, hi) for lo, hi in b)
 
 
-def diff_box(before: np.ndarray, after: np.ndarray) -> Optional[ZyxBox]:
+def diff_box(before: np.ndarray, after: np.ndarray) -> ZyxBox | None:
     """Box around the voxels that differ, or ``None``."""
     changed = np.argwhere(before != after)
     if changed.size == 0:
         return None
     lo, hi = changed.min(axis=0), changed.max(axis=0) + 1
-    return [[int(a), int(b)] for a, b in zip(lo, hi)]
+    return [[int(a), int(b)] for a, b in zip(lo, hi, strict=True)]
 
 
 class BackendSession:
@@ -41,19 +39,19 @@ class BackendSession:
     backends run jobs. Every operation is optional: the default raises
     :class:`Unsupported`, which the protocol maps to the right status."""
 
-    def point(self, zyx: Tuple[int, int, int], positive: bool) -> Optional[ZyxBox]:
+    def point(self, zyx: tuple[int, int, int], positive: bool) -> ZyxBox | None:
         raise Unsupported("point prompts")
 
-    def box(self, bbox: ZyxBox, positive: bool) -> Optional[ZyxBox]:
+    def box(self, bbox: ZyxBox, positive: bool) -> ZyxBox | None:
         raise Unsupported("box prompts")
 
-    def scribble(self, mask: np.ndarray, bbox: ZyxBox, positive: bool) -> Optional[ZyxBox]:
+    def scribble(self, mask: np.ndarray, bbox: ZyxBox, positive: bool) -> ZyxBox | None:
         raise Unsupported("scribble prompts")
 
-    def lasso(self, mask: np.ndarray, bbox: ZyxBox, positive: bool) -> Optional[ZyxBox]:
+    def lasso(self, mask: np.ndarray, bbox: ZyxBox, positive: bool) -> ZyxBox | None:
         raise Unsupported("lasso prompts")
 
-    def undo(self) -> Tuple[bool, Optional[ZyxBox]]:
+    def undo(self) -> tuple[bool, ZyxBox | None]:
         raise Unsupported("undo")
 
     def reset(self) -> None:
@@ -65,7 +63,7 @@ class BackendSession:
     def is_empty(self) -> bool:
         return True
 
-    def start_job(self, labels: Optional[List[str]]) -> str:
+    def start_job(self, labels: list[str] | None) -> str:
         """Starts automatic segmentation of ``labels`` (``None`` = all)."""
         raise Unsupported("automatic segmentation")
 
@@ -92,7 +90,7 @@ class JobRunner:
 
     def __init__(self):
         self.jobs: dict = {}
-        self.result: Optional[np.ndarray] = None
+        self.result: np.ndarray | None = None
         self.lock = threading.Lock()
 
     def start(self, fn, message: str) -> str:
@@ -116,7 +114,7 @@ class JobRunner:
         threading.Thread(target=run, name=f"job-{job}", daemon=True).start()
         return job
 
-    def _progress(self, job: str, progress: float, message: Optional[str]) -> bool:
+    def _progress(self, job: str, progress: float, message: str | None) -> bool:
         """Records progress; returns ``False`` once the job was cancelled, so
         long work can stop early."""
         with self.lock:
@@ -167,11 +165,20 @@ class Backend(ABC):
         ``origin`` and ``direction`` (rows = LPS unit vectors of ``i, j, k``)
         describe the grid in patient space, as sent by FERRUM."""
 
+    def can_unload(self) -> bool:
+        """``True`` if :meth:`unload` frees the backend's GPU memory (Stage 23)."""
+        return False
+
+    def unload(self) -> None:
+        """Frees the model and all GPU memory while no session is open; the
+        next :meth:`open` loads it again."""
+        raise Unsupported("unload")
+
 
 # --------------------------------------------------------------------------- fake
 
 
-def grow(volume: np.ndarray, seed: Tuple[int, int, int], tolerance: float, limit: Optional[ZyxBox] = None) -> np.ndarray:
+def grow(volume: np.ndarray, seed: tuple[int, int, int], tolerance: float, limit: ZyxBox | None = None) -> np.ndarray:
     """6-connected region of voxels within ``tolerance`` of the seed value."""
     region = np.zeros(volume.shape, dtype=bool)
     allowed = np.abs(volume - volume[seed]) <= tolerance
@@ -209,11 +216,11 @@ class FakeSession(BackendSession):
         self.volume = volume
         self.tolerance = tolerance
         self.target = np.zeros(volume.shape, dtype=np.uint8)
-        self.previous: Optional[np.ndarray] = None
+        self.previous: np.ndarray | None = None
         self.runner = JobRunner()
 
     def start_job(self, labels):
-        names = {l["name"]: l["value"] for l in FAKE_LABELS}
+        names = {label["name"]: label["value"] for label in FAKE_LABELS}
         unknown = [n for n in (labels or []) if n not in names]
         if unknown:
             raise ValueError(f"unknown labels: {unknown}")
@@ -242,7 +249,7 @@ class FakeSession(BackendSession):
             raise ValueError("no finished job")
         return self.runner.result
 
-    def _apply(self, new: np.ndarray) -> Optional[ZyxBox]:
+    def _apply(self, new: np.ndarray) -> ZyxBox | None:
         self.previous = self.target
         self.target = new
         return diff_box(self.previous, new)
@@ -320,3 +327,10 @@ class FakeBackend(Backend):
     def open(self, volume, spacing, modality, origin=None, direction=None):
         span = float(volume.max() - volume.min()) or 1.0
         return FakeSession(volume, self.tolerance_fraction * span)
+
+    def can_unload(self) -> bool:
+        return True
+
+    def unload(self) -> None:
+        """Nothing to free: there is no model. Counted for tests."""
+        self.unloads = getattr(self, "unloads", 0) + 1
