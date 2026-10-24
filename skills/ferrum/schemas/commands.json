@@ -2213,7 +2213,7 @@
     }
   },
   "segment shape": {
-    "description": "Shape of a segment from its voxels: volume, extent in mm, slice ranges and largest slices, axial long and short axis with end points, border contact, components and, for segments named left or right, the side it lies on. Measure segments with this, never from images.",
+    "description": "Shape of a segment from its voxels: volume, extent in mm, slice ranges and largest slices, axial long and short axis with end points, border contact, components and, for segments named left or right, the side it lies on. With solid_min, also the axial long and short axis, volume and share of the segment's voxels at or above that value (the solid part of a part-solid lesion); the caller chooses the threshold, and the result is a measurement, not a classification. Measure segments with this, never from images.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -2225,11 +2225,43 @@
           "type": "integer",
           "minimum": 1,
           "description": "segment label"
+        },
+        "solid_min": {
+          "type": "number",
+          "description": "measure the voxels of the segment with a value at or above this (HU on CT), e.g. the solid part of a part-solid lesion; no default"
         }
       },
       "required": [
         "workspace",
         "segment"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "segment distance": {
+    "description": "Shortest distance in mm from a segment to the surface of another (e.g. a lesion to the pleura or a fissure), from their voxels: the two closest voxel centres with voxel and LPS mm coordinates, whether the segment lies inside the other, and an uncertainty of one voxel spacing. The other segment's holes are filled first, so a lesion inside a lung segment is measured to the lung's border. Measure distances between structures with this, not with picked points.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "segment": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "segment label"
+        },
+        "to": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "label of the segment whose surface the distance is measured to"
+        }
+      },
+      "required": [
+        "workspace",
+        "segment",
+        "to"
       ],
       "additionalProperties": false
     }

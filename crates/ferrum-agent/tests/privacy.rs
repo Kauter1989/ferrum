@@ -112,6 +112,9 @@ fn session(agent: &Agent, ws: &str, src: &Path) -> Vec<Value> {
         ),
         ("annotate list", json!({ "workspace": ws })),
         ("segment threshold", json!({ "workspace": ws, "seed": { "voxel": [8, 8, 3] }, "min": 300, "max": 500 })),
+        ("segment threshold", json!({ "workspace": ws, "seed": { "voxel": [1, 1, 3] }, "min": -1100, "max": -900 })),
+        ("segment distance", json!({ "workspace": ws, "segment": 1, "to": 2 })), // covers 17.8-d
+        ("segment shape", json!({ "workspace": ws, "segment": 1, "solid_min": 350 })),
         ("segment metrics", json!({ "workspace": ws, "segment": 1, "describe": true })), // covers 18.4-d
         ("segment metrics", json!({ "workspace": ws, "segment": 1, "profile": "clinical", "describe": true })),
         ("segment list", json!({ "workspace": ws })),

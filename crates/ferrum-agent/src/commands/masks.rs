@@ -1,4 +1,4 @@
-//! `segment shape|components|compare|edit`: measurements and deterministic
+//! `segment shape|distance|components|compare|edit`: measurements and deterministic
 //! edits of segments, computed from the label map (never from images),
 //! and the quality checks every engine result carries (`checks`).
 
@@ -14,6 +14,7 @@ use crate::envelope::{AgentError, ErrorCode, Output};
 use crate::params::Params;
 use crate::points::{describe, nearest_voxel, voxel_to_patient};
 use crate::study::Study;
+use ferrum_radiomics::ValueUnit;
 
 fn round(x: f64, digits: i32) -> f64 {
     let f = 10f64.powi(digits);
@@ -99,18 +100,108 @@ pub fn shape_json(study: &Study, label: u8, r: &MaskRegion) -> Value {
 }
 
 /// `segment shape`: volume, extent, slice ranges, axial long and short
-/// axis, border contact, components and laterality of a segment.
+/// axis, border contact, components and laterality of a segment; with
+/// `solid_min`, the same axes of its voxels at or above that value (the
+/// solid part of a part-solid lesion, as a measurement).
 pub fn shape(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
+    let solid_min = p.f64("solid_min")?;
     let study = ctx.study(p)?;
     let label = segment_label(study, p, "segment")?;
     let r = region(&study.segments, label)
         .ok_or_else(|| AgentError::bad_request(format!("segment {label} has no voxels")))?;
-    Ok(Output::new(json!({
+    let mut data = json!({
         "segment": segment_json(study, label),
         "shape": shape_json(study, label, &r),
         "method": "from the label map: extents are voxel counts × spacing; the long axis is the longest distance between \
                    voxel centres on the largest axial slice, the short axis the longest extent perpendicular to it; \
                    uncertainty ± one in-plane voxel spacing",
+    });
+    let mut warnings = Vec::new();
+    if let Some(t) = solid_min {
+        if !t.is_finite() {
+            return Err(AgentError::bad_request("solid_min must be a number"));
+        }
+        data["solid"] = solid_json(study, &r, t);
+        if let ValueUnit::Unknown { modality } = ValueUnit::from_modality(&study.metadata.modality) {
+            warnings.push(format!(
+                "the voxel values are not known to be HU (modality {}): solid_min was compared with them as stored",
+                if modality.is_empty() { "not declared" } else { modality.as_str() }
+            ));
+        }
+    }
+    let mut out = Output::new(data);
+    for w in warnings {
+        out = out.warn(w);
+    }
+    Ok(out)
+}
+
+/// The part of `r` whose values are at least `min`, with its axes.
+fn solid_json(study: &Study, r: &MaskRegion, min: f64) -> Value {
+    let vol = &study.volume;
+    let size = r.size();
+    let mut mask = vec![0u8; r.bx.voxel_count()];
+    for (n, m) in mask.iter_mut().enumerate() {
+        let (x, y, z) = (n as u32 % size.x, (n as u32 / size.x) % size.y, n as u32 / (size.x * size.y));
+        let g = r.bx.min + UVec3::new(x, y, z);
+        let value = vol.physical(g.x, g.y, g.z).map_or(f64::NEG_INFINITY, f64::from);
+        *m = u8::from(r.contains(g) && value >= min);
+    }
+    let method = "voxels of the segment whose value is at least min_value, a threshold the caller chose; their axial \
+                  long and short axis on their own largest axial slice, as for the whole segment. A measurement, not a \
+                  classification";
+    let total = r.count();
+    let Some(solid) = MaskRegion::from_box_mask(r.bx, &mask) else {
+        return json!({ "min_value": min, "voxels": 0, "volume_ml": 0.0, "share": 0.0, "long_axis": null, "short_axis": null, "axes_slice_number": null, "method": method });
+    };
+    let s = analysis::shape(&solid, vol.dims(), vol.spacing());
+    json!({
+        "min_value": min,
+        "voxels": s.voxels,
+        "volume_ml": round(s.voxels as f64 * voxel_ml(study), 3),
+        "share": round(s.voxels as f64 / total as f64, 4),
+        "long_axis": s.long_axis.as_ref().map(|d| diameter_json(study, d)),
+        "short_axis": s.short_axis.as_ref().map(|d| diameter_json(study, d)),
+        "axes_slice_number": s.largest_slices[0].index + 1,
+        "method": method,
+    })
+}
+
+/// `segment distance`: the smallest distance from a segment to the outer
+/// surface of another (its holes filled, so a lesion inside a lung is
+/// measured to the lung's border, not to the wall of its own hole), with
+/// the two closest voxels.
+pub fn distance(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
+    let study = ctx.study(p)?;
+    let a = segment_label(study, p, "segment")?;
+    let b = segment_label(study, p, "to")?;
+    if a == b {
+        return Err(AgentError::bad_request("segment and to name the same segment"));
+    }
+    let empty = |l: u8| AgentError::bad_request(format!("segment {l} has no voxels"));
+    let ra = region(&study.segments, a).ok_or_else(|| empty(a))?;
+    let rb = region(&study.segments, b).ok_or_else(|| empty(b))?;
+    let filled = analysis::fill_holes(&rb, |_| true);
+    let sp = study.volume.spacing();
+    let near = analysis::distance_to_surface(&ra, &filled, sp)
+        .ok_or_else(|| AgentError::internal(format!("segment {b} has no surface")))?;
+    let inside = analysis::is_within(&ra, &filled);
+    let vol = &study.volume;
+    Ok(Output::new(json!({
+        "segment": segment_json(study, a),
+        "to": segment_json(study, b),
+        "distance": {
+            "mm": round(near.mm, 2),
+            "from": describe(vol, near.from.as_dvec3()),
+            "to": describe(vol, near.to.as_dvec3()),
+            "uncertainty_mm": round(f64::from(sp.max_element()), 3),
+        },
+        "inside": inside,
+        "method": "from the label maps: the shortest distance between the centre of a voxel of segment and the centre \
+                   of a voxel on the outer surface of to (to with its enclosed holes filled; a surface voxel has a face \
+                   neighbour outside it or lies on the volume border), exact (Euclidean distance transform with the \
+                   voxel spacing); neighbouring voxels are one voxel spacing apart; inside: segment lies within to \
+                   with its holes filled; uncertainty ± one voxel spacing (the largest)",
     })))
 }
 
