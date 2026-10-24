@@ -182,16 +182,22 @@ A harness may confirm or reject items only when the operator sets
 
 A host with its own decision channel (a person signed in, no model tool in
 between) uses the library API `ferrum_agent::decisions` instead. It is
-**not** an agent command, so no agent can reach it:
+**not** an agent command: no agent reaches it through FERRUM. FERRUM does
+not authenticate anyone: the host authenticates the person, passes their
+name, and must never expose `record` as a model tool.
 - `revision(config, workspace, item)` gives the item's SHA-256 (source hash
   plus the item's content; review state is not part of it). Read it when
   the item is shown.
 - `record(config, workspace, decision)` takes the item, confirm or reject,
   the person, that revision and the host's SHA-256 of what it showed. It
-  refuses with `source_changed` if the item changed since it was shown,
-  writes the decision like the desktop review queue, and appends both
-  hashes to the audit log (`"source": "host"`). It does not need the
-  operator switch.
+  refuses with `source_changed` if the item changed since it was shown and
+  with `forbidden` if someone has decided on it already (a decision is
+  never overwritten). It appends the audit entry (both hashes, the source
+  hash and the volume; `"source": "host"`) and then writes the decision
+  like the desktop review queue. It does not need the operator switch.
+- Both take an optional `VolumeCache`, so a host showing many items does
+  not load the study for each. The encoding of the revision is in
+  [workspace-format.md](workspace-format.md).
 
 ## Workspace and audit
 
