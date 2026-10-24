@@ -24,7 +24,8 @@ flowchart LR
     P["ferrum-processing<br/>Parallel algorithms"]
     R["ferrum-render<br/>WGSL/wgpu + CPU reference"]
     IO["ferrum-io<br/>DICOM · NIfTI repositories"]
-    EN["ferrum-engines<br/>ferrum-engine/1 client · mock · server"]
+    EN["ferrum-engines<br/>ferrum-engine/1 client · mock · server · GPU groups"]
+    GL["ferrum-gpu-lock<br/>ferrum-gpu-lock/1 leases"]
     RX["ferrum-radiomics<br/>feature registry · profiles · segment metrics"]
     AG["ferrum-agent<br/>agent commands · envelope · workspaces"]
     CLI["ferrum-cli<br/>command line"]
@@ -40,6 +41,7 @@ flowchart LR
     P --> D
     IO -->|"implements VolumeRepository"| D
     EN -->|"implements SegmentationEngine"| D
+    EN -->|"GPU leases"| GL
     CLI --> AG
     AG --> D
     AG --> IO
@@ -55,11 +57,12 @@ flowchart LR
 | `ferrum-processing` | histogram, min/max bricks, ambient occlusion, filters, resampling (rayon) | own application state |
 | `ferrum-io` | DICOM scan → series grouping → slice ordering, reorientation into the LPS grid, volumes of a multi-volume series (`VolumeRepository::volumes`, `dicom/volumes.rs`; each frame of an Enhanced multi-frame file placed by its functional groups; one image per position; what could not be shown as stored goes to `SeriesMetadata::warnings`) → parallel decode; NIfTI read/write with reorientation to LPS; NIfTI label maps mapped onto the volume grid; `ferrum-annotations` v2 and `ferrum-segments` JSON (read and write); `ferrum-workspace` v1 directories with hashed sources and an audit log ([format](workspace-format.md)); DICOM SEG and Comprehensive 3D SR (TID 1500) export ([format](workspace-format.md#5-dicom-export)) | know about rendering or UI |
 | `ferrum-render` | `FrameParams` (pure), WGSL shaders, `VolumeRenderer` (feature `gpu`), `CpuRaycaster` | own application state |
-| `ferrum-engines` | `HttpEngine` (`ferrum-engine/1` client over HTTP), `MockEngine` (region growing, no model), reference protocol server and conformance suite | know about rendering or UI |
+| `ferrum-engines` | `HttpEngine` (`ferrum-engine/1` client over HTTP), `MockEngine` (region growing, no model), reference protocol server and conformance suite; `gpu`: the `[network]` GPU settings (`GpuSettings`) and the lease an engine call of a GPU group takes ([design](gpu-sharing.md)) | know about rendering or UI |
+| `ferrum-gpu-lock` | protocol `ferrum-gpu-lock/1`: per-user, checked lock directory; holder records and OS locks; admission of leases against a group's capacity; stale holders of dead processes removed ([design](gpu-sharing.md), [ADR 0015](decisions/0015-gpu-lease-protocol.md)) | depend on any other FERRUM crate (hosts such as Medical Harness use it as is) |
 | `ferrum-app` | `Viewer` facade, background `JobQueue`, `ToolController`, `GpuSink` port; which tools each view mode offers (`tool_availability`, `set_view_mode`) and segment metrics (`request_segment_metrics` runs `ferrum-radiomics` as a `JobQueue` job; a result says whether it is out of date) and the modality of an image that carries none (`declare_modality`, `needs_modality`); the volumes of a multi-volume series (`volumes`, `switch_volume`, `step_volume`: a switch replaces only the voxels, with an LRU cache of loaded volumes, `viewer/volumes.rs`, [design](multi-volume.md)); the segmentation workflow (`segmentation_step`, the region tool: `ferrum_domain::grow_region_robust` with seed median, smoothing, opening and hole filling, run as a `JobQueue` job with a cancel flag) | depend on wgpu or egui |
 | `ferrum` | panels, widgets, paint callbacks, dialogs; composition root | contain business logic |
 | `ferrum-radiomics` | feature registry (stable id, family, unit, definition text), versioned profiles (`quick`), size, shape (surface mesh by marching cubes, principal axes) and first-order intensity features of a segment, the result type that names profile, version and parameters; calls `ferrum_domain::analysis` for the measures the domain already has ([design](radiomics.md), [ADR 0011](decisions/0011-radiomics-crate.md)) | do I/O, know GPUs or UI, copy a measure that `ferrum-domain` has |
-| `ferrum-agent` | agent skill (depends on `ferrum-domain`, `ferrum-io`, `ferrum-engines`, `ferrum-radiomics` and `ferrum-render` without its GPU feature) ([design](agent-skill.md), [CLI and MCP](agent-cli.md), [segmentation](agent-segmentation.md)): commands on JSON parameters with JSON Schemas, `ferrum-agent/1` envelope and error codes, operator configuration, workspace sessions with a series cache, CPU slice renders with pixel mapping, audit log, MCP server (stdio); engine objects refined from stored prompts, GPU groups, engine sessions cached for MCP, quality checks | depend on wgpu, egui or `ferrum-app` state |
+| `ferrum-agent` | agent skill (depends on `ferrum-domain`, `ferrum-io`, `ferrum-engines`, `ferrum-radiomics` and `ferrum-render` without its GPU feature) ([design](agent-skill.md), [CLI and MCP](agent-cli.md), [segmentation](agent-segmentation.md)): commands on JSON parameters with JSON Schemas, `ferrum-agent/1` envelope and error codes, operator configuration, workspace sessions with a series cache, CPU slice renders with pixel mapping, audit log, MCP server (stdio); engine objects refined from stored prompts, GPU leases (through `ferrum-engines::gpu`), engine sessions cached for MCP, quality checks | depend on wgpu, egui or `ferrum-app` state |
 | `ferrum-cli` | `ferrum-cli` binary: argument parsing to agent calls, exit codes | contain command logic |
 
 

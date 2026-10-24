@@ -1523,12 +1523,21 @@ version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
  "ferrum-domain",
+ "ferrum-gpu-lock",
  "flate2",
  "glam",
  "log",
  "serde_json",
  "tiny_http",
+ "toml 0.9.12+spec-1.1.0",
  "ureq",
+]
+
+[[package]]
+name = "ferrum-gpu-lock"
+version = "0.3.0"
+dependencies = [
+ "rustix 1.1.5",
 ]
 
 [[package]]

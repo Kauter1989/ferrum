@@ -2,6 +2,7 @@
 resolver = "2"
 default-members = ["crates/ferrum"]
 members = [
+    "crates/ferrum-gpu-lock",
     "crates/ferrum-domain",
     "crates/ferrum-processing",
     "crates/ferrum-radiomics",
@@ -30,6 +31,7 @@ ferrum-io = { path = "crates/ferrum-io" }
 ferrum-render = { path = "crates/ferrum-render", default-features = false }
 ferrum-app = { path = "crates/ferrum-app" }
 ferrum-engines = { path = "crates/ferrum-engines" }
+ferrum-gpu-lock = { path = "crates/ferrum-gpu-lock" }
 ferrum-agent = { path = "crates/ferrum-agent" }
 
 glam = { version = "0.33", features = ["bytemuck"] }

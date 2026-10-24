@@ -73,3 +73,11 @@ The scenarios and command details are in
   the group needs.
 - A `roi` check was added: an object reaching an inner face of the
   uploaded region may be cut off.
+
+## Amendment — 2026-10-23, GPU leases
+
+- The GPU-group lock in the temporary folder is replaced by leases of
+  `ferrum-gpu-lock/1` in a per-user directory, which other processes
+  (a model server) can join and which admit holders by size
+  ([ADR 0015](0015-gpu-lease-protocol.md), Stage 23). Rule 1 stands:
+  FERRUM's engine calls of a group still run one at a time.

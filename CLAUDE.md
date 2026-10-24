@@ -37,6 +37,10 @@ ferrum (presentation) → ferrum-app (application) → ferrum-domain ← ferrum-
 - `ferrum-engines` implements `SegmentationEngine` (`ferrum-engine/1`
   client, mock, reference server); nothing else talks to engines. Protocol
   changes update `docs/engine-protocol.md` and the conformance suite.
+- `ferrum-gpu-lock` implements the GPU lease protocol `ferrum-gpu-lock/1`
+  and depends on no other FERRUM crate, so hosts can use it as is. Engine
+  calls of a GPU group take a lease through `ferrum-engines::gpu`
+  ([ADR 0015](docs/decisions/0015-gpu-lease-protocol.md)).
 - `ferrum-radiomics` holds the quantitative description of a segment (the
   feature registry, versioned profiles, size, shape and intensity
   features) and depends only on `ferrum-domain`: no I/O, GPU or UI. It

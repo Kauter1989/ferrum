@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- GPU groups can now be shared with processes outside FERRUM, such as a local model server on the same card ([design](docs/gpu-sharing.md), [ADR 0015](docs/decisions/0015-gpu-lease-protocol.md)). An engine call takes a lease of the new protocol `ferrum-gpu-lock/1` (crate `ferrum-gpu-lock`). With `network.gpu_capacity_mib` and `network.gpu_peaks_mib`, it runs next to other holders when its expected peak fits; otherwise it waits, and MCP progress names the holders. A group that stays full gives `engine_unavailable` naming them. **Upgrade note:** the lock moved from the shared temporary folder (`/tmp/ferrum-gpu-<group>.lock`) to a per-user directory (`$XDG_RUNTIME_DIR/ferrum/gpu`, else `~/.cache/ferrum/gpu`, or `network.gpu_lock_dir`), which is refused when another user owns it or can write it. Upgrade every FERRUM process on a machine together: an older one does not see the new lock.
+
 ### Fixed
 
 - DICOM series that were not acquired as axial slices with rows towards the patient's left (sagittal and coronal MR, a reversed row direction, slices ordered towards the feet) were shown in their stored order: the "axial" view of a sagittal series showed sagittal anatomy and the image could be mirrored, while the labels read R/L as for an axial CT. DICOM volumes are now brought into the canonical LPS grid like NIfTI; coordinates, probe and measurements are unchanged. A DICOM SEG of such a series lies on the LPS grid and references the source series, with per-frame source images only where the planes coincide. Annotations saved before this version on a series whose grid only flipped (not resized) stay on the old side; label maps are moved correctly.

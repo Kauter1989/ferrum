@@ -1,8 +1,12 @@
 //! Engine sessions between calls and GPU sharing
-//! (`docs/agent-segmentation.md` §2 and §5.3).
+//! (`docs/agent-segmentation.md` §2 and §5.3, `docs/gpu-sharing.md`).
 //!
-//! - [`GpuLock`]: engines the operator put into one GPU group are used one
-//!   call at a time, across processes, through an advisory file lock.
+//! - [`gpu_lease`]: an engine call of a GPU group first takes a lease of
+//!   `ferrum-gpu-lock/1`, shared with every process of the user: other
+//!   FERRUM processes, the desktop app, and a model server such as Medical
+//!   Harness's `llama-server`. Engine calls of a group run one at a time,
+//!   and next to other holders only when the leases fit the group's
+//!   capacity.
 //! - [`EngineSessions`]: a long-running server (MCP) keeps the engine
 //!   session of an interactive object open, so a refinement sends only the
 //!   new prompts. The session is only a cache of the prompt history stored
@@ -11,58 +15,60 @@
 //!   kept, so an idle session never holds memory another engine of the
 //!   group needs.
 
-use std::fs::{File, OpenOptions};
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use ferrum_domain::{InteractiveSession, Prompt, Timestamp, VoxelBox};
+use ferrum_engines::gpu::{describe_holders, effective_peak, Lease, LockError};
 
 use crate::config::AgentConfig;
 use crate::envelope::{AgentError, ErrorCode};
 
-/// Held while an engine of a GPU group runs; released on drop.
-#[derive(Debug)]
-pub struct GpuLock {
-    _file: Option<File>,
+/// Takes the GPU lease of an engine call of `url`, or `None` when the
+/// engine is in no GPU group. It waits up to `limits.engine_job_timeout_s`
+/// and tells `progress` who holds the group meanwhile. `manifest_peak` is
+/// the engine's own `limits.expected_peak_mib`.
+pub fn gpu_lease(
+    config: &AgentConfig,
+    url: &str,
+    holder: &str,
+    manifest_peak: Option<u64>,
+    progress: &mut dyn FnMut(f64, &str),
+) -> Result<Option<Lease>, AgentError> {
+    let timeout = Duration::from_secs(config.engine_job_timeout_s);
+    let needs = match effective_peak(config.gpu.operator_peak(url), manifest_peak) {
+        Some(m) => format!("this call needs {m} MiB"),
+        None => "this call needs the whole group".to_owned(),
+    };
+    let mut on_wait = |w: &ferrum_engines::gpu::Wait| {
+        progress(0.0, &format!("waiting for GPU group {}: {}; {needs}", w.group, describe_holders(w.held)));
+        true
+    };
+    let dir = || match &config.gpu.lock_dir {
+        Some(d) => d.display().to_string(),
+        None => ferrum_engines::gpu::default_path().map_or_else(|| "none".into(), |d| d.display().to_string()),
+    };
+    config.gpu.acquire(url, holder, manifest_peak, timeout, &mut on_wait).map_err(|e| lease_error(e, timeout, &dir()))
 }
 
-impl GpuLock {
-    /// Path of the lock file of `group`.
-    pub fn path(group: &str) -> PathBuf {
-        let safe: String = group.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' }).collect();
-        std::env::temp_dir().join(format!("ferrum-gpu-{safe}.lock"))
-    }
-
-    /// Waits up to `timeout` for the GPU group of `url`; engines outside a
-    /// group need no lock.
-    pub fn acquire(config: &AgentConfig, url: &str, timeout: Duration) -> Result<Self, AgentError> {
-        let Some(group) = config.gpu_group(url) else { return Ok(Self { _file: None }) };
-        let path = Self::path(group);
-        let file = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(&path)
-            .map_err(|e| AgentError::internal(format!("GPU lock {}: {e}", path.display())))?;
-        let start = Instant::now();
-        loop {
-            match file.try_lock() {
-                Ok(()) => return Ok(Self { _file: Some(file) }),
-                Err(std::fs::TryLockError::WouldBlock) if start.elapsed() < timeout => {
-                    std::thread::sleep(Duration::from_millis(200));
-                }
-                Err(std::fs::TryLockError::WouldBlock) => {
-                    return Err(AgentError::new(
-                        ErrorCode::EngineUnavailable,
-                        format!("another engine of GPU group {group} is still running"),
-                    )
-                    .hint("wait for it to finish and try again; engines of one GPU group run one at a time"))
-                }
-                Err(std::fs::TryLockError::Error(e)) => {
-                    return Err(AgentError::internal(format!("GPU lock {}: {e}", path.display())))
-                }
-            }
+fn lease_error(e: LockError, timeout: Duration, dir: &str) -> AgentError {
+    match &e {
+        LockError::Timeout { held, .. } if held.is_empty() => {
+            AgentError::new(ErrorCode::EngineUnavailable, e.to_string())
+                .hint(format!("another process keeps the admission lock in {dir}; it must hold it only to decide"))
         }
+        LockError::Timeout { group, held } => AgentError::new(
+            ErrorCode::EngineUnavailable,
+            format!("GPU group {group} stayed full for {} s: {}", timeout.as_secs(), describe_holders(held)),
+        )
+        .hint(format!(
+            "engines of one GPU group run one at a time, and next to other holders only when their leases fit \
+                 network.gpu_capacity_mib; try again when the holders are done (lock directory {dir}; every \
+                 process sharing the card must use the same one)"
+        )),
+        other => AgentError::internal(other.to_string()).hint(format!(
+            "the GPU lock directory {dir} (network.gpu_lock_dir) must belong to this user and be closed to others"
+        )),
     }
 }
 
@@ -200,18 +206,26 @@ mod tests {
         assert!(format!("{:?}", cached(1, "a")).contains("CachedSession"));
     }
 
+    // covers 23.1-e, 23.1-f
     #[test]
-    fn gpu_groups_serialise_engine_calls() {
-        let group = format!("test-{}", std::process::id());
+    fn gpu_groups_serialise_engine_calls_and_name_the_holder() {
+        let dir = std::env::temp_dir().join(format!("ferrum-agent-gpu-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
         let url = "http://127.0.0.1:8765".to_owned();
-        let config = AgentConfig { gpu_groups: vec![(group.clone(), vec![url.clone()])], ..AgentConfig::default() };
-        let held = GpuLock::acquire(&config, &url, Duration::ZERO).unwrap();
-        let busy = GpuLock::acquire(&config, &url, Duration::from_millis(250)).unwrap_err();
+        let mut config = AgentConfig { engine_job_timeout_s: 1, ..AgentConfig::default() };
+        config.gpu.groups = vec![("card".into(), vec![url.clone()])];
+        config.gpu.lock_dir = Some(dir.clone());
+        let mut heard = Vec::new();
+        let held = gpu_lease(&config, &url, "first", None, &mut |_, _| {}).unwrap().unwrap();
+        let busy = gpu_lease(&config, &url, "second", None, &mut |_, m| heard.push(m.to_owned())).unwrap_err();
         assert_eq!(busy.code, ErrorCode::EngineUnavailable);
+        assert!(busy.message.contains("GPU group card stayed full for 1 s: first (pid"), "{}", busy.message);
+        assert!(heard.len() >= 3, "progress during the wait: {heard:?}");
+        assert!(heard[0].starts_with("waiting for GPU group card: first (pid "), "{}", heard[0]);
+        assert!(heard[0].ends_with("holds the whole group; this call needs the whole group"), "{}", heard[0]);
         drop(held);
-        GpuLock::acquire(&config, &url, Duration::ZERO).unwrap();
-        GpuLock::acquire(&config, "http://127.0.0.1:9", Duration::ZERO).unwrap();
-        assert!(GpuLock::path("a b/c").ends_with("ferrum-gpu-a_b_c.lock"));
-        let _ = std::fs::remove_file(GpuLock::path(&group));
+        assert!(gpu_lease(&config, &url, "second", None, &mut |_, _| {}).unwrap().is_some());
+        assert!(gpu_lease(&config, "http://127.0.0.1:9", "x", None, &mut |_, _| {}).unwrap().is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
