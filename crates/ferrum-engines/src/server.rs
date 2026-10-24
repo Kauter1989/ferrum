@@ -148,6 +148,9 @@ impl Router {
 
     /// `POST /v1/unload`: refused with `busy` while sessions are open.
     fn unload(&mut self) -> Reply {
+        if !self.engine.info().is_ok_and(|i| i.capabilities.unload) {
+            return Reply::code(404, "not_found", "this engine cannot unload");
+        }
         if !self.sessions.is_empty() {
             let mut r = Reply::error(&EngineError::Busy { retry_after_s: 5 });
             r.headers.push(("Retry-After", "5".into()));

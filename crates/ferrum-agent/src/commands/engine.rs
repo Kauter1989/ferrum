@@ -183,11 +183,14 @@ pub fn unload(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
         }
         (None, _) => vec![engine_url(config, p)?],
     };
-    let mut results = Vec::new();
     for url in &urls {
-        check_allowed(config, url)?;
-        results.push(unload_one(config, url)?);
+        check_allowed(config, url)?; // all of them before any is asked
     }
+    // this server's own cached engine sessions would keep the engines busy
+    if let Some(c) = ctx.cache.as_mut() {
+        c.engines.close_engines(&urls);
+    }
+    let results: Vec<Value> = urls.iter().map(|url| unload_one(config, url)).collect();
     let mut out = Output::new(json!({ "engines": results }));
     if results.iter().any(|r| r["result"] == "busy") {
         out = out.warn("a busy engine keeps its memory until its sessions close; try again later");
@@ -195,19 +198,28 @@ pub fn unload(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     Ok(out)
 }
 
-fn unload_one(config: &AgentConfig, url: &str) -> Result<Value, AgentError> {
+/// One engine's answer; an error stays in its entry, so the others are still reported.
+fn unload_one(config: &AgentConfig, url: &str) -> Value {
     let e = engine(url);
-    let (result, retry) = match e.unload() {
-        Ok(()) => ("unloaded", None),
-        Err(EngineError::Busy { retry_after_s }) => ("busy", Some(retry_after_s)),
-        Err(EngineError::Unsupported(_)) => ("unsupported", None),
-        Err(EngineError::Unreachable(_)) => ("unreachable", None),
-        Err(other) => return Err(engine_error(other)),
+    // an engine without the capability is not asked: it may answer an unknown route with anything
+    let capable = e.info().map(|i| i.capabilities.unload);
+    let answer = match capable {
+        Ok(false) => Err(EngineError::Unsupported("unload".into())),
+        Ok(true) => e.unload(),
+        Err(err) => Err(err),
+    };
+    let (result, retry, error) = match answer {
+        Ok(()) => ("unloaded", None, None),
+        Err(EngineError::Busy { retry_after_s }) => ("busy", Some(retry_after_s), None),
+        Err(EngineError::Unsupported(_)) => ("unsupported", None, None),
+        Err(EngineError::Unreachable(_)) => ("unreachable", None, None),
+        Err(other) => ("error", None, Some(other.to_string())),
     };
     let resident = e.info().ok().and_then(|i| i.resident_mib);
-    Ok(
-        json!({ "engine": url, "result": result, "retry_after_s": retry, "resident_mib": resident, "gpu_group": config.gpu_group(url) }),
-    )
+    json!({
+        "engine": url, "result": result, "retry_after_s": retry, "error": error,
+        "resident_mib": resident, "gpu_group": config.gpu_group(url),
+    })
 }
 
 fn provenance(i: &EngineInfo, agent: Author) -> Provenance {

@@ -126,7 +126,7 @@ class Engine:
                 "planar_boxes_only": b.get("planar_boxes_only", False),
                 "undo": b.get("undo", False),
                 "deterministic": b.get("deterministic", True),
-                "unload": bool(b.get("unload", False)) or self.backend.can_unload(),
+                "unload": self.backend.can_unload(),
             },
             "modalities": b.get("modalities", []),
             "labels": b.get("labels", []),
@@ -135,6 +135,14 @@ class Engine:
             "limits": limits,
             **({"resident_mib": int(b["resident_mib"])} if b.get("resident_mib") is not None else {}),
         }
+
+    def manifest(self) -> dict:
+        """``GET /v1/info``: :meth:`info` with the GPU memory the backend holds now."""
+        info = self.info()
+        resident = self.backend.resident_mib()
+        if resident is not None:
+            info["resident_mib"] = int(resident)
+        return info
 
     def _expire(self) -> None:
         now = time.monotonic()
@@ -335,11 +343,28 @@ class Engine:
             raise ProtocolError(503, "busy", str(e), retry_after=5) from e
 
 
+def start_sweeper(engine: Engine, every_s: float | None = None) -> threading.Thread:
+    """Closes expired sessions without waiting for a request, so an idle
+    engine frees an abandoned session's memory (Stage 23)."""
+    period = every_s if every_s is not None else max(1.0, min(float(engine.ttl), 60.0))
+
+    def sweep():
+        while True:
+            time.sleep(period)
+            with engine.lock:
+                engine._expire()
+
+    t = threading.Thread(target=sweep, name="session-sweeper", daemon=True)
+    t.start()
+    return t
+
+
 def create_app(backend: Backend, token: str | None = None, session_ttl_s: int = 3600) -> FastAPI:
     """FastAPI application serving ``ferrum-engine/1`` for ``backend``."""
     app = FastAPI(title="FERRUM engine bridge", docs_url=None, redoc_url=None, openapi_url=None)
     engine = Engine(backend, session_ttl_s)
     app.state.engine = engine
+    start_sweeper(engine)
 
     def error(e: ProtocolError) -> JSONResponse:
         headers = {"Retry-After": str(e.retry_after)} if e.retry_after else None
@@ -397,10 +422,13 @@ def create_app(backend: Backend, token: str | None = None, session_ttl_s: int = 
 
     @app.get("/v1/info")
     def info():
-        return locked(engine.info)
+        return locked(engine.manifest)
 
     @app.post("/v1/unload", status_code=204)
-    def unload():
+    def unload(request: Request):
+        # no body is needed, so a browser could send it cross-site without a preflight
+        if "origin" in request.headers:
+            raise ProtocolError(400, "bad_request", "cross-site requests are refused")
         locked(engine.unload)
         return Response(status_code=204)
 

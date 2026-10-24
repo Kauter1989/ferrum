@@ -376,8 +376,9 @@ fn the_engines_peak_raises_the_operators_never_lowers_it() {
         c.gpu.lock_dir = Some(f.locks.clone());
         Agent::new(c)
     };
-    let holder = f.holder(); // 6 000 of 12 000 MiB
-                             // no operator value: the engine's 4 000 MiB fit next to the holder (without it the call would need the whole group)
+    // the holder takes 6 000 of 12 000 MiB
+    let holder = f.holder();
+    // no operator value: the engine's 4 000 MiB fit next to the holder (without it the call would need the whole group)
     let a = agent(None);
     assert_eq!(a.run("study open", &json!({ "workspace": f.ws, "path": f.src }))["ok"], true);
     let ran = a.run("segment auto", &json!({ "workspace": f.ws, "name_prefix": "a/" }));
@@ -386,4 +387,23 @@ fn the_engines_peak_raises_the_operators_never_lowers_it() {
     let refused = agent(Some(7000)).run("segment auto", &json!({ "workspace": f.ws, "name_prefix": "b/" }));
     assert_eq!(refused["error"]["code"], "engine_unavailable", "{refused:#}");
     release(holder);
+}
+
+// covers 23.4-c
+#[test]
+fn unload_closes_this_servers_own_cached_sessions_first() {
+    let f = Fixture::new();
+    // outside a GPU group the MCP server keeps engine sessions open between calls
+    let agent = Agent::new(AgentConfig { engines: vec![f.url.clone()], is_default: false, ..AgentConfig::default() });
+    assert_eq!(agent.run("study open", &json!({ "workspace": f.ws, "path": f.src }))["ok"], true);
+    let mut server = McpServer::new(agent);
+    let point = json!({ "type": "point", "point": { "voxel": [14, 20, 15] }, "positive": true });
+    let call = |name: &str, args: Value| json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": name, "arguments": args } });
+    let r =
+        server.handle(&call("ferrum_segment_interactive", json!({ "workspace": f.ws, "prompts": [point] }))).unwrap();
+    assert_eq!(r["result"]["isError"], false, "{r:#}");
+    assert_eq!(server.cached_engine_sessions(), 1);
+    let u = server.handle(&call("ferrum_engine_unload", json!({}))).unwrap();
+    assert_eq!(u["result"]["structuredContent"]["data"]["engines"][0]["result"], "unloaded", "{u:#}");
+    assert_eq!(server.cached_engine_sessions(), 0);
 }

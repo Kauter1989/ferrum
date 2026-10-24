@@ -121,7 +121,7 @@ pub fn parse_box_query(s: &str) -> Result<VoxelBox, EngineError> {
 /// Encodes engine information (`GET /v1/info`).
 pub fn info_to_json(info: &EngineInfo) -> Value {
     let c = &info.capabilities;
-    json!({
+    let mut v = json!({
         "protocol": info.protocol,
         "name": info.name,
         "version": info.version,
@@ -147,8 +147,11 @@ pub fn info_to_json(info: &EngineInfo) -> Value {
         "research_only": info.research_only,
         "license": info.license,
         "limits": limits_json(info),
-        "resident_mib": info.resident_mib,
-    })
+    });
+    if let Some(r) = info.resident_mib {
+        v["resident_mib"] = json!(r);
+    }
+    v
 }
 
 fn limits_json(info: &EngineInfo) -> Value {
@@ -215,7 +218,8 @@ pub fn info_from_json(v: &Value) -> Result<EngineInfo, EngineError> {
         license: str_of(v, "license"),
         max_voxels: limit("max_voxels"),
         session_ttl_s: limit("session_ttl_s"),
-        expected_peak_mib: limits.get("expected_peak_mib").and_then(Value::as_u64),
+        // 0 would turn a whole-group lease into none: an engine that cannot say reports nothing
+        expected_peak_mib: limits.get("expected_peak_mib").and_then(Value::as_u64).filter(|p| *p > 0),
         resident_mib: v.get("resident_mib").and_then(Value::as_u64),
     })
 }
@@ -476,6 +480,12 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(info_from_json(&info_to_json(&info)).unwrap(), info);
+        // covers 23.2-b
+        let peak =
+            |v: Value| info_from_json(&json!({ "protocol": ENGINE_PROTOCOL, "limits": { "expected_peak_mib": v } }));
+        assert_eq!(peak(json!(5400)).unwrap().expected_peak_mib, Some(5400));
+        assert_eq!(peak(json!(0)).unwrap().expected_peak_mib, None, "0 is no peak, not a 0 MiB lease");
+        assert_eq!(peak(json!(-1)).unwrap().expected_peak_mib, None);
         // covers 23.4-b, 23.4-d: optional fields; an engine from before Stage 23 has none
         let old = json!({ "protocol": ENGINE_PROTOCOL, "capabilities": { "interactive": true }, "limits": { "max_voxels": 1 } });
         let o = info_from_json(&old).unwrap();

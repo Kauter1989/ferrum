@@ -103,7 +103,7 @@ fn unload_round(
     let url = format!("{base}/v1/unload");
     if !info.capabilities.unload {
         drop(open);
-        assert!(matches!(engine.unload(), Err(EngineError::Unsupported(_) | EngineError::Busy { .. })));
+        assert!(matches!(engine.unload(), Err(EngineError::Unsupported(_))));
         return;
     }
     let (status, code, _) = raw("POST", &url, token, None);

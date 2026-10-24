@@ -205,7 +205,7 @@ fn engine_schema(command: &str) -> Option<(&'static str, Value)> {
             obj(json!({}), &[]),
         ),
         "engine unload" => (
-            "Asks idle engines to unload their model and free all of their GPU memory, so another program (a local model server) or a heavier engine has room on a shared card. Give engine (one URL) or group (every engine of a GPU group); without either, the default engine. Each engine answers unloaded, busy (it has open sessions or jobs: nothing is stopped), unsupported or unreachable. The next session loads the model again, which takes time. Never touches results.",
+            "Asks idle engines to unload their model and free all of their GPU memory, so another program (a local model server) or a heavier engine has room on a shared card. Give engine (one URL) or group (every engine of a GPU group); without either, the default engine. Each engine answers unloaded, busy (it has open sessions or jobs: nothing is stopped), unsupported, unreachable or error (with the message). The next session loads the model again, which takes time. Never touches results.",
             obj(
                 json!({
                     "engine": engine_param(),

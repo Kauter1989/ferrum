@@ -169,6 +169,11 @@ class Backend(ABC):
         """``True`` if :meth:`unload` frees the backend's GPU memory (Stage 23)."""
         return False
 
+    def resident_mib(self) -> int | None:
+        """GPU memory the backend holds now, in MiB; ``None`` when unknown.
+        Called for ``GET /v1/info`` only (it may run ``nvidia-smi``)."""
+        return None
+
     def unload(self) -> None:
         """Frees the model and all GPU memory while no session is open; the
         next :meth:`open` loads it again."""
