@@ -286,7 +286,7 @@ impl Workspace {
         let text = serde_json::to_string_pretty(&self.manifest.to_json())
             .map_err(|e| IoError::invalid(&path, e.to_string()))?;
         write_atomic(&path, text.as_bytes())?;
-        changes::publish(&self.root);
+        changes::publish(&self.root, changes::Touched::Manifest);
         Ok(())
     }
 
@@ -338,13 +338,13 @@ impl Workspace {
         let path = self.path(files::ANNOTATIONS);
         if report.annotations.is_empty() {
             remove_if_exists(&path)?;
-            changes::publish(&self.root);
+            changes::publish(&self.root, changes::Touched::Annotations);
             return Ok(());
         }
         let tmp = partial_path(&path);
         write_annotation_report(report, generator, &tmp)?;
         std::fs::rename(&tmp, &path).map_err(|e| IoError::os(&path, e))?;
-        changes::publish(&self.root);
+        changes::publish(&self.root, changes::Touched::Annotations);
         Ok(())
     }
 
@@ -365,7 +365,7 @@ impl Workspace {
         if set.segments().is_empty() {
             remove_if_exists(&nifti)?;
             remove_if_exists(&meta)?;
-            changes::publish(&self.root);
+            changes::publish(&self.root, changes::Touched::Segments);
             return Ok(());
         }
         let (tmp_nifti, tmp_meta) = (partial_path(&nifti), partial_path(&meta));
@@ -373,7 +373,7 @@ impl Workspace {
         write_segments(set, volume.spacing(), generator, &tmp_meta)?;
         std::fs::rename(&tmp_nifti, &nifti).map_err(|e| IoError::os(&nifti, e))?;
         std::fs::rename(&tmp_meta, &meta).map_err(|e| IoError::os(&meta, e))?;
-        changes::publish(&self.root);
+        changes::publish(&self.root, changes::Touched::Segments);
         Ok(())
     }
 
