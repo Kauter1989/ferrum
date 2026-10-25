@@ -210,6 +210,34 @@ can refine the object later by replaying them
   when missing.
 - The agent interface writes one line per command (command, parameters,
   outputs, hashes). Review decisions are logged there too.
+- A decision a host recorded through `ferrum_agent::decisions` (16.7) has
+  `"source": "host"`; `params` holds the item (`segment` or `annotation`),
+  `by` (the name the host gave), `revision` (the item's revision when it
+  was shown) and `shown_sha256` (the host's hash of what it showed). Like
+  an agent command's entry, it has `source_sha256` and, for a multi-volume
+  series, `volume` (`{"series", "label"}`) at the top level. The entry is
+  written before the decision; if writing the decision then fails, a
+  second entry with `"ok": false` follows. `.decisions.lock` in the
+  workspace serialises decisions of several hosts.
+
+  ```json
+  {"time":"…","command":"review confirm","source":"host","params":{"segment":3,"by":"Dr. K. Example","revision":"9a…","shown_sha256":"5f…"},"ok":true,"source_sha256":"c1…"}
+  ```
+
+**Item revision (`ferrum-review-revision/1`):** SHA-256 over, in order,
+strings as a u64 little-endian byte length and their UTF-8 bytes, and
+integers as u64 little-endian:
+- the tag `ferrum-review-revision/1`, the source hash, the open volume's id
+  (empty for a single-volume series);
+- an annotation: `"annotation"`, its id, type, plane, name, text, unit, the
+  slice index, its value with 3 decimals (empty without one), the number
+  of points and each point in voxels as `"i,j,k"` with 3 decimals;
+- a segment: `"segment"`, its label, its name, its box (min then max, six
+  integers) and one byte (0 or 1) per voxel of the box, `i` fastest
+  (`"empty"` instead of box and bytes for a segment without voxels).
+
+Review state and display properties (colour, opacity, visibility) are not
+part of it. A change of the encoding changes the tag.
 
 **Privacy:**
 - The manifest holds paths and hashes only.
