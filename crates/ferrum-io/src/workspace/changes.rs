@@ -258,8 +258,8 @@ fn key_part(p: &str) -> bool {
         return !prefix.is_empty();
     }
     let digits = p.trim_start_matches(|c: char| c.is_ascii_lowercase());
-    let number = matches!(digits.split_once('.'), Some((a, b)) if is_digits(a, 12) && is_digits(b, 6))
-        || is_digits(digits, 12);
+    let number =
+        matches!(digits.split_once('.'), Some((a, b)) if is_digits(a, 12) && is_digits(b, 6)) || is_digits(digits, 12);
     prefix_ok(&p[..p.len() - digits.len()]) && number
 }
 
