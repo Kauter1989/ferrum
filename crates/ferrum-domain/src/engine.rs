@@ -64,6 +64,9 @@ pub struct EngineCapabilities {
     /// Replaying the same prompts on a new session gives the same mask
     /// (the protocol's `deterministic`, `true` when an engine omits it).
     pub deterministic: bool,
+    /// The engine can unload its model and free all of its GPU memory while
+    /// idle (`POST /v1/unload`, Stage 23).
+    pub unload: bool,
 }
 
 impl Default for EngineCapabilities {
@@ -76,6 +79,7 @@ impl Default for EngineCapabilities {
             planar_boxes_only: false,
             undo: false,
             deterministic: true,
+            unload: false,
         }
     }
 }
@@ -118,6 +122,13 @@ pub struct EngineInfo {
     pub max_voxels: u64,
     /// Session lifetime without activity in seconds (0 = unknown).
     pub session_ttl_s: u64,
+    /// GPU memory of the engine process during a call, in MiB, as the
+    /// engine expects it (`limits.expected_peak_mib`); it can raise the
+    /// operator's value, never lower it.
+    pub expected_peak_mib: Option<u64>,
+    /// GPU memory the engine reports holding now, in MiB (`resident_mib`);
+    /// advisory: a process that needs room checks the free memory itself.
+    pub resident_mib: Option<u64>,
 }
 
 impl EngineInfo {
@@ -322,6 +333,14 @@ pub trait SegmentationEngine: Send + Sync {
     /// Starts an interactive session on `volume` (uploaded once).
     /// `modality` is the DICOM modality string (may be empty).
     fn open_session(&self, volume: &Volume, modality: &str) -> Result<Box<dyn InteractiveSession>, EngineError>;
+
+    /// Unloads the model while no session or job is open, freeing the
+    /// engine's GPU memory; the next session loads it again.
+    /// [`EngineError::Busy`] while sessions are open,
+    /// [`EngineError::Unsupported`] when the engine cannot unload.
+    fn unload(&self) -> Result<(), EngineError> {
+        Err(EngineError::Unsupported("unload".into()))
+    }
 }
 
 /// A session on one uploaded volume. Interactive engines refine one target

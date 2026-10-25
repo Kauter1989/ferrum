@@ -554,7 +554,13 @@ pub fn interactive(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
                 p(f, m);
             }
         };
-        let gpu = gpu_lease(config, &plan.url, &format!("ferrum-agent: {}", plan.info.name), None, &mut report)?;
+        let gpu = gpu_lease(
+            config,
+            &plan.url,
+            &format!("ferrum-agent: {}", plan.info.name),
+            plan.info.expected_peak_mib,
+            &mut report,
+        )?;
         let mut r = run_engine(study, &plan, cached, key)?;
         if in_group {
             // closed (its GPU memory freed) before the lease is released

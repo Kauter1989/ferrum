@@ -285,8 +285,17 @@ pub enum EngineCmd {
         #[arg(long)]
         engine: Option<String>,
     },
-    /// Every allowed engine: reachable, name, modes, licence, GPU group.
+    /// Every allowed engine: reachable, name, modes, licence, GPU group, GPU memory.
     List,
+    /// Ask idle engines to unload their model and free their GPU memory.
+    Unload {
+        /// Engine URL (default: the first allowed one).
+        #[arg(long)]
+        engine: Option<String>,
+        /// Every engine of this GPU group.
+        #[arg(long)]
+        group: Option<String>,
+    },
 }
 
 /// `eval …`.
@@ -726,6 +735,9 @@ impl Command {
             }
             Command::Engine(EngineCmd::Info { engine }) => call("engine info", vec![("engine", some(engine.clone()))]),
             Command::Engine(EngineCmd::List) => call("engine list", vec![]),
+            Command::Engine(EngineCmd::Unload { engine, group }) => {
+                call("engine unload", vec![("engine", some(engine.clone())), ("group", some(group.clone()))])
+            }
             Command::Probe { ws: w, point } => call("probe", vec![ws(w), ("point", Some(parse_point(point)?))]),
             Command::Stats { ws: w, bx, sphere, radius_mm, segment, annotation } => {
                 let bx = bx.as_ref().map(|b| -> Result<Value, String> {
@@ -1194,6 +1206,9 @@ mod tests {
         assert_eq!(p["split"], true);
         assert_eq!(call(&["ferrum-cli", "segment", "shape", "-w", "ws", "1"]).0, "segment shape");
         assert_eq!(call(&["ferrum-cli", "engine", "list"]).0, "engine list");
+        // covers 23.4-c
+        let (name, p) = call(&["ferrum-cli", "engine", "unload", "--group", "card"]);
+        assert_eq!((name.as_str(), p["group"].as_str(), p.get("engine")), ("engine unload", Some("card"), None));
         let (name, p) = call(&["ferrum-cli", "run", "probe", "--params", r#"{"workspace":"w"}"#]);
         assert_eq!((name.as_str(), p["workspace"].as_str()), ("probe", Some("w")));
         let (name, p) = call(&["ferrum-cli", "review", "reject", "-w", "ws", "--segment", "2", "--by", "dr.k"]);

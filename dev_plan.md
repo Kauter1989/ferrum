@@ -461,7 +461,7 @@ switch time and GPU memory on a real GPU.
 
 ---
 
-## Stage 23 — GPU sharing with an external model server 🚧 (G1 ✅, G2 ✅; PR 1 of 3)
+## Stage 23 — GPU sharing with an external model server 🚧 (G1 ✅, G2 ✅; PR 2 of 3)
 
 Medical Harness runs its language model locally as a `llama-server`
 sidecar on the same 12 GB card as FERRUM's engines
@@ -523,11 +523,11 @@ running engine job.
 | Task | Criteria | PR | State |
 |---|---|---|---|
 | 23.T1 `ferrum-gpu-lock`: directory checks, holder records, admission, stale holders | 23.1-a/b/c/f, 23.2-a/c/d | 1 | ✅ |
-| 23.T2 `GpuSettings` in `ferrum-engines`; `AgentConfig` delegates; peaks | 23.2-b (operator value and the rule; the manifest field in PR 2) | 1 | ✅ |
+| 23.T2 `GpuSettings` in `ferrum-engines`; `AgentConfig` delegates; peaks | 23.2-b (the manifest field in PR 2) | 1, 2 | ✅ |
 | 23.T3 agent on the lease: wait with progress, timeout naming holders | 23.1-d/e, 23.2-e | 1 | ✅ |
-| 23.T4 protocol additions and conformance | 23.4-b/d | 2 | |
-| 23.T5 bridges: worker process, unload, `resident_mib`, release tests | 23.4-a/b | 2 | |
-| 23.T6 `engine unload`, `engine list` fields | 23.4-c/d | 2 | |
+| 23.T4 protocol additions and conformance | 23.4-b/d | 2 | ✅ |
+| 23.T5 bridges: worker process, unload, `resident_mib`, release tests | 23.4-a/b (tests; the measurements on the card are the field test) | 2 | ✅ |
+| 23.T6 `engine unload`, `engine list` fields | 23.4-c/d | 2 | ✅ |
 | 23.T7 domain port, `GatedEngine`, `Viewer` waiting and cancel | 23.3-a/b | 3 | |
 | 23.T8 AI panel waiting state; `gpu hold` | 23.3-c, 23.5-d | 3 | |
 | 23.T9 benchmark holder options; field run; recipe | 23.5-a/b/c | 3 | |
