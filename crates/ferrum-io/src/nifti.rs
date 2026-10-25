@@ -273,12 +273,11 @@ fn read_values(path: &Path, volume: u64) -> Result<(Vec<f32>, NiftiHeader), IoEr
         return Err(IoError::invalid(path, format!("no volume {} in a file of {}", volume + 1, h.volumes)));
     }
     let n = h.dims.voxel_count();
-    let start = h.vox_offset + volume as usize * n * bpv;
-    let end = start + n * bpv;
-    if bytes.len() < end {
-        return Err(IoError::invalid(path, "voxel data truncated"));
-    }
-    let raw = &bytes[start..end];
+    // checked: the offset and the dims come from the file
+    let size = n.checked_mul(bpv);
+    let start = size.and_then(|s| usize::try_from(volume).ok()?.checked_mul(s)?.checked_add(h.vox_offset));
+    let range = start.zip(size).and_then(|(a, s)| Some(a..a.checked_add(s)?)).filter(|r| r.end <= bytes.len());
+    let raw = range.map(|r| &bytes[r]).ok_or_else(|| IoError::invalid(path, "voxel data truncated"))?;
     let (le, dt) = (h.little_endian, h.datatype);
     let slope = if h.scl_slope == 0.0 || !h.scl_slope.is_finite() { 1.0 } else { h.scl_slope };
     let inter = if h.scl_inter.is_finite() { h.scl_inter } else { 0.0 };
