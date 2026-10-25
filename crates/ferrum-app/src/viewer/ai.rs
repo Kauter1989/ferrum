@@ -49,11 +49,24 @@ impl AiStatus {
 }
 
 enum Command {
-    Open { volume: Arc<Volume>, modality: String, revision: u64 },
-    Prompt { prompt: Prompt, target: u8 },
-    Undo { target: u8 },
+    Open {
+        volume: Arc<Volume>,
+        modality: String,
+        revision: u64,
+    },
+    Prompt {
+        prompt: Prompt,
+        target: u8,
+    },
+    Undo {
+        target: u8,
+    },
     Reset,
-    Automatic { labels: Option<Vec<String>> },
+    Automatic {
+        labels: Option<Vec<String>>,
+    },
+    /// Closes the session (freeing the engine's memory and any GPU lease); no event.
+    Close,
 }
 
 enum Event {
@@ -71,7 +84,28 @@ enum Event {
     Progress(JobStatus),
     /// Finished job: the label map, or `None` if cancelled.
     LabelMap(Result<Option<Vec<u16>>, EngineError>),
+    /// The engine waits before it starts (a shared GPU is full); does not
+    /// complete a request.
+    Waiting(String),
 }
+
+/// Forwards an engine's waits to the UI and stops them on Cancel.
+struct WaitObserver {
+    tx: std::sync::Mutex<Sender<Event>>,
+    stop: Arc<AtomicBool>,
+}
+
+impl ferrum_domain::EngineObserver for WaitObserver {
+    fn waiting(&self, note: &str) -> bool {
+        if let Ok(tx) = self.tx.lock() {
+            let _ = tx.send(Event::Waiting(note.to_owned()));
+        }
+        !self.stop.load(Ordering::Relaxed)
+    }
+}
+
+/// Error of a request sent while no session is open.
+const NO_SESSION: &str = "no session";
 
 /// Interval between job status requests.
 const JOB_POLL: Duration = Duration::from_millis(300);
@@ -107,17 +141,21 @@ struct Worker {
     tx: Option<Sender<Command>>,
     rx: Receiver<Event>,
     thread: Option<JoinHandle<()>>,
+    /// The job's cancel flag and the GPU wait's stop flag, set when the worker goes.
+    stops: [Arc<AtomicBool>; 2],
 }
 
 impl Worker {
-    fn spawn(engine: Arc<dyn SegmentationEngine>, cancel: Arc<AtomicBool>) -> Self {
+    fn spawn(engine: Arc<dyn SegmentationEngine>, cancel: Arc<AtomicBool>, stop_wait: Arc<AtomicBool>) -> Self {
         let (cmd_tx, cmd_rx) = channel::<Command>();
         let (ev_tx, ev_rx) = channel::<Event>();
+        let stops = [cancel.clone(), stop_wait.clone()];
+        engine.observe(Arc::new(WaitObserver { tx: std::sync::Mutex::new(ev_tx.clone()), stop: stop_wait }));
         let thread = std::thread::Builder::new()
             .name("ferrum-ai-engine".into())
             .spawn(move || run_worker(engine.as_ref(), &cancel, &cmd_rx, &ev_tx))
             .ok();
-        Self { tx: Some(cmd_tx), rx: ev_rx, thread }
+        Self { tx: Some(cmd_tx), rx: ev_rx, thread, stops }
     }
 
     fn send(&self, cmd: Command) -> bool {
@@ -128,7 +166,11 @@ impl Worker {
 impl Drop for Worker {
     fn drop(&mut self) {
         // closing the channel ends the loop; the session is dropped (and
-        // closed on the engine) by the worker thread
+        // closed on the engine) by the worker thread. A job or a wait for the
+        // GPU stops first, so the join does not block the UI.
+        for stop in &self.stops {
+            stop.store(true, Ordering::Relaxed);
+        }
         self.tx = None;
         if let Some(t) = self.thread.take() {
             let _ = t.join();
@@ -149,7 +191,7 @@ fn mask_after(
 fn run_worker(engine: &dyn SegmentationEngine, cancel: &AtomicBool, rx: &Receiver<Command>, tx: &Sender<Event>) {
     let mut session: Option<Box<dyn InteractiveSession>> = None;
     let _ = tx.send(Event::Info(engine.info().map(Box::new)));
-    let no_session = || EngineError::Protocol("no session".into());
+    let no_session = || EngineError::Protocol(NO_SESSION.into());
     for cmd in rx {
         let event = match cmd {
             Command::Open { volume, modality, revision } => {
@@ -176,6 +218,10 @@ fn run_worker(engine: &dyn SegmentationEngine, cancel: &AtomicBool, rx: &Receive
                 Some(s) => run_job(s, labels.as_deref(), cancel, tx),
                 None => Err(no_session()),
             }),
+            Command::Close => {
+                session = None;
+                continue;
+            }
         };
         if tx.send(event).is_err() {
             break;
@@ -196,6 +242,8 @@ pub struct AiState {
     objects: u32,
     job: Option<JobStatus>,
     cancel: Arc<AtomicBool>,
+    waiting: Option<String>,
+    stop_wait: Arc<AtomicBool>,
     /// Prompts mark the object (`true`, *Include*) or background (*Exclude*).
     pub positive: bool,
 }
@@ -262,6 +310,12 @@ impl AiState {
         self.job.as_ref()
     }
 
+    /// What the engine waits for before it starts (a shared GPU that
+    /// another program holds), while it waits.
+    pub fn waiting(&self) -> Option<&str> {
+        self.waiting.as_deref()
+    }
+
     /// `true` if the engine marks its results for research use only.
     pub fn research_only(&self) -> bool {
         self.info.as_ref().is_some_and(|i| i.research_only)
@@ -295,7 +349,8 @@ impl Viewer {
         self.ai.status = AiStatus::Connecting;
         self.ai.pending = 1;
         self.ai.cancel = Arc::new(AtomicBool::new(false));
-        self.ai.worker = Some(Worker::spawn(engine, self.ai.cancel.clone()));
+        self.ai.stop_wait = Arc::new(AtomicBool::new(false));
+        self.ai.worker = Some(Worker::spawn(engine, self.ai.cancel.clone(), self.ai.stop_wait.clone()));
     }
 
     /// Disconnects the engine (closing its session). The segments stay.
@@ -307,6 +362,7 @@ impl Viewer {
         self.ai.pending = 0;
         self.ai.target = None;
         self.ai.job = None;
+        self.ai.waiting = None;
         if self.tool.prompt_kind().is_some() {
             self.tool = crate::ToolKind::Pan;
             self.tool_ctl.cancel();
@@ -402,6 +458,14 @@ impl Viewer {
         self.ai_send(Command::Automatic { labels })
     }
 
+    /// Stops waiting for a shared GPU: the request is not sent and fails
+    /// with "stopped waiting"; nothing the engine holds is touched.
+    pub fn ai_cancel_wait(&mut self) {
+        if self.ai.waiting.is_some() {
+            self.ai.stop_wait.store(true, Ordering::Relaxed);
+        }
+    }
+
     /// Asks the engine to cancel the running automatic job.
     pub fn ai_cancel_job(&mut self) {
         if self.ai.job.is_some() {
@@ -437,6 +501,18 @@ impl Viewer {
         }
     }
 
+    /// Removes the current object's segment if it holds no voxels: its
+    /// prompt was never sent.
+    fn drop_empty_target(&mut self) {
+        let empty = |t: u8| self.segmentation().set().is_some_and(|s| s.voxel_count(t) == 0);
+        if let Some(t) = self.ai.target.filter(|t| empty(*t)) {
+            self.ai.target = None;
+            if let Err(e) = self.remove_segment(t) {
+                self.status.errors.push(e.to_string());
+            }
+        }
+    }
+
     /// Applies finished engine work. Called from [`Viewer::poll`].
     pub(super) fn poll_ai(&mut self) {
         while let Some(event) = self.ai.worker.as_ref().and_then(|w| w.rx.try_recv().ok()) {
@@ -463,6 +539,13 @@ impl Viewer {
     }
 
     fn handle_ai_event(&mut self, event: Event) {
+        if let Event::Waiting(note) = &event {
+            self.ai.waiting = Some(note.clone());
+            return;
+        }
+        self.ai.waiting = None;
+        // the next request may wait again
+        self.ai.stop_wait.store(false, Ordering::Relaxed);
         if !matches!(event, Event::Progress(_)) {
             self.ai.pending = self.ai.pending.saturating_sub(1);
         }
@@ -487,6 +570,13 @@ impl Viewer {
             Event::Opened { revision, result } => match result {
                 Ok(()) if Some(revision) == self.ai.session_revision => self.ai.status = AiStatus::Working,
                 Ok(()) => {}
+                // the person stopped waiting for the GPU: still connected, nothing was sent
+                Err(EngineError::Cancelled(m)) => {
+                    self.ai.session_revision = None;
+                    self.ai.status = AiStatus::Connected;
+                    self.status.message = format!("AI segmentation: {m}");
+                    self.drop_empty_target();
+                }
                 Err(e) => {
                     self.ai.session_revision = None;
                     self.ai_failed("Volume upload", &e);
@@ -494,16 +584,23 @@ impl Viewer {
             },
             Event::Mask { target, result } => match result {
                 Ok((r, mask)) => self.apply_ai_mask(target, r, mask),
+                // a prompt queued behind a failed open: the open's error says why
+                Err(EngineError::Protocol(m)) if m == NO_SESSION && self.ai.session_revision.is_none() => {}
                 Err(e) => self.ai_failed("AI prompt", &e),
             },
             Event::Reset(Err(e)) => self.ai_failed("AI reset", &e),
             Event::Reset(Ok(())) => {}
             Event::Progress(status) => self.ai.job = Some(status),
+            Event::Waiting(_) => {}
             Event::LabelMap(result) => {
                 self.ai.job = None;
                 match result {
                     Ok(Some(values)) => self.apply_engine_label_map(&values),
                     Ok(None) => self.status.message = "Automatic segmentation cancelled".into(),
+                    // the job was queued behind an open the person cancelled (a full GPU group)
+                    Err(EngineError::Protocol(m)) if m == NO_SESSION && self.ai.session_revision.is_none() => {
+                        self.status.message = "Automatic segmentation cancelled".into();
+                    }
                     Err(e) => self.ai_failed("Automatic segmentation", &e),
                 }
             }
@@ -564,6 +661,10 @@ impl Viewer {
 
     /// Closes the engine session when the dataset is replaced.
     pub(super) fn reset_ai_session(&mut self) {
+        if let Some(w) = &self.ai.worker {
+            // the old study's session and its GPU lease go now, not at the next prompt
+            w.send(Command::Close);
+        }
         self.ai.session_revision = None;
         self.ai.target = None;
         self.ai.objects = 0;

@@ -58,6 +58,8 @@ proptest = "1"
 criterion = { version = "0.5", default-features = false }
 approx = "0.5"
 tempfile = "3"
+ctrlc = { version = "3", features = ["termination"] }
+rustix = { version = "1", default-features = false, features = ["std", "process"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }
 tiny_http = "0.12"

@@ -329,6 +329,85 @@ fn ai_tools_are_visible_but_disabled_until_an_engine_connects() {
     assert_eq!(h.state().viewer.tool, ToolKind::Pan);
 }
 
+/// Prompts the AI point tool at the centre of the axial view.
+fn ai_point(viewer: &mut ferrum_app::Viewer) {
+    viewer.set_slice_index(SliceAxis::Axial, 20);
+    viewer.slice_input(
+        SliceAxis::Axial,
+        ferrum_app::InputKind::Press,
+        glam::Vec2::splat(100.0),
+        glam::Vec2::splat(200.0),
+    );
+}
+
+// covers 23.3-a, 23.3-b, 23.3-c
+#[test]
+fn ai_panel_shows_waiting_for_gpu() {
+    use ferrum_engines::gpu::{GpuSettings, Kind, LockDir, Request};
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = loaded_app(dir.path(), None);
+    let server =
+        ferrum_engines::EngineServer::start(Arc::new(ferrum_engines::MockEngine::default()), "127.0.0.1:0", None)
+            .unwrap();
+    let url = server.url();
+    let locks = dir.path().join("gpu");
+    app.panel.ai.url = url.clone();
+    app.panel.ai.gpu = Ok(GpuSettings {
+        groups: vec![("card".into(), vec![url.clone()])],
+        capacity_mib: vec![("card".into(), 12_000)],
+        peaks_mib: vec![(url.clone(), 7000)],
+        lock_dir: Some(locks.clone()),
+    });
+    // a model server outside FERRUM holds half of the card
+    let request = Request {
+        group: "card",
+        holder: "llama-server",
+        kind: Kind::Resident,
+        lease_mib: Some(6000),
+        capacity_mib: Some(12_000),
+    };
+    let held = LockDir::at(&locks).unwrap().acquire(&request, std::time::Duration::ZERO, &mut |_| true).unwrap();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1200.0, 1000.0))
+        .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
+    h.run();
+    h.get_by_label_contains("Connect").click();
+    h.step();
+    h.state_mut().viewer.wait_ai_idle();
+    h.run();
+    h.get_by_label("AI point").click();
+    h.run();
+    ai_point(&mut h.state_mut().viewer);
+    let start = std::time::Instant::now();
+    while h.state().viewer.ai().waiting().is_none() {
+        assert!(start.elapsed().as_secs() < 10, "never waited for the GPU");
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    h.step();
+    h.get_by_label_contains("Waiting for GPU: llama-server (pid ");
+    h.get_by_label_contains("holds 6000 MiB (group card)");
+    h.get_by_label(&format!("{} Cancel", egui_phosphor::light::X_CIRCLE)).click();
+    h.step();
+    h.state_mut().viewer.wait_ai_idle();
+    h.run();
+    assert!(h.query_by_label_contains("Waiting for GPU").is_none());
+    assert!(h.state().viewer.ai().status().is_connected(), "Cancel keeps the engine connected");
+    assert_eq!(h.state().viewer.ai().target(), None, "nothing was sent");
+    assert!(h.state().viewer.segment_summaries().is_empty(), "no empty AI segment is left");
+
+    // the model server leaves: the next prompt runs
+    drop(held);
+    ai_point(&mut h.state_mut().viewer);
+    h.state_mut().viewer.wait_ai_idle();
+    h.run();
+    let target = h.state().viewer.ai().target().expect("the prompt ran");
+    assert!(h.state().viewer.segmentation().set().unwrap().voxel_count(target) > 1000);
+    let holders = LockDir::at(&locks).unwrap().holders("card").unwrap();
+    assert_eq!(holders.len(), 1, "the desktop's session holds the lease");
+    assert!(holders[0].holder.starts_with("ferrum desktop: "), "{}", holders[0].holder);
+}
+
 #[test]
 fn automatic_segmentation_runs_from_the_panel() {
     let dir = tempfile::tempdir().unwrap();

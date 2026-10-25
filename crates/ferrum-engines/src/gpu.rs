@@ -16,7 +16,13 @@
 //! ```
 
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+use ferrum_domain::{
+    EngineError, EngineInfo, EngineObserver, InteractiveSession, JobStatus, Prompt, PromptResult, SegmentationEngine,
+    Volume, VoxelBox,
+};
 
 pub use ferrum_gpu_lock::{default_path, describe_holders, HolderInfo, Kind, Lease, LockDir, LockError, Request, Wait};
 
@@ -136,6 +142,123 @@ impl GpuSettings {
     }
 }
 
+impl GpuSettings {
+    /// The `[network]` GPU settings of an operator configuration file, for
+    /// the desktop app (the agent's `AgentConfig` reads the same keys); other
+    /// sections and keys are left to their owners.
+    pub fn load_network(path: &std::path::Path) -> Result<Self, String> {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        let table: toml::Table = text.parse().map_err(|e: toml::de::Error| e.message().to_owned())?;
+        let mut s = Self::default();
+        if let Some(network) = table.get("network").and_then(toml::Value::as_table) {
+            for (k, v) in network {
+                s.set(k, v)?;
+            }
+        }
+        s.validate()?;
+        Ok(s)
+    }
+}
+
+/// An engine of a GPU group, as the desktop app uses it: opening a session
+/// takes the group's lease and the session holds it until it is dropped,
+/// because an open interactive session keeps its image on the GPU. While
+/// the lease waits, the [`EngineObserver`] hears who holds the group and may
+/// stop the wait.
+pub struct GatedEngine {
+    inner: Arc<dyn SegmentationEngine>,
+    settings: GpuSettings,
+    url: String,
+    timeout: Duration,
+    observer: Mutex<Option<Arc<dyn EngineObserver>>>,
+}
+
+impl GatedEngine {
+    /// `inner` reached at `url`, gated by `settings` (no-op when the URL is in
+    /// no group); a wait longer than `timeout` fails.
+    pub fn new(inner: Arc<dyn SegmentationEngine>, settings: GpuSettings, url: &str, timeout: Duration) -> Self {
+        let url = url.trim_end_matches('/').to_owned();
+        Self { inner, settings, url, timeout, observer: Mutex::new(None) }
+    }
+
+    fn lease(&self) -> Result<Option<Lease>, EngineError> {
+        if self.settings.group(&self.url).is_none() {
+            return Ok(None); // no extra request for an engine in no group
+        }
+        let info = self.inner.info()?;
+        let holder = format!("ferrum desktop: {}", info.name);
+        let observer = self.observer.lock().ok().and_then(|o| o.clone());
+        let mut on_wait = |w: &Wait| {
+            let held = describe_holders(w.held);
+            let held = if held.is_empty() { "another process is taking a lease".to_owned() } else { held };
+            let note = format!("{held} (group {})", w.group);
+            observer.as_ref().is_none_or(|o| o.waiting(&note))
+        };
+        self.settings.acquire(&self.url, &holder, info.expected_peak_mib, self.timeout, &mut on_wait).map_err(|e| {
+            match e {
+                LockError::Cancelled => EngineError::Cancelled("stopped waiting for the GPU".into()),
+                other => EngineError::Internal(other.to_string()),
+            }
+        })
+    }
+}
+
+impl SegmentationEngine for GatedEngine {
+    fn info(&self) -> Result<EngineInfo, EngineError> {
+        self.inner.info()
+    }
+
+    fn open_session(&self, volume: &Volume, modality: &str) -> Result<Box<dyn InteractiveSession>, EngineError> {
+        let lease = self.lease()?;
+        let session = self.inner.open_session(volume, modality)?;
+        Ok(Box::new(GatedSession { session, _lease: lease }))
+    }
+
+    fn unload(&self) -> Result<(), EngineError> {
+        self.inner.unload()
+    }
+
+    fn observe(&self, observer: Arc<dyn EngineObserver>) {
+        if let Ok(mut o) = self.observer.lock() {
+            *o = Some(observer);
+        }
+    }
+}
+
+/// A session holding its group's lease. Fields drop in order: the session
+/// closes (freeing the engine's memory) before the lease is released.
+struct GatedSession {
+    session: Box<dyn InteractiveSession>,
+    _lease: Option<Lease>,
+}
+
+impl InteractiveSession for GatedSession {
+    fn prompt(&mut self, prompt: &Prompt) -> Result<PromptResult, EngineError> {
+        self.session.prompt(prompt)
+    }
+    fn mask(&mut self, bx: VoxelBox) -> Result<Vec<u8>, EngineError> {
+        self.session.mask(bx)
+    }
+    fn undo(&mut self) -> Result<PromptResult, EngineError> {
+        self.session.undo()
+    }
+    fn reset(&mut self) -> Result<(), EngineError> {
+        self.session.reset()
+    }
+    fn start_job(&mut self, labels: Option<&[String]>) -> Result<String, EngineError> {
+        self.session.start_job(labels)
+    }
+    fn job_status(&mut self, job: &str) -> Result<JobStatus, EngineError> {
+        self.session.job_status(job)
+    }
+    fn cancel_job(&mut self, job: &str) -> Result<(), EngineError> {
+        self.session.cancel_job(job)
+    }
+    fn label_map(&mut self) -> Result<Vec<u16>, EngineError> {
+        self.session.label_map()
+    }
+}
+
 fn urls(v: &toml::Value, what: &str) -> Result<Vec<String>, String> {
     let list = v.as_array().ok_or_else(|| format!("{what} must be a list of URLs"))?;
     list.iter()
@@ -172,6 +295,57 @@ mod tests {
         }
         s.validate()?;
         Ok(s)
+    }
+
+    // covers 23.3-a
+    #[test]
+    fn the_desktop_reads_only_the_gpu_keys_of_the_agent_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ferrum-agent.toml");
+        let write = |text: &str| std::fs::write(&path, text).unwrap();
+        write(
+            "[data]\nread_roots = [\"/data\"]\n[limits]\nengine_job_timeout_s = 60\n[network]\n\
+             engines = [\"http://127.0.0.1:8765\"]\ngpu_groups = { card = [\"http://127.0.0.1:8765/\"] }\n\
+             gpu_capacity_mib = { card = 12000 }\n",
+        );
+        let s = GpuSettings::load_network(&path).unwrap();
+        assert_eq!(s.group("http://127.0.0.1:8765"), Some("card"));
+        assert_eq!(s.capacity("card"), Some(12_000));
+        write("[data]\nread_roots = []\n");
+        assert_eq!(GpuSettings::load_network(&path).unwrap(), GpuSettings::default(), "no [network]: no groups");
+        write("[network]\ngpu_capacity_mib = { other = 1 }\n");
+        assert!(GpuSettings::load_network(&path).unwrap_err().contains("not in network.gpu_groups"));
+        write("[network\n");
+        assert!(GpuSettings::load_network(&path).is_err(), "bad TOML");
+        assert!(GpuSettings::load_network(&dir.path().join("missing.toml")).unwrap_err().starts_with("cannot read"));
+    }
+
+    // covers 23.3-a
+    #[test]
+    fn a_gated_session_holds_the_lease_and_an_ungated_engine_takes_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let url = "http://engine.invalid";
+        let settings = GpuSettings {
+            groups: vec![("card".into(), vec![url.into()])],
+            lock_dir: Some(dir.path().join("gpu")),
+            ..GpuSettings::default()
+        };
+        let holders = || LockDir::at(dir.path().join("gpu")).unwrap().holders("card").unwrap();
+        let volume = Volume::from_physical(ferrum_domain::Dims3::new(4, 4, 4), glam::Vec3::ONE, &[0.0; 64]).unwrap();
+        let mock: Arc<dyn SegmentationEngine> = Arc::new(crate::MockEngine::default());
+        let gated = GatedEngine::new(mock.clone(), settings.clone(), url, Duration::from_secs(1));
+        let session = gated.open_session(&volume, "CT").unwrap();
+        let held = holders();
+        assert_eq!(held.len(), 1);
+        assert!(held[0].holder.starts_with("ferrum desktop: "), "{}", held[0].holder);
+        // the group is full: a second session waits, then fails naming the group
+        let busy = GatedEngine::new(mock.clone(), settings.clone(), url, Duration::ZERO);
+        assert!(busy.open_session(&volume, "CT").is_err());
+        drop(session);
+        assert!(holders().is_empty(), "closing the session releases the lease");
+        let ungated = GatedEngine::new(mock, settings, "http://other.invalid", Duration::ZERO);
+        let _free = ungated.open_session(&volume, "CT").unwrap();
+        assert!(holders().is_empty(), "an engine in no group takes no lease");
     }
 
     // covers 23.2-b
