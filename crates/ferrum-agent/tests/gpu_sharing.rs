@@ -35,7 +35,8 @@ fn external_holder() {
         lease_mib: Some(6000),
         capacity_mib: Some(CAPACITY),
     };
-    let lease = LockDir::at(PathBuf::from(dir)).unwrap().acquire(&req, Duration::ZERO, &mut |_| true).unwrap();
+    // it waits rather than tries once: the parent polls `holders`, which takes the admission lock briefly
+    let lease = LockDir::at(PathBuf::from(dir)).unwrap().acquire(&req, Duration::from_secs(15), &mut |_| true).unwrap();
     let mut line = String::new();
     let _ = std::io::stdin().read_line(&mut line);
     drop(lease);
@@ -104,6 +105,9 @@ impl SegmentationEngine for Peeking {
         self.2.lock().unwrap().extend(records(&self.1));
         let s = self.0.open_session(volume, modality)?;
         Ok(Box::new(Watched(s, self.1.clone(), self.3.clone())))
+    }
+    fn unload(&self) -> Result<(), EngineError> {
+        self.0.unload()
     }
 }
 
@@ -284,4 +288,123 @@ fn engine_sessions_close_before_the_lease_is_released() {
         [true, true],
         "auto, then interactive (MCP): both closed under the lease"
     );
+}
+
+/// The mock engine without unload (an engine from before Stage 23).
+struct NoUnload(MockEngine);
+
+impl SegmentationEngine for NoUnload {
+    fn info(&self) -> Result<EngineInfo, EngineError> {
+        let mut i = self.0.info()?;
+        i.capabilities.unload = false;
+        i.resident_mib = Some(2100);
+        i.expected_peak_mib = Some(5400);
+        Ok(i)
+    }
+    fn open_session(&self, volume: &Volume, modality: &str) -> Result<Box<dyn InteractiveSession>, EngineError> {
+        self.0.open_session(volume, modality)
+    }
+}
+
+// covers 23.4-c, 23.4-d
+#[test]
+fn idle_engines_unload_busy_ones_keep_their_memory() {
+    let f = Fixture::new();
+    let old = EngineServer::start(Arc::new(NoUnload(MockEngine::default())), "127.0.0.1:0", None).unwrap();
+    let mut c = AgentConfig { engines: vec![f.url.clone(), old.url()], is_default: false, ..AgentConfig::default() };
+    c.gpu.groups = vec![("card".into(), vec![f.url.clone(), old.url()])];
+    c.gpu.lock_dir = Some(f.locks.clone());
+    let agent = Agent::new(c);
+
+    let list = agent.run("engine list", &json!({}));
+    let engines = list["data"]["engines"].as_array().unwrap();
+    assert_eq!((engines[0]["unload"].as_bool(), engines[1]["unload"].as_bool()), (Some(true), Some(false)));
+    assert_eq!(
+        (engines[1]["resident_mib"].as_u64(), engines[1]["expected_peak_mib"].as_u64()),
+        (Some(2100), Some(5400))
+    );
+    assert_eq!(engines[0]["resident_mib"], Value::Null);
+
+    let group = agent.run("engine unload", &json!({ "group": "card" }));
+    assert_eq!(group["ok"], true, "{group:#}");
+    let results: Vec<&str> =
+        group["data"]["engines"].as_array().unwrap().iter().map(|e| e["result"].as_str().unwrap()).collect();
+    assert_eq!(results, ["unloaded", "unsupported"]);
+
+    // an open session keeps the engine busy; nothing is stopped
+    let engine = ferrum_engines::HttpEngine::new(ferrum_engines::HttpConfig::new(&f.url));
+    let session = engine.open_session(&ferrum_agent::evals::sphere_cube().unwrap(), "CT").unwrap();
+    let busy = agent.run("engine unload", &json!({ "engine": f.url }));
+    assert_eq!(busy["data"]["engines"][0]["result"], "busy", "{busy:#}");
+    assert!(busy["data"]["engines"][0]["retry_after_s"].as_u64().is_some());
+    assert!(busy["warnings"].to_string().contains("busy engine keeps its memory"));
+    drop(session);
+    assert_eq!(agent.run("engine unload", &json!({}))["data"]["engines"][0]["result"], "unloaded", "default engine");
+
+    let code = |p: Value| agent.run("engine unload", &p)["error"]["code"].as_str().unwrap_or("").to_owned();
+    assert_eq!(code(json!({ "group": "card", "engine": f.url })), "bad_request");
+    assert_eq!(code(json!({ "group": "other" })), "not_found");
+    assert_eq!(code(json!({ "engine": "http://127.0.0.1:9" })), "forbidden");
+}
+
+/// The mock engine expecting 4 000 MiB per call.
+struct Small(MockEngine);
+
+impl SegmentationEngine for Small {
+    fn info(&self) -> Result<EngineInfo, EngineError> {
+        Ok(EngineInfo { expected_peak_mib: Some(4000), ..self.0.info()? })
+    }
+    fn open_session(&self, volume: &Volume, modality: &str) -> Result<Box<dyn InteractiveSession>, EngineError> {
+        self.0.open_session(volume, modality)
+    }
+}
+
+// covers 23.2-b
+#[test]
+fn the_engines_peak_raises_the_operators_never_lowers_it() {
+    let f = Fixture::new();
+    let small = EngineServer::start(Arc::new(Small(MockEngine::default())), "127.0.0.1:0", None).unwrap();
+    let agent = |operator_peak: Option<u64>| {
+        let mut c = AgentConfig {
+            engines: vec![small.url()],
+            engine_job_timeout_s: 1,
+            is_default: false,
+            ..AgentConfig::default()
+        };
+        c.gpu.groups = vec![("card".into(), vec![small.url()])];
+        c.gpu.capacity_mib = vec![("card".into(), CAPACITY)];
+        c.gpu.peaks_mib = operator_peak.map(|p| (small.url(), p)).into_iter().collect();
+        c.gpu.lock_dir = Some(f.locks.clone());
+        Agent::new(c)
+    };
+    // the holder takes 6 000 of 12 000 MiB
+    let holder = f.holder();
+    // no operator value: the engine's 4 000 MiB fit next to the holder (without it the call would need the whole group)
+    let a = agent(None);
+    assert_eq!(a.run("study open", &json!({ "workspace": f.ws, "path": f.src }))["ok"], true);
+    let ran = a.run("segment auto", &json!({ "workspace": f.ws, "name_prefix": "a/" }));
+    assert_eq!(ran["ok"], true, "{ran:#}");
+    // the operator's 7 000 MiB stand although the engine says 4 000
+    let refused = agent(Some(7000)).run("segment auto", &json!({ "workspace": f.ws, "name_prefix": "b/" }));
+    assert_eq!(refused["error"]["code"], "engine_unavailable", "{refused:#}");
+    release(holder);
+}
+
+// covers 23.4-c
+#[test]
+fn unload_closes_this_servers_own_cached_sessions_first() {
+    let f = Fixture::new();
+    // outside a GPU group the MCP server keeps engine sessions open between calls
+    let agent = Agent::new(AgentConfig { engines: vec![f.url.clone()], is_default: false, ..AgentConfig::default() });
+    assert_eq!(agent.run("study open", &json!({ "workspace": f.ws, "path": f.src }))["ok"], true);
+    let mut server = McpServer::new(agent);
+    let point = json!({ "type": "point", "point": { "voxel": [14, 20, 15] }, "positive": true });
+    let call = |name: &str, args: Value| json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": name, "arguments": args } });
+    let r =
+        server.handle(&call("ferrum_segment_interactive", json!({ "workspace": f.ws, "prompts": [point] }))).unwrap();
+    assert_eq!(r["result"]["isError"], false, "{r:#}");
+    assert_eq!(server.cached_engine_sessions(), 1);
+    let u = server.handle(&call("ferrum_engine_unload", json!({}))).unwrap();
+    assert_eq!(u["result"]["structuredContent"]["data"]["engines"][0]["result"], "unloaded", "{u:#}");
+    assert_eq!(server.cached_engine_sessions(), 0);
 }

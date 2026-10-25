@@ -1604,10 +1604,28 @@
     }
   },
   "engine list": {
-    "description": "Every engine the operator allows: whether it answers, name, version, modes, research_only and GPU group.",
+    "description": "Every engine the operator allows: whether it answers, name, version, modes, research_only, GPU group, whether it can unload, and the GPU memory it reports holding (resident_mib, advisory) and expects per call (expected_peak_mib).",
     "parameters": {
       "type": "object",
       "properties": {},
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  "engine unload": {
+    "description": "Asks idle engines to unload their model and free all of their GPU memory, so another program (a local model server) or a heavier engine has room on a shared card. Give engine (one URL) or group (every engine of a GPU group); without either, the default engine. Each engine answers unloaded, busy (it has open sessions or jobs: nothing is stopped), unsupported, unreachable or error (with the message). The next session loads the model again, which takes time. Never touches results.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "engine": {
+          "type": "string",
+          "description": "engine base URL (default: the first one the operator allows)"
+        },
+        "group": {
+          "type": "string",
+          "description": "a GPU group of the operator configuration (network.gpu_groups)"
+        }
+      },
       "required": [],
       "additionalProperties": false
     }

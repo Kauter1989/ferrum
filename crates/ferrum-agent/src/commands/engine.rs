@@ -45,13 +45,22 @@ pub fn engine_url(config: &AgentConfig, p: &Params) -> Result<String, AgentError
                     .hint("the operator lists engines in network.engines; or pass engine (a URL)")
             })?,
     };
-    let allowed =
-        if config.engines.is_empty() { config.is_default && is_loopback(&url) } else { config.engines.contains(&url) };
+    check_allowed(config, &url)?;
+    Ok(url)
+}
+
+/// Refuses engines the operator does not allow.
+fn check_allowed(config: &AgentConfig, url: &str) -> Result<(), AgentError> {
+    let allowed = if config.engines.is_empty() {
+        config.is_default && is_loopback(url)
+    } else {
+        config.engines.iter().any(|e| e == url)
+    };
     if !allowed {
         return Err(AgentError::new(ErrorCode::Forbidden, format!("engine {url} is not allowed"))
             .hint("the operator configuration lists the engines FERRUM may contact (network.engines)"));
     }
-    Ok(url)
+    Ok(())
 }
 
 /// The engine client of `url`, with the operator's token.
@@ -92,6 +101,9 @@ pub fn info_json(config: &AgentConfig, url: &str, i: &EngineInfo) -> Value {
         "planar_boxes_only": i.capabilities.planar_boxes_only,
         "undo": i.capabilities.undo,
         "deterministic": i.capabilities.deterministic,
+        "unload": i.capabilities.unload,
+        "resident_mib": i.resident_mib,
+        "expected_peak_mib": i.expected_peak_mib,
         "labels": i.labels.iter().map(|l| json!({ "value": l.value, "name": l.name })).collect::<Vec<_>>(),
         "modalities": i.modalities,
         "research_only": i.research_only,
@@ -154,6 +166,62 @@ pub fn list(ctx: &mut Ctx, _p: &Params) -> Result<Output, AgentError> {
     Ok(out)
 }
 
+/// `engine unload`: asks idle engines to unload their model and free their
+/// GPU memory (Stage 23); a busy engine keeps it, a running job is never
+/// stopped.
+pub fn unload(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
+    let config = ctx.config;
+    let urls = match (p.str("group")?, p.str("engine")?) {
+        (Some(_), Some(_)) => return Err(AgentError::bad_request("give engine or group, not both")),
+        (Some(g), None) => {
+            let members = config.gpu.members(g);
+            if members.is_empty() {
+                return Err(AgentError::not_found(format!("no GPU group {g}"))
+                    .hint("the operator names the groups in network.gpu_groups"));
+            }
+            members
+        }
+        (None, _) => vec![engine_url(config, p)?],
+    };
+    for url in &urls {
+        check_allowed(config, url)?; // all of them before any is asked
+    }
+    // this server's own cached engine sessions would keep the engines busy
+    if let Some(c) = ctx.cache.as_mut() {
+        c.engines.close_engines(&urls);
+    }
+    let results: Vec<Value> = urls.iter().map(|url| unload_one(config, url)).collect();
+    let mut out = Output::new(json!({ "engines": results }));
+    if results.iter().any(|r| r["result"] == "busy") {
+        out = out.warn("a busy engine keeps its memory until its sessions close; try again later");
+    }
+    Ok(out)
+}
+
+/// One engine's answer; an error stays in its entry, so the others are still reported.
+fn unload_one(config: &AgentConfig, url: &str) -> Value {
+    let e = engine(url);
+    // an engine without the capability is not asked: it may answer an unknown route with anything
+    let capable = e.info().map(|i| i.capabilities.unload);
+    let answer = match capable {
+        Ok(false) => Err(EngineError::Unsupported("unload".into())),
+        Ok(true) => e.unload(),
+        Err(err) => Err(err),
+    };
+    let (result, retry, error) = match answer {
+        Ok(()) => ("unloaded", None, None),
+        Err(EngineError::Busy { retry_after_s }) => ("busy", Some(retry_after_s), None),
+        Err(EngineError::Unsupported(_)) => ("unsupported", None, None),
+        Err(EngineError::Unreachable(_)) => ("unreachable", None, None),
+        Err(other) => ("error", None, Some(other.to_string())),
+    };
+    let resident = e.info().ok().and_then(|i| i.resident_mib);
+    json!({
+        "engine": url, "result": result, "retry_after_s": retry, "error": error,
+        "resident_mib": resident, "gpu_group": config.gpu_group(url),
+    })
+}
+
 fn provenance(i: &EngineInfo, agent: Author) -> Provenance {
     Provenance::engine(&i.name, &i.version, i.research_only, Timestamp::now()).requested_by(agent)
 }
@@ -181,7 +249,7 @@ fn wait_for_job(ctx: &mut Ctx, session: &mut dyn InteractiveSession, job: &str) 
 fn run_job(
     ctx: &mut Ctx,
     p: &Params,
-    (url, name): (&str, &str),
+    (url, name, peak): (&str, &str, Option<u64>),
     labels: Option<&[String]>,
 ) -> Result<(Vec<u16>, Option<String>), AgentError> {
     let modality = match p.str("modality")? {
@@ -190,7 +258,7 @@ fn run_job(
     };
     let volume = ctx.study(p)?.volume.clone();
     let config = ctx.config;
-    let gpu = gpu_lease(config, url, &format!("ferrum-agent: {name}"), None, &mut |f, m| ctx.report(f, m))?;
+    let gpu = gpu_lease(config, url, &format!("ferrum-agent: {name}"), peak, &mut |f, m| ctx.report(f, m))?;
     let gpu_warning = gpu.as_ref().and_then(|l| l.warning().map(str::to_owned));
     let mut session = engine(url).open_session(&volume, &modality).map_err(engine_error)?;
     let job = session.start_job(labels).map_err(engine_error)?;
@@ -234,7 +302,7 @@ pub fn auto(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     if !info.capabilities.automatic {
         return Err(AgentError::bad_request(format!("{} has no automatic segmentation", info.name)));
     }
-    let (values, gpu_warning) = run_job(ctx, p, (&url, &info.name), labels.as_deref())?;
+    let (values, gpu_warning) = run_job(ctx, p, (&url, &info.name, info.expected_peak_mib), labels.as_deref())?;
     let config = ctx.config;
     let study = ctx.study(p)?;
     let present = present_values(&values, study.segments.labels().data());

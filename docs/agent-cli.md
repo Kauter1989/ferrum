@@ -86,7 +86,8 @@ workspace paths are placed under the operator's `data.workspace_root`.
 | `segment components -w W L [--min-ml ML] [--split]` | 26-connected components, largest first, with centroid, box and ml; `--split` makes a segment of each further component of at least `--min-ml` |
 | `segment compare -w W A B [--b-workspace W2]` | Dice, Jaccard, volumes and difference, HD95 and Hausdorff distance in mm, centroid distance; B may be in another workspace of the same series |
 | `segment edit -w W L --op keep_largest\|fill_holes\|restrict_to_box\|remove_small [--box A B] [--min-ml ML]` | Deterministic clean-up of a segment the agent created or asked an engine for |
-| `engine list` | Every allowed engine: reachable, name, version, modes, `deterministic`, `research_only`, GPU group |
+| `engine list` | Every allowed engine: reachable, name, version, modes, `deterministic`, `research_only`, GPU group, `unload`, `resident_mib` (reported by the engine, advisory) and `expected_peak_mib` |
+| `engine unload [--engine URL \| --group G]` | Asks idle engines to unload their model and free all their GPU memory (Stage 23): per engine `unloaded`, `busy` (sessions or jobs open; nothing is stopped, `retry_after_s`), `unsupported` or `unreachable`. Not a decision on results; the next session reloads the model |
 | `engine info [--engine URL]` | Capabilities, labels, `deterministic`, `research_only` and licence of a `ferrum-engine/1` engine |
 | `segment interactive -w W [--engine URL] [--name N] [--agent ID] [--segment L [--append \| --undo]] [--from-segment L] [--roi A B \| --whole-volume] [--min-ml ML] [--max-ml ML] [--modality M] PROMPT…` | Prompts an interactive engine ([below](#segmentation-engines)): `+POINT` / `-POINT`, `±box:POINT:POINT`, `±lasso:P1;P2;P3`, `±scribble:P1;P2`. A new object becomes a segment proposed by the engine; `--segment` refines one made earlier |
 | `segment auto -w W [--engine URL] [--label NAME]… [--name-prefix P] [--modality M] [--agent ID]` | Runs an automatic engine (e.g. TotalSegmentator); every structure found becomes a segment proposed by the engine, with checks; existing segments keep their voxels |
@@ -309,8 +310,8 @@ Label bridges. The scenarios they serve, step by step, are in
   ([gpu-sharing.md](gpu-sharing.md)).
 - With `network.gpu_capacity_mib`, an engine call runs next to other
   holders when its expected peak fits. Its peak is
-  `network.gpu_peaks_mib`; once engines report `limits.expected_peak_mib`
-  (Stage 23, PR 2), their value can raise it but never lower it. Without a capacity, a group admits one holder
+  `network.gpu_peaks_mib`; an engine that reports
+  `limits.expected_peak_mib` can raise it but never lower it. Without a capacity, a group admits one holder
   at a time; without a peak, a call takes the whole group. A group that
   stays full gives `engine_unavailable` naming its holders.
 - On a 12 GB card, nnInteractive and the full TotalSegmentator model fit

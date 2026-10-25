@@ -87,6 +87,7 @@ pub const COMMANDS: &[(&str, Command)] = &[
     ("segment threshold", segment::threshold),
     ("engine info", engine::info),
     ("engine list", engine::list),
+    ("engine unload", engine::unload),
     ("segment interactive", interactive::interactive),
     ("segment auto", engine::auto),
     ("segment shape", masks::shape),
