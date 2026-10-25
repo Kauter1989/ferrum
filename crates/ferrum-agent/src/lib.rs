@@ -22,6 +22,7 @@
 pub mod agent;
 pub mod commands;
 pub mod config;
+pub mod decisions;
 pub mod envelope;
 pub mod evals;
 pub mod gpu;
