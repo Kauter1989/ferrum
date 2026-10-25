@@ -418,6 +418,12 @@ that says so instead of editing the old one.
 - **Rule:** Never rely on closing a file to release a `flock`/`File::lock`
   in a process that may spawn children: unlock explicitly. A test that
   passes locally and fails once on CI is a race to reproduce, not a flake.
+- **Same family (Stage 23 PR 2 and 3):** a child holder that tried its
+  lease once (`Duration::ZERO`) lost to the parent's `holders()` poll,
+  which takes the admission lock briefly. It failed 1 run in 15–20 under
+  load: first in `gpu_sharing.rs`, then in `ferrum-gpu-lock/tests/processes.rs`.
+  A test's child holder waits for its lease; only a test of the refusal
+  itself tries once.
 
 ### L28 — Processes a test started outlived it and hung the run (2026-10, Stage 23 PR 3)
 
