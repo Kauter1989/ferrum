@@ -541,7 +541,7 @@ running engine job.
 
 ---
 
-## Stage 24 — Embeddable viewer widget (`ferrum-ui`) 📋 (G1 pending)
+## Stage 24 — Embeddable viewer widget (`ferrum-ui`) 📋 (G1 ✅, G2 pending)
 
 Medical Harness shows a conversation and FERRUM's viewer in one egui/wgpu
 window ([#69](https://github.com/Kauter1989/ferrum/issues/69); P1 for the
@@ -580,12 +580,14 @@ viewers in one window (one `Viewer` per window; the GPU resources are
 installed once), file loading inside the widget (the host opens studies
 through `Viewer` or its own code), theming beyond FERRUM's dark theme.
 
-**Clarifications (G1):**
-- Q1: crate name `ferrum-ui`, as in the issue? — proposed: yes.
-- Q2: panels as separate widgets the host may place (24.1-c), rather than one fixed layout? — proposed: yes; the host decides its layout.
-- Q3: events in this stage, before `ferrum-view/1`? — proposed: yes, as Rust types; #70 gives them their JSON schema.
-- Q4: egui and wgpu versions: the host must use the same versions as FERRUM (they are re-exported as `ferrum_ui::egui` and `ferrum_ui::egui_wgpu`)? — proposed: yes, and the versions are named in the crate docs.
-- Q5: mode — gated (G1 spec, G2 design), as for a stage? — proposed: yes.
+**Clarifications (G1 ✅ 2026-10-25):**
+- Q1: crate name `ferrum-ui`, as in the issue? — A: yes (2026-10-25).
+- Q2: panels as separate widgets the host may place (24.1-c), rather than one fixed layout? — A: yes; the host decides its layout (2026-10-25).
+- Q3: events in this stage, before `ferrum-view/1`? — A: yes, as Rust types; #70 gives them their JSON schema (2026-10-25).
+- Q4: egui and wgpu versions: the host must use the same versions as FERRUM (they are re-exported as `ferrum_ui::egui` and `ferrum_ui::egui_wgpu`)? — A: yes, and the versions are named in the crate docs (2026-10-25).
+- Q5: mode — gated (G1 spec, G2 design), as for a stage? — A: yes (2026-10-25).
+
+**Design:** [docs/embeddable-viewer.md](docs/embeddable-viewer.md), [ADR 0016](docs/decisions/0016-ferrum-ui-crate.md) (G2 pending). Size L, two PRs: the move, then events and the example host.
 
 ## Roadmap
 
