@@ -264,7 +264,7 @@ impl NiftiHeader {
 
 /// Reads the header and every voxel of the first 3D volume as physical
 /// values (scaling applied), in stored order.
-fn read_values(path: &Path, volume: u64) -> Result<(Vec<f32>, NiftiHeader), IoError> {
+pub(crate) fn read_values(path: &Path, volume: u64) -> Result<(Vec<f32>, NiftiHeader), IoError> {
     let bytes = read_all(path)?;
     let h = NiftiHeader::parse(&bytes, path)?;
     let bpv =

@@ -34,6 +34,8 @@ use crate::error::IoError;
 use crate::nifti::{read_label_nifti, write_label_nifti};
 use crate::segments::{read_segments, write_segments};
 
+pub mod changes;
+
 /// Value of the `format` field of `workspace.json`.
 pub const WORKSPACE_FORMAT: &str = "ferrum-workspace";
 /// Version of the workspace layout: 1, or 2 when the manifest names the
@@ -283,7 +285,9 @@ impl Workspace {
         let path = self.root.join(files::MANIFEST);
         let text = serde_json::to_string_pretty(&self.manifest.to_json())
             .map_err(|e| IoError::invalid(&path, e.to_string()))?;
-        write_atomic(&path, text.as_bytes())
+        write_atomic(&path, text.as_bytes())?;
+        changes::publish(&self.root);
+        Ok(())
     }
 
     /// Opens the workspace in `root`.
@@ -333,11 +337,15 @@ impl Workspace {
     pub fn save_annotations(&self, report: &AnnotationReport, generator: &str) -> Result<(), IoError> {
         let path = self.path(files::ANNOTATIONS);
         if report.annotations.is_empty() {
-            return remove_if_exists(&path);
+            remove_if_exists(&path)?;
+            changes::publish(&self.root);
+            return Ok(());
         }
         let tmp = partial_path(&path);
         write_annotation_report(report, generator, &tmp)?;
-        std::fs::rename(&tmp, &path).map_err(|e| IoError::os(&path, e))
+        std::fs::rename(&tmp, &path).map_err(|e| IoError::os(&path, e))?;
+        changes::publish(&self.root);
+        Ok(())
     }
 
     /// Loads the annotations of a volume of `dims`, or `None` if there are
@@ -356,13 +364,17 @@ impl Workspace {
         let (nifti, meta) = (self.path(files::SEGMENTS_NIFTI), self.path(files::SEGMENTS_JSON));
         if set.segments().is_empty() {
             remove_if_exists(&nifti)?;
-            return remove_if_exists(&meta);
+            remove_if_exists(&meta)?;
+            changes::publish(&self.root);
+            return Ok(());
         }
         let (tmp_nifti, tmp_meta) = (partial_path(&nifti), partial_path(&meta));
         write_label_nifti(set.labels(), volume, &tmp_nifti)?;
         write_segments(set, volume.spacing(), generator, &tmp_meta)?;
         std::fs::rename(&tmp_nifti, &nifti).map_err(|e| IoError::os(&nifti, e))?;
-        std::fs::rename(&tmp_meta, &meta).map_err(|e| IoError::os(&meta, e))
+        std::fs::rename(&tmp_meta, &meta).map_err(|e| IoError::os(&meta, e))?;
+        changes::publish(&self.root);
+        Ok(())
     }
 
     /// Loads the segments on the grid of `volume`, or `None` if there are

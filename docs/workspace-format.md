@@ -224,6 +224,23 @@ can refine the object later by replaying them
   {"time":"…","command":"review confirm","source":"host","params":{"segment":3,"by":"Dr. K. Example","revision":"9a…","shown_sha256":"5f…"},"ok":true,"source_sha256":"c1…"}
   ```
 
+**Change notifications (16.8):** `ferrum_io::workspace::changes` tells
+the agent, the viewer and a host's panels what changed in a workspace.
+Changes are computed by comparing the files with the state read before,
+so they are the same whichever process wrote them:
+- `subscribe(root)`: every save through `Workspace` in this process sends
+  its changes to the receivers of that workspace before the save returns;
+- `WorkspaceWatcher::poll()`: for changes made by other processes. It reads
+  the JSON files on every poll and decodes `segments.nii.gz` only when its
+  size or modification time changed. The host chooses the interval.
+
+The kinds are a segment added, removed, revised (name, colour,
+visibility, opacity or voxels) or reviewed (new status); an annotation
+added, removed, revised (name, points, slice, text) or reviewed; and the
+open volume switched (the key after `#v=`). Changes hold labels, ids,
+statuses and the volume key only. They never hold names, texts, UIDs,
+paths or the reviewer.
+
 **Item revision (`ferrum-review-revision/1`):** SHA-256 over, in order,
 strings as a u64 little-endian byte length and their UTF-8 bytes, and
 integers as u64 little-endian:
