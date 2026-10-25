@@ -123,3 +123,117 @@ fn mcp_over_stdio_and_schemas() {
         Some(2)
     );
 }
+
+fn gpu_config(dir: &Path) -> std::path::PathBuf {
+    let config = dir.join("ferrum-agent.toml");
+    let text = format!(
+        "[network]\ngpu_groups = {{ card = [\"http://127.0.0.1:1\"] }}\ngpu_capacity_mib = {{ card = 12000 }}\ngpu_lock_dir = {:?}\n",
+        dir.join("gpu")
+    );
+    std::fs::write(&config, text).unwrap();
+    config
+}
+
+fn records(dir: &Path) -> Vec<String> {
+    std::fs::read_dir(dir.join("gpu/card"))
+        .map(|d| {
+            d.flatten()
+                .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+                .map(|e| std::fs::read_to_string(e.path()).unwrap())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+// covers 23.5-d
+#[cfg(unix)]
+#[test]
+fn gpu_hold_runs_command_and_releases() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = gpu_config(dir.path());
+    // the command sees its own lease record, then exits with its own code
+    let out = Command::new(env!("CARGO_BIN_EXE_ferrum-cli"))
+        .args(["gpu", "hold", "--group", "card", "--lease-mib", "6000", "--name", "sidecar", "--"])
+        .args(["sh", "-c", "cat \"$0\"/card/*.json; exit 3"])
+        .arg(dir.path().join("gpu"))
+        .env("FERRUM_AGENT_CONFIG", &config)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(3), "the command's exit code: {stderr}");
+    let record: Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!((record["holder"].as_str(), record["lease_mib"].as_u64()), (Some("sidecar"), Some(6000)), "{record}");
+    assert_eq!(record["kind"], "resident");
+    assert!(stderr.contains("holding 6000 MiB of GPU group card for sidecar"), "{stderr}");
+    assert!(stderr.contains("released GPU group card"), "{stderr}");
+    assert!(records(dir.path()).is_empty(), "the lease is released when the command exits");
+
+    // a group the operator did not configure is refused before anything runs
+    let (code, env) = cli(&["gpu", "hold", "--group", "other", "--", "sh", "-c", "exit 0"], Some(&config));
+    assert_eq!((code, env["error"]["code"].as_str()), (1, Some("bad_request")), "{env}");
+    // nothing to run is a usage error
+    let (code, _) = cli(&["gpu", "hold", "--group", "card"], Some(&config));
+    assert_eq!(code, 2);
+}
+
+// covers 23.5-d
+#[test]
+fn gpu_hold_not_an_mcp_tool() {
+    let (code, env) = cli(&["commands"], None);
+    assert_eq!(code, 0);
+    let names: Vec<&str> = env["commands"].as_array().unwrap().iter().map(|c| c.as_str().unwrap()).collect();
+    assert!(names.iter().all(|n| !n.starts_with("gpu")), "{names:?}");
+    let schemas =
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../skills/ferrum/schemas/commands.json"))
+            .unwrap();
+    let schemas: Value = serde_json::from_str(&schemas).unwrap();
+    assert!(schemas.as_object().unwrap().keys().all(|k| !k.starts_with("gpu")), "not in commands.json");
+    let mut mcp = Command::new(env!("CARGO_BIN_EXE_ferrum-cli"))
+        .arg("mcp")
+        .env_remove("FERRUM_AGENT_CONFIG")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        use std::io::Write;
+        let mut stdin = mcp.stdin.take().unwrap();
+        writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"protocolVersion":"2025-06-18","capabilities":{{}},"clientInfo":{{"name":"t","version":"0"}}}}}}"#).unwrap();
+        writeln!(stdin, r#"{{"jsonrpc":"2.0","id":2,"method":"tools/list"}}"#).unwrap();
+    }
+    let out = mcp.wait_with_output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    let list: Value = text.lines().map(|l| serde_json::from_str::<Value>(l).unwrap()).find(|v| v["id"] == 2).unwrap();
+    let tools: Vec<&str> =
+        list["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
+    assert!(tools.len() > 20, "{tools:?}");
+    assert!(tools.iter().all(|t| !t.contains("gpu")), "{tools:?}");
+}
+
+// covers 23.5-d
+#[cfg(unix)]
+#[test]
+fn gpu_hold_forwards_ctrl_c_and_releases_after_the_command() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = gpu_config(dir.path());
+    let mut hold = Command::new(env!("CARGO_BIN_EXE_ferrum-cli"))
+        .args(["gpu", "hold", "--group", "card", "--lease-mib", "6000", "--"])
+        .args(["sh", "-c", "trap 'sleep 0.3; exit 7' INT; while true; do sleep 0.05; done"])
+        .env("FERRUM_AGENT_CONFIG", &config)
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let start = std::time::Instant::now();
+    while records(dir.path()).is_empty() {
+        assert!(start.elapsed().as_secs() < 10, "never held");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    std::thread::sleep(std::time::Duration::from_millis(200)); // the shell has set its trap
+                                                               // Ctrl-C at a terminal reaches the hold process only (the command has its own process group)
+    assert!(Command::new("kill").args(["-INT", &hold.id().to_string()]).status().unwrap().success());
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    assert_eq!(records(dir.path()).len(), 1, "still held while the command finishes");
+    assert_eq!(hold.wait().unwrap().code(), Some(7), "the command got SIGINT and its exit code is returned");
+    assert!(records(dir.path()).is_empty());
+}

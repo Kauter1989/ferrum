@@ -74,7 +74,7 @@ FERRUM is a visualisation core meant to be extended
 | Extension | Port (in `ferrum-domain`) | Status |
 |---|---|---|
 | Data sources | `VolumeRepository` | implemented: DICOM, NIfTI |
-| Segmentation engines | `SegmentationEngine`, `InteractiveSession` | implemented: `ferrum-engines` with `HttpEngine`, `MockEngine` and a reference server; driven by the *Segmentation* section and the AI tools of the toolbar |
+| Segmentation engines | `SegmentationEngine`, `InteractiveSession` | implemented: `ferrum-engines` with `HttpEngine`, `MockEngine` and a reference server; driven by the *Segmentation* section and the AI tools of the toolbar. `EngineObserver` (`SegmentationEngine::observe`, default no-op) reports a wait for a shared GPU to the viewer; `ferrum-engines::gpu::GatedEngine` takes a GPU group's lease for each session |
 | Result stores | `ResultStore` | implemented: `ferrum-io::WorkspaceStore` (`ferrum-workspace` v1); the viewer opens a workspace, shows its review queue, writes decisions back and keeps the modality declared for an image that carries none (`modality`, `set_modality`) and the volume shown of a multi-volume series (`volume`, `set_volume`) |
 | Exporters | `Exporter` | planned as a port; today annotation JSON, NIfTI label maps and DICOM SEG/SR (`ferrum-io::dicom::export`) are called directly |
 

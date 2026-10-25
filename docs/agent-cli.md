@@ -314,6 +314,23 @@ Label bridges. The scenarios they serve, step by step, are in
   `limits.expected_peak_mib` can raise it but never lower it. Without a capacity, a group admits one holder
   at a time; without a peak, a call takes the whole group. A group that
   stays full gives `engine_unavailable` naming its holders.
+- `ferrum-cli gpu hold --group G [--lease-mib N] [--name NAME]
+  [--timeout-s S] -- <command> [args…]` wraps a process outside FERRUM,
+  such as `llama-server`, in a `resident` lease of group G. It waits for
+  room (default `engine_job_timeout_s`), runs the command, and releases
+  the lease when the command exits. It returns the command's exit code, or
+  1 with an error envelope if the lease cannot be taken. Its notes go to
+  stderr. On Unix the command runs in its own process group: Ctrl-C or
+  SIGTERM sent to `gpu hold` reaches the command once as SIGINT, and the
+  lease stays held until the command has exited. The command does not
+  read the terminal. `gpu hold` starts a program, so it is an operator
+  tool of the command line only: it is not an agent command, has no
+  schema and is not an MCP tool.
+- The desktop app reads the same `[network]` settings from
+  `$FERRUM_AGENT_CONFIG`. An engine of a group takes its lease when a
+  session opens, and the AI panel shows "Waiting for GPU: <holder>" with
+  Cancel while it waits. Cancel sends nothing and leaves no empty
+  segment.
 - On a 12 GB card, nnInteractive and the full TotalSegmentator model fit
   only in turn; the bridges free their GPU memory between calls
   ([ai-demo.md](ai-demo.md#one-gpu-for-all-engines)).

@@ -215,6 +215,13 @@ command exits, returning the command's exit code. The logic lives in
 an agent command: it is in neither the MCP tool list nor `commands.json`,
 and a test checks that it is absent from both.
 
+As built: the command runs in its own process group (Unix), so Ctrl-C at
+the terminal reaches only `gpu hold`. `gpu hold` passes Ctrl-C or SIGTERM
+on once as SIGINT and releases the lease only after the command has
+exited; a Ctrl-C during the wait stops the wait. A command in its own
+process group must not read the terminal (a model server does not).
+`--timeout-s` defaults to `limits.engine_job_timeout_s`.
+
 ### 3.7 Benchmark and recipe (23.5)
 
 - `scripts/benchmark_engines.py` gains these options:

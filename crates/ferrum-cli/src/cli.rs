@@ -143,6 +143,32 @@ pub enum Command {
         #[arg(long)]
         workspace_root: Option<PathBuf>,
     },
+    /// Shared GPU groups (operator tool; not an agent command).
+    #[command(subcommand)]
+    Gpu(Gpu),
+}
+
+/// `gpu …`.
+#[derive(Debug, Subcommand)]
+pub enum Gpu {
+    /// Holds a lease of a GPU group while a command (e.g. a model server) runs.
+    Hold {
+        /// The GPU group (network.gpu_groups).
+        #[arg(long)]
+        group: String,
+        /// The lease in MiB (default: the whole group).
+        #[arg(long)]
+        lease_mib: Option<u64>,
+        /// Holder name in the lock record (default: the program's name).
+        #[arg(long)]
+        name: Option<String>,
+        /// Seconds to wait for room (default: limits.engine_job_timeout_s).
+        #[arg(long)]
+        timeout_s: Option<u64>,
+        /// The command and its arguments, after `--`.
+        #[arg(last = true, required = true)]
+        command: Vec<std::ffi::OsString>,
+    },
 }
 
 /// `study …`.
@@ -797,6 +823,7 @@ impl Command {
                 }
             },
             Command::Mcp { workspace_root } => ("mcp".to_owned(), json!({ "workspace_root": workspace_root })),
+            Command::Gpu(_) => return Err("gpu commands are run by main, not the agent".into()),
         })
     }
 }

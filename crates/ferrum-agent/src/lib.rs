@@ -24,6 +24,7 @@ pub mod commands;
 pub mod config;
 pub mod envelope;
 pub mod evals;
+pub mod gpu;
 pub mod mcp;
 pub mod params;
 pub mod points;
