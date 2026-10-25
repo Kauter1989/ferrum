@@ -529,7 +529,7 @@ running engine job.
 | 23.T6 `engine unload`, `engine list` fields | 23.4-c/d | 2 | ✅ |
 | 23.T7 domain port, `GatedEngine`, `Viewer` waiting and cancel | 23.3-a/b | 3 | ✅ |
 | 23.T8 AI panel waiting state; `gpu hold` | 23.3-c, 23.5-d | 3 | ✅ |
-| 23.T9 benchmark holder options; field run; recipe | 23.5-a/b/c | 3 | |
+| 23.T9 benchmark holder options; field run; recipe | 23.5-a/b/c | 3 | options ✅ (dry run); field run and recipe pending |
 
 **Size:** XL, five contract surfaces. It is split into three PRs of size L
 ([design §7–8](docs/gpu-sharing.md#7-size-and-pr-split)):

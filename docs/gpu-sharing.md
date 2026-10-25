@@ -235,6 +235,18 @@ process group must not read the terminal (a model server does not).
 - The recipe for 12 GB goes to `docs/gpu-sharing.md` §5 after the field
   run.
 
+As built:
+- `--capacity-mib` is required with a holder; without a capacity the
+  group admits one holder at a time and every engine call would wait.
+- The time a call waited comes from its envelope. An engine call that
+  waited a second or more warns "waited N s for GPU group G".
+- The holder's memory is `nvidia-smi --query-compute-apps` for the
+  command's pid (the child of `gpu hold`, read from `/proc`).
+- `pytest bridges/tests/test_benchmark.py` runs the options as a dry run
+  with a fake `ferrum-cli`. The measurements and the recipe (§5 of the
+  field results) are still pending: they need the field run on the
+  user's card.
+
 ## 4. Contracts
 
 | Contract | Change | Also update (`ferrum-change` §2) |

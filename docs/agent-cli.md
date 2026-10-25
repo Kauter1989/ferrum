@@ -313,7 +313,8 @@ Label bridges. The scenarios they serve, step by step, are in
   `network.gpu_peaks_mib`; an engine that reports
   `limits.expected_peak_mib` can raise it but never lower it. Without a capacity, a group admits one holder
   at a time; without a peak, a call takes the whole group. A group that
-  stays full gives `engine_unavailable` naming its holders.
+  stays full gives `engine_unavailable` naming its holders. A call that
+  waited a second or more warns "waited N s for GPU group G".
 - `ferrum-cli gpu hold --group G [--lease-mib N] [--name NAME]
   [--timeout-s S] -- <command> [args…]` wraps a process outside FERRUM,
   such as `llama-server`, in a `resident` lease of group G. It waits for

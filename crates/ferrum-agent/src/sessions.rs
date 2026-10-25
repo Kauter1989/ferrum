@@ -24,6 +24,33 @@ use ferrum_engines::gpu::{describe_holders, effective_peak, Lease, LockError};
 use crate::config::AgentConfig;
 use crate::envelope::{AgentError, ErrorCode};
 
+/// A GPU lease held for an engine call, and how long the call waited for it.
+#[derive(Debug)]
+pub struct GpuLease {
+    lease: Lease,
+    group: String,
+    waited: Duration,
+}
+
+impl GpuLease {
+    /// How long the call waited for room.
+    pub fn waited(&self) -> Duration {
+        self.waited
+    }
+
+    /// The warning for the call's envelope: the lease's own (admitted over
+    /// a capacity it cannot check) and a wait of a second or more, which
+    /// `scripts/benchmark_engines.py` reads.
+    pub fn warning(&self) -> Option<String> {
+        let waited = (self.waited >= Duration::from_secs(1))
+            .then(|| format!("waited {:.1} s for GPU group {}", self.waited.as_secs_f64(), self.group));
+        match (self.lease.warning(), waited) {
+            (Some(a), Some(b)) => Some(format!("{a}; {b}")),
+            (a, b) => a.map(str::to_owned).or(b),
+        }
+    }
+}
+
 /// Takes the GPU lease of an engine call of `url`, or `None` when the
 /// engine is in no GPU group. It waits up to `limits.engine_job_timeout_s`
 /// and tells `progress` who holds the group meanwhile. `manifest_peak` is
@@ -34,7 +61,7 @@ pub fn gpu_lease(
     holder: &str,
     manifest_peak: Option<u64>,
     progress: &mut dyn FnMut(f64, &str),
-) -> Result<Option<Lease>, AgentError> {
+) -> Result<Option<GpuLease>, AgentError> {
     let timeout = Duration::from_secs(config.engine_job_timeout_s);
     let needs = match effective_peak(config.gpu.operator_peak(url), manifest_peak) {
         Some(m) => format!("this call needs {m} MiB"),
@@ -48,7 +75,13 @@ pub fn gpu_lease(
         Some(d) => d.display().to_string(),
         None => ferrum_engines::gpu::default_path().map_or_else(|| "none".into(), |d| d.display().to_string()),
     };
-    config.gpu.acquire(url, holder, manifest_peak, timeout, &mut on_wait).map_err(|e| lease_error(e, timeout, &dir()))
+    let start = std::time::Instant::now();
+    let lease = config
+        .gpu
+        .acquire(url, holder, manifest_peak, timeout, &mut on_wait)
+        .map_err(|e| lease_error(e, timeout, &dir()))?;
+    let group = config.gpu.group(url).unwrap_or_default().to_owned();
+    Ok(lease.map(|lease| GpuLease { lease, group, waited: start.elapsed() }))
 }
 
 fn lease_error(e: LockError, timeout: Duration, dir: &str) -> AgentError {
@@ -223,7 +256,20 @@ mod tests {
         assert!(heard.len() >= 3, "progress during the wait: {heard:?}");
         assert!(heard[0].starts_with("waiting for GPU group card: first (pid "), "{}", heard[0]);
         assert!(heard[0].ends_with("holds the whole group; this call needs the whole group"), "{}", heard[0]);
-        drop(held);
+        let first = held.warning();
+        assert!(first.is_none(), "no wait, no warning: {first:?}");
+        // a call that waits says so
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(1200));
+            drop(held);
+        });
+        config.engine_job_timeout_s = 10;
+        let waited = gpu_lease(&config, &url, "second", None, &mut |_, _| {}).unwrap().unwrap();
+        release.join().unwrap();
+        assert!(waited.waited() >= Duration::from_millis(1000));
+        let w = waited.warning().unwrap();
+        assert!(w.starts_with("waited 1.") && w.ends_with(" s for GPU group card"), "{w}");
+        drop(waited);
         assert!(gpu_lease(&config, &url, "second", None, &mut |_, _| {}).unwrap().is_some());
         assert!(gpu_lease(&config, "http://127.0.0.1:9", "x", None, &mut |_, _| {}).unwrap().is_none());
         let _ = std::fs::remove_dir_all(&dir);
