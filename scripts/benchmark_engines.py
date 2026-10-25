@@ -34,6 +34,7 @@ local engine URLs (through ferrum-cli).
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -122,6 +123,21 @@ class Holder:
     def start(self) -> None:
         self.process = subprocess.Popen(self.argv, env=self.env)  # noqa: S603 - the operator's own command
 
+    def running(self) -> bool:
+        return self.process is not None and self.process.poll() is None
+
+    def wait_started(self, timeout_s: float = 600) -> int | None:
+        """Waits until ``gpu hold`` holds its lease and runs the command; the
+        command's pid, or ``None`` if ``gpu hold`` exited first (no lease, a
+        bad command)."""
+        end = time.monotonic() + timeout_s
+        while time.monotonic() < end and self.running():
+            pid = self.command_pid()
+            if pid is not None:
+                return pid
+            time.sleep(0.1)
+        return None
+
     def command_pid(self) -> int | None:
         """Pid of the holder's command (the child of ``gpu hold``), for its GPU memory."""
         if self.process is None:
@@ -134,21 +150,28 @@ class Holder:
             return None
 
     def stop(self) -> None:
-        if self.process is None or self.process.poll() is not None:
+        if not self.running():
             return
-        self.process.send_signal(signal.SIGINT)  # gpu hold forwards it and releases after the command
+        pid = self.command_pid()
+        self.process.send_signal(signal.SIGINT)  # gpu hold passes it on and releases after the command
         try:
             self.process.wait(timeout=30)
         except subprocess.TimeoutExpired:
+            # the command runs in its own process group: end it too, or it keeps the GPU (and the lease)
+            if pid is not None:
+                with contextlib.suppress(OSError):
+                    os.killpg(pid, signal.SIGKILL)
             self.process.kill()
 
 
-def wait_ready(url: str, timeout_s: float = 600) -> bool:
-    """Polls ``url`` until it answers 200 (a model server loading its weights)."""
+def wait_ready(url: str, holder: Holder, timeout_s: float = 600) -> bool:
+    """Polls ``url`` until it answers 200 (a model server loading its weights);
+    ``False`` if the holder exits first. No proxy: the URL is local."""
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     end = time.monotonic() + timeout_s
-    while time.monotonic() < end:
+    while time.monotonic() < end and holder.running():
         try:
-            with urllib.request.urlopen(url, timeout=5) as r:  # noqa: S310 - the operator's local URL
+            with opener.open(url, timeout=5) as r:
                 if r.status == 200:
                     return True
         except (OSError, ValueError):
@@ -276,7 +299,10 @@ def main(argv=None) -> int:
     try:
         if holder is not None:
             holder.start()
-            if args.wait_ready and not wait_ready(args.wait_ready):
+            if holder.wait_started() is None:
+                print("the external holder exited before it held its lease (see its output)", file=sys.stderr)
+                return 1
+            if args.wait_ready and not wait_ready(args.wait_ready, holder):
                 print(f"the holder did not answer {args.wait_ready}", file=sys.stderr)
                 return 1
         return run_steps(args, root, config, holder)
@@ -292,12 +318,19 @@ def run_steps(args, root: str, config: str, holder: Holder | None) -> int:
     modality = ["--modality", args.modality] if args.modality else []
     holder_pid = holder.command_pid() if holder is not None else None
     record = {
-        "holder": args.external_holder.split()[0] if args.external_holder else None,
+        # the program's name only: a full path may name the operator's home directory
+        "holder": os.path.basename(shlex.split(args.external_holder)[0]) if args.external_holder else None,
         "lease_mib": args.lease_mib,
         "capacity_mib": args.capacity_mib,
     }
 
     def run(name: str, *a: str) -> dict:
+        if holder is not None and not holder.running():
+            # the steps would measure a card without the holder: say so instead
+            rows.append({"step": name, "ok": False, "error": "the external holder exited", "seconds": 0.0,
+                         "waited_s": 0.0, "gpu_mib_before": None, "gpu_mib_peak": None, "holder_mib": None,
+                         "roi_voxels": None, "volume_ml": None, "segments": None, "failed_checks": None})  # fmt: skip
+            return {"ok": False}
         return step(rows, name, args.gpu, cli, config, *a, holder_pid=holder_pid)
 
     opened = run("study open", "study", "open", "-w", ws, args.series)

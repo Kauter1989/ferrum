@@ -172,6 +172,20 @@ says.
     works, so it can block an external holder; the session closes when the
     person switches tools or the study, as today.
 
+As built (PR 3), the desktop:
+- `GatedEngine` takes the lease in `open_session` only. An automatic job
+  runs in that session, so it runs under the same lease.
+- The wait observer has its own stop flag (`stop_wait`): Cancel stops a
+  wait without touching a job.
+- The session, and so the lease, closes when another study is opened,
+  when the engine is disconnected, and when the app closes. Disconnect
+  and closing the app stop a wait at once; they never wait out the
+  timeout. While a session is open on the current study, the desktop
+  keeps its lease, so an engine of the group can be blocked for as long
+  as the person works with the AI tools. That is deliberate: the engine
+  holds its GPU memory for that time.
+- An engine in no group takes no lease and makes no extra request.
+
 ### 3.5 Unload and resident memory (23.4)
 
 - **Protocol (additive to v1):**
@@ -221,6 +235,12 @@ on once as SIGINT and releases the lease only after the command has
 exited; a Ctrl-C during the wait stops the wait. A command in its own
 process group must not read the terminal (a model server does not).
 `--timeout-s` defaults to `limits.engine_job_timeout_s`.
+Each Ctrl-C goes to the command's whole process group, so a wrapper
+script and the server it starts both get it. The command inherits the
+lease's lock file. If `gpu hold` itself is killed (SIGKILL, out of
+memory), the lease stays held until the command exits too; its record
+then names the dead `gpu hold` pid. A Ctrl-C during the wait exits with
+130 and starts nothing.
 
 ### 3.7 Benchmark and recipe (23.5)
 

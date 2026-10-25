@@ -35,9 +35,11 @@ pub struct Hold {
 /// command exits; returns the command's exit code. `note` receives what
 /// happens (waiting, holding, released) for the operator.
 ///
-/// On Unix the command runs in its own process group, and Ctrl-C (or
-/// SIGTERM) sent to this process is forwarded to it once as SIGINT, so the
-/// lease is never released while the command still runs.
+/// On Unix the command runs in its own process group, and each Ctrl-C (or
+/// SIGTERM) sent to this process is passed on to that group as SIGINT; the
+/// lease is released only after the command has exited. The command
+/// inherits the lease's lock file, so if this process is killed (SIGKILL,
+/// out of memory) the lease stays held until the command exits too.
 pub fn hold(config: &AgentConfig, h: &Hold, note: &mut dyn FnMut(&str)) -> Result<i32, AgentError> {
     let (program, args) =
         h.command.split_first().ok_or_else(|| AgentError::bad_request("give the command to run after --"))?;
@@ -66,31 +68,75 @@ pub fn hold(config: &AgentConfig, h: &Hold, note: &mut dyn FnMut(&str)) -> Resul
         }
         !interrupted.load(Ordering::SeqCst)
     };
-    let lease = dir.acquire(&req, h.timeout, &mut on_wait).map_err(|e| {
-        AgentError::new(ErrorCode::EngineUnavailable, e.to_string())
-            .hint("try again when the holders are done, or give a longer --timeout-s")
-    })?;
+    let lease = match dir.acquire(&req, h.timeout, &mut on_wait) {
+        Ok(lease) => lease,
+        Err(ferrum_engines::gpu::LockError::Cancelled) => return Ok(interrupted_before_start(note)),
+        Err(e) => {
+            return Err(AgentError::new(ErrorCode::EngineUnavailable, e.to_string())
+                .hint("try again when the holders are done, or give a longer --timeout-s"))
+        }
+    };
     if interrupted.load(Ordering::SeqCst) {
-        return Err(AgentError::new(ErrorCode::EngineUnavailable, "interrupted before the command started"));
+        return Ok(interrupted_before_start(note));
     }
+    // the command inherits the lease's lock: it stays held if this process is killed first
+    lease.share_with_children().map_err(|e| AgentError::internal(format!("GPU lease: {e}")))?;
     let mut cmd = Command::new(program);
     cmd.args(args);
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        // Ctrl-C at the terminal reaches only this process, which forwards it once
+        // Ctrl-C at the terminal reaches only this process, which passes it on to the command's group
         cmd.process_group(0);
     }
     let mut child = cmd.spawn().map_err(|e| AgentError::bad_request(format!("{}: {e}", program.to_string_lossy())))?;
     child_pid.store(child.id(), Ordering::SeqCst);
+    if interrupted.load(Ordering::SeqCst) {
+        // a Ctrl-C between the check above and the store: pass it on now
+        interrupt_group(child.id());
+    }
     let lease_text = h.lease_mib.map_or_else(|| "the whole group".to_owned(), |m| format!("{m} MiB"));
     note(&format!("holding {lease_text} of GPU group {} for {name} (pid {})", h.group, child.id()));
-    let status = child.wait();
+    wait_exited(child.id());
+    // cleared before the child is reaped, so a late Ctrl-C cannot reach a reused pid
     child_pid.store(0, Ordering::SeqCst);
+    let status = child.wait();
     drop(lease);
     note(&format!("released GPU group {}", h.group));
     let status = status.map_err(|e| AgentError::internal(format!("waiting for {name}: {e}")))?;
     Ok(exit_code(status))
+}
+
+/// Blocks until the child has exited, without reaping it (its pid stays
+/// taken until `wait`).
+fn wait_exited(pid: u32) {
+    #[cfg(unix)]
+    if let Some(pid) = i32::try_from(pid).ok().and_then(rustix::process::Pid::from_raw) {
+        use rustix::process::{waitid, WaitId, WaitIdOptions};
+        while let Err(rustix::io::Errno::INTR) = waitid(WaitId::Pid(pid), WaitIdOptions::EXITED | WaitIdOptions::NOWAIT)
+        {
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = pid;
+}
+
+/// SIGINT to the command's process group (its pid), so a wrapper script and
+/// the server it started both get it.
+fn interrupt_group(pid: u32) {
+    #[cfg(unix)]
+    if let Some(pid) = i32::try_from(pid).ok().and_then(rustix::process::Pid::from_raw) {
+        let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::INT);
+    }
+    #[cfg(not(unix))]
+    let _ = pid;
+}
+
+/// Ctrl-C before the command started: nothing ran; the exit code of an
+/// interrupted program.
+fn interrupted_before_start(note: &mut dyn FnMut(&str)) -> i32 {
+    note("interrupted; the command was not started");
+    130
 }
 
 fn exit_code(status: std::process::ExitStatus) -> i32 {
@@ -105,19 +151,16 @@ fn exit_code(status: std::process::ExitStatus) -> i32 {
 }
 
 /// Keeps Ctrl-C and SIGTERM from ending this process: before the command
-/// starts they stop the wait; while it runs they are passed on to it as
-/// SIGINT.
+/// starts they stop the wait; while it runs each is passed on to the
+/// command's process group as SIGINT. (Windows: Ctrl-C reaches every
+/// process of the console, the command included.)
 fn forward_interrupts(child_pid: Arc<AtomicU32>, interrupted: Arc<AtomicBool>) {
     let result = ctrlc::set_handler(move || {
         interrupted.store(true, Ordering::SeqCst);
-        #[cfg(unix)]
-        if let Some(pid) = i32::try_from(child_pid.load(Ordering::SeqCst)).ok().and_then(rustix::process::Pid::from_raw)
-        {
-            let _ = rustix::process::kill_process(pid, rustix::process::Signal::INT);
+        match child_pid.load(Ordering::SeqCst) {
+            0 => {}
+            pid => interrupt_group(pid),
         }
-        // Windows: Ctrl-C reaches every process of the console, the command included
-        #[cfg(not(unix))]
-        let _ = &child_pid;
     });
     if let Err(e) = result {
         log::warn!("gpu hold: Ctrl-C is not forwarded: {e}");

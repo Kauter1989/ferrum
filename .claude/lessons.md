@@ -419,6 +419,23 @@ that says so instead of editing the old one.
   in a process that may spawn children: unlock explicitly. A test that
   passes locally and fails once on CI is a race to reproduce, not a flake.
 
+### L28 — Processes a test started outlived it and hung the run (2026-10, Stage 23 PR 3)
+
+- **Symptom:** A mutation check of `gpu hold` (the fix reverted) never
+  finished. The file it was to restore stayed mutated, and the next build
+  tested the wrong code. Earlier, `pkill -f "ferrum-cli gpu hold"` killed
+  the shell that ran it, because its own command line matched.
+- **Root cause:** The failing tests left their `sh` loops running
+  (`while true`). Their stdout was the pipe into `grep`, so the pipeline
+  waited for them forever, and the restore step after it never ran.
+- **Why it was missed:** The tests passed with the fix, so the loops
+  always ended. Only a failing run left them behind.
+- **Guard:** Scripts that tests run loop for a bounded time (about 20 s,
+  `crates/ferrum-cli/tests/cli.rs`), and every wait for a child has a
+  timeout (`wait_or_kill`). For a mutation check, build first, run the
+  test binary under `timeout`, and restore in a separate step. Find stray
+  processes with `ps` and kill them by pid, never with `pkill -f`.
+
 ## What worked
 
 ### W1 — Field test on the user's GPU with a throw-away script (2026-10, Stage 17)

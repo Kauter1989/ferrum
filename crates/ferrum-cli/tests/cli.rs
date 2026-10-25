@@ -211,29 +211,114 @@ fn gpu_hold_not_an_mcp_tool() {
     assert!(tools.iter().all(|t| !t.contains("gpu")), "{tools:?}");
 }
 
+/// Waits up to 10 s for `child`, killing it on timeout: a regression fails
+/// instead of hanging the suite.
+#[cfg(unix)]
+fn wait_or_kill(child: &mut std::process::Child) -> Option<i32> {
+    let start = std::time::Instant::now();
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            return status.code();
+        }
+        if start.elapsed().as_secs() >= 10 {
+            let _ = child.kill();
+            panic!("gpu hold did not exit");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+/// `gpu hold` running `script` in `sh`, once the script has touched
+/// `$READY` (after setting its traps). Scripts loop at most about 20 s, so a
+/// failing test leaves no process behind that holds the test's output open.
+#[cfg(unix)]
+fn held(dir: &Path, script: &str) -> std::process::Child {
+    let config = gpu_config(dir);
+    let ready = dir.join("ready");
+    let hold = Command::new(env!("CARGO_BIN_EXE_ferrum-cli"))
+        .args(["gpu", "hold", "--group", "card", "--lease-mib", "6000", "--", "sh", "-c", script])
+        .env("FERRUM_AGENT_CONFIG", &config)
+        .env("READY", &ready)
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let start = std::time::Instant::now();
+    while !ready.exists() {
+        assert!(start.elapsed().as_secs() < 10, "the command never started");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    hold
+}
+
+/// Whether group `card` has a live holder, as another process sees it.
+#[cfg(unix)]
+fn group_held(dir: &Path) -> bool {
+    use ferrum_engines::gpu::LockDir;
+    !LockDir::at(dir.join("gpu")).unwrap().holders("card").unwrap().is_empty()
+}
+
+/// Ctrl-C at a terminal reaches `gpu hold` only: the command has its own process group.
+#[cfg(unix)]
+fn ctrl_c(hold: &std::process::Child) {
+    assert!(Command::new("kill").args(["-INT", &hold.id().to_string()]).status().unwrap().success());
+}
+
 // covers 23.5-d
 #[cfg(unix)]
 #[test]
 fn gpu_hold_forwards_ctrl_c_and_releases_after_the_command() {
     let dir = tempfile::tempdir().unwrap();
-    let config = gpu_config(dir.path());
-    let mut hold = Command::new(env!("CARGO_BIN_EXE_ferrum-cli"))
-        .args(["gpu", "hold", "--group", "card", "--lease-mib", "6000", "--"])
-        .args(["sh", "-c", "trap 'sleep 0.3; exit 7' INT; while true; do sleep 0.05; done"])
-        .env("FERRUM_AGENT_CONFIG", &config)
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .unwrap();
-    let start = std::time::Instant::now();
-    while records(dir.path()).is_empty() {
-        assert!(start.elapsed().as_secs() < 10, "never held");
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
-    std::thread::sleep(std::time::Duration::from_millis(200)); // the shell has set its trap
-                                                               // Ctrl-C at a terminal reaches the hold process only (the command has its own process group)
-    assert!(Command::new("kill").args(["-INT", &hold.id().to_string()]).status().unwrap().success());
+    let done = dir.path().join("done");
+    let script = format!(
+        "trap 'sleep 0.3; touch {}; exit 7' INT; touch \"$READY\"; i=0; while [ $i -lt 400 ]; do i=$((i+1)); sleep 0.05; done",
+        done.display()
+    );
+    let mut hold = held(dir.path(), &script);
+    assert_eq!(records(dir.path()).len(), 1);
+    ctrl_c(&hold);
     std::thread::sleep(std::time::Duration::from_millis(100));
-    assert_eq!(records(dir.path()).len(), 1, "still held while the command finishes");
-    assert_eq!(hold.wait().unwrap().code(), Some(7), "the command got SIGINT and its exit code is returned");
+    assert!(!done.exists() && group_held(dir.path()), "still held while the command finishes");
+    assert_eq!(wait_or_kill(&mut hold), Some(7), "the command got SIGINT and its exit code is returned");
     assert!(records(dir.path()).is_empty());
+}
+
+// covers 23.5-d
+#[cfg(unix)]
+#[test]
+fn gpu_hold_interrupts_a_wrapper_and_its_server() {
+    let dir = tempfile::tempdir().unwrap();
+    let flag = dir.path().join("server-got-sigint");
+    // a wrapper that does not exec: only the group signal reaches the "server" below it
+    let script = format!(
+        "sh -c 'trap \"touch {}; exit 0\" INT; touch \"$READY\"; i=0; while [ $i -lt 400 ]; do i=$((i+1)); sleep 0.05; done'; exit 5",
+        flag.display()
+    );
+    let mut hold = held(dir.path(), &script);
+    ctrl_c(&hold);
+    let code = wait_or_kill(&mut hold);
+    assert!(flag.exists(), "the server under the wrapper got SIGINT");
+    assert!(code == Some(5) || code == Some(130), "the wrapper's exit: {code:?}");
+    assert!(!group_held(dir.path()));
+}
+
+// covers 23.5-d
+#[cfg(unix)]
+#[test]
+fn a_killed_gpu_hold_keeps_the_lease_while_its_command_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let go = dir.path().join("go");
+    let script = format!(
+        "touch \"$READY\"; i=0; while [ ! -e {} ] && [ $i -lt 400 ]; do i=$((i+1)); sleep 0.05; done",
+        go.display()
+    );
+    let mut hold = held(dir.path(), &script);
+    hold.kill().unwrap(); // SIGKILL: no handler runs
+    hold.wait().unwrap();
+    assert!(group_held(dir.path()), "the command still runs and still holds the lease");
+    std::fs::write(&go, b"").unwrap(); // the command exits
+    let start = std::time::Instant::now();
+    while group_held(dir.path()) {
+        assert!(start.elapsed().as_secs() < 10, "the lease outlived its command");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
 }

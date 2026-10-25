@@ -21,8 +21,10 @@ log = os.environ["FAKE_CLI_LOG"]
 with open(log, "a") as f:
     f.write(json.dumps(args) + "\\n")
 if args[:2] == ["gpu", "hold"]:
-    cmd = args[args.index("--") + 1:]
-    os.execvp(cmd[0], cmd)
+    import signal, subprocess
+    child = subprocess.Popen(args[args.index("--") + 1:])
+    signal.signal(signal.SIGINT, lambda *_: child.terminate())
+    sys.exit(child.wait())
 if args[:2] == ["segment", "interactive"]:
     print(json.dumps({{"ok": True, "warnings": ["waited 2.5 s for GPU group bench"],
                       "data": {{"segment": {{"label": 1, "volume_ml": 12.0}}, "roi": {{"voxels": 1000}}}}}}))
@@ -79,6 +81,20 @@ def test_the_holder_runs_under_gpu_hold_and_each_step_records_its_wait(tmp_path,
     assert "holder_mib" in steps["study open"], "measured per step (None without nvidia-smi)"
     assert "| Waited for GPU (s) |" in report["markdown"]
     assert "| 2.5 |" in report["markdown"]
+
+
+# covers 23.5-a
+@pytest.mark.skipif(not os.path.exists("/proc/self/task"), reason="the holder's pid is read from /proc (Linux)")
+def test_a_holder_that_exits_stops_the_benchmark(tmp_path, fake_cli, capsys):
+    bench = load()
+    cli, log = fake_cli
+    code = bench.main([
+        "--series", str(tmp_path / "ct.nii.gz"), "--workspace", str(tmp_path / "ws"), "--ferrum-cli", str(cli),
+        "--capacity-mib", "12288", "--external-holder", "false",
+    ])  # fmt: skip
+    assert code == 1
+    assert "exited before it held its lease" in capsys.readouterr().err
+    assert [c[:2] for c in calls(log)] == [["gpu", "hold"]], "no step ran without the holder"
 
 
 # covers 23.5-a

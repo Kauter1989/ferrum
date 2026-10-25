@@ -49,11 +49,24 @@ impl AiStatus {
 }
 
 enum Command {
-    Open { volume: Arc<Volume>, modality: String, revision: u64 },
-    Prompt { prompt: Prompt, target: u8 },
-    Undo { target: u8 },
+    Open {
+        volume: Arc<Volume>,
+        modality: String,
+        revision: u64,
+    },
+    Prompt {
+        prompt: Prompt,
+        target: u8,
+    },
+    Undo {
+        target: u8,
+    },
     Reset,
-    Automatic { labels: Option<Vec<String>> },
+    Automatic {
+        labels: Option<Vec<String>>,
+    },
+    /// Closes the session (freeing the engine's memory and any GPU lease); no event.
+    Close,
 }
 
 enum Event {
@@ -128,18 +141,21 @@ struct Worker {
     tx: Option<Sender<Command>>,
     rx: Receiver<Event>,
     thread: Option<JoinHandle<()>>,
+    /// The job's cancel flag and the GPU wait's stop flag, set when the worker goes.
+    stops: [Arc<AtomicBool>; 2],
 }
 
 impl Worker {
     fn spawn(engine: Arc<dyn SegmentationEngine>, cancel: Arc<AtomicBool>, stop_wait: Arc<AtomicBool>) -> Self {
         let (cmd_tx, cmd_rx) = channel::<Command>();
         let (ev_tx, ev_rx) = channel::<Event>();
+        let stops = [cancel.clone(), stop_wait.clone()];
         engine.observe(Arc::new(WaitObserver { tx: std::sync::Mutex::new(ev_tx.clone()), stop: stop_wait }));
         let thread = std::thread::Builder::new()
             .name("ferrum-ai-engine".into())
             .spawn(move || run_worker(engine.as_ref(), &cancel, &cmd_rx, &ev_tx))
             .ok();
-        Self { tx: Some(cmd_tx), rx: ev_rx, thread }
+        Self { tx: Some(cmd_tx), rx: ev_rx, thread, stops }
     }
 
     fn send(&self, cmd: Command) -> bool {
@@ -150,7 +166,11 @@ impl Worker {
 impl Drop for Worker {
     fn drop(&mut self) {
         // closing the channel ends the loop; the session is dropped (and
-        // closed on the engine) by the worker thread
+        // closed on the engine) by the worker thread. A job or a wait for the
+        // GPU stops first, so the join does not block the UI.
+        for stop in &self.stops {
+            stop.store(true, Ordering::Relaxed);
+        }
         self.tx = None;
         if let Some(t) = self.thread.take() {
             let _ = t.join();
@@ -198,6 +218,10 @@ fn run_worker(engine: &dyn SegmentationEngine, cancel: &AtomicBool, rx: &Receive
                 Some(s) => run_job(s, labels.as_deref(), cancel, tx),
                 None => Err(no_session()),
             }),
+            Command::Close => {
+                session = None;
+                continue;
+            }
         };
         if tx.send(event).is_err() {
             break;
@@ -573,6 +597,10 @@ impl Viewer {
                 match result {
                     Ok(Some(values)) => self.apply_engine_label_map(&values),
                     Ok(None) => self.status.message = "Automatic segmentation cancelled".into(),
+                    // the job was queued behind an open the person cancelled (a full GPU group)
+                    Err(EngineError::Protocol(m)) if m == NO_SESSION && self.ai.session_revision.is_none() => {
+                        self.status.message = "Automatic segmentation cancelled".into();
+                    }
                     Err(e) => self.ai_failed("Automatic segmentation", &e),
                 }
             }
@@ -633,6 +661,10 @@ impl Viewer {
 
     /// Closes the engine session when the dataset is replaced.
     pub(super) fn reset_ai_session(&mut self) {
+        if let Some(w) = &self.ai.worker {
+            // the old study's session and its GPU lease go now, not at the next prompt
+            w.send(Command::Close);
+        }
         self.ai.session_revision = None;
         self.ai.target = None;
         self.ai.objects = 0;
