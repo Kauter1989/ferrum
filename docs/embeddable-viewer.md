@@ -164,6 +164,7 @@ synthetic phantom. Its layout lives in `pub fn host_ui(...)`, which
 - `panels::side_panel` draws the tabbed panel and returns the frame's
   `PanelRequest`s. `SidePanel` as a type was not needed.
 - `ViewerWidget::show` returns no events yet; they come in PR 2 (T4).
+- 24.3-a, checked: `examples/showcase.rs` rendered its six scenes on a phantom (`ferrum-cli eval phantoms`), with `develop` and with this branch, on lavapipe. The images are identical pixel for pixel, except for the status bar's frame-time readout (28 × 10 px), which changes on every run.
 
 ## 4. Contracts
 
