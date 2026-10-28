@@ -104,9 +104,16 @@ fn the_widget_lays_out_without_a_gpu_next_to_the_hosts_panel() {
     h.get_by_label("Distance").click();
     h.run();
     assert_eq!(h.state().viewer.tool, ToolKind::Distance);
-    for mode in [ViewMode::Mpr, ViewMode::Volume3d, ViewMode::Slice2d] {
-        h.state_mut().viewer.set_view_mode(mode);
+    // the widget's tool bar switches modes, and each mode offers its tools
+    for (mode, label) in
+        [("MPR", ViewMode::Mpr), ("3D", ViewMode::Volume3d), ("2D", ViewMode::Slice2d)].map(|(l, m)| (m, l))
+    {
+        h.get_by_label(label).click();
         h.run();
+        assert_eq!(h.state().viewer.view_mode(), mode);
+        let rotate = h.query_by_label("Rotate").is_some();
+        let distance = h.query_by_label("Distance").is_some();
+        assert_eq!((rotate, distance), (mode == ViewMode::Volume3d, mode != ViewMode::Volume3d), "{mode:?}");
     }
     assert!(h.query_by_label("Engine URL").is_none(), "no panel unless the host places one");
 }
@@ -146,4 +153,58 @@ fn the_image_formation_model_stays_in_ferrum_render() {
             path.display()
         );
     }
+}
+
+/// One frame of `ctx` without a renderer (its textures are dropped).
+fn frame(ctx: &egui::Context, ui: &mut dyn FnMut(&mut egui::Ui)) -> egui::FullOutput {
+    let mut out = ctx.run_ui(egui::RawInput::default(), ui);
+    out.textures_delta.clear();
+    out
+}
+
+// covers 24.1-b
+#[test]
+fn the_host_keeps_its_fonts_and_style_and_still_gets_the_icons() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut viewer = viewer(dir.path());
+    let mut widget = ViewerWidget::new().with_theme(false);
+    let ctx = egui::Context::default();
+    // the host's own font and style, set before the widget's first frame
+    let data = egui::FontDefinitions::default().font_data.values().next().unwrap().as_ref().clone();
+    let family = egui::epaint::text::InsertFontFamily {
+        family: egui::FontFamily::Proportional,
+        priority: egui::epaint::text::FontPriority::Highest,
+    };
+    ctx.add_font(egui::epaint::text::FontInsert::new("host-font", data, vec![family]));
+    ctx.set_theme(egui::Theme::Light);
+    for _ in 0..2 {
+        frame(&ctx, &mut |ui| widget.show(ui, &mut viewer, None));
+    }
+    let fonts: Vec<String> = ctx.fonts(|f| f.definitions().font_data.keys().cloned().collect());
+    assert!(fonts.iter().any(|k| k == "host-font"), "the host's font is kept: {fonts:?}");
+    assert!(fonts.iter().any(|k| k == ferrum_ui::theme::ICON_FONT), "the icons are there: {fonts:?}");
+    assert_eq!(ctx.theme(), egui::Theme::Light, "with_theme(false) leaves the host's style");
+}
+
+// covers 24.1-b
+#[test]
+fn a_study_being_loaded_keeps_frames_coming() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut viewer = Viewer::new(Arc::new(ferrum_io::CompositeRepository::default()));
+    let mut widget = ViewerWidget::new();
+    let ctx = egui::Context::default();
+    let delay = |out: &egui::FullOutput| out.viewport_output.values().next().unwrap().repaint_delay;
+    // egui asks for a few frames of its own at first; then an idle widget asks for none
+    let idle_wait = (0..20)
+        .map(|_| delay(&frame(&ctx, &mut |ui| widget.show(ui, &mut viewer, None))))
+        .find(|d| *d > std::time::Duration::ZERO)
+        .expect("an idle widget stops asking for frames");
+    viewer.open_paths(vec![phantom_file(dir.path())]);
+    let out = frame(&ctx, &mut |ui| widget.show(ui, &mut viewer, None));
+    let wait = delay(&out);
+    assert!(viewer.is_loading() || viewer.dataset().is_some());
+    if viewer.is_loading() {
+        assert_eq!(wait, std::time::Duration::ZERO, "a load in progress asks for the next frame (idle: {idle_wait:?})");
+    }
+    viewer.wait_idle();
 }

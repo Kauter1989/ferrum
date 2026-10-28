@@ -31,6 +31,19 @@ pub fn tool_icon(t: ToolKind) -> &'static str {
     }
 }
 
+/// The view-mode switch (2D, 3D, MPR), at the start of the widget's tool
+/// bar; the desktop app has it in its header.
+pub fn mode_switch(ui: &mut egui::Ui, viewer: &mut Viewer) {
+    let modes = [ViewMode::Slice2d, ViewMode::Volume3d, ViewMode::Mpr];
+    let rect = ui.max_rect();
+    row_in(ui, rect, Layout::left_to_right(Align::Center), |ui| {
+        let current = modes.iter().position(|m| *m == viewer.view_mode());
+        if let Some(i) = segmented(ui, &["2D", "3D", "MPR"], current) {
+            viewer.set_view_mode(modes[i]);
+        }
+    });
+}
+
 /// Draws the tool bar into `ui` (one row, the height of `ui`).
 pub fn show(ui: &mut egui::Ui, viewer: &mut Viewer) {
     let rect = ui.max_rect();

@@ -68,7 +68,7 @@ impl ViewerApp {
         Self {
             viewer,
             panel: PanelState::default(),
-            views: ViewerWidget::new().with_toolbar(false).with_theme(false),
+            views: ViewerWidget::new().with_toolbar(false).with_theme(false).with_icon_font(false),
             show_panel: true,
             show_studies: true,
             show_about: false,
@@ -115,11 +115,13 @@ impl ViewerApp {
         }
         self.last_frame = Some(now);
 
-        // polls the viewer and uploads to the GPU before the header shows its status
-        self.views.begin_frame(&ctx, &mut self.viewer, render_state);
+        self.viewer.poll();
         self.handle_dropped_files(&ctx);
         self.handle_shortcuts(&ctx);
         self.handle_screenshot_events(&ctx);
+        // uploads to the GPU after the shortcuts (an undo shows in this frame) and before the
+        // header shows the status, the order the app always had; its second poll finds nothing new
+        self.views.begin_frame(&ctx, &mut self.viewer, render_state);
 
         let has_data = self.viewer.dataset().is_some();
         egui::Panel::top("header").exact_size(56.0).frame(theme::bar()).show(ui, |ui| self.header(ui));

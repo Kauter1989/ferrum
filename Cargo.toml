@@ -49,6 +49,7 @@ wgpu = "30"
 eframe = { version = "0.36", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland"] }
 egui = "0.36"
 egui-wgpu = "0.36"
+egui-phosphor = { version = "0.14", default-features = false, features = ["light"] }
 egui_kittest = { version = "0.36", features = ["wgpu"] }
 rfd = "0.17"
 image = { version = "0.25", default-features = false, features = ["png"] }

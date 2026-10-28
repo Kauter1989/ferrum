@@ -12,6 +12,8 @@ use crate::volume_view::{self, VolumeViewState};
 
 /// Height of the tool bar row when the widget draws it.
 const TOOLBAR_HEIGHT: f32 = 48.0;
+/// Width of the view-mode switch at the start of the widget's tool bar.
+const MODE_SWITCH_WIDTH: f32 = 150.0;
 
 /// The views of one [`Viewer`]; keep one per window, next to the viewer.
 pub struct ViewerWidget {
@@ -20,9 +22,11 @@ pub struct ViewerWidget {
     sync: GpuSyncState,
     toolbar: bool,
     theme: bool,
+    icon_font: bool,
     styled: bool,
-    /// The egui pass in which [`ViewerWidget::begin_frame`] last ran.
-    prepared: Option<u64>,
+    /// The egui pass in which [`ViewerWidget::begin_frame`] last ran, and
+    /// whether it uploaded to the GPU.
+    prepared: Option<(u64, bool)>,
 }
 
 impl Default for ViewerWidget {
@@ -49,6 +53,7 @@ impl ViewerWidget {
             sync: GpuSyncState::default(),
             toolbar: true,
             theme: true,
+            icon_font: true,
             styled: false,
             prepared: None,
         }
@@ -62,30 +67,58 @@ impl ViewerWidget {
         self
     }
 
-    /// Whether the widget applies FERRUM's dark theme to the context on its
-    /// first frame (default). A host with its own style turns it off.
+    /// Whether the widget applies FERRUM's dark colours to the context on
+    /// its first frame (default). A host with its own style turns it off;
+    /// the host's fonts are kept either way.
     pub fn with_theme(mut self, on: bool) -> Self {
         self.theme = on;
         self
     }
 
-    /// Applies finished background work of `viewer` and uploads what changed
-    /// to the GPU (`render_state` absent: nothing is uploaded, as in a test
-    /// without a GPU). [`ViewerWidget::show`] calls it once per frame unless
-    /// the host called it earlier in the frame, e.g. before drawing panels
-    /// that show the viewer's status.
+    /// Whether the widget adds its icon font to the context on its first
+    /// frame (default; the tool bar and panels need it). Off only for a host
+    /// that installs it itself, as the desktop app does with
+    /// [`crate::theme::install`].
+    pub fn with_icon_font(mut self, on: bool) -> Self {
+        self.icon_font = on;
+        self
+    }
+
+    /// Applies finished background work of `viewer`, asks for another frame
+    /// while work is running, and uploads what changed to the GPU
+    /// (`render_state` absent: nothing is uploaded, as in a test without a
+    /// GPU). [`ViewerWidget::show`] calls it unless the host did earlier in
+    /// the frame (e.g. before drawing panels that show the viewer's status);
+    /// the viewer is polled once per frame, and the GPU synced once a render
+    /// state is given.
     pub fn begin_frame(
         &mut self,
         ctx: &egui::Context,
         viewer: &mut Viewer,
         render_state: Option<&egui_wgpu::RenderState>,
     ) {
-        self.prepared = Some(ctx.cumulative_pass_nr());
-        if self.theme && !self.styled {
-            crate::theme::install(ctx);
-            self.styled = true;
+        let pass = ctx.cumulative_pass_nr();
+        if self.prepared.is_none_or(|(p, _)| p != pass) {
+            if !self.styled {
+                if self.icon_font {
+                    crate::theme::add_icon_font(ctx);
+                }
+                if self.theme {
+                    crate::theme::visuals(ctx);
+                }
+                self.styled = true;
+            }
+            viewer.poll();
+            // also while no study is shown yet: a load in progress needs frames to finish
+            if viewer.is_loading() || viewer.is_computing() || viewer.ai().is_busy() || viewer.volume.interacting {
+                ctx.request_repaint();
+            }
         }
-        viewer.poll();
+        let synced = self.prepared.is_some_and(|(p, synced)| p == pass && synced);
+        self.prepared = Some((pass, synced || render_state.is_some()));
+        if synced {
+            return;
+        }
         let Some(rs) = render_state else { return };
         let mut guard = rs.renderer.write();
         if let Some(renderer) = guard.callback_resources.get_mut::<VolumeRenderer>() {
@@ -98,22 +131,19 @@ impl ViewerWidget {
     /// MPR quad (axial, 3D, coronal, sagittal) or the 3D view. Nothing is
     /// drawn before a study is loaded.
     pub fn show(&mut self, ui: &mut egui::Ui, viewer: &mut Viewer, render_state: Option<&egui_wgpu::RenderState>) {
-        if self.prepared != Some(ui.ctx().cumulative_pass_nr()) {
-            self.begin_frame(&ui.ctx().clone(), viewer, render_state);
-        }
+        self.begin_frame(&ui.ctx().clone(), viewer, render_state);
         if viewer.dataset().is_none() {
             return;
         }
         if self.toolbar {
             let full = ui.available_rect_before_wrap();
             let bar = Rect::from_min_size(full.min, Vec2::new(full.width(), TOOLBAR_HEIGHT));
-            ui.scope_builder(UiBuilder::new().max_rect(bar), |ui| crate::toolbar::show(ui, viewer));
+            let (modes, tools) = bar.split_left_right_at_x(bar.min.x + MODE_SWITCH_WIDTH);
+            ui.scope_builder(UiBuilder::new().max_rect(modes), |ui| crate::toolbar::mode_switch(ui, viewer));
+            ui.scope_builder(UiBuilder::new().max_rect(tools), |ui| crate::toolbar::show(ui, viewer));
             ui.allocate_rect(bar, egui::Sense::hover());
         }
         self.views(ui, viewer);
-        if viewer.is_loading() || viewer.is_computing() || viewer.ai().is_busy() || viewer.volume.interacting {
-            ui.ctx().request_repaint();
-        }
     }
 
     fn views(&mut self, ui: &mut egui::Ui, viewer: &mut Viewer) {

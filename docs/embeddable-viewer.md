@@ -57,10 +57,12 @@ depends on `ferrum-ui`. Its `ui` module re-exports what its tests use, so
 Dependencies of `ferrum-ui`: `ferrum-app`, `ferrum-domain`,
 `ferrum-render` (`gpu`), `ferrum-processing`, `ferrum-engines`,
 `ferrum-radiomics`, `egui`, `egui-wgpu`, `wgpu`, `egui-phosphor`, `glam`,
-`log`. Not `eframe`, not `rfd` (24.1-a; a test reads `cargo metadata`).
-`eframe` is a dev-dependency for the example only.
+`log`. Not `eframe`, not `rfd` (24.1-a).
+`eframe` is a dev-dependency for the example only. A test reads `cargo tree -e normal` and refuses `eframe`, `rfd` and `winit`.
 
 ### 3.2 Public API
+
+(As planned; §3.7 records how it was built: `panels::side_panel` instead of a `SidePanel` type, the tool bar as a module of its own.)
 
 ```rust
 /// Once per window, with the host's render state (24.1-b).
@@ -130,6 +132,8 @@ decision is not an event (24.2-c).
 
 ### 3.5 Desktop after the move (24.3)
 
+(As planned; in the build the desktop turns the widget's tool bar off and draws `toolbar::show` in its own bar, §3.7.)
+
 `ViewerApp::show` keeps the header, sidebar, status bar, dialogs and
 start screen, and calls `ViewerWidget::show` in the central panel and
 `SidePanel::show` in the right panel; `PanelRequest`s become the `rfd`
@@ -164,6 +168,18 @@ synthetic phantom. Its layout lives in `pub fn host_ui(...)`, which
 - `panels::side_panel` draws the tabbed panel and returns the frame's
   `PanelRequest`s. `SidePanel` as a type was not needed.
 - `ViewerWidget::show` returns no events yet; they come in PR 2 (T4).
+- The widget's tool bar starts with the view-mode switch (2D, 3D, MPR,
+  `toolbar::mode_switch`); the desktop keeps its switch in the header.
+- Fonts and colours are separate. The widget adds its icon font with
+  `ctx.add_font`, keeping the host's fonts (`with_icon_font`, default on).
+  `with_theme` applies only FERRUM's colours. The desktop installs both
+  itself, as before (`theme::install`).
+- `begin_frame` polls once per frame and asks for the next frame while
+  work runs, also before a study is shown. It uploads to the GPU once a
+  render state is given, so a host can call it without one before its
+  panels and pass one to `show`. That case is not covered by a test,
+  because it needs a GPU render state; the desktop's GPU tests cover the
+  usual path.
 - 24.3-a, checked: `examples/showcase.rs` rendered its six scenes on a phantom (`ferrum-cli eval phantoms`), with `develop` and with this branch, on lavapipe. The images are identical pixel for pixel, except for the status bar's frame-time readout (28 × 10 px), which changes on every run.
 
 ## 4. Contracts
@@ -192,7 +208,7 @@ synthetic phantom. Its layout lives in `pub fn host_ui(...)`, which
 
 | Criterion | How | Level |
 |---|---|---|
-| 24.1-a | `ferrum_ui_has_no_shell_dependencies` (reads `cargo metadata`: no `eframe`, no `rfd` in normal deps) | test |
+| 24.1-a | `ferrum_ui_has_no_shell_dependencies` (reads `cargo tree -e normal`: no `eframe`, `rfd` or `winit`) | test |
 | 24.1-b | `the_widget_lays_out_without_a_gpu` (egui_kittest, no render state); the desktop's GPU renders on lavapipe | test |
 | 24.1-c | `toolbar_and_panels_are_optional` | test |
 | 24.2-a | `events_are_coalesced_per_frame` (scroll 5 slices in one frame: one `SliceChanged`; window drag: one `WindowChanged` after release) | test |

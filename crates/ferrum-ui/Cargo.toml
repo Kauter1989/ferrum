@@ -18,7 +18,7 @@ glam.workspace = true
 log.workspace = true
 egui.workspace = true
 egui-wgpu.workspace = true
-egui-phosphor = { version = "0.14", default-features = false, features = ["light"] }
+egui-phosphor.workspace = true
 wgpu.workspace = true
 
 [dev-dependencies]
