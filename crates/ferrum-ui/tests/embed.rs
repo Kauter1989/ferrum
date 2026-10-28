@@ -126,3 +126,24 @@ fn toolbar_and_panels_are_optional() {
     h.run();
     assert_eq!(h.state().requests.len(), 1, "a request is given once");
 }
+
+// covers 24.3-c
+#[test]
+fn the_image_formation_model_stays_in_ferrum_render() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    for entry in std::fs::read_dir(&src).unwrap() {
+        let path = entry.unwrap().path();
+        assert_ne!(
+            path.extension().and_then(|e| e.to_str()),
+            Some("wgsl"),
+            "{}: shaders live in ferrum-render",
+            path.display()
+        );
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !text.contains("fn raycast") && !text.contains("@fragment"),
+            "{}: no image formation here",
+            path.display()
+        );
+    }
+}

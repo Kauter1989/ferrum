@@ -480,6 +480,7 @@ fn lit_fraction(img: &image::RgbaImage, rect: egui::Rect) -> f64 {
     lit as f64 / total.max(1) as f64
 }
 
+// covers 24.3-b (the desktop draws through ferrum-ui)
 #[test]
 fn every_view_mode_renders_the_volume() {
     let Some(rs) = gpu_render_state() else {
@@ -520,6 +521,7 @@ fn every_view_mode_renders_the_volume() {
     }
 }
 
+// covers 24.3-b (the desktop draws through ferrum-ui)
 #[test]
 fn segments_are_drawn_in_2d_and_3d() {
     let Some(rs) = gpu_render_state() else {
