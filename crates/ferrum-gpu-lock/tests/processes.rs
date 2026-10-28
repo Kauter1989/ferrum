@@ -50,7 +50,8 @@ fn holder_child() {
     let Some(dir) = std::env::var_os(CHILD_ENV) else { return };
     let dir = LockDir::at(PathBuf::from(dir)).unwrap();
     let r = Request { group: "g", holder: "child", kind: Kind::Resident, lease_mib: None, capacity_mib: None };
-    let lease = try_once(&dir, &r).unwrap();
+    // it waits rather than tries once: the parent polls `holders`, which takes the admission lock briefly
+    let lease = dir.acquire(&r, Duration::from_secs(15), &mut |_| true).unwrap();
     let mut line = String::new();
     let _ = std::io::stdin().read_line(&mut line);
     drop(lease);

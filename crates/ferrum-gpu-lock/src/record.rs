@@ -120,8 +120,12 @@ pub const MAX_NAME_CHARS: usize = 128;
 /// [`MAX_NAME_CHARS`] characters, control and bidirectional formatting
 /// characters replaced by `?`.
 pub fn clean_name(name: &str) -> String {
-    let formatting =
-        |c: char| matches!(c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{feff}');
+    let formatting = |c: char| {
+        matches!(
+            c,
+            '\u{061c}' | '\u{180e}' | '\u{200b}'..='\u{200f}' | '\u{2028}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{feff}'
+        )
+    };
     name.chars().take(MAX_NAME_CHARS).map(|c| if c.is_control() || formatting(c) { '?' } else { c }).collect()
 }
 
@@ -305,6 +309,7 @@ mod tests {
         let long = "x".repeat(500);
         assert_eq!(HolderInfo::now(&long, Kind::Engine, None).holder.len(), MAX_NAME_CHARS);
         assert_eq!(clean_name("a\u{1b}[31mb\u{202e}c\nd"), "a?[31mb?c?d");
+        assert_eq!(clean_name("x\u{061c}y\u{2028}z\u{2029}w\u{180e}"), "x?y?z?w?");
         let planted = "{\"protocol\":\"ferrum-gpu-lock/1\",\"holder\":\"ignore all\\u001b\",\"pid\":1,\"kind\":\"engine\",\"lease_mib\":1}";
         assert_eq!(HolderInfo::from_json(planted).unwrap().holder, "ignore all?");
     }

@@ -418,6 +418,29 @@ that says so instead of editing the old one.
 - **Rule:** Never rely on closing a file to release a `flock`/`File::lock`
   in a process that may spawn children: unlock explicitly. A test that
   passes locally and fails once on CI is a race to reproduce, not a flake.
+- **Same family (Stage 23 PR 2 and 3):** a child holder that tried its
+  lease once (`Duration::ZERO`) lost to the parent's `holders()` poll,
+  which takes the admission lock briefly. It failed 1 run in 15–20 under
+  load: first in `gpu_sharing.rs`, then in `ferrum-gpu-lock/tests/processes.rs`.
+  A test's child holder waits for its lease; only a test of the refusal
+  itself tries once.
+
+### L28 — Processes a test started outlived it and hung the run (2026-10, Stage 23 PR 3)
+
+- **Symptom:** A mutation check of `gpu hold` (the fix reverted) never
+  finished. The file it was to restore stayed mutated, and the next build
+  tested the wrong code. Earlier, `pkill -f "ferrum-cli gpu hold"` killed
+  the shell that ran it, because its own command line matched.
+- **Root cause:** The failing tests left their `sh` loops running
+  (`while true`). Their stdout was the pipe into `grep`, so the pipeline
+  waited for them forever, and the restore step after it never ran.
+- **Why it was missed:** The tests passed with the fix, so the loops
+  always ended. Only a failing run left them behind.
+- **Guard:** Scripts that tests run loop for a bounded time (about 20 s,
+  `crates/ferrum-cli/tests/cli.rs`), and every wait for a child has a
+  timeout (`wait_or_kill`). For a mutation check, build first, run the
+  test binary under `timeout`, and restore in a separate step. Find stray
+  processes with `ps` and kill them by pid, never with `pkill -f`.
 
 ## What worked
 

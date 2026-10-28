@@ -31,7 +31,7 @@ use crate::config::AgentConfig;
 use crate::envelope::{AgentError, ErrorCode, Output};
 use crate::params::Params;
 use crate::points::{nearest_voxel, parse_plane, resolve, PointInput};
-use crate::sessions::{gpu_lease, CachedSession, SessionKey};
+use crate::sessions::{gpu_lease, CachedSession, GpuLease, SessionKey};
 use crate::study::{generator, Study, VolumeCache};
 
 fn bad(msg: impl Into<String>) -> AgentError {
@@ -566,7 +566,7 @@ pub fn interactive(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
             // closed (its GPU memory freed) before the lease is released
             r.session = None;
         }
-        (r, gpu.and_then(|l| l.warning().map(str::to_owned)))
+        (r, gpu.as_ref().and_then(GpuLease::warning))
     };
     if result.mask.is_none() && plan.target.is_none() {
         return Ok(research_warning(

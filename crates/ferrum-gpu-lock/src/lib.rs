@@ -363,6 +363,20 @@ pub struct Lease {
 }
 
 impl Lease {
+    /// Lets child processes started from now on inherit the lease's lock
+    /// file (it is opened close-on-exec). The OS lock then lasts while this
+    /// process or any such child runs, so a wrapper (`ferrum-cli gpu hold`)
+    /// that is killed does not release a lease its command still uses.
+    /// Only for a process that starts the holder's command and nothing else:
+    /// every child started meanwhile keeps the lease too (lesson L27).
+    pub fn share_with_children(&self) -> std::io::Result<()> {
+        #[cfg(unix)]
+        if let Some(lock) = &self.lock {
+            rustix::io::fcntl_setfd(lock, rustix::io::FdFlags::empty())?;
+        }
+        Ok(())
+    }
+
     fn create(gdir: &Path, req: &Request, warning: Option<String>) -> Result<Self, LockError> {
         let info = HolderInfo::now(req.holder, req.kind, req.lease_mib);
         let id = unique_id();

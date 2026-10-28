@@ -30,6 +30,11 @@ fn main() -> ExitCode {
         },
         None => AgentConfig::default(),
     };
+    if let cli::Command::Gpu(cli::Gpu::Hold { group, lease_mib, name, timeout_s, command }) = cli.command {
+        let timeout = std::time::Duration::from_secs(timeout_s.unwrap_or(config.engine_job_timeout_s));
+        let h = ferrum_agent::gpu::Hold { group, lease_mib, name, timeout, command };
+        return gpu_hold(&config, &h);
+    }
     let (command, params) = match cli.command.to_call() {
         Ok(call) => call,
         Err(message) => {
@@ -72,6 +77,18 @@ fn main() -> ExitCode {
         ExitCode::SUCCESS
     } else {
         ExitCode::from(1)
+    }
+}
+
+/// `gpu hold`: notes go to stderr, so the command's own output stays as it
+/// is; exits with the command's exit code, or 1 with an error envelope.
+fn gpu_hold(config: &AgentConfig, h: &ferrum_agent::gpu::Hold) -> ExitCode {
+    match ferrum_agent::gpu::hold(config, h, &mut |n| eprintln!("ferrum-cli gpu hold: {n}")) {
+        Ok(code) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
+        Err(e) => {
+            println!("{}", ferrum_agent::envelope::error_envelope(&e));
+            ExitCode::from(1)
+        }
     }
 }
 

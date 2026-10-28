@@ -17,7 +17,7 @@ use super::Ctx;
 use crate::config::AgentConfig;
 use crate::envelope::{AgentError, ErrorCode, Output};
 use crate::params::Params;
-use crate::sessions::gpu_lease;
+use crate::sessions::{gpu_lease, GpuLease};
 
 /// Environment variable with the engine's bearer token (never in files).
 pub const TOKEN_ENV: &str = "FERRUM_ENGINE_TOKEN";
@@ -83,7 +83,9 @@ pub fn engine_error(e: EngineError) -> AgentError {
         EngineError::TooLarge(_) => AgentError::new(ErrorCode::Limit, msg)
             .hint("segment interactive uploads a region of interest; leave out whole_volume or give a smaller roi"),
         EngineError::BadRequest(_) | EngineError::Unsupported(_) => AgentError::bad_request(msg),
-        EngineError::Protocol(_) | EngineError::NotFound | EngineError::Internal(_) => AgentError::internal(msg),
+        EngineError::Protocol(_) | EngineError::NotFound | EngineError::Internal(_) | EngineError::Cancelled(_) => {
+            AgentError::internal(msg)
+        }
     }
 }
 
@@ -259,7 +261,7 @@ fn run_job(
     let volume = ctx.study(p)?.volume.clone();
     let config = ctx.config;
     let gpu = gpu_lease(config, url, &format!("ferrum-agent: {name}"), peak, &mut |f, m| ctx.report(f, m))?;
-    let gpu_warning = gpu.as_ref().and_then(|l| l.warning().map(str::to_owned));
+    let gpu_warning = gpu.as_ref().and_then(GpuLease::warning);
     let mut session = engine(url).open_session(&volume, &modality).map_err(engine_error)?;
     let job = session.start_job(labels).map_err(engine_error)?;
     let status = wait_for_job(ctx, session.as_mut(), &job)?;

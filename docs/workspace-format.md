@@ -224,6 +224,41 @@ can refine the object later by replaying them
   {"time":"…","command":"review confirm","source":"host","params":{"segment":3,"by":"Dr. K. Example","revision":"9a…","shown_sha256":"5f…"},"ok":true,"source_sha256":"c1…"}
   ```
 
+**Change notifications (16.8):** `ferrum_io::workspace::changes` tells
+the agent, the viewer and a host's panels what changed in a workspace.
+Changes are computed by comparing the files with the state read before,
+so they are the same whichever process wrote them:
+- `subscribe(root)` returns a `Subscription`. Every save through
+  `Workspace` in this process sends its changes before the save returns,
+  together with what other processes changed since the last save. The
+  workspace need not exist yet. Dropping the subscription unsubscribes.
+  The channel is unbounded, so the host drains it.
+- `WorkspaceWatcher::poll()` finds changes made by other processes. It
+  reads a file again only when its size, modification time or (on Unix)
+  inode changed. A same-size rewrite within the clock's resolution of a
+  filesystem with coarse times (FAT, some network mounts) can be missed.
+  A label map that changed while `segments.json` did not is held back for
+  one poll, because a save may be between its two renames. The watcher
+  also reports this process's own saves, so a host that uses both gets
+  those twice.
+
+The kinds are:
+- a segment added, removed, revised (name, colour, visibility, opacity or
+  voxels) or reviewed (new status);
+- an annotation added, removed, revised (kind, plane, slice, points, text,
+  name) or reviewed;
+- the open volume switched, with its key: the part after `#v=` when it
+  has the form FERRUM generates (`b1000`, `te80-e2`, `n3`), otherwise
+  `other`;
+- a file that cannot be read.
+
+Only regular files are read: no symbolic links, FIFOs or devices. JSON
+files are limited to 64 MiB and the label map to 2 GiB decompressed, and
+only `uint8` label maps are read. An unreadable file is reported once,
+and its items keep their last state. Changes hold labels, ids, statuses
+and the volume key only. They never hold names, texts, UIDs, paths or the
+reviewer.
+
 **Item revision (`ferrum-review-revision/1`):** SHA-256 over, in order,
 strings as a u64 little-endian byte length and their UTF-8 bytes, and
 integers as u64 little-endian:

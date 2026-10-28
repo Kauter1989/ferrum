@@ -172,6 +172,20 @@ says.
     works, so it can block an external holder; the session closes when the
     person switches tools or the study, as today.
 
+As built (PR 3), the desktop:
+- `GatedEngine` takes the lease in `open_session` only. An automatic job
+  runs in that session, so it runs under the same lease.
+- The wait observer has its own stop flag (`stop_wait`): Cancel stops a
+  wait without touching a job.
+- The session, and so the lease, closes when another study is opened,
+  when the engine is disconnected, and when the app closes. Disconnect
+  and closing the app stop a wait at once; they never wait out the
+  timeout. While a session is open on the current study, the desktop
+  keeps its lease, so an engine of the group can be blocked for as long
+  as the person works with the AI tools. That is deliberate: the engine
+  holds its GPU memory for that time.
+- An engine in no group takes no lease and makes no extra request.
+
 ### 3.5 Unload and resident memory (23.4)
 
 - **Protocol (additive to v1):**
@@ -215,6 +229,19 @@ command exits, returning the command's exit code. The logic lives in
 an agent command: it is in neither the MCP tool list nor `commands.json`,
 and a test checks that it is absent from both.
 
+As built: the command runs in its own process group (Unix), so Ctrl-C at
+the terminal reaches only `gpu hold`. `gpu hold` passes Ctrl-C or SIGTERM
+on once as SIGINT and releases the lease only after the command has
+exited; a Ctrl-C during the wait stops the wait. A command in its own
+process group must not read the terminal (a model server does not).
+`--timeout-s` defaults to `limits.engine_job_timeout_s`.
+Each Ctrl-C goes to the command's whole process group, so a wrapper
+script and the server it starts both get it. The command inherits the
+lease's lock file. If `gpu hold` itself is killed (SIGKILL, out of
+memory), the lease stays held until the command exits too; its record
+then names the dead `gpu hold` pid. A Ctrl-C during the wait exits with
+130 and starts nothing.
+
 ### 3.7 Benchmark and recipe (23.5)
 
 - `scripts/benchmark_engines.py` gains these options:
@@ -227,6 +254,18 @@ and a test checks that it is absent from both.
   the time the call waited.
 - The recipe for 12 GB goes to `docs/gpu-sharing.md` §5 after the field
   run.
+
+As built:
+- `--capacity-mib` is required with a holder; without a capacity the
+  group admits one holder at a time and every engine call would wait.
+- The time a call waited comes from its envelope. An engine call that
+  waited a second or more warns "waited N s for GPU group G".
+- The holder's memory is `nvidia-smi --query-compute-apps` for the
+  command's pid (the child of `gpu hold`, read from `/proc`).
+- `pytest bridges/tests/test_benchmark.py` runs the options as a dry run
+  with a fake `ferrum-cli`. The measurements and the recipe (§5 of the
+  field results) are still pending: they need the field run on the
+  user's card.
 
 ## 4. Contracts
 
