@@ -18,24 +18,24 @@ path = "src/lib.rs"
 
 [dependencies]
 ferrum-domain.workspace = true
-ferrum-processing.workspace = true
 ferrum-io.workspace = true
 ferrum-render = { workspace = true, features = ["gpu"] }
 ferrum-app.workspace = true
-ferrum-radiomics.workspace = true
-ferrum-engines.workspace = true
+ferrum-ui.workspace = true
 glam.workspace = true
 log.workspace = true
 env_logger.workspace = true
 eframe.workspace = true
 egui.workspace = true
 egui-wgpu.workspace = true
-egui-phosphor = { version = "0.14", default-features = false, features = ["light"] }
+egui-phosphor.workspace = true
 wgpu.workspace = true
 rfd.workspace = true
 image.workspace = true
 
 [dev-dependencies]
+ferrum-radiomics.workspace = true
+ferrum-engines.workspace = true
 egui_kittest.workspace = true
 tempfile.workspace = true
 

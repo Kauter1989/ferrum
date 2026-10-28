@@ -8,29 +8,27 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use egui::{Align, Align2, Color32, Id, Layout, Order, Pos2, Rect, RichText, Stroke, UiBuilder, Vec2};
+use egui::{Align, Align2, Color32, Id, Layout, Order, Pos2, Rect, RichText, Stroke, Vec2};
 use egui_phosphor::light as icon;
-use ferrum_app::{GpuSyncState, ToolKind, ViewMode, Viewer};
-use ferrum_domain::{SliceAxis, ViewPreset, VolumeRepository};
-use ferrum_render::gpu::VolumeRenderer;
+use ferrum_app::{ViewMode, Viewer};
+use ferrum_domain::VolumeRepository;
 
-use crate::gpu_bridge::{self, RendererSink};
-use crate::ui::panels::{self, PanelState, PanelTab};
+use ferrum_ui::gpu_bridge;
+use ferrum_ui::panels::{self, PanelRequest, PanelState, PanelTab};
+use ferrum_ui::theme::{self, ACCENT, ACCENT_SOFT, BORDER, DANGER, OVERLAY, TEXT, TEXT_DIM};
+use ferrum_ui::widgets::{self, row_in, segmented, tool_button, toolbar_separator};
+use ferrum_ui::{toolbar, ViewerWidget};
+
 use crate::ui::recent::RecentFiles;
-use crate::ui::slice_view::{self, SliceViewState};
-use crate::ui::theme::{self, ACCENT, ACCENT_SOFT, BORDER, DANGER, OVERLAY, TEXT, TEXT_DIM};
-use crate::ui::volume_view::{self, VolumeViewState};
-use crate::ui::widgets::{self, segmented, tool_button, tool_button_enabled, toolbar_separator};
 
 /// Top-level application.
 pub struct ViewerApp {
     /// Application layer.
     pub viewer: Viewer,
-    sync: GpuSyncState,
     /// Settings panel state (tabs, editors, AI connection).
     pub panel: PanelState,
-    slice_states: [SliceViewState; 3],
-    volume_state: VolumeViewState,
+    /// The views (from `ferrum-ui`); the tool bar is drawn in the app's own bar.
+    views: ViewerWidget,
     show_panel: bool,
     show_studies: bool,
     show_about: bool,
@@ -44,27 +42,6 @@ pub struct ViewerApp {
     styled: bool,
 }
 
-/// Icon of a 2D tool.
-pub(crate) fn tool_icon(t: ToolKind) -> &'static str {
-    match t {
-        ToolKind::Pan => icon::HAND,
-        ToolKind::WindowLevel => icon::CIRCLE_HALF,
-        ToolKind::Probe => icon::CROSSHAIR,
-        ToolKind::Distance => icon::RULER,
-        ToolKind::Angle => icon::ANGLE,
-        ToolKind::Area => icon::POLYGON,
-        ToolKind::Rect => icon::SQUARE,
-        ToolKind::Text => icon::TEXT_T,
-        ToolKind::Move => icon::ARROWS_OUT_CARDINAL,
-        ToolKind::Delete => icon::X,
-        ToolKind::AiPoint => icon::CURSOR_CLICK,
-        ToolKind::AiBox => icon::BOUNDING_BOX,
-        ToolKind::AiScribble => icon::SCRIBBLE,
-        ToolKind::AiLasso => icon::LASSO,
-        ToolKind::Region => icon::PAINT_BUCKET,
-    }
-}
-
 /// The entry recorded for an open action: the folder, or the single file.
 fn study_entry(paths: &[PathBuf]) -> Option<PathBuf> {
     let first = paths.first()?;
@@ -73,11 +50,6 @@ fn study_entry(paths: &[PathBuf]) -> Option<PathBuf> {
 
 fn file_name(p: &Path) -> String {
     p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.to_string_lossy().into_owned())
-}
-
-/// Runs `add` in a horizontal, vertically centred child of `ui` limited to `rect`.
-fn row_in(ui: &mut egui::Ui, rect: Rect, layout: Layout, add: impl FnOnce(&mut egui::Ui)) {
-    ui.scope_builder(UiBuilder::new().max_rect(rect).layout(layout), add);
 }
 
 impl ViewerApp {
@@ -95,10 +67,8 @@ impl ViewerApp {
         viewer.open_paths(paths);
         Self {
             viewer,
-            sync: GpuSyncState::default(),
             panel: PanelState::default(),
-            slice_states: Default::default(),
-            volume_state: VolumeViewState::default(),
+            views: ViewerWidget::new().with_toolbar(false).with_theme(false).with_icon_font(false),
             show_panel: true,
             show_studies: true,
             show_about: false,
@@ -131,17 +101,6 @@ impl ViewerApp {
         }
     }
 
-    fn sync_gpu(&mut self, render_state: Option<&egui_wgpu::RenderState>) {
-        let Some(rs) = render_state else {
-            return;
-        };
-        let mut guard = rs.renderer.write();
-        if let Some(renderer) = guard.callback_resources.get_mut::<VolumeRenderer>() {
-            let mut sink = RendererSink { device: &rs.device, queue: &rs.queue, renderer };
-            self.viewer.sync_gpu(&mut self.sync, &mut sink);
-        }
-    }
-
     /// Draws the whole UI. Separated from [`eframe::App`] so that UI tests
     /// can drive it without a window.
     pub fn show(&mut self, ui: &mut egui::Ui, render_state: Option<&egui_wgpu::RenderState>) {
@@ -160,12 +119,17 @@ impl ViewerApp {
         self.handle_dropped_files(&ctx);
         self.handle_shortcuts(&ctx);
         self.handle_screenshot_events(&ctx);
-        self.sync_gpu(render_state);
+        // uploads to the GPU after the shortcuts (an undo shows in this frame) and before the
+        // header shows the status, the order the app always had; its second poll finds nothing new
+        self.views.begin_frame(&ctx, &mut self.viewer, render_state);
 
         let has_data = self.viewer.dataset().is_some();
         egui::Panel::top("header").exact_size(56.0).frame(theme::bar()).show(ui, |ui| self.header(ui));
         if has_data {
-            egui::Panel::top("toolbar").exact_size(48.0).frame(theme::bar()).show(ui, |ui| self.toolbar(ui));
+            egui::Panel::top("toolbar")
+                .exact_size(48.0)
+                .frame(theme::bar())
+                .show(ui, |ui| toolbar::show(ui, &mut self.viewer));
             egui::Panel::bottom("status").exact_size(28.0).frame(theme::bar()).show(ui, |ui| self.status_bar(ui));
             if self.show_studies {
                 egui::Panel::left("studies")
@@ -175,19 +139,18 @@ impl ViewerApp {
                     .show(ui, |ui| self.studies(ui));
             }
             if self.show_panel {
-                egui::Panel::right("settings")
+                let requests = egui::Panel::right("settings")
                     .exact_size(324.0)
                     .resizable(false)
                     .frame(theme::side())
-                    .show(ui, |ui| panels::show(ui, &mut self.viewer, &mut self.panel));
-                if std::mem::take(&mut self.panel.export_annotations) {
-                    self.export_annotations();
-                }
-                if std::mem::take(&mut self.panel.segments.import_labels) {
-                    self.import_labels();
-                }
-                if std::mem::take(&mut self.panel.segments.export_labels) {
-                    self.export_labels();
+                    .show(ui, |ui| panels::side_panel(ui, &mut self.viewer, &mut self.panel))
+                    .inner;
+                for request in requests {
+                    match request {
+                        PanelRequest::ExportAnnotations => self.export_annotations(),
+                        PanelRequest::ImportLabels => self.import_labels(),
+                        PanelRequest::ExportLabels => self.export_labels(),
+                    }
                 }
             }
         }
@@ -215,35 +178,8 @@ impl ViewerApp {
     fn main_area(&mut self, ui: &mut egui::Ui) {
         if self.viewer.dataset().is_none() {
             self.start_screen(ui);
-            return;
-        }
-        match self.viewer.view_mode() {
-            ViewMode::Slice2d => {
-                let axis = self.viewer.slices.axis;
-                slice_view::show(ui, &mut self.viewer, axis, &mut self.slice_states[axis.normal_axis()]);
-            }
-            ViewMode::Volume3d => volume_view::show(ui, &mut self.viewer, &mut self.volume_state),
-            ViewMode::Mpr => {
-                let full = ui.available_rect_before_wrap();
-                let gap = 8.0;
-                let half = (full.size() - Vec2::splat(gap)) * 0.5;
-                let cell = |col: f32, row: f32| {
-                    Rect::from_min_size(full.min + Vec2::new(col * (half.x + gap), row * (half.y + gap)), half)
-                };
-                let layout = [
-                    (cell(0.0, 0.0), Some(SliceAxis::Axial)),
-                    (cell(1.0, 0.0), None),
-                    (cell(0.0, 1.0), Some(SliceAxis::Coronal)),
-                    (cell(1.0, 1.0), Some(SliceAxis::Sagittal)),
-                ];
-                for (rect, axis) in layout {
-                    ui.scope_builder(UiBuilder::new().max_rect(rect), |ui| match axis {
-                        Some(a) => slice_view::show(ui, &mut self.viewer, a, &mut self.slice_states[a.normal_axis()]),
-                        None => volume_view::show(ui, &mut self.viewer, &mut self.volume_state),
-                    });
-                }
-                ui.allocate_rect(full, egui::Sense::hover());
-            }
+        } else {
+            self.views.show(ui, &mut self.viewer, None);
         }
     }
 
@@ -339,101 +275,6 @@ impl ViewerApp {
                 self.pick_workspace();
             }
         });
-    }
-
-    fn toolbar(&mut self, ui: &mut egui::Ui) {
-        let rect = ui.max_rect();
-        let mode = self.viewer.view_mode();
-        row_in(ui, rect, Layout::left_to_right(Align::Center), |ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            if mode == ViewMode::Volume3d {
-                let erasing = self.viewer.volume.eraser_enabled;
-                if tool_button(ui, icon::CUBE_FOCUS, "Rotate", !erasing).clicked() {
-                    self.viewer.volume.eraser_enabled = false;
-                }
-                if tool_button(ui, icon::ERASER, "Volume eraser", erasing).clicked() {
-                    self.viewer.volume.eraser_enabled = !erasing;
-                }
-                toolbar_separator(ui);
-                for p in ViewPreset::ALL {
-                    if tool_button(ui, p.label(), p.name(), false).clicked() {
-                        self.viewer.volume.camera.look_from(p);
-                    }
-                }
-                toolbar_separator(ui);
-                if tool_button(ui, icon::ARROW_COUNTER_CLOCKWISE, "Reset camera", false).clicked() {
-                    self.viewer.reset_view_3d();
-                }
-                let can_undo = self.viewer.erase_history_len() > 0;
-                if tool_button_enabled(ui, icon::ARROW_U_UP_LEFT, "Undo erase", false, can_undo).clicked() {
-                    self.viewer.undo_erase();
-                }
-            } else {
-                for t in ToolKind::ALL {
-                    self.tool_button(ui, t);
-                }
-                toolbar_separator(ui);
-                ui.label(RichText::new("Segment").size(12.0).color(TEXT_DIM));
-                for t in ToolKind::SEGMENT {
-                    self.tool_button(ui, t);
-                }
-                toolbar_separator(ui);
-                let any = !self.viewer.annotations().is_empty();
-                if tool_button_enabled(ui, icon::TRASH, "Clear annotations", false, any).clicked() {
-                    self.viewer.clear_annotations();
-                }
-                if mode == ViewMode::Slice2d {
-                    toolbar_separator(ui);
-                    self.zoom_buttons(ui);
-                }
-            }
-        });
-        if mode == ViewMode::Slice2d {
-            row_in(ui, rect, Layout::right_to_left(Align::Center), |ui| {
-                let current = SliceAxis::ALL.iter().position(|a| *a == self.viewer.slices.axis);
-                let labels = SliceAxis::ALL.map(|a| a.label());
-                if let Some(i) = segmented(ui, &labels, current) {
-                    self.viewer.slices.axis = SliceAxis::ALL[i];
-                }
-            });
-        }
-    }
-
-    /// A toolbar button selecting `t`; disabled, with the reason on hover,
-    /// when the tool cannot be used now (e.g. an AI tool without engine).
-    fn tool_button(&mut self, ui: &mut egui::Ui, t: ToolKind) {
-        let available = self.viewer.tool_availability(t);
-        let active = self.viewer.tool == t && available.is_ok();
-        let resp = tool_button_enabled(ui, tool_icon(t), t.label(), active, available.is_ok());
-        match available {
-            Ok(()) => {
-                if resp.on_hover_text(t.hint()).clicked() {
-                    self.viewer.select_tool(t);
-                }
-            }
-            Err(reason) => {
-                resp.on_hover_text(format!("{}: {reason}", t.label()));
-            }
-        }
-    }
-
-    fn zoom_buttons(&mut self, ui: &mut egui::Ui) {
-        let axis = self.viewer.slices.axis;
-        let view = &mut self.viewer.slices.views[axis.normal_axis()];
-        let mut scale = |f: f32| {
-            let z = (view.zoom * f).clamp(ferrum_domain::SliceView::MIN_ZOOM, ferrum_domain::SliceView::MAX_ZOOM);
-            view.pan *= z / view.zoom;
-            view.zoom = z;
-        };
-        if tool_button(ui, icon::MAGNIFYING_GLASS_PLUS, "Zoom in", false).clicked() {
-            scale(1.25);
-        }
-        if tool_button(ui, icon::MAGNIFYING_GLASS_MINUS, "Zoom out", false).clicked() {
-            scale(0.8);
-        }
-        if tool_button(ui, icon::ARROWS_IN, "Fit to view", false).clicked() {
-            *view = ferrum_domain::SliceView::default();
-        }
     }
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {

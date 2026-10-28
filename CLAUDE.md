@@ -24,7 +24,7 @@ segmentation engines, and an agent skill (planned). Read
 ## Layering — never violate
 
 ```
-ferrum (presentation) → ferrum-app (application) → ferrum-domain ← ferrum-io (data)
+ferrum (desktop shell) → ferrum-ui (views, panels) → ferrum-app (application) → ferrum-domain ← ferrum-io (data)
                                        ↘ ferrum-processing, ferrum-render (infrastructure)
                                        ↘ ferrum-radiomics → ferrum-domain (segment metrics)
 ```
@@ -58,7 +58,9 @@ ferrum (presentation) → ferrum-app (application) → ferrum-domain ← ferrum-
   Regenerate `skills/ferrum/schemas/commands.json` with `ferrum-cli schema`
   and keep `skills/ferrum/reference/commands.md` complete (tests check
   both); outputs must pass the identifier scan (`tests/privacy.rs`).
-- No business logic in `ferrum` widgets — add a use case to `Viewer`.
+- No business logic in `ferrum` or `ferrum-ui` widgets — add a use case to
+  `Viewer`. `ferrum-ui` opens no windows or file dialogs (no `eframe`, no
+  `rfd`); hosts embed it ([ADR 0016](docs/decisions/0016-ferrum-ui-crate.md)).
 - DICOM tags only through `dicom_dictionary_std::tags` constants — never raw
   tag literals.
 

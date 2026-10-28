@@ -547,6 +547,66 @@ running engine job.
 
 ---
 
+## Stage 24 — Embeddable viewer widget (`ferrum-ui`) 🚧 (G1 ✅, G2 ✅; PR 1 of 2)
+
+Medical Harness shows a conversation and FERRUM's viewer in one egui/wgpu
+window ([#69](https://github.com/Kauter1989/ferrum/issues/69); P1 for the
+harness's Demo 4, a live viewer). Until then the harness shows FERRUM
+renders as images. What exists:
+- The views (`slice_view.rs`, `volume_view.rs`), the panels (segments,
+  segmentation and AI, review, metrics card, transfer function) and the
+  GPU bridge (`gpu_bridge.rs`) live in the `ferrum` binary crate, mixed
+  with the app shell in `app.rs`: header, toolbar, start screen, recent
+  files, file dialogs (`rfd`), drag and drop, screenshots and keyboard
+  shortcuts.
+- Every use case is already a `Viewer` method in `ferrum-app`, and the
+  views draw through `GpuSink` and egui-wgpu paint callbacks.
+- The view state that an agent could set (`ferrum-view/1`,
+  [#70](https://github.com/Kauter1989/ferrum/issues/70)) does not exist
+  yet. It is the next stage and builds on this one.
+
+This stage moves the viewer into a library crate that another egui/wgpu
+application places in a panel, and makes the desktop app its first user.
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 24.1 | As a **harness developer**, I want to place FERRUM's viewer in a panel of my own egui/wgpu window so that the person works with the study next to the conversation, rendered on the GPU without streaming. | [24.1-a] A new crate `ferrum-ui` exports `ViewerWidget`, which draws the 2D, MPR and 3D views of a `Viewer` with their overlays, measurements and segments into any `egui::Ui` it is given, with no window, menus or file dialogs of its own. Its dependencies include neither `eframe` nor `rfd`. [24.1-b] A host installs the GPU resources once with the `egui_wgpu::RenderState` it already has (`ferrum_ui::install`). Without a render state (a CPU-only test), the widget still lays out and handles input. [24.1-c] The widget has the desktop's toolbar of view tools (modes, tools, zoom) as an option the host can turn off, and the panels (segments, AI segmentation, review, metrics) as separate widgets the host may place or leave out. |
+| 24.2 | As a **harness developer**, I want the widget to tell me what the person did so that my agent learns the outcome without being in the render loop. | [24.2-a] Each frame, `ViewerWidget::show` returns the events of that frame: `PointPicked`, `RoiDrawn` (an annotation or a segment the person drew), `SliceChanged`, `WindowChanged` and `CameraChanged`. Events are coalesced: one `SliceChanged` per frame at most, and a drag gives one `WindowChanged` when it ends. [24.2-b] Points are given in FERRUM's point forms (`voxel` and `patient_mm`), the same values the agent's `probe` resolves. [24.2-c] No event is a decision: confirm and reject stay in the review widget, and the host's decision channel is the library API of 16.7. |
+| 24.3 | As a **FERRUM maintainer**, I want the desktop app to be a thin user of the same crate so that the rendering rule and the UI tests stay in one place. | [24.3-a] `ferrum` (the app) keeps only the shell: header, start screen, recent files, file and save dialogs, drag and drop, screenshots, shortcuts. It draws the views and panels through `ferrum-ui`. [24.3-b] The UI tests (`crates/ferrum/tests/ui.rs`) and `gpu_parity.rs` pass unchanged in what they check; tests of the views and panels may move to `ferrum-ui`. [24.3-c] The shaders stay in `ferrum-render`; `ferrum-ui` adds no image-formation code, so the rendering rule is unchanged. |
+| 24.4 | As a **harness developer**, I want an example host so that I can copy a working setup. | [24.4-a] `crates/ferrum-ui/examples/embed_host.rs` opens a window with its own side panel (an event log and a few buttons that call `Viewer` use cases, such as "next slice" and "lung window") next to the widget, and prints the events it receives. [24.4-b] A UI test drives the example's layout with `egui_kittest`: a click in the axial view gives one `PointPicked` whose voxel matches `probe` for that point. |
+| 24.5 | As a **clinician**, I want the licence and the research-use badge of an engine to stay visible when FERRUM is embedded so that I always know a result came from a research-only engine. | [24.5-a] The AI segmentation widget shows the engine's licence and the `research_only` badge as the desktop does; a segment proposed by an engine keeps its "Proposed by engine" label in the segments widget. [24.5-b] A UI test checks both inside the embedded layout of the example. |
+
+**Success metrics:** the example host shows a CT with the views, takes a
+point pick and prints it within one frame. The desktop app looks and
+behaves as before: all UI tests and `gpu_parity.rs` pass on lavapipe.
+
+**Out of scope:** the `ferrum-view/1` state and agent commands (#70, next
+stage), streaming and WASM backends (ADR 0014 decisions 4–7), several
+viewers in one window (one `Viewer` per window; the GPU resources are
+installed once), file loading inside the widget (the host opens studies
+through `Viewer` or its own code), theming beyond FERRUM's dark theme.
+
+**Clarifications (G1 ✅ 2026-10-25):**
+- Q1: crate name `ferrum-ui`, as in the issue? — A: yes (2026-10-25).
+- Q2: panels as separate widgets the host may place (24.1-c), rather than one fixed layout? — A: yes; the host decides its layout (2026-10-25).
+- Q3: events in this stage, before `ferrum-view/1`? — A: yes, as Rust types; #70 gives them their JSON schema (2026-10-25).
+- Q4: egui and wgpu versions: the host must use the same versions as FERRUM (they are re-exported as `ferrum_ui::egui` and `ferrum_ui::egui_wgpu`)? — A: yes, and the versions are named in the crate docs (2026-10-25).
+- Q5: mode — gated (G1 spec, G2 design), as for a stage? — A: yes (2026-10-25).
+
+**Design:** [docs/embeddable-viewer.md](docs/embeddable-viewer.md), [ADR 0016](docs/decisions/0016-ferrum-ui-crate.md) (G2 ✅ 2026-10-28: «работай автономно по плану далее»; CI on GitHub is unavailable until 1 November, so PRs are checked locally with `preflight.sh`). Size L, two PRs: the move, then events and the example host.
+
+### Implementation
+
+| Task | Criteria | PR | Status |
+|---|---|---|---|
+| 24.T1 crate `ferrum-ui`; views, panels, theme, widgets, GPU bridge moved | 24.1-a, 24.3-c | 1 | ✅ |
+| 24.T2 `ViewerWidget` (layout, tool bar, polling, GPU sync), `panels::side_panel`, `PanelRequest` | 24.1-b/c | 1 | ✅ |
+| 24.T3 desktop on `ferrum-ui`; UI tests and parity unchanged; renders before and after compared | 24.3-a/b | 1 | ✅ |
+| 24.T4 events | 24.2-a/b/c | 2 | |
+| 24.T5 example host and its UI test | 24.4-a/b | 2 | |
+| 24.T6 licence and badge test in the embedded layout | 24.5-a/b | 2 | |
+| 24.T7 docs, events privacy test | — | 2 | |
+
 ## Roadmap
 
 Updated 2026-10-19, after Stage 20. Order is a proposal; each stage

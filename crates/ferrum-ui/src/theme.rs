@@ -31,13 +31,37 @@ pub const WARN: Color32 = Color32::from_rgb(240, 190, 60);
 /// Errors and destructive actions.
 pub const DANGER: Color32 = Color32::from_rgb(232, 104, 96);
 
-/// Installs fonts (with Phosphor icons as a fallback glyph source) and
-/// the dark visuals.
+/// Name of the icon font (Phosphor, light).
+pub const ICON_FONT: &str = "phosphor";
+
+/// Installs fonts (egui's defaults with Phosphor icons as a fallback glyph
+/// source) and the dark visuals: the desktop app's whole look. It replaces
+/// the context's fonts; an embedding host uses [`add_icon_font`] and,
+/// if it wants FERRUM's colours, [`visuals`].
 pub fn install(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
     egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Light);
     ctx.set_fonts(fonts);
+    visuals(ctx);
+}
 
+/// Adds the icon font to the context's fonts, keeping the host's own: the
+/// tool bar and the panels need it for their icons.
+pub fn add_icon_font(ctx: &egui::Context) {
+    use egui::epaint::text::{FontInsert, FontPriority, InsertFontFamily};
+    let data = egui::FontData::from_static(egui_phosphor::Variant::Light.font_bytes());
+    ctx.add_font(FontInsert::new(
+        ICON_FONT,
+        data,
+        vec![
+            InsertFontFamily { family: egui::FontFamily::Proportional, priority: FontPriority::Lowest },
+            InsertFontFamily { family: egui::FontFamily::Name(ICON_FONT.into()), priority: FontPriority::Highest },
+        ],
+    ));
+}
+
+/// FERRUM's dark visuals (colours, corners, shadows), without fonts.
+pub fn visuals(ctx: &egui::Context) {
     ctx.set_theme(egui::Theme::Dark);
     ctx.style_mut_of(egui::Theme::Dark, |style| {
         let mut v = Visuals::dark();

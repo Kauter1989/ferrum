@@ -81,6 +81,30 @@ pub struct PanelState {
     pub review: super::review_panel::ReviewPanelState,
 }
 
+/// A file action the side panel asks of its host: the panels open no file
+/// dialogs, so the host decides where files go.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PanelRequest {
+    /// Export the annotations (the desktop app: a JSON or CSV file).
+    ExportAnnotations,
+    /// Import a NIfTI label map as segments.
+    ImportLabels,
+    /// Export the segments as a NIfTI label map.
+    ExportLabels,
+}
+
+/// Draws the tabbed side panel (as [`show`]) and returns the file actions
+/// the person asked for in this frame.
+pub fn side_panel(ui: &mut egui::Ui, viewer: &mut Viewer, state: &mut PanelState) -> Vec<PanelRequest> {
+    show(ui, viewer, state);
+    let flags = [
+        (std::mem::take(&mut state.export_annotations), PanelRequest::ExportAnnotations),
+        (std::mem::take(&mut state.segments.import_labels), PanelRequest::ImportLabels),
+        (std::mem::take(&mut state.segments.export_labels), PanelRequest::ExportLabels),
+    ];
+    flags.into_iter().filter(|(set, _)| *set).map(|(_, r)| r).collect()
+}
+
 fn collapsible(ui: &mut egui::Ui, id: &str, icon_str: &str, title: &str, open: bool, body: impl FnOnce(&mut egui::Ui)) {
     let header = RichText::new(format!("{icon_str}  {title}")).size(13.5).strong().color(TEXT);
     egui::CollapsingHeader::new(header).id_salt(id).default_open(open).show(ui, body);
