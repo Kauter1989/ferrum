@@ -547,7 +547,7 @@ running engine job.
 
 ---
 
-## Stage 24 — Embeddable viewer widget (`ferrum-ui`) 📋 (G1 ✅, G2 pending)
+## Stage 24 — Embeddable viewer widget (`ferrum-ui`) 🚧 (G1 ✅, G2 ✅; PR 1 of 2)
 
 Medical Harness shows a conversation and FERRUM's viewer in one egui/wgpu
 window ([#69](https://github.com/Kauter1989/ferrum/issues/69); P1 for the
@@ -593,7 +593,19 @@ through `Viewer` or its own code), theming beyond FERRUM's dark theme.
 - Q4: egui and wgpu versions: the host must use the same versions as FERRUM (they are re-exported as `ferrum_ui::egui` and `ferrum_ui::egui_wgpu`)? — A: yes, and the versions are named in the crate docs (2026-10-25).
 - Q5: mode — gated (G1 spec, G2 design), as for a stage? — A: yes (2026-10-25).
 
-**Design:** [docs/embeddable-viewer.md](docs/embeddable-viewer.md), [ADR 0016](docs/decisions/0016-ferrum-ui-crate.md) (G2 pending). Size L, two PRs: the move, then events and the example host.
+**Design:** [docs/embeddable-viewer.md](docs/embeddable-viewer.md), [ADR 0016](docs/decisions/0016-ferrum-ui-crate.md) (G2 ✅ 2026-10-28: «работай автономно по плану далее»; CI on GitHub is unavailable until 1 November, so PRs are checked locally with `preflight.sh`). Size L, two PRs: the move, then events and the example host.
+
+### Implementation
+
+| Task | Criteria | PR | Status |
+|---|---|---|---|
+| 24.T1 crate `ferrum-ui`; views, panels, theme, widgets, GPU bridge moved | 24.1-a, 24.3-c | 1 | ✅ |
+| 24.T2 `ViewerWidget` (layout, tool bar, polling, GPU sync), `panels::side_panel`, `PanelRequest` | 24.1-b/c | 1 | ✅ |
+| 24.T3 desktop on `ferrum-ui`; UI tests and parity unchanged; renders before and after compared | 24.3-a/b | 1 | ✅ |
+| 24.T4 events | 24.2-a/b/c | 2 | |
+| 24.T5 example host and its UI test | 24.4-a/b | 2 | |
+| 24.T6 licence and badge test in the embedded layout | 24.5-a/b | 2 | |
+| 24.T7 docs, events privacy test | — | 2 | |
 
 ## Roadmap
 

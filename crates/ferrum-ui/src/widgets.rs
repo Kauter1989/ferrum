@@ -195,3 +195,8 @@ pub fn logo(p: &egui::Painter, rect: Rect) {
         OVERLAY,
     );
 }
+
+/// Runs `add` in a child of `ui` limited to `rect`, with `layout`.
+pub fn row_in(ui: &mut Ui, rect: Rect, layout: Layout, add: impl FnOnce(&mut Ui)) {
+    ui.scope_builder(egui::UiBuilder::new().max_rect(rect).layout(layout), add);
+}

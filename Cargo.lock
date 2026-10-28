@@ -1454,9 +1454,9 @@ dependencies = [
  "ferrum-domain",
  "ferrum-engines",
  "ferrum-io",
- "ferrum-processing",
  "ferrum-radiomics",
  "ferrum-render",
+ "ferrum-ui",
  "glam",
  "image",
  "log",
@@ -1617,6 +1617,27 @@ dependencies = [
  "proptest",
  "rayon",
  "thiserror 2.0.21",
+ "wgpu",
+]
+
+[[package]]
+name = "ferrum-ui"
+version = "0.3.0"
+dependencies = [
+ "egui",
+ "egui-phosphor",
+ "egui-wgpu",
+ "egui_kittest",
+ "ferrum-app",
+ "ferrum-domain",
+ "ferrum-engines",
+ "ferrum-io",
+ "ferrum-processing",
+ "ferrum-radiomics",
+ "ferrum-render",
+ "glam",
+ "log",
+ "tempfile",
  "wgpu",
 ]
 

@@ -148,6 +148,23 @@ synthetic phantom. Its layout lives in `pub fn host_ui(...)`, which
 `tests/embed.rs` includes with `#[path]` and drives with `egui_kittest`
 (24.4-b, 24.5-b).
 
+### 3.7 As built (PR 1)
+
+- The modules sit at the crate root (`ferrum_ui::slice_view`,
+  `ferrum_ui::panels`, …), not in `views/` and `panels/` folders. The
+  moved files keep their `super::` paths unchanged, and the desktop's
+  `ferrum::ui` re-exports them.
+- The tool bar is a module of its own (`ferrum_ui::toolbar::show`). The
+  desktop draws it in its full-width bar, as before, and turns the
+  widget's own bar off (`with_toolbar(false)`).
+- `ViewerWidget::begin_frame` polls the viewer and uploads to the GPU.
+  `show` calls it once per frame unless the host did so earlier. The
+  desktop calls it before its header, so the status line is current, as
+  before.
+- `panels::side_panel` draws the tabbed panel and returns the frame's
+  `PanelRequest`s. `SidePanel` as a type was not needed.
+- `ViewerWidget::show` returns no events yet; they come in PR 2 (T4).
+
 ## 4. Contracts
 
 | Contract | Change | Also update |

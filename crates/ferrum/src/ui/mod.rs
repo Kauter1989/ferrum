@@ -1,14 +1,9 @@
-//! Widgets, panels and the visual theme.
+//! The views and panels come from `ferrum-ui`; the start screen's list of
+//! recent studies belongs to the app.
 
-pub mod ai_panel;
-pub mod metrics_card;
-pub mod panels;
+pub use ferrum_ui::{
+    ai_panel, metrics_card, panels, review_panel, segmentation_panel, segments_panel, slice_view, tf_editor, theme,
+    toolbar, volume_view, widgets,
+};
+
 pub mod recent;
-pub mod review_panel;
-pub mod segmentation_panel;
-pub mod segments_panel;
-pub mod slice_view;
-pub mod tf_editor;
-pub mod theme;
-pub mod volume_view;
-pub mod widgets;

@@ -1,6 +1,6 @@
 # ADR 0016 — The viewer as a library crate (`ferrum-ui`)
 
-- **Status:** Proposed (Stage 24, G2 pending)
+- **Status:** Accepted (Stage 24, G2 2026-10-28)
 - **Date:** 2026-10-25
 
 ## Context

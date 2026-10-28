@@ -12,6 +12,7 @@ members = [
     "crates/ferrum-engines",
     "crates/ferrum-agent",
     "crates/ferrum-cli",
+    "crates/ferrum-ui",
     "crates/ferrum",
 ]
 
@@ -33,6 +34,7 @@ ferrum-app = { path = "crates/ferrum-app" }
 ferrum-engines = { path = "crates/ferrum-engines" }
 ferrum-gpu-lock = { path = "crates/ferrum-gpu-lock" }
 ferrum-agent = { path = "crates/ferrum-agent" }
+ferrum-ui = { path = "crates/ferrum-ui" }
 
 glam = { version = "0.33", features = ["bytemuck"] }
 rayon = "1.10"
