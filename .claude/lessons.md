@@ -442,6 +442,33 @@ that says so instead of editing the old one.
   test binary under `timeout`, and restore in a separate step. Find stray
   processes with `ps` and kill them by pid, never with `pkill -f`.
 
+### L29 — A caption edit rewrote whole files: PowerShell 5.1 and UTF-8 (2026-11, Stage 25 PR 1)
+
+- **Symptom:** While writing Stage 25 PR 1 on Windows, `.md` files and one
+  test file were edited with `Get-Content -Raw … | Set-Content -Encoding
+  utf8`. `dev_plan.md` and `docs/view-host.md` came back with a byte-order
+  mark and CP1251 mojibake (`Stages 1–13` became `Stages 1вЂ“13`), and a
+  test comment lost three dash characters. `git diff --stat` showed 421
+  changed lines in a file that had gained 77.
+- **Root cause:** Windows PowerShell 5.1 reads a BOM-less file through the
+  ANSI code page (`Get-Content` default) and writes UTF-8 *with* a BOM, so
+  every `–`, `—`, `≤` or `×` round-trips through CP1251; a second pass
+  double-encodes it.
+- **Why it was missed:** `git diff --stat` was read only after `git add`,
+  and the corruption looks plausible in a console whose code page matches
+  the mojibake.
+- **Fix:** the files were restored from their original bytes
+  (`text.encode("cp1251").decode("utf-8")`, BOM stripped) and the staged
+  diff then showed additions only.
+- **Rule:** Edit repository text with the editor tool, never by rewriting a
+  whole file through a shell. On Windows use PowerShell 7
+  (`-Encoding utf8NoBOM`) or Python with `newline="\n"`. Read
+  `git diff --cached --numstat` before every commit: a small edit must
+  show a small count, and one changed line must show one insertion, not a
+  rewrite of the file.
+- **Guard:** this rule and the `git diff --cached --numstat` step in the
+  delivery checklist (`ferrum-change` §2).
+
 ## What worked
 
 ### W1 — Field test on the user's GPU with a throw-away script (2026-10, Stage 17)
