@@ -157,6 +157,17 @@ impl Viewer {
         self.segments.show = show;
     }
 
+    /// Replaces the segmentation with `set` (`None` clears it), as a host
+    /// does when a workspace changed under a long-lived viewer: the
+    /// overlay is shown when the new set has visible segments and a
+    /// generation bump tells the GPU sink to upload the new labels.
+    pub fn adopt_segments(&mut self, set: Option<SegmentationSet>) {
+        let has = set.as_ref().is_some_and(|s| s.segments().iter().any(|g| g.visible));
+        self.segments.set = set;
+        self.segments.generation = self.bump_revision();
+        self.segments.show |= has;
+    }
+
     /// Chooses how segments are drawn on slices.
     pub fn set_segment_style(&mut self, style: SegmentStyle) {
         self.segments.style = style;

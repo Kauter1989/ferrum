@@ -607,6 +607,82 @@ through `Viewer` or its own code), theming beyond FERRUM's dark theme.
 | 24.T6 licence and badge test in the embedded layout | 24.5-a/b | 2 | |
 | 24.T7 docs, events privacy test | — | 2 | |
 
+## Stage 25 — Local GPU view for a harness (`ferrum-view/1`) 🚧
+
+A harness shows FERRUM next to its conversation: the person works with the
+study in the harness window, the frames are made on the local GPU, and the
+agent learns what the person did without sitting in the render loop
+([#70](https://github.com/Kauter1989/ferrum/issues/70),
+[ADR 0014](docs/decisions/0014-generative-ui-view-host.md)). What exists:
+every use case in `ferrum-app`, `Viewer::slice_params` / `frame_params`,
+offscreen GPU rendering with readback (`render_slice_image`,
+`render_volume_image`) and the CPU oracles behind it, the `GpuSink` port,
+and the workspace store with its change notifications. What is missing: a
+process that keeps a `Viewer` alive, serves frames and input over loopback,
+and a page any harness can show.
+
+Design: [docs/view-host.md](docs/view-host.md),
+[ADR 0017](docs/decisions/0017-view-host-crate.md).
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 25.1 | As a **harness developer**, I want one command that serves the open workspace as a local view so that my harness can show it without linking Rust into the GUI. | [25.1-a] `ferrum-cli view serve --workspace <dir> [--port 0] [--cpu]` opens the workspace like the desktop does (sources verified, series loaded, annotations and segments attached), binds `127.0.0.1` only, and prints one JSON object `{"url","token","workspace","backend"}` on stdout before serving; `token` is 32 hex digits from the OS random source and `backend` is `gpu` or `cpu`. [25.1-b] Every request needs the token (`?token=`, `Authorization: Bearer`, or the `ferrum-view` cookie set by the page); a missing or wrong token is `401` and nothing else; an unknown path is `404`; a wrong method is `405`. [25.1-c] Ctrl-C ends the process (the socket closes with it), and dropping the server unblocks its loop and joins its thread; a workspace whose sources changed (`source_changed`) or that cannot be read fails before binding, with the reason, and no token is printed. [25.1-d] It is a CLI-only command, never an MCP tool, like `gpu hold`. |
+| 25.2 | As a **clinician**, I want to read the study in the harness: change the slice, change the window, see the segments and read the value under the cursor. | [25.2-a] `GET /api/frame.png` returns a PNG of the slice the state names, drawn from the workspace's study at the volume's native resolution (one pixel per voxel); `plane` is `axial`, `coronal` or `sagittal` and the index is 0-based and clamped to the volume. [25.2-b] Frames carry the segments of the workspace (fill and outline, opacity from `segments.json`) when the overlay is shown in the state (the default while the workspace has segments). [25.2-c] `POST /api/input` takes one of `{"slice": <i>}`, `{"step": ±n}`, `{"window": {"center": c, "width": w}}`, `{"preset": "<name>"}`, `{"plane": "<plane>"}`, `{"probe": {"x": px, "y": px}}`; a step of one wheel notch moves the index by exactly one and clamps; an out-of-range value is clamped, a wrong type is `400` and changes nothing. [25.2-d] After a `probe` the state carries `probe: {voxel: [i,j,k], patient_mm: [x,y,z], value, unit}` resolved through the frame's own pixel mapping, and the value equals `ferrum-cli probe` for the (rounded) voxel. [25.2-e] The state (`GET /api/state`) names the study by its series only: plane, index, slice count, window, segment labels and names, view id, never a path or UID. |
+| 25.3 | As a **clinician with no usable GPU**, I want the same picture so that the harness works on a server or a laptop without a discrete card. | [25.3-a] `--cpu` (or a machine without an adapter) renders on the CPU through the same `Viewer`: the frame equals the CPU oracle `SliceImage::extract` + `WindowLevel::apply` pixel for pixel. [25.3-b] A GPU frame and a CPU frame of the same state agree within the existing parity thresholds (mean absolute difference < 2.5/255, < 2 % of pixels outside 2.5/255) on a phantom with segments and a window. [25.3-c] `backend` in 25.1-a says which one ran, and the same state is served by both. |
+| 25.4 | As a **harness developer**, I want a self-contained page and a documented protocol so that any harness (not only mine) can mount the view. | [25.4-a] `GET /` returns one HTML document with inline CSS and JS and no request to any other origin; it draws the frame, turns wheel and drag into `POST /api/input`, shows the slice index, the window and the probe readout. [25.4-b] `docs/view-host.md` specifies `ferrum-view/1`: routes, state, input, events, token, limits, and the privacy rules. [25.4-c] `GET /api/events?since=<seq>` returns the events recorded so far with sequence numbers: `slice_changed`, `plane_changed`, `window_changed`, `point_picked`, each with its values and, for a pick, voxel and patient mm. [25.4-d] Requests are bounded: a body over 64 KiB is `413`, an unparseable or invalid input is `400` and changes nothing, an unknown path is `404`, and a frame is drawn again only when the state revision changed since the last one. |
+| 25.5 | As an **operator**, I want no patient data to leave the machine and no identifiers in what the harness stores. | [25.5-a] State, events and the page hold voxel indices, patient millimetres, window values, dims, spacing, segment labels and names only: no path, source, study or series field at all. The tests study lives in a folder named after a patient (`patient_Jane_Doe_1234`), and neither that name nor the path appears in the state, the events or the page. [25.5-b] The token is not written to the log, the workspace or the page source; the page receives it in a cookie with `SameSite=Strict` and `HttpOnly`. [25.5-c] The host sends no request to any origin other than its own. |
+| 25.6 | As a **harness developer**, I want a working example plugin for one harness so that the demo needs no wiring of my own. | [25.6-a] `integrations/dsh/` holds a DeepSeek Harness client plugin (plain CJS bundle, `dsh.client`, no build step) that shows the host's own page in a `main` page, a sidebar row and a conversation-header button, takes the `url` and `token` of `ferrum-cli view serve` (kept in `localStorage`, loopback addresses only, a 32-hex-digit token), and is enabled by one `cordis.patch.yml` row; its README gives the exact steps. The plugin does not start the host: a browser bundle cannot spawn a process, and the launcher is Stage 26 work. [25.6-b] `node integrations/dsh/smoke.js <url> <token>` drives the live host over HTTP (state, frame, input, events) and exits non-zero on any mismatch; `node integrations/dsh/plugin/smoke-load.cjs` loads the bundle against a stub module loader and checks its id and the three slot registrations. |
+
+**Success metrics:** in the harness, an axial 512×512 slice scrolls at
+10 frames/s or better over loopback on the user's GPU, a pick gives the
+same voxel and HU value as `ferrum-cli probe`, and the first frame arrives
+within 2 s of the host starting.
+
+**Out of scope:** MPR crosshair, 3D orbit and the volume view, and the
+other `ferrum-view/1` components (Stage 26 draws them on the same
+interfaces); decisions through the view (they stay with
+`ferrum_agent::decisions`); a WASM/WebGPU client; remote exposure and TLS;
+several viewers per host; the agent command set (an agent reads the events
+of 25.4-c in Stage 26 through `view events`).
+
+**Clarifications (autonomous; `assumed:`):**
+- assumed: the host renders on the CPU by default only when no adapter is
+  found; `--cpu` forces it, because a demo machine has a GPU and the GPU
+  path is the point of the stage.
+- assumed: frames are PNG, not JPEG: loopback makes the size irrelevant,
+  and a PNG keeps the pixel values exact for the parity tests and for a
+  person measuring on screen.
+- assumed: the page renders one view (2D slice), because a slice is what a
+  person scrolls while reading a study and what the demo needs; MPR and 3D
+  are separate components in Stage 26.
+- assumed: the frame is requested by the page (pull), not pushed by the
+  host; a pull keeps one code path for HTTP and makes "render only the
+  latest state" the natural behaviour.
+- assumed: the DeepSeek Harness plugin lives in this repository under
+  `integrations/` and is not part of the Cargo workspace, so the FERRUM
+  crates stay free of Node and the plugin can be copied into another
+  harness.
+
+### Implementation
+
+| Task | Criteria | PR | State |
+|---|---|---|---|
+| 25.T1 crate `ferrum-view`: session, state, input, events, workspace reload | 25.1-a, 25.2-c/e, 25.4-b/c | 1 | ✅ |
+| 25.T2 CPU frame source (the slice oracle and the `slice.wgsl` overlay rule) | 25.2-a/b, 25.3-a | 1 | ✅ |
+| 25.T3 GPU frame source (`render_slice_image`) and the CPU/GPU comparison | 25.3-b, 25.2-b | 1 | ✅ |
+| 25.T4 server: routes, token and cookie, the self-contained page, body limit | 25.1-b/c, 25.4-a/d, 25.5-a/b/c | 1 | ✅ |
+| 25.T5 `ferrum-cli view serve` and its parse test | 25.1-a/d | 1 | ✅ |
+| 25.T6 docs: `view-host.md`, ADR 0017, architecture, CLAUDE.md, CHANGELOG | 25.4-b | 1 | ✅ |
+| 25.T7 DeepSeek Harness plugin and its smoke script | 25.6-a/b | 2 | |
+
+**Status (PR 1):** the host runs and its tests pass: the page is
+self-contained and refuses a missing token, a CPU frame equals the oracle
+exactly, a GPU frame agrees with the CPU one (mean deviation and the four
+outline sides), input moves one slice per notch and clamps, a pick gives the
+voxel and the value `probe` gives, events are ordered and hold no path or
+name, and a segment the agent saves appears on the next state read. Open:
+25.6 (the harness plugin, PR 2) and the MPR/3D components (Stage 26).
+
 ## Roadmap
 
 Updated 2026-10-19, after Stage 20. Order is a proposal; each stage
@@ -668,3 +744,4 @@ SUV for non-DICOM PET without a sidecar that names the units.
 Architecture (to decide in an ADR): a second volume in `Dataset` and
 `GpuSink`, resampling to the base grid, and the rendering rule (shader and
 CPU raycaster both).
+

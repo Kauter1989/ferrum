@@ -203,6 +203,18 @@ pub enum Study {
 /// `view …`.
 #[derive(Debug, Subcommand)]
 pub enum View {
+    /// Serve the workspace as a local view host for a harness (not an agent
+    /// command): prints one JSON line and serves until Ctrl-C.
+    Serve {
+        #[command(flatten)]
+        ws: Ws,
+        /// Port on 127.0.0.1; 0 lets the system choose one.
+        #[arg(long, default_value_t = 0)]
+        port: u16,
+        /// Draw frames with the CPU reference renderer instead of the GPU.
+        #[arg(long)]
+        cpu: bool,
+    },
     /// Several slices of one plane as a labelled grid.
     Montage {
         #[command(flatten)]
@@ -831,6 +843,7 @@ impl Command {
 fn view_call(v: &View) -> Result<(String, Value), String> {
     let call = |name: &str, fields: Vec<(&str, Option<Value>)>| (name.to_owned(), object(fields));
     Ok(match v {
+        View::Serve { .. } => return Err("view serve is run by main, not by the agent".into()),
         View::Slice { ws: w, plane, slice_number, at, window, size, overlays, display } => call(
             "view slice",
             [
@@ -1043,6 +1056,26 @@ fn segment_call(s: &Segment) -> Result<(String, Value), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // covers 25.1-a, 25.1-d
+    #[test]
+    fn view_serve_is_a_cli_command_not_an_agent_call() {
+        let cli = Cli::try_parse_from(["ferrum-cli", "view", "serve", "--workspace", "ws/ct1"]).unwrap();
+        match cli.command {
+            Command::View(View::Serve { ws, port, cpu }) => {
+                assert_eq!((ws.workspace.as_str(), port, cpu), ("ws/ct1", 0, false));
+            }
+            other => panic!("expected view serve, got {other:?}"),
+        }
+        let cli =
+            Cli::try_parse_from(["ferrum-cli", "view", "serve", "-w", "ws/ct1", "--port", "8765", "--cpu"]).unwrap();
+        match cli.command {
+            Command::View(View::Serve { port, cpu, .. }) => assert_eq!((port, cpu), (8765, true)),
+            other => panic!("expected view serve, got {other:?}"),
+        }
+        let call = Cli::try_parse_from(["ferrum-cli", "view", "serve", "-w", "ws"]).unwrap().command.to_call();
+        assert!(call.is_err(), "view serve is run by main, never by the agent");
+    }
 
     #[test]
     fn points_and_windows() {
