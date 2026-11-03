@@ -27,6 +27,7 @@ segmentation engines, and an agent skill (planned). Read
 ferrum (desktop shell) → ferrum-ui (views, panels) → ferrum-app (application) → ferrum-domain ← ferrum-io (data)
                                        ↘ ferrum-processing, ferrum-render (infrastructure)
                                        ↘ ferrum-radiomics → ferrum-domain (segment metrics)
+ferrum-cli → ferrum-view (local view host) → ferrum-app, ferrum-render (gpu), ferrum-io
 ```
 
 - `ferrum-domain` has no I/O, no GPU, no UI dependencies; it defines ports
@@ -61,6 +62,12 @@ ferrum (desktop shell) → ferrum-ui (views, panels) → ferrum-app (application
 - No business logic in `ferrum` or `ferrum-ui` widgets — add a use case to
   `Viewer`. `ferrum-ui` opens no windows or file dialogs (no `eframe`, no
   `rfd`); hosts embed it ([ADR 0016](docs/decisions/0016-ferrum-ui-crate.md)).
+- `ferrum-view` implements the local view host `ferrum-view/1`
+  ([design](docs/view-host.md), [ADR 0017](docs/decisions/0017-view-host-crate.md)):
+  one workspace kept open, slice frames on the GPU or the CPU reference,
+  loopback HTTP with a token. Only `ferrum-cli` depends on it (`view serve`,
+  a CLI-only command). It adds no image-formation code and no business
+  logic; protocol changes update `docs/view-host.md` and its tests.
 - DICOM tags only through `dicom_dictionary_std::tags` constants — never raw
   tag literals.
 

@@ -1516,6 +1516,7 @@ dependencies = [
  "ferrum-domain",
  "ferrum-engines",
  "ferrum-io",
+ "ferrum-view",
  "glam",
  "serde_json",
  "tempfile",
@@ -1638,6 +1639,27 @@ dependencies = [
  "glam",
  "log",
  "tempfile",
+ "wgpu",
+]
+
+[[package]]
+name = "ferrum-view"
+version = "0.3.0"
+dependencies = [
+ "ferrum-app",
+ "ferrum-domain",
+ "ferrum-io",
+ "ferrum-render",
+ "getrandom 0.3.4",
+ "glam",
+ "image",
+ "log",
+ "pollster 0.4.0",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tiny_http",
+ "ureq",
  "wgpu",
 ]
 

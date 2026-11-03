@@ -525,6 +525,23 @@ impl Viewer {
         }
     }
 
+    /// The window (centre and width, in the volume's units) of the slice
+    /// views.
+    pub fn window(&self) -> WindowLevel {
+        self.slices.window
+    }
+
+    /// Replaces the window of the slice views (centre and width in the
+    /// volume's units); a width below [`WindowLevel::MIN_WIDTH`] is clamped.
+    pub fn set_window(&mut self, window: WindowLevel) {
+        self.slices.window = window;
+    }
+
+    /// The slice index shown for `axis` (0-based, clamped to the volume).
+    pub fn slice_index(&self, axis: SliceAxis) -> u32 {
+        self.slices.index(axis)
+    }
+
     /// Sets the window from the 0.5–99.5 % histogram percentiles.
     pub fn auto_window(&mut self) {
         if let Some(d) = &self.dataset {
