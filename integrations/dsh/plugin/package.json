@@ -1,0 +1,27 @@
+{
+  "name": "ferrum-dsh-panel",
+  "version": "0.1.0",
+  "private": true,
+  "description": "FERRUM view panel for the DeepSeek Harness web client: the ferrum-view/1 host in an iframe (Stage 25 test plugin).",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web"
+    }
+  },
+  "files": [
+    "lib/index.js",
+    "lib/client.js"
+  ],
+  "license": "MIT OR Apache-2.0"
+}
