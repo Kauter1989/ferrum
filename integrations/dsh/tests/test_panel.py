@@ -49,9 +49,9 @@ def test_the_bundle_is_a_classic_script_the_harness_can_serve():
 
 def test_the_registrations_make_the_panel_reachable():
     # covers 26.4-a
-    result = subprocess.run(
-        # The executable and the script are this repository's own files.
-        [node(), str(SMOKE)],  # noqa: S603
+    # The executable and the script are this repository's own files.
+    result = subprocess.run(  # noqa: S603
+        [node(), str(SMOKE)],
         cwd=PLUGIN,
         capture_output=True,
         text=True,
