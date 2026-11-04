@@ -27,7 +27,9 @@ step() {
 schema_fresh() {
   local tmp; tmp=$(mktemp)
   cargo run -q -p ferrum-cli -- schema >"$tmp" || return 1
-  if ! diff -q "$tmp" skills/ferrum/schemas/commands.json >/dev/null; then
+  # The checkout may hold CRLF (Windows, git autocrlf): compare content, not
+  # line endings, or a fresh schema looks stale on every Windows machine.
+  if ! diff -q <(tr -d '\r' <"$tmp") <(tr -d '\r' <skills/ferrum/schemas/commands.json) >/dev/null; then
     echo "    skills/ferrum/schemas/commands.json is stale:"
     echo "    cargo run -q -p ferrum-cli -- schema > skills/ferrum/schemas/commands.json"
     rm -f "$tmp"; return 1

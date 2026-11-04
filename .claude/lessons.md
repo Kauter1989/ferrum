@@ -591,6 +591,33 @@ that says so instead of editing the old one.
   minimum say in the same breath which platform CI covers and which it does
   not.
 
+### L34 — Three red CI pushes that a local run would have caught (2026-11, Stage 26)
+
+- **Symptom:** The same branch was pushed three times in a row, and CI failed
+  each time within seconds — twice in `python-lint` (four ruff findings, then
+  a missing trailing newline and a misplaced `noqa`), and once earlier on the
+  manifest. Nothing in the branch was wrong in principle: every finding was
+  mechanical and fixed in a minute. What it cost was three CI runs, three
+  waits of six minutes on `check`, and three rounds of context.
+- **Root cause:** The checks were run *after* the push and read from the CI
+  log. Locally, only the tests of the crates that had changed had been run,
+  and `python-lint` was not run at all — the hook that would have run ruff
+  printed "ruff is not installed" and that line was not acted on.
+- **Why it was missed:** A Windows machine was treated as a reason to skip
+  the Linux-shaped checks. It is not: WSL runs the same Ubuntu toolchain CI
+  uses, and lavapipe was already installed there.
+- **Fix:** `preflight.sh` runs in WSL on this machine; the script itself was
+  broken by a CRLF working copy (`/usr/bin/env: 'bash\r': Permission
+  denied`), which `.gitattributes` (`*.sh eol=lf`) and
+  `core.autocrlf=false` now prevent, and its schema check compares content
+  rather than bytes. ruff 0.16.9, the version CI pins, is installed locally.
+- **Guard:** `ferrum-change` §4 now says the checks run before the push, names
+  the WSL command, and lists what CI runs outside `preflight.sh`
+  (`test_hooks.py`, ruff, `cargo deny`).
+- **Rule:** Push once, after the checks pass locally. A CI minute spent on a
+  finding `ruff check` or `cargo fmt` would have shown at once is a minute
+  the project cannot pay for; on Windows that means WSL, not skipping.
+
 ## What worked
 
 ### W1 — Field test on the user's GPU with a throw-away script (2026-10, Stage 17)

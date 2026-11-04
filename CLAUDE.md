@@ -100,6 +100,17 @@ make coverage                                # coverage report; CI floor in Make
 cargo run --release -- <path>                 # the app is the default member
 ```
 
+**Run the checks before the push, not after it** (L34). `preflight.sh` runs
+them in CI order; on Windows run it in WSL, which is the Linux CI uses:
+
+```powershell
+wsl -e bash -lc "cd /mnt/e/projects/ferrum/sources/ferrum && .claude/skills/ferrum-change/preflight.sh"
+```
+
+CI minutes are the project's and are few: a push that fails on `ruff`, `fmt`
+or a stale schema spends them on what a local run answers for free. Details
+and the checks CI runs outside `preflight.sh`: `ferrum-change` §4.
+
 ## Workflow, skills and lessons
 
 Start every task with the skill `ferrum-workflow`, adapted from Spec

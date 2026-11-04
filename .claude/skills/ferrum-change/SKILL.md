@@ -76,6 +76,11 @@ DICOM tags only via `dicom_dictionary_std::tags`.
 
 ## 4. Check locally — the same as CI
 
+**Run the checks before the push, not after it** (L34). Every CI round costs
+the project minutes it does not have, and a red push spends them on what a
+local run would have caught. The order is: fix, run locally, push once,
+watch CI for the Linux-specific answers local runs cannot give.
+
 Run `.claude/skills/ferrum-change/preflight.sh` from the repo root and read its last line (`all checks passed`, L19). It
 runs, in CI order:
 1. `cargo fmt --all -- --check`;
@@ -85,6 +90,44 @@ runs, in CI order:
 4. `FERRUM_REQUIRE_GPU=1 cargo test --workspace -- --test-threads=4`
    (lavapipe: `mesa-vulkan-drivers`);
 5. with `--coverage`, `make coverage-ci` (floor in the `Makefile`).
+
+**On Windows the script runs in WSL** — the same Linux environment as CI,
+with lavapipe installed, so GPU tests run instead of skipping:
+
+```powershell
+wsl -e bash -lc "cd /mnt/e/projects/ferrum/sources/ferrum && .claude/skills/ferrum-change/preflight.sh"
+```
+
+Two things make that work, and both are fixed in the repository:
+- the working copy must hold LF in shell scripts and data
+  (`.gitattributes`, and `core.autocrlf=false`);
+- the schema check compares content, not line endings.
+
+**The GPU half needs a Mesa new enough for wgpu 30.** CI runs
+`ubuntu-latest` (Mesa 24+). A WSL on Ubuntu 22.04 has Mesa 23.2 through
+`jammy-updates`, and there the lavapipe driver segfaults in the first GPU
+parity test (`SIGSEGV` in `gpu_parity`) — the tests are not wrong, the driver
+is old. What still holds without `FERRUM_REQUIRE_GPU`: the rest of the suite,
+including the UI tests, runs and passes there, which is exactly what a
+Windows host cannot tell you (the same UI tests need a different driver path
+on Windows and two of them fail on the host while passing in WSL).
+
+So the useful split on Windows is:
+- **WSL, without `FERRUM_REQUIRE_GPU`**: the Linux answers — hooks, ruff, fmt,
+  clippy, schema, every non-GPU test, the UI tests;
+- **the host (PowerShell)**: the Windows answers and, for now, the GPU
+  renderer tests (`ferrum-render`'s parity suite, 14 tests, green).
+
+A push made with only one of the two is a push whose other half CI will
+judge; say which half was checked.
+
+Before pushing, also run the checks CI runs outside `preflight.sh`:
+- `python .claude/hooks/test_hooks.py` when a hook or `test_hooks.py`
+  changed (CI job `python-lint`);
+- `ruff check` and `ruff format --check` on the changed Python files
+  (`pip install ruff==0.16.9`, the pin CI uses; the hook prints a warning
+  when ruff is missing);
+- `cargo deny check licenses` when a dependency changed.
 
 **A red suite is a defect, never a background** (L33). CI runs on Linux; a
 change delivered from Windows or macOS may meet tests that only ever pass on
