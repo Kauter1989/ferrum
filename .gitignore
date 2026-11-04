@@ -12,3 +12,7 @@ build/
 
 # Claude Code hook state (markers, compaction log)
 .claude/state/
+
+# Build artifacts of the browser panel (integrations/dsh/panel/build.cmd)
+integrations/dsh/panel/*.wasm
+integrations/dsh/panel/*.js

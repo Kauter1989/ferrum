@@ -373,6 +373,37 @@ fn a_wrong_token_an_unknown_route_and_a_wrong_method_are_refused() {
 }
 
 #[test]
+fn the_volume_crosses_the_wire_once_for_a_client_that_renders_it() {
+    // covers the browser panel's data path: header, voxels and the hash a
+    // client checks its cached copy against
+    let f = fixture(false);
+    let server = open(&f);
+    let (status, header) = get_json(&token_url(&server, "/api/volume.json"));
+    assert_eq!(status, 200, "{header}");
+    let dims = f.volume.dims();
+    assert_eq!(header["format"].as_str(), Some("ferrum-volume/1"));
+    assert_eq!(
+        header["dims"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap()).collect::<Vec<_>>(),
+        vec![u64::from(dims.x), u64::from(dims.y), u64::from(dims.z)]
+    );
+    let count = u64::from(dims.x) * u64::from(dims.y) * u64::from(dims.z);
+    assert_eq!(header["bytes"].as_u64(), Some(count * 4), "f32 per voxel");
+    assert_eq!(header["value_unit"].as_str(), Some("HU"));
+
+    let (status, body) = get(&token_url(&server, "/api/volume"));
+    assert_eq!(status, 200);
+    assert_eq!(body.len() as u64, count * 4, "the body is the voxels the header describes");
+    // The values are the volume's own, i fastest.
+    let first = f32::from_le_bytes([body[0], body[1], body[2], body[3]]);
+    assert!((first - f.volume.physical(0, 0, 0).unwrap()).abs() < 1e-3, "first voxel {first}");
+    assert_eq!(header["sha256"].as_str().map(str::len), Some(64), "the header names a SHA-256");
+
+    // The voxels need the token like every other data route.
+    let (status, _) = get(&format!("{}/api/volume", server.url()));
+    assert_eq!(status, 401);
+}
+
+#[test]
 fn the_gpu_backend_draws_the_same_slice_as_the_cpu() {
     // covers 25.3-b
     let f = fixture(true);

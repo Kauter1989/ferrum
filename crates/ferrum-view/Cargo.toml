@@ -21,6 +21,7 @@ thiserror.workspace = true
 tiny_http.workspace = true
 wgpu.workspace = true
 getrandom.workspace = true
+sha2.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

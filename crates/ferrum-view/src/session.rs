@@ -13,11 +13,18 @@ use ferrum_domain::{ResultStore, SliceAxis, WindowLevel};
 use ferrum_io::workspace::changes::WorkspaceWatcher;
 use ferrum_io::{CompositeRepository, WorkspaceStore};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 use crate::cpu::CpuFrameSource;
 use crate::frame::{Backend, BackendPreference, FrameSource};
 use crate::gpu::GpuFrameSource;
 use crate::state::{state_json, Event, Input, ViewState, FORMAT};
+
+/// The lower-case hex SHA-256 of `bytes`, as the workspace format writes it.
+fn hex_sha256(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    digest.iter().map(|b| format!("{b:02x}")).collect()
+}
 
 /// Everything a view host can fail at.
 #[derive(Debug, thiserror::Error)]
@@ -138,6 +145,41 @@ impl Session {
             });
         }
         Ok(state)
+    }
+
+    /// The study's voxels for a client that renders them itself: the header
+    /// (dims, spacing, value range) as JSON and `count` f32 values, `i`
+    /// fastest, in the volume's own units.
+    ///
+    /// A browser panel takes this once and draws with the GPU of the person's
+    /// machine, so nothing but the volume crosses the wire (ADR 0014
+    /// decision 4, the local backend).
+    pub fn volume(&self) -> Result<(Value, Vec<u8>), ViewError> {
+        let dataset = self.viewer.dataset().ok_or(ViewError::NoStudy)?;
+        let volume = &dataset.volume;
+        let dims = volume.dims();
+        let spacing = volume.spacing();
+        let range = volume.range();
+        let mut values = Vec::with_capacity(volume.data().len());
+        for k in 0..dims.z {
+            for j in 0..dims.y {
+                for i in 0..dims.x {
+                    let value = volume.physical(i, j, k).unwrap_or(0.0);
+                    values.extend_from_slice(&value.to_le_bytes());
+                }
+            }
+        }
+        let header = json!({
+            "format": "ferrum-volume/1",
+            "dims": [dims.x, dims.y, dims.z],
+            "spacing_mm": [spacing.x, spacing.y, spacing.z],
+            "value_range": [range.min, range.max],
+            "value_unit": crate::state::value_unit(&self.viewer),
+            "frame": "LPS: voxel i, j, k are the stored order of the canonical grid",
+            "bytes": values.len(),
+            "sha256": hex_sha256(&values),
+        });
+        Ok((header, values))
     }
 
     /// The current frame, drawn again only when the state changed.

@@ -32,10 +32,13 @@ use web_sys::HtmlCanvasElement;
 #[wasm_bindgen]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FerrumMode {
-    /// One 2D slice.
+    /// One 2D slice, filling the canvas.
     Slice2d,
-    /// A 3D volume render.
+    /// A 3D volume render, filling the canvas.
     Volume3d,
+    /// Axial, coronal and sagittal slices beside a 3D render: the layout the
+    /// desktop's MPR mode uses, in one canvas.
+    Mpr,
 }
 
 /// A live FERRUM view bound to one canvas.
@@ -51,8 +54,8 @@ pub struct FerrumView {
     settings: RenderSettings,
     window: WindowLevel,
     transfer_function: TransferFunction,
-    axis: SliceAxis,
-    slice: u32,
+    /// Current slice per plane, indexed by `SliceAxis::normal_axis`.
+    slices: [u32; 3],
     mode: FerrumMode,
     size: UVec2,
 }
@@ -111,8 +114,7 @@ impl FerrumView {
             settings: RenderSettings::default(),
             window: WindowLevel::new(0.5, 1.0),
             transfer_function: TransferFunction::legacy_default(),
-            axis: SliceAxis::Axial,
-            slice: 0,
+            slices: [0; 3],
             mode: FerrumMode::Volume3d,
             size: UVec2::new(width, height),
         })
@@ -133,7 +135,7 @@ impl FerrumView {
         self.renderer.set_volume(&self.ctx.device, &self.ctx.queue, &volume);
         self.grid = BrickGrid::compute(&volume, 8);
         self.window = WindowLevel::auto(volume.range(), &ferrum_domain::storage_histogram(volume.data(), 256));
-        self.slice = dims[2] / 2;
+        self.slices = [dims[0] / 2, dims[1] / 2, dims[2] / 2];
         self.volume = Arc::new(volume);
         self.upload_occupancy();
         Ok(())
@@ -175,47 +177,66 @@ impl FerrumView {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("ferrum-wasm frame") });
         match self.mode {
             FerrumMode::Slice2d => {
-                self.renderer.prepare_slice(&self.ctx.device, &self.ctx.queue, 0, &self.slice_params());
-                {
-                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("slice pass"),
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view: &view,
-                            depth_slice: None,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                                store: wgpu::StoreOp::Store,
-                            },
-                        })],
-                        depth_stencil_attachment: None,
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                        multiview_mask: None,
-                    });
-                    self.renderer.paint_slice(&mut pass, 0);
-                }
+                let rect = (Vec2::ZERO, self.size.as_vec2());
+                let params = self.slice_params(SliceAxis::Axial, rect);
+                self.renderer.prepare_slice(&self.ctx.device, &self.ctx.queue, 0, &params);
+                let mut pass = self.present_pass(&mut encoder, &view);
+                self.renderer.paint_slice(&mut pass, 0);
             }
             FerrumMode::Volume3d => {
-                let params = self.frame_params();
+                let params = self.frame_params(self.size.as_vec2());
                 self.renderer.render_volume(&self.ctx.device, &self.ctx.queue, &mut encoder, 0, &params, self.size);
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("present pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &view,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
+                let mut pass = self.present_pass(&mut encoder, &view);
                 self.renderer.paint_volume(&mut pass, 0);
+            }
+            FerrumMode::Mpr => {
+                // Four quarters of the canvas. Each slice draws its image into
+                // its own rect (the shader maps a rect of the whole canvas),
+                // and the 3D view fills the last quarter through a viewport.
+                let rects = self.mpr_rects();
+                for (id, axis, rect) in [
+                    (0u64, SliceAxis::Axial, rects[0]),
+                    (1u64, SliceAxis::Coronal, rects[1]),
+                    (2u64, SliceAxis::Sagittal, rects[2]),
+                ] {
+                    let fitted = self.fit_rect(axis, rect);
+                    self.renderer.prepare_slice(
+                        &self.ctx.device,
+                        &self.ctx.queue,
+                        id,
+                        &self.slice_params(axis, fitted),
+                    );
+                }
+                let (min, max) = rects[3];
+                let quarter = Vec2::new(max.x - min.x, max.y - min.y);
+                let params = self.frame_params(quarter);
+                self.renderer.render_volume(
+                    &self.ctx.device,
+                    &self.ctx.queue,
+                    &mut encoder,
+                    3,
+                    &params,
+                    UVec2::new(quarter.x.max(1.0) as u32, quarter.y.max(1.0) as u32),
+                );
+                // Each slice's shader paints the whole canvas (it colours the
+                // pixels outside its rect with the background), so every slice
+                // is scissored to its own quarter; otherwise the last one
+                // would erase the other three. The 3D image goes first, in its
+                // quarter through a viewport.
+                let mut pass = self.present_pass(&mut encoder, &view);
+                pass.set_viewport(min.x, min.y, quarter.x.max(1.0), quarter.y.max(1.0), 0.0, 1.0);
+                self.renderer.paint_volume(&mut pass, 3);
+                pass.set_viewport(0.0, 0.0, self.size.x as f32, self.size.y as f32, 0.0, 1.0);
+                for (id, rect) in [(0u64, rects[0]), (1u64, rects[1]), (2u64, rects[2])] {
+                    pass.set_scissor_rect(
+                        rect.0.x.max(0.0) as u32,
+                        rect.0.y.max(0.0) as u32,
+                        (rect.1.x - rect.0.x).max(1.0) as u32,
+                        (rect.1.y - rect.0.y).max(1.0) as u32,
+                    );
+                    self.renderer.paint_slice(&mut pass, id);
+                }
+                pass.set_scissor_rect(0, 0, self.size.x, self.size.y);
             }
         }
         self.ctx.queue.submit(Some(encoder.finish()));
@@ -243,18 +264,16 @@ impl FerrumView {
         self.window = WindowLevel::new(center, width);
     }
 
-    /// The plane of the 2D view.
-    pub fn set_slice_axis(&mut self, axis: &str) -> Result<(), JsValue> {
-        self.axis = SliceAxis::ALL
+    /// The slice index of one plane, clamped to the volume. `plane` is
+    /// `axial`, `coronal` or `sagittal`.
+    pub fn set_slice(&mut self, plane: &str, index: u32) -> Result<(), JsValue> {
+        let axis = SliceAxis::ALL
             .into_iter()
-            .find(|a| a.label().eq_ignore_ascii_case(axis))
-            .ok_or_else(|| JsValue::from_str(&format!("unknown plane {axis:?}")))?;
+            .find(|a| a.label().eq_ignore_ascii_case(plane))
+            .ok_or_else(|| JsValue::from_str(&format!("unknown plane {plane:?}")))?;
+        let count = axis.slice_count(&self.volume);
+        self.slices[axis.normal_axis()] = index.min(count.saturating_sub(1));
         Ok(())
-    }
-
-    /// The slice index of the 2D view (clamped to the volume).
-    pub fn set_slice(&mut self, index: u32) {
-        self.slice = index.min(self.volume.dims().z.saturating_sub(1));
     }
 
     /// Orbits the 3D camera by a drag in pixels.
@@ -270,6 +289,27 @@ impl FerrumView {
     /// Where the camera starts.
     pub fn reset_camera(&mut self) {
         self.camera = OrbitCamera::default();
+    }
+
+    /// Sets the volume transfer function from a CT preset: `soft_tissue_bone`,
+    /// `lung_vessels` or `bone`, built for this volume's HU range. This is
+    /// what the desktop's 3D presets do, so a harness shows the same anatomy
+    /// instead of an editable default ramp.
+    pub fn set_ct_preset(&mut self, preset: &str) -> Result<(), JsValue> {
+        use ferrum_domain::CtPreset;
+        let chosen = match preset.trim().to_lowercase().replace(' ', "_").as_str() {
+            "soft_tissue_bone" | "soft_tissue" | "tissue" | "ct_soft_tissue_+_bone" => CtPreset::SoftTissueBone,
+            "lung_vessels" | "lung" | "ct_lung_vessels" => CtPreset::LungVessels,
+            "bone" | "ct_bone" => CtPreset::Bone,
+            other => {
+                return Err(JsValue::from_str(&format!(
+                    "unknown CT preset {other:?}; use soft_tissue_bone, lung_vessels or bone"
+                )))
+            }
+        };
+        self.transfer_function = TransferFunction::ct_preset(chosen, self.volume.range());
+        self.upload_occupancy();
+        Ok(())
     }
 
     /// The renderer's description, for a status line.
@@ -290,6 +330,27 @@ impl FerrumView {
 }
 
 impl FerrumView {
+    /// A render pass over the canvas, cleared to the background colour.
+    fn present_pass<'a>(
+        &self,
+        encoder: &'a mut wgpu::CommandEncoder,
+        view: &'a wgpu::TextureView,
+    ) -> wgpu::RenderPass<'a> {
+        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("ferrum-wasm present"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        })
+    }
+
     fn upload_occupancy(&mut self) {
         let tf = self.transfer_function.bake(256);
         self.renderer.set_transfer_function(&self.ctx.queue, &tf);
@@ -297,32 +358,62 @@ impl FerrumView {
         self.renderer.set_occupancy(&self.ctx.device, &self.ctx.queue, self.grid.grid_dims(), &occupancy);
     }
 
-    fn slice_params(&self) -> SliceParams {
-        let position = self.axis.slice_position(&self.volume, self.slice);
+    /// `rect` (`min`, `max` in canvas pixels) reduced to the largest box with
+    /// the plane's aspect: the shader stretches the image over the rect, so a
+    /// square rect would distort a 512?256 coronal slice.
+    fn fit_rect(&self, axis: SliceAxis, rect: (Vec2, Vec2)) -> (Vec2, Vec2) {
+        let (min, max) = rect;
+        let (box_w, box_h) = (max.x - min.x, max.y - min.y);
+        let (plane_w, plane_h) = axis.plane_dims(&self.volume);
+        let aspect = plane_w as f32 / plane_h.max(1) as f32;
+        let (w, h) =
+            if box_w / box_h.max(1.0) > aspect { (box_h * aspect, box_h) } else { (box_w, box_w / aspect.max(1e-3)) };
+        let centre = (min + max) / 2.0;
+        (centre - Vec2::new(w, h) / 2.0, centre + Vec2::new(w, h) / 2.0)
+    }
+
+    /// Parameters of one slice, drawn into `rect` (pixels of the canvas).
+    fn slice_params(&self, axis: SliceAxis, rect: (Vec2, Vec2)) -> SliceParams {
+        let index = self.slices[axis.normal_axis()];
         SliceParams {
-            rect: (Vec2::ZERO, self.size.as_vec2()),
+            rect,
             window: self.window.normalized_bounds(self.volume.range()),
-            position,
-            axis: self.axis.id(),
+            position: axis.slice_position(&self.volume, index),
+            axis: axis.id(),
             nearest: true,
-            background: [0.0, 0.0, 0.0, 1.0],
+            background: [0.05, 0.05, 0.06, 1.0],
             segments: false,
             segment_style: ferrum_domain::SegmentStyle::default(),
             fill_opacity: 1.0,
         }
     }
 
-    fn frame_params(&self) -> FrameParams {
+    /// Parameters of the 3D view for a viewport `size`.
+    fn frame_params(&self, size: Vec2) -> FrameParams {
         FrameParams::new(
             &self.volume,
             &self.camera,
             &self.settings,
             &ferrum_domain::ClipSettings::default(),
-            self.size.as_vec2(),
+            size,
             8,
             None,
         )
         .with_segments(false)
+    }
+
+    /// The four rectangles of the MPR layout: axial, coronal, sagittal and 3D,
+    /// in canvas pixels.
+    fn mpr_rects(&self) -> [(Vec2, Vec2); 4] {
+        let (w, h) = (self.size.x as f32, self.size.y as f32);
+        let (half_w, half_h) = (w / 2.0, h / 2.0);
+        // `MARGIN` pixels of gap at the inner edges keep the four views apart.
+        [
+            (Vec2::ZERO, Vec2::new(half_w, half_h)),
+            (Vec2::new(half_w, 0.0), Vec2::new(w, half_h)),
+            (Vec2::new(0.0, half_h), Vec2::new(half_w, h)),
+            (Vec2::new(half_w, half_h), Vec2::new(w, h)),
+        ]
     }
 }
 

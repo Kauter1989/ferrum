@@ -129,7 +129,11 @@ impl Host {
                 return;
             }
         }
-        let authorized = self.authorized(&request, &url);
+        // The panel module is public code, not data: a browser imports it as a
+        // module and cannot append the token to that request, so it is served
+        // without one. Everything that carries a study stays behind the token.
+        let public_panel = url.starts_with("/panel/");
+        let authorized = public_panel || self.authorized(&request, &url);
         let reply = if !authorized {
             Reply::json(StatusCode(401), json!({"error": "token required"}))
         } else {
@@ -171,6 +175,22 @@ impl Host {
                 let since = query_value(url, "since").and_then(|v| v.parse::<u64>().ok());
                 Reply::json(StatusCode(200), self.session.events_json(since))
             }
+            // A client that draws the study itself takes the voxels once.
+            "/api/volume" if get => match self.session.volume() {
+                Ok((header, values)) => Reply {
+                    status: StatusCode(200),
+                    content_type: "application/octet-stream",
+                    headers: vec![("X-Ferrum-Volume".into(), header.to_string())],
+                    body: values,
+                },
+                Err(e) => internal(e),
+            },
+            // The header alone, so a client can size the download and check a
+            // cached copy without fetching the voxels again.
+            "/api/volume.json" if get => match self.session.volume() {
+                Ok((header, _)) => Reply::json(StatusCode(200), header),
+                Err(e) => internal(e),
+            },
             "/api/frame.png" if get => match self.session.frame() {
                 Ok(frame) => Reply {
                     status: StatusCode(200),
@@ -188,9 +208,27 @@ impl Host {
                 Err(e @ ViewError::BadRequest(_)) => Reply::json(StatusCode(400), json!({ "error": e.to_string() })),
                 Err(e) => internal(e),
             },
-            "/api/state" | "/api/events" | "/api/frame.png" | "/api/input" | "/" | "/index.html" => {
-                Reply::json(StatusCode(405), json!({"error": "wrong method"}))
-            }
+            // The browser panel: the built wasm module and its JS glue, taken
+            // from the folder next to the executable (see
+            // integrations/dsh/panel/build.cmd). A client that draws the study
+            // itself loads these once.
+            panel if get && panel.starts_with("/panel/") => match panel_file(panel) {
+                Some((bytes, kind)) => Reply {
+                    status: StatusCode(200),
+                    content_type: kind,
+                    // A panel served from another origin (a harness) may
+                    // import the module, but nothing else of the host is
+                    // open to it.
+                    headers: vec![
+                        ("Cache-Control".into(), "max-age=60".into()),
+                        ("Access-Control-Allow-Origin".into(), "*".into()),
+                    ],
+                    body: bytes,
+                },
+                None => Reply::json(StatusCode(404), json!({ "error": "no such panel file" })),
+            },
+            "/api/state" | "/api/events" | "/api/frame.png" | "/api/volume" | "/api/volume.json" | "/api/input"
+            | "/" | "/index.html" => Reply::json(StatusCode(405), json!({"error": "wrong method"})),
             _ => Reply::json(StatusCode(404), json!({"error": "no such route"})),
         }
     }
@@ -198,6 +236,12 @@ impl Host {
     fn respond(&self, request: Request, reply: Reply) {
         let mut response = Response::from_data(reply.body).with_status_code(reply.status);
         let mut headers = reply.headers;
+        // A harness panel is another origin: it authorises with the token, and
+        // the browser needs this header to let it read the answer. It is only
+        // added to authorised answers.
+        if !headers.iter().any(|(name, _)| name == "Access-Control-Allow-Origin") {
+            headers.push(("Access-Control-Allow-Origin".into(), "*".into()));
+        }
         if !reply.content_type.is_empty() {
             headers.push(("Content-Type".into(), reply.content_type.to_owned()));
         }
@@ -234,6 +278,34 @@ impl Reply {
             body: PAGE.as_bytes().to_vec(),
         }
     }
+}
+
+/// A file of the browser panel (`/panel/<name>`) and its content type.
+///
+/// The host looks for `ferrum_wasm.js` and `ferrum_wasm_bg.wasm` next to its
+/// own executable first, then in a `panel` folder below the working directory;
+/// anything else is refused, so the route cannot be turned into a file server.
+fn panel_file(path: &str) -> Option<(Vec<u8>, &'static str)> {
+    let name = path.strip_prefix("/panel/")?;
+    let (bytes, kind) = match name {
+        "ferrum_wasm.js" => (std::fs::read(panel_path(name)?).ok()?, "text/javascript"),
+        "ferrum_wasm_bg.wasm" => (std::fs::read(panel_path(name)?).ok()?, "application/wasm"),
+        _ => return None,
+    };
+    Some((bytes, kind))
+}
+
+/// Where a panel file lives: beside the executable, else in `./panel`.
+fn panel_path(name: &str) -> Option<std::path::PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join(name));
+            candidates.push(dir.join("panel").join(name));
+        }
+    }
+    candidates.push(std::path::Path::new("panel").join(name));
+    candidates.into_iter().find(|p| p.is_file())
 }
 
 fn internal(error: ViewError) -> Reply {
