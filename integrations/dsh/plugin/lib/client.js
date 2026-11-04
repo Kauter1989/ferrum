@@ -123,7 +123,11 @@ window.__ModuleLoader__.load({
 			const [token, setToken] = React.useState(read(KEY_TOKEN, ""));
 			const [mode, setMode] = React.useState("mpr");
 			const [renderMode, setRenderMode] = React.useState("transfer_function");
-			const [status, setStatus] = React.useState("no view host connected");
+			const [status, setStatus] = React.useState(
+				tokenLooksValid(read(KEY_TOKEN, ""))
+					? "a saved token is filled in — a host prints a new one every time it starts"
+					: "no view host connected"
+			);
 			const [error, setError] = React.useState(null);
 			const canvasRef = React.useRef(null);
 			const viewRef = React.useRef(null);
@@ -179,14 +183,22 @@ window.__ModuleLoader__.load({
 					const view = await wasm.FerrumView.create(canvas);
 					viewRef.current = view;
 					setStatus("taking the study…");
-					const header = await fetch(clean + "/api/volume.json?token=" + secret).then((r) => {
-						if (!r.ok) throw new Error("volume: HTTP " + r.status);
-						return r.json();
-					});
-					const bytes = await fetch(clean + "/api/volume?token=" + secret).then((r) => {
-						if (!r.ok) throw new Error("volume: HTTP " + r.status);
-						return r.arrayBuffer();
-					});
+					// A stale token is the one failure a person can fix, so it is
+					// named: the host prints a new one on every start, and the panel
+					// remembers the old one in localStorage.
+					const take = async (path, want) => {
+						const response = await fetch(clean + path + "?token=" + encodeURIComponent(secret));
+						if (response.status === 401) {
+							throw new Error(
+								"the view host refused the token (401). Each `ferrum-cli view serve` prints a new one: " +
+									"paste the token from the terminal that runs it and press Connect again."
+							);
+						}
+						if (!response.ok) throw new Error(path + ": HTTP " + response.status);
+						return want === "json" ? response.json() : response.arrayBuffer();
+					};
+					const header = await take("/api/volume.json", "json");
+					const bytes = await take("/api/volume", "bytes");
 					view.set_volume(new Uint32Array(header.dims), new Float32Array(header.spacing_mm), new Float32Array(bytes));
 					view.set_window(header.value_range[0], header.value_range[1]);
 					// A CT is shown with the desktop's own preset: `tissue` has its
