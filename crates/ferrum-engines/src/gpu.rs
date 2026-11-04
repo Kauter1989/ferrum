@@ -361,20 +361,25 @@ mod tests {
     // covers 23.2-b, 23.2-d
     #[test]
     fn settings_are_parsed_and_cross_checked() {
-        let s = parse(
+        // The lock directory must be absolute; which absolute path is an
+        // operating system's business, so the case takes one that is absolute
+        // where the test runs. Forward slashes keep the TOML literal simple
+        // (a backslash would start an escape) and Windows accepts them.
+        let lock_dir = if cfg!(windows) { "C:/Users/ferrum/gpu" } else { "/run/user/1000/ferrum/gpu" };
+        let s = parse(&format!(
             r#"[network]
-            gpu_groups = { card = ["http://127.0.0.1:8765/", "http://127.0.0.1:8766"] }
-            gpu_capacity_mib = { card = 11264 }
-            gpu_peaks_mib = { "http://127.0.0.1:8765/" = 6000 }
-            gpu_lock_dir = "/run/user/1000/ferrum/gpu""#,
-        )
+            gpu_groups = {{ card = ["http://127.0.0.1:8765/", "http://127.0.0.1:8766"] }}
+            gpu_capacity_mib = {{ card = 11264 }}
+            gpu_peaks_mib = {{ "http://127.0.0.1:8765/" = 6000 }}
+            gpu_lock_dir = "{lock_dir}""#
+        ))
         .unwrap();
         assert_eq!(s.group("http://127.0.0.1:8765"), Some("card"), "trailing slashes are trimmed");
         assert_eq!(s.capacity("card"), Some(11264));
         assert_eq!(s.operator_peak("http://127.0.0.1:8765"), Some(6000));
         assert_eq!(s.operator_peak("http://127.0.0.1:8766"), None);
         assert_eq!(s.members("card").len(), 2);
-        assert_eq!(s.lock_dir, Some(PathBuf::from("/run/user/1000/ferrum/gpu")));
+        assert_eq!(s.lock_dir, Some(PathBuf::from(lock_dir)));
         for (bad, says) in [
             ("[network]\ngpu_capacity_mib = { other = 1 }", "not in network.gpu_groups"),
             ("[network]\ngpu_peaks_mib = { \"http://x\" = 1 }", "in no GPU group"),

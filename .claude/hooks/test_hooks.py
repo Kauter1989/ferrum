@@ -24,7 +24,7 @@ def run_hook(name, payload):
     out = subprocess.run(
         [sys.executable, HOOKS, name], input=json.dumps(payload), capture_output=True, text=True, timeout=120
     )
-    assert out.returncode == 0, out.stderr
+    assert out.returncode == 0, f"{name}: exit {out.returncode}; stderr: {out.stderr[:600]}"
     return json.loads(out.stdout)["hookSpecificOutput"] if out.stdout.strip() else None
 
 
@@ -51,7 +51,9 @@ class Repo:
     def write(self, rel, text, mode="w"):
         p = os.path.join(self.path, rel)
         os.makedirs(os.path.dirname(p), exist_ok=True)
-        with open(p, mode) as f:
+        # Repository files are UTF-8; without this, Windows writes the locale
+        # code page and the hook (which reads UTF-8) refuses the file.
+        with open(p, mode, encoding="utf-8") as f:
             f.write(text)
         return p
 
@@ -343,6 +345,7 @@ class Reminders(unittest.TestCase):  # F, G, H, I
         try:
             r.write(".claude/lessons.md", "### L1 — Outlines on two sides (2026-10)\n")
             out = run_hook("session-start", {"cwd": r.path})
+            self.assertIsNotNone(out, f"session-start printed nothing; repo at {r.path}")
             self.assertIn("Branch feat/x", out["additionalContext"])
             self.assertIn("Outlines on two sides", out["additionalContext"])
             run_hook("pre-compact", {"cwd": r.path, "trigger": "auto", "session_id": "s1"})

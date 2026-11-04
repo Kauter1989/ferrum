@@ -318,19 +318,20 @@ mod tests {
 
     #[test]
     fn path_rules() {
-        let c = AgentConfig {
-            read_roots: vec!["/data/in".into()],
-            workspace_root: Some("/data/ws".into()),
-            ..AgentConfig::default()
-        };
-        assert_eq!(c.check_source(Path::new("/data/in/ct/1.dcm")).unwrap(), PathBuf::from("/data/in/ct/1.dcm"));
-        assert_eq!(c.check_source(Path::new("/data/in/../secret")).unwrap_err().code, ErrorCode::Forbidden);
-        assert_eq!(c.check_source(Path::new("/data/income")).unwrap_err().code, ErrorCode::Forbidden);
-        assert_eq!(c.resolve_workspace(Path::new("ct1")).unwrap(), PathBuf::from("/data/ws/ct1"));
+        // The rules are about paths, not about one operating system: the cases
+        // are built from an absolute root so Windows (C:\…) and Unix (/…) both
+        // exercise the same checks.
+        let base = if cfg!(windows) { "C:\\data" } else { "/data" };
+        let p = |rest: &str| Path::new(base).join(rest.replace('/', std::path::MAIN_SEPARATOR_STR));
+        let c = AgentConfig { read_roots: vec![p("in")], workspace_root: Some(p("ws")), ..AgentConfig::default() };
+        assert_eq!(c.check_source(&p("in/ct/1.dcm")).unwrap(), p("in/ct/1.dcm"));
+        assert_eq!(c.check_source(&p("in/../secret")).unwrap_err().code, ErrorCode::Forbidden);
+        assert_eq!(c.check_source(&p("income")).unwrap_err().code, ErrorCode::Forbidden);
+        assert_eq!(c.resolve_workspace(Path::new("ct1")).unwrap(), p("ws/ct1"));
         assert_eq!(c.resolve_workspace(Path::new("../x")).unwrap_err().code, ErrorCode::Forbidden);
-        assert_eq!(c.resolve_workspace(Path::new("/tmp/ws")).unwrap_err().code, ErrorCode::Forbidden);
+        assert_eq!(c.resolve_workspace(&p("tmp/ws")).unwrap_err().code, ErrorCode::Forbidden);
         let open = AgentConfig::default();
-        assert!(open.check_source(Path::new("/anything")).is_ok());
-        assert_eq!(open.resolve_workspace(Path::new("/tmp/./ws")).unwrap(), PathBuf::from("/tmp/ws"));
+        assert!(open.check_source(&p("anything")).is_ok());
+        assert_eq!(open.resolve_workspace(&p("tmp/./ws")).unwrap(), p("tmp/ws"));
     }
 }

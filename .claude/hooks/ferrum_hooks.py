@@ -19,6 +19,7 @@ except A and B, which deny when they cannot decide safely. Lessons are in
 import hashlib
 import json
 import os
+import pathlib
 import re
 import shlex
 import shutil
@@ -458,7 +459,9 @@ def guard_edit(data):
         root = repo_root(cwd)
     except (RuntimeError, subprocess.TimeoutExpired, OSError):
         return
-    rel = os.path.relpath(os.path.abspath(os.path.join(cwd, path)), root)
+    # Git paths always use forward slashes; on Windows `relpath` gives
+    # backslashes, and every pattern and `git cat-file` below expects `/`.
+    rel = os.path.relpath(os.path.abspath(os.path.join(cwd, path)), root).replace(os.sep, "/")
     if not re.match(r"^docs/decisions/\d{4}-.*\.md$", rel):
         return
     try:
@@ -511,7 +514,8 @@ def post_edit(data):
     except (RuntimeError, subprocess.TimeoutExpired, OSError):
         return
     full = os.path.abspath(os.path.join(cwd, path))
-    rel = os.path.relpath(full, root)
+    # Git paths use forward slashes, and the change matrix is keyed by them.
+    rel = os.path.relpath(full, root).replace(os.sep, "/")
     if rel.endswith(".rs") and os.path.exists(full):
         subprocess.run(["rustfmt", "--edition", "2021", full], cwd=root, capture_output=True, timeout=30)
     parts = []
@@ -596,14 +600,20 @@ def session_start(data):
         lines.append("Lessons: " + "; ".join(t.split(" (")[0] for t in titles))
     target = os.path.join(root, "target")
     if os.path.isdir(target):
+        # `du` is Unix-only; on Windows its absence raised FileNotFoundError
+        # out of the hook and swallowed the whole session-start message.
         try:
-            out = subprocess.run(["du", "-sk", target], capture_output=True, text=True, timeout=5)
-            gb = int(out.stdout.split()[0]) / 1024 / 1024
+            if shutil.which("du") is not None:
+                out = subprocess.run(["du", "-sk", target], capture_output=True, text=True, timeout=5)
+                kb = int(out.stdout.split()[0])
+            else:
+                kb = sum(f.stat().st_size for f in pathlib.Path(target).rglob("*") if f.is_file()) // 1024
+            gb = kb / 1024 / 1024
             if gb > 20:
                 lines.append(
                     f"target/ is {gb:.0f} GB: remove target/llvm-cov-target and target/release if not needed (L15)."
                 )
-        except (subprocess.TimeoutExpired, ValueError, IndexError):
+        except (subprocess.TimeoutExpired, ValueError, IndexError, OSError):
             pass
     if shutil.which("ruff") is None:
         lines.append("ruff is not installed: edited Python files are not linted (pip install ruff; ruff.toml).")

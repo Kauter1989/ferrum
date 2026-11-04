@@ -42,6 +42,9 @@ fn references_name_every_command() {
         assert!(cli_doc.contains(first), "docs/agent-cli.md lacks {c}");
     }
     let skill = std::fs::read_to_string(root().join("skills/ferrum/SKILL.md")).unwrap();
+    // A checkout may hold CRLF (git's autocrlf on Windows). The content is what
+    // this test judges, so the line endings are normalised before comparing.
+    let skill = skill.replace("\r\n", "\n");
     assert!(skill.starts_with("---\nname: ferrum-imaging\ndescription: "), "SKILL.md front matter");
     for page in ["commands", "coordinates", "outputs", "safety", "segmentation"] {
         assert!(skill.contains(&format!("reference/{page}.md")));
