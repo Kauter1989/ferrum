@@ -374,8 +374,8 @@ fn a_wrong_token_an_unknown_route_and_a_wrong_method_are_refused() {
 
 #[test]
 fn the_volume_crosses_the_wire_once_for_a_client_that_renders_it() {
-    // covers the browser panel's data path: header, voxels and the hash a
-    // client checks its cached copy against
+    // covers 26.3-a: the header names the grid, the range and a hash, the body
+    // is the voxels themselves, and both need the token
     let f = fixture(false);
     let server = open(&f);
     let (status, header) = get_json(&token_url(&server, "/api/volume.json"));
@@ -401,6 +401,32 @@ fn the_volume_crosses_the_wire_once_for_a_client_that_renders_it() {
     // The voxels need the token like every other data route.
     let (status, _) = get(&format!("{}/api/volume", server.url()));
     assert_eq!(status, 401);
+}
+
+#[test]
+fn the_panel_module_is_public_code_while_the_data_is_not() {
+    // covers 26.3-b: a browser imports the module without being able to send
+    // the token on that request, so the module is served without one; the
+    // study itself stays behind the token.
+    let f = fixture(false);
+    let server = open(&f);
+    let (status, _) = get(&token_url(&server, "/api/state"));
+    assert_eq!(status, 200);
+
+    // The module route answers without a token, and only for the two files a
+    // browser needs: the route cannot be turned into a file server.
+    for path in ["/panel/ferrum_wasm.js", "/panel/ferrum_wasm_bg.wasm"] {
+        let (status, _) = get(&format!("{}{path}", server.url()));
+        assert!(status == 200 || status == 404, "{path} answered {status}: a missing file is 404, never 401");
+    }
+    let (status, _) = get(&format!("{}/panel/crate::session", server.url()));
+    assert_eq!(status, 404, "a path outside the two module files is refused");
+
+    // Every data route still refuses a request without the token.
+    for path in ["/api/state", "/api/volume", "/api/volume.json", "/api/frame.png"] {
+        let (status, _) = get(&format!("{}{path}", server.url()));
+        assert_eq!(status, 401, "{path} answered {status} without a token");
+    }
 }
 
 #[test]

@@ -8,6 +8,8 @@
  * The harness never runs the bundle before it serves it, so this is the only
  * check of the wrapper, the package id and the slot registrations that needs
  * no harness.
+ *
+ * # covers 26.4-a
  */
 "use strict";
 

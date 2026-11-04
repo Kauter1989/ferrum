@@ -469,6 +469,85 @@ that says so instead of editing the old one.
 - **Guard:** this rule and the `git diff --cached --numstat` step in the
   delivery checklist (`ferrum-change` §2).
 
+### L30 — An iframe into a harness panel: the secure context said no (2026-11, Stage 26)
+
+- **Symptom:** The DeepSeek Harness plugin showed a black panel. The host
+  answered every route, the page drew correctly in a normal browser, and the
+  plugin's own smoke script passed.
+- **Root cause:** The Desktop window is loaded from the `dsh-app://` scheme,
+  which Chromium treats as a secure context; such a page does not render
+  `http://` content in a frame, so the iframe stayed empty. Serving
+  `http://127.0.0.1` is not a substitute for rendering in the panel. The same
+  rule kills a cross-origin `import()` of a `http://` module.
+- **Why it was missed:** The page was verified in a plain browser tab, where
+  the iframe works, so every check that ran said "the server is fine". No
+  check ran inside the harness window, and the harness reports nothing there.
+- **Fix:** The panel renders the study itself (`crates/ferrum-wasm`, WebGPU
+  in a `<canvas>`); the host page is not framed at all. PR #91 replaced #90.
+- **Guard:** `docs/webgpu-panel.md` records the constraint with the
+  measurement; the plugin smoke script checks the bundle's registrations and
+  never claims the image was seen; the PR body carries the "not verified"
+  row when the panel was not opened in a real harness window
+  (`ferrum-verify` §4).
+- **Rule:** For a harness integration, verify inside the harness's own
+  renderer, not in a browser tab: a secure-context host (`dsh-app://`,
+  `app://`, `tauri://`) refuses what a plain page allows. When a frame stays
+  black while the server answers, suspect the embedding policy before the
+  code.
+
+### L31 — A registered tab type that no menu could offer (2026-11, Stage 26)
+
+- **Symptom:** After the panel rendered, the person could not open it in the
+  right sidebar: the strip's "+" menu had no FERRUM entry, and the header
+  button always opened the panel in the centre column.
+- **Root cause:** Two independent defects in the plugin's client half.
+  1. `sidebarRightTabs.register` accepted the type, but the "+" menu is built
+     from the type's `guide` entries, and the registration passed `guide: []`.
+     A type with no guide entry is registered and offered nowhere.
+  2. The header button called `sidebarRight.openTab`, which needs a focused
+     pane (`require()`); outside one it throws, and the plugin's own fallback
+     took over — the centre column. The built-in Browser uses
+     `commandTarget(element)` + `openTabFromTarget(kind, target)`, which binds
+     the tab to the session.
+- **Why it was missed:** The smoke script checked that the slots were
+  registered, not that the type could be reached from the UI; and the first
+  "fix" guessed at the API instead of reading how the shipped Browser plugin
+  registers its own tab.
+- **Fix:** A guide entry with title, description and icon; the header button
+  opens through `openTabFromTarget` and reveals a collapsed pane
+  (`isExpanded`/`toggleExpanded`), guarded so a build without those methods
+  still opens the tab. Commit `bee370b`.
+- **Guard:** `smoke-load.cjs` asserts the guide entry, its title, the session
+  binding, that a collapsed pane is revealed and that an open pane is not
+  collapsed; the fallback is asserted separately.
+- **Rule:** When a plugin extends a harness's own UI, read the shipped plugin
+  that owns that surface (`dsh-client-ui-sidebar-browser`) and copy its
+  registration path field by field. A registration that succeeds is not a
+  registration that is reachable, and a test must assert reachability, not
+  just the call.
+
+### L32 — Chasing an API contract by reading minified bundles (2026-11, Stage 26)
+
+- **Symptom:** Three rounds were spent on the right-sidebar tab, each ending
+  in a new guess about the slot contract. One guess (declaring
+  `dsh.client.inject: ["@deepseek-ai/dsh-client-ui-sidebar-right"]` in the
+  plugin manifest) dropped the plugin out of the client graph entirely,
+  because that package is not a dependency of the profile.
+- **Root cause:** The harness's client code is bundled and minified; reading
+  it gives fragments, not contracts. Meanwhile the harness ships tools that
+  answer directly: `boot()` composes the profile, `prepareProfileEntries`
+  reports what it would disable, the host prints activation warnings to
+  stderr, and the served page embeds the whole client graph.
+- **Why it was missed:** Debugging started from the docs and the bundle text
+  instead of from the running system's own diagnostics.
+- **Fix:** The working method, recorded as W9.
+- **Guard:** W9 states the order of investigation for a harness integration;
+  `integrations/dsh/plugin/lib/index.js` records its activation so "the row
+  never loaded" and "the panel is not visible" are distinguishable.
+- **Rule:** With a bundled host, do not infer a contract from minified
+  source; drive the host's own boot, composition and graph, and read what it
+  says.
+
 ## What worked
 
 ### W1 — Field test on the user's GPU with a throw-away script (2026-10, Stage 17)
@@ -559,3 +638,57 @@ that says so instead of editing the old one.
 - **Keep:** When no real data of a format can be downloaded, repack real
   data of another format with an independent library, verify the packing
   against that library first, then compare FERRUM across the formats.
+
+### W9 — Building a harness plugin: probe the host, then copy the shipped plugin (2026-11, Stage 26)
+
+- **What:** The order that finally worked for the DeepSeek Harness panel,
+  after three rounds of guessing:
+  1. **Prove the platform first.** A probe crate plus a stand page
+     (`crates/ferrum-wasm`, `integrations/dsh/panel/stand.html`) answered
+     "can the browser draw with our renderer at all" before any plugin code:
+     144 fps, WebGPU, one afternoon. Every later failure was then known not
+     to be the renderer.
+  2. **Ask the host's own boots, not its source.** The runtime is asar-
+     wrapped, so `ELECTRON_RUN_AS_NODE=1 "<Harness>.exe" <script>` runs the
+     harness's own `boot()`/`composeEntries()`/`loadProfileDirectory()` and
+     prints the entry tree it would mount; `reportSkippedBundles` and the
+     activation audit write to stderr, which the Electron window drops — run
+     the host from a console and read it. A profile copy in a temp directory
+     makes this safe.
+  3. **Read the graph the harness serves.** `GET /` embeds `__DSH_BOOT__`
+     with every client bundle, its phase and its `inject` list: it answers
+     "is my bundle there, and does it come after the package it needs".
+  4. **Copy the shipped plugin that owns the surface.** For a right-sidebar
+     tab: `dsh-client-ui-sidebar-browser` (`sidebarRightTabs.register` with a
+     `guide` entry, `sidebar.right.pane.tab` + `.title` keyed by the type id,
+     `commandTarget` + `openTabFromTarget`). For a header action:
+     `dsh-client-ui-jobs`. The contract is the shipped code, not a doc.
+  5. **Make the host half record that it applied.** One line appended to a
+     file tells "the row never loaded" from "the panel is not visible"; a
+     harness reports activation failures where nobody looks.
+  6. **Verify in the harness's renderer.** The panel ran in a browser tab
+     for hours and stayed black inside the harness (L30).
+- **Outcome:** Steps 2 and 4 ended three rounds of guessing in minutes each;
+  the tab, the token and the WebGPU canvas all work in the harness now.
+- **Keep:** For any host that mounts plugins (a harness, an IDE, a window
+  manager), the order is: probe the platform in isolation, ask the host's own
+  boot what it mounts, read the served graph, copy the shipped plugin that
+  owns the surface, leave a trace in the host half, then verify inside the
+  host's own renderer.
+
+### W10 — One renderer, two hosts: the wasm binding as a thin layer (2026-11, Stage 26)
+
+- **What:** `crates/ferrum-wasm` does not re-implement anything: it takes a
+  `<canvas>`, gets the WebGPU adapter, and calls `VolumeRenderer`,
+  `FrameParams`, `OrbitCamera` and `RenderMode` exactly as the desktop does.
+  `ferrum-domain`, `ferrum-processing` and `ferrum-app` compiled for
+  `wasm32` with no source change at all.
+- **Outcome:** The browser and the desktop cannot drift: a shader or frame
+  model change reaches both at once, and the rendering rule of `CLAUDE.md`
+  still has one implementation. The whole crate is behind
+  `#![cfg(target_arch = "wasm32")]`, so the native workspace build is
+  unaffected.
+- **Keep:** When a second host must draw the same thing, bind the existing
+  renderer rather than port it; treat "the dependency compiles for the other
+  target unchanged" as the design constraint, and check it before writing
+  the binding.

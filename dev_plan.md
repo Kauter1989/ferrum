@@ -444,8 +444,8 @@ change of the agent's command set: gate G1 before design).
 
 ### Implementation
 
-| Task | Criteria | PR | State |
-|---|---|---|---|
+| Task | What | Criteria | PR | State |
+|---|---|---|---|---|
 | 20.1 Enhanced per-frame geometry | 20.1-a…f | [#60](https://github.com/Kauter1989/ferrum/pull/60) | ✅ |
 | 20.4.1–20.4.2 partition volumes (DICOM, NIfTI) | 20.4-a…d | [#62](https://github.com/Kauter1989/ferrum/pull/62) | ✅ |
 | 20.3.1–20.3.3 agent and workspace | 20.3-a…f | [#63](https://github.com/Kauter1989/ferrum/pull/63) | ✅ |
@@ -526,7 +526,7 @@ running engine job.
 
 ### Implementation
 
-| Task | Criteria | PR | State |
+| Task | What | Criteria | PR | State |
 |---|---|---|---|
 | 23.T1 `ferrum-gpu-lock`: directory checks, holder records, admission, stale holders | 23.1-a/b/c/f, 23.2-a/c/d | 1 | ✅ |
 | 23.T2 `GpuSettings` in `ferrum-engines`; `AgentConfig` delegates; peaks | 23.2-b (the manifest field in PR 2) | 1, 2 | ✅ |
@@ -665,7 +665,7 @@ of 25.4-c in Stage 26 through `view events`).
 
 ### Implementation
 
-| Task | Criteria | PR | State |
+| Task | What | Criteria | PR | State |
 |---|---|---|---|
 | 25.T1 crate `ferrum-view`: session, state, input, events, workspace reload | 25.1-a, 25.2-c/e, 25.4-b/c | 1 | ✅ |
 | 25.T2 CPU frame source (the slice oracle and the `slice.wgsl` overlay rule) | 25.2-a/b, 25.3-a | 1 | ✅ |
@@ -682,6 +682,94 @@ outline sides), input moves one slice per notch and clamps, a pick gives the
 voxel and the value `probe` gives, events are ordered and hold no path or
 name, and a segment the agent saves appears on the next state read. Open:
 25.6 (the harness plugin, PR 2) and the MPR/3D components (Stage 26).
+
+## Stage 26 — The study in a browser panel (WASM + WebGPU) 🚧
+
+**Size:** L ([design](docs/webgpu-panel.md) with the measurements).
+
+**Why.** A panel that shows a streamed image is a picture, not a view: no
+rotation, no scrolling through slices, no real time. A person in a harness
+must rotate the volume and step through MPR while the agent works beside
+them. FERRUM already owns that renderer, so the panel runs the renderer
+itself instead of receiving frames.
+
+### User stories
+
+1. As a **clinician**, I want to open the study beside my conversation and
+   rotate the volume and scroll the slices myself, so that I follow what
+   the agent does without waiting for a rendered picture.
+2. As a **harness maintainer**, I want the panel to use the harness's own
+   tab in the right sidebar, so that the conversation stays where it was.
+3. As a **developer**, I want the panel to draw with FERRUM's own shaders
+   and frame model rather than a second renderer, so that the browser and
+   the desktop show the same image.
+
+### Criteria
+
+- [26.1-a] `cargo build -p ferrum-wasm --target wasm32-unknown-unknown`
+  produces a module that a browser loads and draws with, and the workspace
+  builds for the host unchanged.
+- [26.1-b] The browser and the desktop use one image-formation model: the
+  panel calls `VolumeRenderer` with `volume.wgsl` and takes its camera and
+  render modes from `ferrum-domain`, adding no shader and no ray marcher.
+- [26.2-a] The MPR layout shows axial, coronal and sagittal slices and the
+  3D volume in one canvas, each slice in its own rect with its aspect
+  kept, and no view erases another.
+- [26.2-b] The render modes of the desktop (`tissue`, `isosurface`, `mip`,
+  `transfer_function`) and its CT presets are available, and a CT opens on
+  the soft tissue and bone preset.
+- [26.3-a] A client that renders the study itself takes the voxels once
+  over loopback: `/api/volume` carries dims, spacing, value range, unit and
+  a SHA-256 in the header, and `/api/volume.json` the header alone. The
+  voxels need the token like every data route.
+- [26.3-b] The built module is served at `/panel/…` without the token: it is
+  code, not data, and a browser imports a module without being able to add
+  the token to that request.
+- [26.4-a] In the DeepSeek Harness the panel opens as a tab of the right
+  sidebar, offered by the strip's own menu, and the conversation keeps the
+  centre column.
+- [26.4-b] A host that starts a new token on every run says so when a panel
+  sends an old one: the answer is 401, and the panel names the cause and
+  where the current token is printed.
+
+### Verification
+
+| Criterion | Level | Evidence | Outcome |
+|---|---|---|---|
+| 26.1-a | build + manual | `cargo build -p ferrum-wasm --target wasm32-unknown-unknown`; the module loaded in a browser window and drew the study | ✅ |
+| 26.1-b | reading + manual | the binding calls `VolumeRenderer` with `volume.wgsl`; the panel's image matched the desktop preset on the same CT | ✅ |
+| 26.2-a | visual | the MPR layout on a 512×512×252 CT: all four quarters, no view erased | ✅ |
+| 26.2-b | visual | all four modes and the soft tissue + bone preset | ✅ |
+| 26.3-a | test | `view_host.rs::the_volume_crosses_the_wire_once_for_a_client_that_renders_it` | ✅ |
+| 26.3-b | test | `view_host.rs::the_panel_module_is_public_code_while_the_data_is_not` | ✅ |
+| 26.4-a | manual | the person opened the tab in the right sidebar of the harness | ✅ |
+| 26.4-b | manual + host | 200 for the current token, 401 for an old one; the panel names the cause | ✅ |
+
+Not verified by automation: 26.1, 26.2 and the panel itself — the WebGPU path
+needs a headed browser, and this machine's headless Chromium has no WebGPU
+adapter ([design](docs/webgpu-panel.md)). Field numbers: 144 fps at
+1317×856, 512×512×252 CT, RTX 3080.
+
+### Out of scope
+
+Segments and their overlay in the browser, the transfer-function editor,
+measurements in the panel, a compressed or 16-bit volume transfer (a
+512×512×252 study crosses the wire as 252 MB today), and an automated test
+of the WebGPU path (it needs a headed browser, [design](docs/webgpu-panel.md)).
+
+### Implementation
+
+| Task | What | Criteria | PR | State |
+|---|---|---|---|
+| 26.1 | `ferrum-wasm`: canvas and WebGPU adapter, slice and volume views, the MPR layout, the render modes and the CT presets | 26.1-a, 26.1-b, 26.2-a, 26.2-b | 1 | ✅ |
+| 26.2 | view host: `/api/volume`, `/api/volume.json`, `/panel/…`, CORS | 26.3-a, 26.3-b | 1 | ✅ |
+| 26.3 | DeepSeek Harness panel: canvas, controls, the right-sidebar tab | 26.4-a, 26.4-b | 1 | ✅ |
+| 26.4 | docs: `webgpu-panel.md`, architecture, CLAUDE.md, CHANGELOG, this spec | — | 1 | ✅ |
+
+**Status:** built and observed on the user's machine: the panel opens in the
+right sidebar and draws MPR and 3D at 144 fps on a 512×512×252 CT. The
+criteria marked ✅ were verified by test, by looking at the image, or on the
+user's machine as noted in the PR table; automation for 26.1–26.2 is open.
 
 ## Roadmap
 

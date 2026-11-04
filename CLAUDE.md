@@ -28,6 +28,7 @@ ferrum (desktop shell) → ferrum-ui (views, panels) → ferrum-app (application
                                        ↘ ferrum-processing, ferrum-render (infrastructure)
                                        ↘ ferrum-radiomics → ferrum-domain (segment metrics)
 ferrum-cli → ferrum-view (local view host) → ferrum-app, ferrum-render (gpu), ferrum-io
+ferrum-wasm (browser) → ferrum-render (gpu), ferrum-app, ferrum-processing — builds for wasm32 only
 ```
 
 - `ferrum-domain` has no I/O, no GPU, no UI dependencies; it defines ports
@@ -68,6 +69,14 @@ ferrum-cli → ferrum-view (local view host) → ferrum-app, ferrum-render (gpu)
   loopback HTTP with a token. Only `ferrum-cli` depends on it (`view serve`,
   a CLI-only command). It adds no image-formation code and no business
   logic; protocol changes update `docs/view-host.md` and its tests.
+- `ferrum-wasm` is the same renderer in a browser
+  ([design](docs/webgpu-panel.md)): it binds `ferrum-render` to a `<canvas>`
+  through WebGPU and adds only the MPR layout and the CT presets. It builds
+  for `wasm32-unknown-unknown`; the whole module body is behind
+  `#![cfg(target_arch = "wasm32")]`, so a native `cargo check --workspace`
+  compiles an empty crate. It adds no image-formation code, parses no files
+  and holds no business logic. A harness panel is the consumer; the steps
+  are in `integrations/dsh/README.md`.
 - DICOM tags only through `dicom_dictionary_std::tags` constants — never raw
   tag literals.
 
