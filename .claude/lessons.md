@@ -548,6 +548,49 @@ that says so instead of editing the old one.
   source; drive the host's own boot, composition and graph, and read what it
   says.
 
+### L33 — A red test suite accepted as "it was already red" (2026-11, Stage 26)
+
+- **Symptom:** `cargo test --workspace` failed in six places and
+  `test_hooks.py` in three, all on this Windows machine. Each was checked
+  against `origin/develop`, found to fail there too, written into the PR as
+  "pre-existing", and the work went on. The user stopped it: a commit must
+  not leave the suite red.
+- **Root cause:** The checks were platform-blind. They were written and are
+  run in CI on Linux, where every case below happens to be true:
+  - `guard_edit` built its repository path with `os.path.relpath`, which
+    returns backslashes on Windows, while the ADR pattern and
+    `git cat-file` expect `/` — so a merged ADR could be rewritten with no
+    hook complaint;
+  - `session_start` sized `target/` with `du`, a Unix tool; on Windows
+    `FileNotFoundError` escaped and the whole session-start message
+    disappeared;
+  - the hook tests wrote fixtures without `encoding`, so the locale code page
+    met the hook's UTF-8 reader;
+  - three tests hard-coded Unix roots (`/data/in`, `/run/user/1000/…`);
+  - `mcp.rs` replaced the workspace root in JSON, where a Windows separator
+    is `\\`, so the replacement never matched;
+  - `package.rs` compared `SKILL.md` with `\n` against a CRLF checkout;
+  - two helpers sat behind a `#[cfg(unix)]` test but were not gated
+    themselves, which `-D warnings` reports on Windows.
+- **Why it was missed:** "Red on develop too" answered "is this my
+  regression" and was taken as "not my problem". It answers neither of the
+  questions that matter: does the project pass on the machine the work runs
+  on, and does CI cover that platform?
+- **Fix:** Commit `1035d28`: paths normalised to `/`, a portable size walk,
+  fixtures written as UTF-8, roots built from the running platform, both JSON
+  spellings replaced, line endings normalised, the helpers gated like their
+  user.
+- **Guard:** the hook tests run before a change that touches hooks
+  (`CLAUDE.md`, *Hooks*), and the delivery checklist expects the suite to be
+  green, not "as green as before" (`ferrum-change` §4). The new L33 rule
+  states what to do with a pre-existing failure.
+- **Rule:** A failing test is a defect of the repository, not of the
+  platform it was noticed on: fix it, or exclude it on purpose with a
+  written reason inside the test. Never hand a branch where the suite is
+  red, and never let "it failed before my change" stand as an answer — at
+  minimum say in the same breath which platform CI covers and which it does
+  not.
+
 ## What worked
 
 ### W1 — Field test on the user's GPU with a throw-away script (2026-10, Stage 17)

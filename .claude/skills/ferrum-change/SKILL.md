@@ -86,6 +86,19 @@ runs, in CI order:
    (lavapipe: `mesa-vulkan-drivers`);
 5. with `--coverage`, `make coverage-ci` (floor in the `Makefile`).
 
+**A red suite is a defect, never a background** (L33). CI runs on Linux; a
+change delivered from Windows or macOS may meet tests that only ever pass on
+one platform. When a test fails before the change as well:
+- fix it in the same branch — a path built with `os.path.relpath`, a Unix
+  tool such as `du`, a fixture written without `encoding`, a root hard-coded
+  as `/data`, a JSON compare that ignores `\\` — these are repository
+  defects, and each one hides the next real failure;
+- if it genuinely cannot be fixed here (a GPU that removes the device, a
+  harness bug), say so in the PR in one sentence with the name of the test
+  and the reason, and still run everything else green.
+
+Never write "it failed before my change" and stop there.
+
 Notes:
 - **Hooks catch some of this before you do** (`CLAUDE.md`, *Hooks*):
   - `rustfmt` runs after each edit of a `.rs` file, and `ruff format`
