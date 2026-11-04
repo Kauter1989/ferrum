@@ -14,6 +14,7 @@ members = [
     "crates/ferrum-cli",
     "crates/ferrum-ui",
     "crates/ferrum-view",
+    "crates/ferrum-wasm",
     "crates/ferrum",
 ]
 

@@ -1,0 +1,29 @@
+[package]
+name = "ferrum-wasm"
+description = "FERRUM in the browser: a wgpu/WebGPU renderer for a <canvas>, driven by the same shaders and use cases as the desktop app."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# This crate only builds for the browser: `wgpu::SurfaceTarget::Canvas` exists
+# there and nowhere else, so the native workspace build skips it.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+ferrum-domain.workspace = true
+ferrum-processing.workspace = true
+ferrum-render = { workspace = true, features = ["gpu"] }
+glam.workspace = true
+bytemuck.workspace = true
+wgpu.workspace = true
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["CanvasRenderingContext2d", "Document", "Element", "HtmlCanvasElement", "Window"] }
+console_error_panic_hook = "0.1"
+wasm-bindgen-futures = "0.4"
+
+[lints]
+workspace = true
