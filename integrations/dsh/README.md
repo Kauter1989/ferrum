@@ -79,6 +79,10 @@ editing it while the harness runs does not load the plugin.
 2. the panel draws **MPR** by default: axial (top left), coronal (top right),
    sagittal (bottom left) and the 3D volume (bottom right);
 3. drag over the canvas to orbit the 3D view, scroll to zoom;
+   the panel opens in the conversation (FERRUM in the session header or the
+   left sidebar) and, when the right sidebar is available, as a tab beside the
+   chat: open it with **FERRUM** in the session header, or from the strip's
+   **+** menu;
 4. **3D** and **2D** switch to a single full-canvas view, and the select
    picks the 3D mode (`transfer_function` by default, with the desktop's CT
    soft tissue + bone preset; `tissue`, `isosurface` and `mip` are the others).

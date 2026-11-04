@@ -2,7 +2,7 @@
   "name": "ferrum-dsh-panel",
   "version": "0.1.0",
   "private": true,
-  "description": "FERRUM view panel for the DeepSeek Harness web client: the ferrum-view/1 host in an iframe (Stage 25 test plugin).",
+  "description": "FERRUM panel for the DeepSeek Harness web client: MPR and 3D drawn from ferrum-wasm on the browser GPU.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {

@@ -44,6 +44,8 @@ const sandbox = {
 	}
 };
 sandbox.globalThis = sandbox;
+// The header button asks the pane which surface has focus.
+sandbox.document = { activeElement: null };
 vm.runInNewContext(bundle, sandbox, { filename: "lib/client.js" });
 
 assert(
@@ -87,22 +89,96 @@ const slots = {
 	}
 };
 const layout = { selectPanel: (panel) => registrations.push({ selectPanel: panel }) };
-plugin.apply({ slots, layout });
+// The right sidebar's two services, as DSH provides them: a tab-type registry
+// and the pane controller whose `openTab` shows a tab.
+const tabTypes = [];
+const sidebarRightTabs = {
+	register(definition) {
+		tabTypes.push(definition);
+	}
+};
+const opened = [];
+const toggles = [];
+let expanded = false;
+const sidebarRight = {
+	// The pane controller resolves the session from the focused surface, as the
+	// built-in Browser does; the header button must use that path.
+	commandTarget() {
+		return { sessionId: "s1", paneId: "p1", host: "dock" };
+	},
+	openTabFromTarget(kind, target) {
+		opened.push({ kind, target });
+	},
+	openTab(kind, options) {
+		opened.push({ kind, options, wrong: "the header must bind the tab to a session, not open it blindly" });
+	},
+	isExpanded() {
+		return expanded;
+	},
+	toggleExpanded() {
+		expanded = !expanded;
+		toggles.push(expanded);
+	}
+};
+plugin.apply({ slots, layout, sidebarRightTabs, sidebarRight });
 
-assert(registrations.length >= 3, "apply() made " + registrations.length + " registrations, expected three");
+assert(registrations.length >= 5, "apply() made " + registrations.length + " registrations, expected five");
 const bySlot = (name) => registrations.find((registered) => registered.slot === name);
 assert(bySlot("main"), "no main page registration");
 assert(bySlot("main").options.key === plugin.PANEL_ID, "the main page has no stable key");
 assert(bySlot("sidebar.panellist"), "no sidebar row registration");
 assert(bySlot("sidebar.panellist").options.label === "FERRUM", "the sidebar row is not labelled FERRUM");
 assert(bySlot("conversation.session.header.actions"), "no conversation header button");
+
+// The right sidebar: one tab type and the two slots it needs.
+assert(tabTypes.length === 1, "expected one right-sidebar tab type, got " + tabTypes.length);
+assert(tabTypes[0].kind === plugin.PANEL_ID, "the tab type kind is not the panel id");
+assert(tabTypes[0].multiple === false, "the FERRUM tab should not be openable twice");
+// The strip's "+" menu lists these entries: an empty list means the type
+// exists but can be opened from nowhere.
+assert(Array.isArray(tabTypes[0].guide) && tabTypes[0].guide.length >= 1, "the tab type has no guide entry");
+assert(typeof tabTypes[0].guide[0].title === "function", "the guide entry has no title function");
+assert(tabTypes[0].guide[0].title() === "FERRUM", "the guide entry is not labelled FERRUM");
+assert(bySlot("sidebar.right.pane.tab"), "no right-pane tab registration");
+assert(bySlot("sidebar.right.pane.tab").options.key === plugin.PANEL_ID, "the right-pane tab has no stable key");
+assert(bySlot("sidebar.right.pane.tab.title"), "no right-pane tab title registration");
 assert(renders === 0, "loading the bundle rendered something");
 
-// The header button opens the page through the layout service.
+// The header button opens the panel in the right sidebar, next to the chat,
+// bound to the session the focused surface belongs to.
 bySlot("conversation.session.header.actions").options.inject().open();
+assert(opened.length === 1, "the header button did not open a right-sidebar tab");
+assert(opened[0].kind === plugin.PANEL_ID, "the header button opened the wrong tab kind");
+assert(opened[0].wrong === undefined, "the header opened a tab without binding it to a session");
 assert(
-	registrations.some((entry) => entry.selectPanel === plugin.PANEL_ID),
-	"the header button does not select the FERRUM page"
+	opened[0].target && opened[0].target.sessionId === "s1",
+	"the tab was not bound to the focused session"
+);
+assert(
+	!registrations.some((entry) => entry.selectPanel === plugin.PANEL_ID),
+	"the header button took over the main column even though a right sidebar exists"
+);
+assert(toggles.length === 1 && expanded, "the header button did not reveal the collapsed right sidebar");
+// A pane that is already open is left alone.
+toggles.length = 0;
+bySlot("conversation.session.header.actions").options.inject().open();
+assert(toggles.length === 0, "the header button collapsed an already open right sidebar");
+
+// A build without the right sidebar keeps the panel working in the centre.
+const fallback = [];
+plugin.apply({
+	slots: {
+		inject: (name, register) => fallback.push(register()),
+		register: (options) => ({ slot: options.name, options })
+	},
+	layout: { selectPanel: (panel) => fallback.push({ selectPanel: panel }) }
+});
+const fallbackHeader = fallback.find((entry) => entry.slot === "conversation.session.header.actions");
+assert(fallbackHeader, "no header button without a right sidebar");
+fallbackHeader.options.inject().open();
+assert(
+	fallback.some((entry) => entry.selectPanel === plugin.PANEL_ID),
+	"without a right sidebar the header button does not fall back to the centre"
 );
 
 // The two guards the page relies on: loopback only, and a 32-hex-digit token.

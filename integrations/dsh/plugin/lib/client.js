@@ -325,21 +325,87 @@ window.__ModuleLoader__.load({
 			return h("button", { type: "button", style: styles.button, title: "Open the FERRUM view", onClick: open }, "FERRUM");
 		}
 
+		/** The caption of the FERRUM tab in the right sidebar's strip. */
+		function FerrumTabTitle() {
+			return h("span", null, "FERRUM");
+		}
+
 		/** Cordis services this plugin needs; the fiber waits for each one. */
-		const inject = ["slots", "layout"];
+		const inject = ["slots", "layout", "sidebarRight", "sidebarRightTabs"];
 
 		function apply(ctx) {
 			ctx.slots.inject("main", () => ctx.slots.register({ name: "main", key: PANEL_ID }, FerrumPage));
 			ctx.slots.inject("sidebar.panellist", () =>
 				ctx.slots.register({ name: "sidebar.panellist", id: PANEL_ID, order: 10, label: "FERRUM" }, FerrumIcon)
 			);
+
+			// A tab of the right sidebar: the conversation keeps the centre
+			// column and the study sits beside it. DSH owns the tab strip, the
+			// pane actions and the session scoping; this plugin only says what a
+			// FERRUM tab is and what it draws.
+			//
+			// When a build has no right sidebar, the panel still works in the
+			// main column: the services are checked, not assumed.
+			if (ctx.sidebarRightTabs !== undefined && ctx.sidebarRight !== undefined) {
+				ctx.sidebarRightTabs.register({
+					id: PANEL_ID,
+					kind: PANEL_ID,
+					multiple: false,
+					title: () => "FERRUM",
+					// The strip's "+" menu lists these entries: a type with no guide
+					// entry is registered but offered nowhere.
+					guide: [
+						{
+							id: "open",
+							title: () => "FERRUM",
+							description: () => "View the study: MPR and 3D",
+							icon: FerrumIcon
+						}
+					]
+				});
+				ctx.slots.inject("sidebar.right.pane.tab", () =>
+					ctx.slots.register({ name: "sidebar.right.pane.tab", key: PANEL_ID }, FerrumPage)
+				);
+				ctx.slots.inject("sidebar.right.pane.tab.title", () =>
+					ctx.slots.register({ name: "sidebar.right.pane.tab.title", key: PANEL_ID }, FerrumTabTitle)
+				);
+			}
+
 			ctx.slots.inject("conversation.session.header.actions", () =>
 				ctx.slots.register(
 					{
 						name: "conversation.session.header.actions",
 						id: "ferrum.open",
 						order: 10,
-						inject: () => ({ open: () => ctx.layout.selectPanel(PANEL_ID) })
+						// The header button puts the panel beside the conversation: expand
+						// the right sidebar if it is collapsed, then open the tab in the
+						// session the focused surface belongs to (the same path the
+						// built-in Browser takes). Without a right sidebar, or without
+						// a session to bind to, the main column shows the panel.
+						inject: () => ({
+							open: () => {
+								try {
+									const target = ctx.sidebarRight.commandTarget(document.activeElement);
+									if (target !== undefined) {
+										ctx.sidebarRight.openTabFromTarget(PANEL_ID, target);
+										// A collapsed pane holds the tab but shows nothing,
+										// so reveal it. A build whose pane cannot report its
+										// state simply keeps whatever the person chose.
+										try {
+											if (typeof ctx.sidebarRight.isExpanded === "function" && !ctx.sidebarRight.isExpanded()) {
+												ctx.sidebarRight.toggleExpanded();
+											}
+										} catch (e) {
+											/* the tab is open; the pane keeps its own state */
+										}
+										return;
+									}
+								} catch (e) {
+									/* fall through to the main column */
+								}
+								ctx.layout.selectPanel(PANEL_ID);
+							}
+						})
 					},
 					FerrumHeaderAction
 				)
