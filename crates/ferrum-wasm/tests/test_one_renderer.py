@@ -87,10 +87,10 @@ def test_the_desktop_render_modes_and_ct_presets_are_offered():
 def test_the_crate_is_inert_off_wasm_so_the_workspace_builds():
     # covers 26.1-a
     text = SOURCE.read_text(encoding="utf-8")
-    first = [line for line in text.splitlines() if line.strip() and not line.startswith("//!")][0]
+    first = next(line for line in text.splitlines() if line.strip() and not line.startswith("//!"))
     assert first.strip() == '#![cfg(target_arch = "wasm32")]', (
         f"the module body is not gated on wasm; the first item is {first!r}"
     )
     manifest = (CRATE / "Cargo.toml").read_text(encoding="utf-8")
     assert 'target_arch = "wasm32"' in manifest, "the dependencies are not gated on wasm"
-    assert re.search(r'^\[lib\]', manifest, re.M), "no [lib] section"
+    assert "[lib]" in manifest, "no [lib] section"

@@ -50,7 +50,7 @@ def test_the_bundle_is_a_classic_script_the_harness_can_serve():
 def test_the_registrations_make_the_panel_reachable():
     # covers 26.4-a
     result = subprocess.run(
-        [node(), str(SMOKE)],
+        [node(), str(SMOKE)],  # noqa: S603 - the paths are this repository's own files
         cwd=PLUGIN,
         capture_output=True,
         text=True,
@@ -69,5 +69,5 @@ def test_the_panel_takes_the_token_from_the_person_not_the_environment():
     assert "refused the token" in text, "a refused token is not explained"
     assert "ferrum-cli view serve" in text, "the message does not say where a token comes from"
     # The address is loopback only, and the token shape is checked before a request.
-    assert "isLoopback" in text
-    assert "tokenLooksValid" in text
+    assert "isLoopback" in text, "a remote address is not refused"
+    assert "tokenLooksValid" in text, "a malformed token is not refused"
