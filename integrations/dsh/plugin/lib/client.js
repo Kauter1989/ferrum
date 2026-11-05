@@ -48,6 +48,13 @@ window.__ModuleLoader__.load({
 			token: { flex: "0 1 220px" },
 			button: { font: "inherit", fontSize: "13px", padding: "6px 12px", borderRadius: "6px", border: "1px solid var(--dsh-border, #d0d5dd)", background: "transparent", color: "inherit", cursor: "pointer" },
 			buttonOn: { borderColor: "#4fb3d9", color: "#4fb3d9" },
+			// A native drop-down paints its popup with the platform's palette and
+			// does not inherit the page's colours: with `color: inherit` the options
+			// computed to near-white on a transparent background, and the popup drew
+			// them white on white. Both the list and its options state their own
+			// colours, and `color-scheme: light` makes the popup follow them.
+			select: { font: "inherit", fontSize: "13px", padding: "6px 8px", borderRadius: "6px", border: "1px solid var(--dsh-border, #d0d5dd)", background: "#ffffff", color: "#1d1f26", cursor: "pointer", colorScheme: "light" },
+			option: { background: "#ffffff", color: "#1d1f26" },
 			stage: { position: "relative", flex: "1 1 auto", minHeight: 0, borderRadius: "10px", border: "1px solid var(--dsh-border, #d0d5dd)", overflow: "hidden", background: "#0b0d10" },
 			canvas: { display: "block", width: "100%", height: "100%", cursor: "grab" },
 			labels: { position: "absolute", inset: 0, pointerEvents: "none", font: "12px/1.2 ui-monospace, monospace", color: "#c8ccd4" },
@@ -309,8 +316,10 @@ window.__ModuleLoader__.load({
 					button("2D", mode === "slice", () => setMode("slice")),
 					h(
 						"select",
-						{ style: styles.button, value: renderMode, onChange: (e) => setRenderMode(e.target.value), "aria-label": "3D mode" },
-						["tissue", "isosurface", "mip", "transfer_function"].map((m) => h("option", { key: m, value: m }, m))
+						{ style: styles.select, value: renderMode, onChange: (e) => setRenderMode(e.target.value), "aria-label": "3D mode" },
+						["tissue", "isosurface", "mip", "transfer_function"].map((m) =>
+							h("option", { key: m, value: m, style: styles.option }, m)
+						)
 					)
 				),
 				h(

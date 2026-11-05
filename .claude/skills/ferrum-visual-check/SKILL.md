@@ -49,6 +49,12 @@ Read tool. Look for:
   - axial images have the patient's left on screen right (radiological
     view; the render's `orientation` field reads `R` left, `L` right);
   - the rectangle sits off-centre, so a flip shows.
+- **Anything with a UI around it** (a panel, a desktop control): open the
+  controls whose content appears only when open — a drop-down, a menu, a
+  tooltip (L35). A native popup is painted by the platform, so its text
+  neither inherits the page's colour nor follows its theme; a closed control
+  looks right while its list is unreadable. Check the open state, or read the
+  computed colours of the list and its items.
 
 Say in your report which images you looked at. Do not claim a visual
 result you did not see.

@@ -72,3 +72,26 @@ def test_the_panel_takes_the_token_from_the_person_not_the_environment():
     # The address is loopback only, and the token shape is checked before a request.
     assert "isLoopback" in text, "a remote address is not refused"
     assert "tokenLooksValid" in text, "a malformed token is not refused"
+
+
+def test_the_mode_dropdown_states_its_own_colours():
+    """A native popup does not inherit the page's palette.
+
+    With `color: inherit` the options came out white on a white popup inside a
+    dark harness: the text was there and could not be read. The list and its
+    options therefore carry explicit colours, and the option list is the four
+    desktop render modes.
+    """
+    text = BUNDLE.read_text(encoding="utf-8")
+
+    assert "select: {" in text, "the mode dropdown has no style of its own"
+    assert "option: {" in text, "the dropdown options have no style of their own"
+    # Both the popup and the options set a foreground colour.
+    for style in ("select: {", "option: {"):
+        block = text[text.index(style) :]
+        block = block[: block.index("}")]
+        assert "color:" in block, f"{style} sets no text colour"
+        assert "background:" in block, f"{style} sets no background"
+
+    for mode in ("tissue", "isosurface", "mip", "transfer_function"):
+        assert f'"{mode}"' in text, f"the dropdown does not offer {mode}"

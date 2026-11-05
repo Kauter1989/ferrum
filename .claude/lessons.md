@@ -618,6 +618,32 @@ that says so instead of editing the old one.
   finding `ruff check` or `cargo fmt` would have shown at once is a minute
   the project cannot pay for; on Windows that means WSL, not skipping.
 
+### L35 — A native `<select>` popup does not inherit the page's colours (2026-11, Stage 26)
+
+- **Symptom:** In the harness panel the 3D mode drop-down showed its selected
+  value, but opening it revealed white text on a white popup: the options
+  were there and could not be read. The user found it at once.
+- **Root cause:** The `<select>` carried `color: inherit`, so in the harness's
+  dark theme the options computed to `rgb(230,231,234)` over a *transparent*
+  background. A native popup is not painted by the page: the platform paints
+  the list with its own palette, which in a light system theme is white, and
+  the inherited near-white text landed on it. Measured with
+  `getComputedStyle` on both variants: before, option text `rgb(230,231,234)`
+  on `transparent`; after, `rgb(29,31,38)` on `rgb(255,255,255)`.
+- **Why it was missed:** The closed state renders correctly, so every look at
+  the toolbar said "fine"; the defect only exists while the popup is open,
+  and no check painted one.
+- **Fix:** The list and its options state their own colours, and
+  `color-scheme: light` makes the popup follow them.
+- **Guard:** `integrations/dsh/tests/test_panel.py::test_the_mode_dropdown_states_its_own_colours`
+  requires a style for both the list and the options with a foreground and a
+  background, and checks the four modes are still offered; it fails when the
+  colour is removed from the option style. `ferrum-visual-check` gains the
+  question for native popups.
+- **Rule:** A native popup (`<select>`, `<datalist>`, a context menu) is
+  drawn by the platform, not by the page: give it explicit colours and a
+  `color-scheme`, and never rely on `inherit` across that boundary.
+
 ## What worked
 
 ### W1 — Field test on the user's GPU with a throw-away script (2026-10, Stage 17)
