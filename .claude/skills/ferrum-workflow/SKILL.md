@@ -53,6 +53,10 @@ When unsure, size first (`ferrum-size`) and let the size decide. A
   - grow beyond size M during implementation.
 - **Merging always waits for the user's word (G3).** So do pushes to
   `develop` or `main`, and releases.
+- **Every push is preceded by a local run** of the checks CI would make
+  (`CLAUDE.md`, *Every push is preceded by a local run*; in WSL on Windows).
+  CI minutes are few; a red round spends them on what a local command answers
+  for free (L34).
 
 ## 3. Phases
 

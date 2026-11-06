@@ -611,9 +611,12 @@ that says so instead of editing the old one.
   denied`), which `.gitattributes` (`*.sh eol=lf`) and
   `core.autocrlf=false` now prevent, and its schema check compares content
   rather than bytes. ruff 0.16.9, the version CI pins, is installed locally.
-- **Guard:** `ferrum-change` §4 now says the checks run before the push, names
-  the WSL command, and lists what CI runs outside `preflight.sh`
-  (`test_hooks.py`, ruff, `cargo deny`).
+- **Guard:** the rule is part of the development rules, not only of this
+  file: `CLAUDE.md` has the section *Every push is preceded by a local run —
+  a rule, not advice* with the checklist (preflight, WSL on Windows, the
+  checks outside it, push once, a red suite is a defect), and
+  `ferrum-workflow`, `ferrum-change` §4 and `ferrum-verify` §1 each point at
+  it where a push is decided.
 - **Rule:** Push once, after the checks pass locally. A CI minute spent on a
   finding `ruff check` or `cargo fmt` would have shown at once is a minute
   the project cannot pay for; on Windows that means WSL, not skipping.

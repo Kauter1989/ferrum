@@ -100,16 +100,55 @@ make coverage                                # coverage report; CI floor in Make
 cargo run --release -- <path>                 # the app is the default member
 ```
 
-**Run the checks before the push, not after it** (L34). `preflight.sh` runs
-them in CI order; on Windows run it in WSL, which is the Linux CI uses:
+## Every push is preceded by a local run — a rule, not advice
 
-```powershell
-wsl -e bash -lc "cd /mnt/e/projects/ferrum/sources/ferrum && .claude/skills/ferrum-change/preflight.sh"
-```
+CI minutes are the project's and are few, and a red CI round spends them on
+what a local command answers for free (L34). So, before **every** push:
 
-CI minutes are the project's and are few: a push that fails on `ruff`, `fmt`
-or a stale schema spends them on what a local run answers for free. Details
-and the checks CI runs outside `preflight.sh`: `ferrum-change` §4.
+1. **`preflight.sh`** — the CI order (fmt, clippy, schema, the workspace
+   tests, optionally coverage). Its last line must read
+   `all checks passed`:
+
+   ```bash
+   .claude/skills/ferrum-change/preflight.sh            # or --quick, --coverage
+   ```
+
+2. **On Windows, in WSL** — the same Linux CI uses, which is where the
+   Linux-only cases and the hooks actually run:
+
+   ```powershell
+   wsl -e bash -lc "cd /mnt/e/projects/ferrum/sources/ferrum && .claude/skills/ferrum-change/preflight.sh"
+   ```
+
+   The WSL distribution must hold LF in shell scripts and data
+   (`.gitattributes`, `core.autocrlf=false`) — a CRLF checkout makes bash
+   refuse the script, which is how the local run was skipped for a whole
+   evening.
+
+3. **What `preflight.sh` does not cover**, run when the change touches it:
+   - `python .claude/hooks/test_hooks.py` after a hook or `test_hooks.py`
+     change (CI job `python-lint`);
+   - `python -m ruff check` and `python -m ruff format --check` on the
+     changed Python files, with `ruff==0.16.9` as CI pins it (the hook warns
+     when ruff is missing — act on that warning);
+   - `python -m pytest <changed test directories>` for Python tests outside
+     cargo (the panel and `ferrum-wasm` source checks);
+   - `node integrations/dsh/plugin/smoke-load.cjs` when the panel bundle
+     changes;
+   - `cargo deny check licenses` when a dependency changes;
+   - skill `ferrum-visual-check` when the change draws pixels or a UI
+     control.
+
+4. **Then push once.** If a push is made without the full local run, the
+   commit message and the PR say which parts were not run — never leave it
+   unsaid.
+
+5. **A red suite is a defect** (L33): fix it in the same branch, or name in
+   the PR the test, the reason and the platform. "It failed before my
+   change" is not an answer.
+
+Step-by-step detail and the platform split (what WSL answers, what the host
+answers): `ferrum-change` §4.
 
 ## Workflow, skills and lessons
 
