@@ -237,9 +237,12 @@ impl Host {
         let mut response = Response::from_data(reply.body).with_status_code(reply.status);
         let mut headers = reply.headers;
         // A harness panel is another origin: it authorises with the token, and
-        // the browser needs this header to let it read the answer. It is only
-        // added to authorised answers.
-        if !headers.iter().any(|(name, _)| name == "Access-Control-Allow-Origin") {
+        // the browser needs this header to let it read the answer. It goes on
+        // successful answers only — on a 401 or a 404 the wildcard would let
+        // any page on this machine tell that a view host is running, which no
+        // page needs to know.
+        let authorised = reply.status.0 / 100 == 2;
+        if authorised && !headers.iter().any(|(name, _)| name == "Access-Control-Allow-Origin") {
             headers.push(("Access-Control-Allow-Origin".into(), "*".into()));
         }
         if !reply.content_type.is_empty() {

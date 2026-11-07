@@ -46,24 +46,23 @@ def test_the_browser_renderer_hands_the_frame_model_to_ferrum_render():
 
 def test_the_mpr_layout_gives_every_view_its_own_quarter():
     # covers 26.2-a
+    #
+    # The geometry itself is tested in Rust (`tests/layout.rs`), which calls it
+    # with real canvas sizes: four quarters that tile the canvas, and a slice
+    # fitted to its plane's shape without leaving its quarter. Those cases fail
+    # when the fit is sized by the wrong side or the centring is dropped. What
+    # is left here is the wiring a source scan can check: that the renderer
+    # uses that layout, and that each view is confined to its own quarter.
     text = SOURCE.read_text(encoding="utf-8")
 
-    # Four rects, one per view, computed from the canvas: axial, coronal,
-    # sagittal and 3D. A layout with fewer is a layout that hides a view.
-    assert "fn mpr_rects" in text, "the MPR layout has no rect function"
-    body = text[text.index("fn mpr_rects") :]
-    body = body[: body.index("\n    }\n")]
-    # Four rects as `(min, max)` pairs; the first uses Vec2::ZERO for its min.
-    assert body.count("Vec2::new(") >= 7, f"the four quarters are not four rects: {body}"
-    assert re.search(r"-> \[\(Vec2, Vec2\); 4\]", body), "the layout is not four rects"
-    assert "Vec2::ZERO" in body, "the first quarter does not start at the origin"
+    assert "layout::quarters(" in text, "the renderer does not use the tested MPR layout"
     # Each slice is scissored to its own quarter: without that the last slice's
     # full-canvas triangle erases the others (found on a real CT).
     assert re.search(r"pass\.set_scissor_rect\(", text), "slices are not scissored to their quarters"
     # The 3D image is placed through a viewport, not stretched over the canvas.
     assert re.search(r"pass\.set_viewport\(", text), "the 3D view is not placed in its quarter"
-    # A slice is never stretched: its rect is fitted to the plane's shape.
-    assert "fn fit_rect" in text, "slices are not fitted to their aspect"
+    # The slice rect comes from the tested fit, with the plane's own dims.
+    assert "layout::fit(" in text, "slices are not fitted to their aspect"
     assert "plane_dims" in text, "the fit does not use the plane's own dims"
 
 

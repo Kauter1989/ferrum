@@ -15,9 +15,11 @@ presented straight into the canvas.
 `crates/ferrum-wasm` is a thin binding of `ferrum-render`: it takes a
 `<canvas>`, asks the browser for a WebGPU adapter, configures the surface and
 exposes `set_volume`, `set_mode`, `set_render_mode`, `set_window`,
-`set_slice_axis`, `set_slice`, `orbit`, `zoom` and `render`. The rendering
+`set_slice` (a plane name and an index), `set_ct_preset`, `orbit`, `zoom`,
+`reset_camera`, `resize`, `render` and `adapter_info`. The rendering
 code is not a second implementation: it is `VolumeRenderer` with the shaders
-from `ferrum-render`.
+from `ferrum-render`. The MPR geometry lives in `src/layout.rs`, whose tests
+run on the host (`crates/ferrum-wasm/tests/layout.rs`).
 
 `integrations/dsh/panel/stand.html` is the throwaway page that proved it: a
 synthetic chest-like volume, drag to orbit, wheel to zoom, a select for the

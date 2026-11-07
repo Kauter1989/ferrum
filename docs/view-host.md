@@ -78,11 +78,21 @@ a frame. It is 32 hex digits from the operating system's random source.
 | `GET` | `/api/frame.png` | the slice at native resolution, `image/png`; header `X-Ferrum-Rev` |
 | `GET` | `/api/events?since=<seq>` | events with `seq` greater than `since` |
 | `POST` | `/api/input` | one input object; answers with the new state |
+| `GET` | `/api/volume` | the voxels as little-endian `f32`, `application/octet-stream`; the grid, spacing and range travel in `X-Ferrum-Volume` as JSON (26.3-a) |
+| `GET` | `/api/volume.json` | the same description as `application/json`, with `sha256` of the voxels |
+| `GET` | `/panel/<file>` | the browser renderer module (`ferrum_wasm.js`, `ferrum_wasm_bg.wasm`); **no token** (26.3-b) |
+
+Every `GET` answer other than `/panel/<file>` needs the token. `/panel/<file>`
+serves code, not data — a browser cannot attach a token to a module import —
+so it needs none, and the route serves only those two literal file names from
+fixed directories: anything else is `404`, never a path on disk.
 
 An unknown path is `404`, a known path with the wrong method is `405`, a body
 over 64 KiB is `413`, an unparseable or invalid input is `400` — in every
 case with `{"error": "…"}` and no state change. Every answer has
-`Cache-Control: no-store`.
+`Cache-Control: no-store`, and only a successful (`2xx`) answer carries
+`Access-Control-Allow-Origin: *`, so a page on another origin can read an
+authorised answer but cannot use a refusal to discover that a host is running.
 
 ### 4.3 State
 

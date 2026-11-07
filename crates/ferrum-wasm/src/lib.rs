@@ -14,8 +14,13 @@
 //!
 //! The Rust side keeps no policy: the panel decides what to show and calls
 //! the setters, exactly as `ferrum-agent` commands do on the desktop.
+//!
+//! The MPR geometry of [`layout`] is plain arithmetic and is tested on the
+//! host, even though this module itself is wasm-only.
 
 #![cfg(target_arch = "wasm32")]
+
+pub mod layout;
 
 use std::sync::Arc;
 
@@ -360,16 +365,9 @@ impl FerrumView {
 
     /// `rect` (`min`, `max` in canvas pixels) reduced to the largest box with
     /// the plane's aspect: the shader stretches the image over the rect, so a
-    /// square rect would distort a 512?256 coronal slice.
+    /// square rect would distort a 512×256 coronal slice.
     fn fit_rect(&self, axis: SliceAxis, rect: (Vec2, Vec2)) -> (Vec2, Vec2) {
-        let (min, max) = rect;
-        let (box_w, box_h) = (max.x - min.x, max.y - min.y);
-        let (plane_w, plane_h) = axis.plane_dims(&self.volume);
-        let aspect = plane_w as f32 / plane_h.max(1) as f32;
-        let (w, h) =
-            if box_w / box_h.max(1.0) > aspect { (box_h * aspect, box_h) } else { (box_w, box_w / aspect.max(1e-3)) };
-        let centre = (min + max) / 2.0;
-        (centre - Vec2::new(w, h) / 2.0, centre + Vec2::new(w, h) / 2.0)
+        layout::fit(rect, axis.plane_dims(&self.volume))
     }
 
     /// Parameters of one slice, drawn into `rect` (pixels of the canvas).
@@ -405,23 +403,8 @@ impl FerrumView {
     /// The four rectangles of the MPR layout: axial, coronal, sagittal and 3D,
     /// in canvas pixels.
     fn mpr_rects(&self) -> [(Vec2, Vec2); 4] {
-        let (w, h) = (self.size.x as f32, self.size.y as f32);
-        let (half_w, half_h) = (w / 2.0, h / 2.0);
-        // `MARGIN` pixels of gap at the inner edges keep the four views apart.
-        [
-            (Vec2::ZERO, Vec2::new(half_w, half_h)),
-            (Vec2::new(half_w, 0.0), Vec2::new(w, half_h)),
-            (Vec2::new(0.0, half_h), Vec2::new(half_w, h)),
-            (Vec2::new(half_w, half_h), Vec2::new(w, h)),
-        ]
+        layout::quarters(self.size.as_vec2())
     }
-}
-
-/// The camera of the volume view as Euler angles, for a panel that keeps the
-/// orientation between frames.
-#[wasm_bindgen]
-pub fn camera_angles(camera: &[f32]) -> Vec<f32> {
-    camera.to_vec()
 }
 
 /// The render modes in display order (`tissue`, `isosurface`, `mip`,
@@ -435,12 +418,6 @@ pub fn render_modes() -> Vec<JsValue> {
 #[wasm_bindgen]
 pub fn planes() -> Vec<JsValue> {
     SliceAxis::ALL.into_iter().map(|a| JsValue::from_str(a.label())).collect()
-}
-
-/// Formats a voxel for a status line (`i, j, k`).
-#[wasm_bindgen]
-pub fn describe_voxel(i: u32, j: u32, k: u32) -> String {
-    format!("{i}, {j}, {k}")
 }
 
 /// The visibility toggle a panel keeps for the overview.

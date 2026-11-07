@@ -111,6 +111,12 @@ fn get_json(url: &str) -> (u16, Value) {
     (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
 }
 
+/// The `Access-Control-Allow-Origin` the answer carries, if any.
+fn cors(url: &str) -> Option<String> {
+    let response = agent().get(url).call().unwrap();
+    response.headers().get("access-control-allow-origin").and_then(|v| v.to_str().ok()).map(str::to_owned)
+}
+
 fn post(url: &str, body: &str) -> (u16, Value) {
     let mut response = agent().post(url).header("Content-Type", "application/json").send(body).unwrap();
     let status = response.status().as_u16();
@@ -427,6 +433,28 @@ fn the_panel_module_is_public_code_while_the_data_is_not() {
         let (status, _) = get(&format!("{}{path}", server.url()));
         assert_eq!(status, 401, "{path} answered {status} without a token");
     }
+}
+
+#[test]
+fn the_panel_may_read_an_authorised_answer_and_nothing_else() {
+    // A harness panel lives on another origin, so it needs the CORS header to
+    // read the study — but only once it has the token. On a refusal the header
+    // would let any page on this machine tell that a view host is running,
+    // which no page needs to know.
+    let f = fixture(false);
+    let server = open(&f);
+
+    assert_eq!(
+        cors(&token_url(&server, "/api/state")).as_deref(),
+        Some("*"),
+        "an authorised answer cannot be read cross-origin"
+    );
+    assert_eq!(cors(&token_url(&server, "/api/volume.json")).as_deref(), Some("*"));
+
+    assert_eq!(cors(&format!("{}/api/state", server.url())), None, "a 401 named the host to any page");
+    assert_eq!(cors(&format!("{}/api/nothing", server.url())), None, "a 404 named the host to any page");
+    let wrong = format!("{}/api/state?token={}", server.url(), "0".repeat(32));
+    assert_eq!(cors(&wrong), None, "a wrong token still answered with the header");
 }
 
 #[test]
