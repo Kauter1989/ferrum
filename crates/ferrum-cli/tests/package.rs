@@ -42,6 +42,11 @@ fn references_name_every_command() {
         assert!(cli_doc.contains(first), "docs/agent-cli.md lacks {c}");
     }
     let skill = std::fs::read_to_string(root().join("skills/ferrum/SKILL.md")).unwrap();
+    // The file is stored with LF (`.gitattributes`), and a front matter written
+    // with CRLF would break a YAML parser, so the stored form is checked first
+    // and the content is then compared line-ending agnostically.
+    assert!(!skill.contains("\r\n"), "SKILL.md is stored with CRLF line endings; .gitattributes keeps markdown at LF");
+    let skill = skill.replace("\r\n", "\n");
     assert!(skill.starts_with("---\nname: ferrum-imaging\ndescription: "), "SKILL.md front matter");
     for page in ["commands", "coordinates", "outputs", "safety", "segmentation"] {
         assert!(skill.contains(&format!("reference/{page}.md")));

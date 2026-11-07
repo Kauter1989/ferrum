@@ -35,6 +35,9 @@ fn main() -> ExitCode {
         let h = ferrum_agent::gpu::Hold { group, lease_mib, name, timeout, command };
         return gpu_hold(&config, &h);
     }
+    if let cli::Command::View(cli::View::Serve { ws, port, cpu }) = cli.command {
+        return view_serve(std::path::Path::new(&ws.workspace), port, cpu);
+    }
     let (command, params) = match cli.command.to_call() {
         Ok(call) => call,
         Err(message) => {
@@ -78,6 +81,43 @@ fn main() -> ExitCode {
     } else {
         ExitCode::from(1)
     }
+}
+
+/// `view serve`: prints one JSON line (`url`, `token`, `workspace`,
+/// `backend`) and serves the workspace until Ctrl-C. CLI only, never an MCP
+/// tool (like `gpu hold`).
+fn view_serve(workspace: &std::path::Path, port: u16, cpu: bool) -> ExitCode {
+    use ferrum_view::{BackendPreference, ServeOptions, Session, ViewServer};
+    let preference = if cpu { BackendPreference::Cpu } else { BackendPreference::Auto };
+    let session = match Session::open(workspace, preference) {
+        Ok(session) => session,
+        Err(e) => {
+            eprintln!("ferrum-cli view serve: {e}");
+            return ExitCode::from(1);
+        }
+    };
+    let mut server = match ViewServer::start(session, ServeOptions { port }) {
+        Ok(server) => server,
+        Err(e) => {
+            eprintln!("ferrum-cli view serve: {e}");
+            return ExitCode::from(1);
+        }
+    };
+    println!(
+        "{}",
+        json!({
+            "url": server.url(),
+            "token": server.token(),
+            "workspace": server.workspace(),
+            "backend": server.backend(),
+        })
+    );
+    if std::io::Write::flush(&mut std::io::stdout()).is_err() {
+        eprintln!("ferrum-cli view serve: cannot write to stdout");
+        return ExitCode::from(1);
+    }
+    server.wait();
+    ExitCode::SUCCESS
 }
 
 /// `gpu hold`: notes go to stderr, so the command's own output stays as it

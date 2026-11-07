@@ -442,6 +442,211 @@ that says so instead of editing the old one.
   test binary under `timeout`, and restore in a separate step. Find stray
   processes with `ps` and kill them by pid, never with `pkill -f`.
 
+### L29 — A caption edit rewrote whole files: PowerShell 5.1 and UTF-8 (2026-11, Stage 25 PR 1)
+
+- **Symptom:** While writing Stage 25 PR 1 on Windows, `.md` files and one
+  test file were edited with `Get-Content -Raw … | Set-Content -Encoding
+  utf8`. `dev_plan.md` and `docs/view-host.md` came back with a byte-order
+  mark and CP1251 mojibake (`Stages 1–13` became `Stages 1вЂ“13`), and a
+  test comment lost three dash characters. `git diff --stat` showed 421
+  changed lines in a file that had gained 77.
+- **Root cause:** Windows PowerShell 5.1 reads a BOM-less file through the
+  ANSI code page (`Get-Content` default) and writes UTF-8 *with* a BOM, so
+  every `–`, `—`, `≤` or `×` round-trips through CP1251; a second pass
+  double-encodes it.
+- **Why it was missed:** `git diff --stat` was read only after `git add`,
+  and the corruption looks plausible in a console whose code page matches
+  the mojibake.
+- **Fix:** the files were restored from their original bytes
+  (`text.encode("cp1251").decode("utf-8")`, BOM stripped) and the staged
+  diff then showed additions only.
+- **Rule:** Edit repository text with the editor tool, never by rewriting a
+  whole file through a shell. On Windows use PowerShell 7
+  (`-Encoding utf8NoBOM`) or Python with `newline="\n"`. Read
+  `git diff --cached --numstat` before every commit: a small edit must
+  show a small count, and one changed line must show one insertion, not a
+  rewrite of the file.
+- **Guard:** this rule and the `git diff --cached --numstat` step in the
+  delivery checklist (`ferrum-change` §2).
+
+### L30 — An iframe into a harness panel: the secure context said no (2026-11, Stage 26)
+
+- **Symptom:** The DeepSeek Harness plugin showed a black panel. The host
+  answered every route, the page drew correctly in a normal browser, and the
+  plugin's own smoke script passed.
+- **Root cause:** The Desktop window is loaded from the `dsh-app://` scheme,
+  which Chromium treats as a secure context; such a page does not render
+  `http://` content in a frame, so the iframe stayed empty. Serving
+  `http://127.0.0.1` is not a substitute for rendering in the panel. The same
+  rule kills a cross-origin `import()` of a `http://` module.
+- **Why it was missed:** The page was verified in a plain browser tab, where
+  the iframe works, so every check that ran said "the server is fine". No
+  check ran inside the harness window, and the harness reports nothing there.
+- **Fix:** The panel renders the study itself (`crates/ferrum-wasm`, WebGPU
+  in a `<canvas>`); the host page is not framed at all. PR #91 replaced #90.
+- **Guard:** `docs/webgpu-panel.md` records the constraint with the
+  measurement; the plugin smoke script checks the bundle's registrations and
+  never claims the image was seen; the PR body carries the "not verified"
+  row when the panel was not opened in a real harness window
+  (`ferrum-verify` §4).
+- **Rule:** For a harness integration, verify inside the harness's own
+  renderer, not in a browser tab: a secure-context host (`dsh-app://`,
+  `app://`, `tauri://`) refuses what a plain page allows. When a frame stays
+  black while the server answers, suspect the embedding policy before the
+  code.
+
+### L31 — A registered tab type that no menu could offer (2026-11, Stage 26)
+
+- **Symptom:** After the panel rendered, the person could not open it in the
+  right sidebar: the strip's "+" menu had no FERRUM entry, and the header
+  button always opened the panel in the centre column.
+- **Root cause:** Two independent defects in the plugin's client half.
+  1. `sidebarRightTabs.register` accepted the type, but the "+" menu is built
+     from the type's `guide` entries, and the registration passed `guide: []`.
+     A type with no guide entry is registered and offered nowhere.
+  2. The header button called `sidebarRight.openTab`, which needs a focused
+     pane (`require()`); outside one it throws, and the plugin's own fallback
+     took over — the centre column. The built-in Browser uses
+     `commandTarget(element)` + `openTabFromTarget(kind, target)`, which binds
+     the tab to the session.
+- **Why it was missed:** The smoke script checked that the slots were
+  registered, not that the type could be reached from the UI; and the first
+  "fix" guessed at the API instead of reading how the shipped Browser plugin
+  registers its own tab.
+- **Fix:** A guide entry with title, description and icon; the header button
+  opens through `openTabFromTarget` and reveals a collapsed pane
+  (`isExpanded`/`toggleExpanded`), guarded so a build without those methods
+  still opens the tab. Commit `bee370b`.
+- **Guard:** `smoke-load.cjs` asserts the guide entry, its title, the session
+  binding, that a collapsed pane is revealed and that an open pane is not
+  collapsed; the fallback is asserted separately.
+- **Rule:** When a plugin extends a harness's own UI, read the shipped plugin
+  that owns that surface (`dsh-client-ui-sidebar-browser`) and copy its
+  registration path field by field. A registration that succeeds is not a
+  registration that is reachable, and a test must assert reachability, not
+  just the call.
+
+### L32 — Chasing an API contract by reading minified bundles (2026-11, Stage 26)
+
+- **Symptom:** Three rounds were spent on the right-sidebar tab, each ending
+  in a new guess about the slot contract. One guess (declaring
+  `dsh.client.inject: ["@deepseek-ai/dsh-client-ui-sidebar-right"]` in the
+  plugin manifest) dropped the plugin out of the client graph entirely,
+  because that package is not a dependency of the profile.
+- **Root cause:** The harness's client code is bundled and minified; reading
+  it gives fragments, not contracts. Meanwhile the harness ships tools that
+  answer directly: `boot()` composes the profile, `prepareProfileEntries`
+  reports what it would disable, the host prints activation warnings to
+  stderr, and the served page embeds the whole client graph.
+- **Why it was missed:** Debugging started from the docs and the bundle text
+  instead of from the running system's own diagnostics.
+- **Fix:** The working method, recorded as W9.
+- **Guard:** W9 states the order of investigation for a harness integration;
+  `integrations/dsh/plugin/lib/index.js` records its activation so "the row
+  never loaded" and "the panel is not visible" are distinguishable.
+- **Rule:** With a bundled host, do not infer a contract from minified
+  source; drive the host's own boot, composition and graph, and read what it
+  says.
+
+### L33 — A red test suite accepted as "it was already red" (2026-11, Stage 26)
+
+- **Symptom:** `cargo test --workspace` failed in six places and
+  `test_hooks.py` in three, all on this Windows machine. Each was checked
+  against `origin/develop`, found to fail there too, written into the PR as
+  "pre-existing", and the work went on. The user stopped it: a commit must
+  not leave the suite red.
+- **Root cause:** The checks were platform-blind. They were written and are
+  run in CI on Linux, where every case below happens to be true:
+  - `guard_edit` built its repository path with `os.path.relpath`, which
+    returns backslashes on Windows, while the ADR pattern and
+    `git cat-file` expect `/` — so a merged ADR could be rewritten with no
+    hook complaint;
+  - `session_start` sized `target/` with `du`, a Unix tool; on Windows
+    `FileNotFoundError` escaped and the whole session-start message
+    disappeared;
+  - the hook tests wrote fixtures without `encoding`, so the locale code page
+    met the hook's UTF-8 reader;
+  - three tests hard-coded Unix roots (`/data/in`, `/run/user/1000/…`);
+  - `mcp.rs` replaced the workspace root in JSON, where a Windows separator
+    is `\\`, so the replacement never matched;
+  - `package.rs` compared `SKILL.md` with `\n` against a CRLF checkout;
+  - two helpers sat behind a `#[cfg(unix)]` test but were not gated
+    themselves, which `-D warnings` reports on Windows.
+- **Why it was missed:** "Red on develop too" answered "is this my
+  regression" and was taken as "not my problem". It answers neither of the
+  questions that matter: does the project pass on the machine the work runs
+  on, and does CI cover that platform?
+- **Fix:** Commit `1035d28`: paths normalised to `/`, a portable size walk,
+  fixtures written as UTF-8, roots built from the running platform, both JSON
+  spellings replaced, line endings normalised, the helpers gated like their
+  user.
+- **Guard:** the hook tests run before a change that touches hooks
+  (`CLAUDE.md`, *Hooks*), and the delivery checklist expects the suite to be
+  green, not "as green as before" (`ferrum-change` §4). The new L33 rule
+  states what to do with a pre-existing failure.
+- **Rule:** A failing test is a defect of the repository, not of the
+  platform it was noticed on: fix it, or exclude it on purpose with a
+  written reason inside the test. Never hand a branch where the suite is
+  red, and never let "it failed before my change" stand as an answer — at
+  minimum say in the same breath which platform CI covers and which it does
+  not.
+
+### L34 — Three red CI pushes that a local run would have caught (2026-11, Stage 26)
+
+- **Symptom:** The same branch was pushed three times in a row, and CI failed
+  each time within seconds — twice in `python-lint` (four ruff findings, then
+  a missing trailing newline and a misplaced `noqa`), and once earlier on the
+  manifest. Nothing in the branch was wrong in principle: every finding was
+  mechanical and fixed in a minute. What it cost was three CI runs, three
+  waits of six minutes on `check`, and three rounds of context.
+- **Root cause:** The checks were run *after* the push and read from the CI
+  log. Locally, only the tests of the crates that had changed had been run,
+  and `python-lint` was not run at all — the hook that would have run ruff
+  printed "ruff is not installed" and that line was not acted on.
+- **Why it was missed:** A Windows machine was treated as a reason to skip
+  the Linux-shaped checks. It is not: WSL runs the same Ubuntu toolchain CI
+  uses, and lavapipe was already installed there.
+- **Fix:** `preflight.sh` runs in WSL on this machine; the script itself was
+  broken by a CRLF working copy (`/usr/bin/env: 'bash\r': Permission
+  denied`), which `.gitattributes` (`*.sh eol=lf`) and
+  `core.autocrlf=false` now prevent, and its schema check compares content
+  rather than bytes. ruff 0.16.9, the version CI pins, is installed locally.
+- **Guard:** the rule is part of the development rules, not only of this
+  file: `CLAUDE.md` has the section *Every push is preceded by a local run —
+  a rule, not advice* with the checklist (preflight, WSL on Windows, the
+  checks outside it, push once, a red suite is a defect), and
+  `ferrum-workflow`, `ferrum-change` §4 and `ferrum-verify` §1 each point at
+  it where a push is decided.
+- **Rule:** Push once, after the checks pass locally. A CI minute spent on a
+  finding `ruff check` or `cargo fmt` would have shown at once is a minute
+  the project cannot pay for; on Windows that means WSL, not skipping.
+
+### L35 — A native `<select>` popup does not inherit the page's colours (2026-11, Stage 26)
+
+- **Symptom:** In the harness panel the 3D mode drop-down showed its selected
+  value, but opening it revealed white text on a white popup: the options
+  were there and could not be read. The user found it at once.
+- **Root cause:** The `<select>` carried `color: inherit`, so in the harness's
+  dark theme the options computed to `rgb(230,231,234)` over a *transparent*
+  background. A native popup is not painted by the page: the platform paints
+  the list with its own palette, which in a light system theme is white, and
+  the inherited near-white text landed on it. Measured with
+  `getComputedStyle` on both variants: before, option text `rgb(230,231,234)`
+  on `transparent`; after, `rgb(29,31,38)` on `rgb(255,255,255)`.
+- **Why it was missed:** The closed state renders correctly, so every look at
+  the toolbar said "fine"; the defect only exists while the popup is open,
+  and no check painted one.
+- **Fix:** The list and its options state their own colours, and
+  `color-scheme: light` makes the popup follow them.
+- **Guard:** `integrations/dsh/tests/test_panel.py::test_the_mode_dropdown_states_its_own_colours`
+  requires a style for both the list and the options with a foreground and a
+  background, and checks the four modes are still offered; it fails when the
+  colour is removed from the option style. `ferrum-visual-check` gains the
+  question for native popups.
+- **Rule:** A native popup (`<select>`, `<datalist>`, a context menu) is
+  drawn by the platform, not by the page: give it explicit colours and a
+  `color-scheme`, and never rely on `inherit` across that boundary.
+
 ## What worked
 
 ### W1 — Field test on the user's GPU with a throw-away script (2026-10, Stage 17)
@@ -532,3 +737,57 @@ that says so instead of editing the old one.
 - **Keep:** When no real data of a format can be downloaded, repack real
   data of another format with an independent library, verify the packing
   against that library first, then compare FERRUM across the formats.
+
+### W9 — Building a harness plugin: probe the host, then copy the shipped plugin (2026-11, Stage 26)
+
+- **What:** The order that finally worked for the DeepSeek Harness panel,
+  after three rounds of guessing:
+  1. **Prove the platform first.** A probe crate plus a stand page
+     (`crates/ferrum-wasm`, `integrations/dsh/panel/stand.html`) answered
+     "can the browser draw with our renderer at all" before any plugin code:
+     144 fps, WebGPU, one afternoon. Every later failure was then known not
+     to be the renderer.
+  2. **Ask the host's own boots, not its source.** The runtime is asar-
+     wrapped, so `ELECTRON_RUN_AS_NODE=1 "<Harness>.exe" <script>` runs the
+     harness's own `boot()`/`composeEntries()`/`loadProfileDirectory()` and
+     prints the entry tree it would mount; `reportSkippedBundles` and the
+     activation audit write to stderr, which the Electron window drops — run
+     the host from a console and read it. A profile copy in a temp directory
+     makes this safe.
+  3. **Read the graph the harness serves.** `GET /` embeds `__DSH_BOOT__`
+     with every client bundle, its phase and its `inject` list: it answers
+     "is my bundle there, and does it come after the package it needs".
+  4. **Copy the shipped plugin that owns the surface.** For a right-sidebar
+     tab: `dsh-client-ui-sidebar-browser` (`sidebarRightTabs.register` with a
+     `guide` entry, `sidebar.right.pane.tab` + `.title` keyed by the type id,
+     `commandTarget` + `openTabFromTarget`). For a header action:
+     `dsh-client-ui-jobs`. The contract is the shipped code, not a doc.
+  5. **Make the host half record that it applied.** One line appended to a
+     file tells "the row never loaded" from "the panel is not visible"; a
+     harness reports activation failures where nobody looks.
+  6. **Verify in the harness's renderer.** The panel ran in a browser tab
+     for hours and stayed black inside the harness (L30).
+- **Outcome:** Steps 2 and 4 ended three rounds of guessing in minutes each;
+  the tab, the token and the WebGPU canvas all work in the harness now.
+- **Keep:** For any host that mounts plugins (a harness, an IDE, a window
+  manager), the order is: probe the platform in isolation, ask the host's own
+  boot what it mounts, read the served graph, copy the shipped plugin that
+  owns the surface, leave a trace in the host half, then verify inside the
+  host's own renderer.
+
+### W10 — One renderer, two hosts: the wasm binding as a thin layer (2026-11, Stage 26)
+
+- **What:** `crates/ferrum-wasm` does not re-implement anything: it takes a
+  `<canvas>`, gets the WebGPU adapter, and calls `VolumeRenderer`,
+  `FrameParams`, `OrbitCamera` and `RenderMode` exactly as the desktop does.
+  `ferrum-domain`, `ferrum-processing` and `ferrum-app` compiled for
+  `wasm32` with no source change at all.
+- **Outcome:** The browser and the desktop cannot drift: a shader or frame
+  model change reaches both at once, and the rendering rule of `CLAUDE.md`
+  still has one implementation. The whole crate is behind
+  `#![cfg(target_arch = "wasm32")]`, so the native workspace build is
+  unaffected.
+- **Keep:** When a second host must draw the same thing, bind the existing
+  renderer rather than port it; treat "the dependency compiles for the other
+  target unchanged" as the design constraint, and check it before writing
+  the binding.

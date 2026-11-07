@@ -13,6 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 ferrum-agent.workspace = true
+ferrum-view.workspace = true
 serde_json.workspace = true
 clap.workspace = true
 

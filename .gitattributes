@@ -1,0 +1,16 @@
+# Shell scripts and their data must keep LF everywhere: a CRLF checkout makes
+# `#!/usr/bin/env bash` fail with "bad interpreter", and the hook tests and
+# `preflight.sh` are run from Git Bash and WSL on Windows.
+*.sh text eol=lf
+*.bash text eol=lf
+*.py text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+Skillfile* text eol=lf
+
+# Windows command files stay CRLF, which `cmd.exe` expects.
+*.cmd text eol=crlf
+*.bat text eol=crlf

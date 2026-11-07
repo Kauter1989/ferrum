@@ -124,6 +124,9 @@ fn mcp_over_stdio_and_schemas() {
     );
 }
 
+// These two helpers serve the GPU-lease test, which runs only on Unix (`sh -c`):
+// on Windows they would be unused, and an unused function is a warning there.
+#[cfg(unix)]
 fn gpu_config(dir: &Path) -> std::path::PathBuf {
     let config = dir.join("ferrum-agent.toml");
     let text = format!(
@@ -134,6 +137,7 @@ fn gpu_config(dir: &Path) -> std::path::PathBuf {
     config
 }
 
+#[cfg(unix)]
 fn records(dir: &Path) -> Vec<String> {
     std::fs::read_dir(dir.join("gpu/card"))
         .map(|d| {
