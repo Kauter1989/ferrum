@@ -101,7 +101,7 @@ class ProtectedBranches(unittest.TestCase):  # A
         self.assertEqual(decision(self.r.bash("git push")), "deny")
 
     def test_feature_push_passes(self):
-        self.assertIsNone(self.r.bash("FERRUM_SKIP_PREPUSH=1 git push -u origin feat/x"))
+        self.assertIsNone(self.r.bash("FERRUM_SKIP_PREPUSH=checking-the-branch-name git push -u origin feat/x"))
 
     def test_non_git_commands_pass(self):
         self.assertIsNone(self.r.bash("echo develop && ls"))
@@ -246,7 +246,7 @@ class BranchSize(unittest.TestCase):  # E4
                 r.write(f"crates/ferrum-agent/src/mod{i}.rs", "// line\n" * 50)
             sh(r.path, "git", "add", "-A")
             sh(r.path, "git", "commit", "-q", "-m", "size l")
-            out = r.bash("FERRUM_SKIP_PREPUSH=1 git push -u origin feat/x")
+            out = r.bash("FERRUM_SKIP_PREPUSH=checking-the-branch-name git push -u origin feat/x")
             self.assertIsNone(out, "the size check refused a branch within L")
 
             # One more file tips it past the class.
@@ -259,6 +259,100 @@ class BranchSize(unittest.TestCase):  # E4
             self.assertIn("L36", out["permissionDecisionReason"])
         finally:
             r.close()
+
+
+class LocalRunGate(unittest.TestCase):  # E1
+    """The local run is the gate before CI, not a suggestion (L34).
+
+    Its job is to make a red pipeline unlikely before it is paid for, so the
+    escape hatch is not a silent one: a bare `FERRUM_SKIP_PREPUSH=1` is refused
+    and the value has to say why.
+    """
+
+    def test_a_bare_skip_is_refused(self):
+        r = Repo()
+        try:
+            out = r.bash("FERRUM_SKIP_PREPUSH=1 git push -u origin feat/x")
+            self.assertEqual(decision(out), "deny", "a silent skip of the local run was allowed")
+            reason = out["permissionDecisionReason"]
+            self.assertIn("needs a reason", reason)
+            self.assertIn("L34", reason)
+        finally:
+            r.close()
+
+    def test_a_skip_with_a_reason_passes(self):
+        r = Repo()
+        try:
+            out = r.bash("FERRUM_SKIP_PREPUSH=the-hook-cannot-run-here git push -u origin feat/x")
+            self.assertIsNone(out, "a skip with a stated reason was still refused")
+        finally:
+            r.close()
+
+    def test_a_short_value_counts_as_no_reason(self):
+        r = Repo()
+        try:
+            out = r.bash("FERRUM_SKIP_PREPUSH=x git push -u origin feat/x")
+            self.assertEqual(decision(out), "deny", "a one-letter 'reason' was accepted")
+        finally:
+            r.close()
+
+
+class KnownFailures(unittest.TestCase):  # E1
+    """A failure a machine is known to have is forgiven only in writing (L33).
+
+    The gate must not let a red suite through because it is inconvenient, and
+    must not block every push on a defect that is recorded, explained and
+    owned. Both halves are tested, plus both shapes cargo prints.
+    """
+
+    PER_BINARY = "error: test failed, to rerun pass `-p ferrum --test ui`\n"
+    SUMMARY = (
+        "test result: FAILED. 17 passed; 2 failed\n"
+        "error: 2 targets failed:\n"
+        "    `-p ferrum --test ui`\n"
+        "    `-p ferrum-render --test gpu_parity`\n"
+    )
+
+    def test_a_known_failure_is_forgiven(self):
+        sys.path.insert(0, os.path.dirname(HOOKS))
+        import ferrum_hooks
+
+        for name, output in (("per-binary", self.PER_BINARY), ("summary", self.SUMMARY)):
+            known = {"ferrum --test ui": {"reason": "a driver defect"}}
+            forgiven = ferrum_hooks.tests_passed_except(output, known)
+            self.assertIn("ferrum --test ui", forgiven, f"{name}: a listed failure was not forgiven")
+            unknown = ferrum_hooks.tests_passed_except(output, {})
+            self.assertEqual(unknown, [], f"{name}: an unlisted failure was forgiven")
+
+    def test_the_summary_shape_lists_every_target(self):
+        sys.path.insert(0, os.path.dirname(HOOKS))
+        import ferrum_hooks
+
+        both = {"ferrum --test ui": {}, "ferrum-render --test gpu_parity": {}}
+        forgiven = ferrum_hooks.tests_passed_except(self.SUMMARY, both)
+        self.assertEqual(len(set(forgiven)), 2, f"the summary shape lost a target: {forgiven}")
+        # One known and one unknown must not pass: the unknown still blocks.
+        half = ferrum_hooks.tests_passed_except(self.SUMMARY, {"ferrum --test ui": {}})
+        self.assertEqual(len(set(half)), 1, "a half-known run was treated as fully known")
+
+    def test_carriage_returns_do_not_defeat_the_parse(self):
+        sys.path.insert(0, os.path.dirname(HOOKS))
+        import ferrum_hooks
+
+        crlf = self.PER_BINARY.replace("\n", "\r\n")
+        forgiven = ferrum_hooks.tests_passed_except(crlf, {"ferrum --test ui": {}})
+        self.assertIn("ferrum --test ui", forgiven, "a CRLF line hid a known failure")
+
+    def test_an_entry_without_a_reason_is_still_a_defect_to_fix(self):
+        sys.path.insert(0, os.path.dirname(HOOKS))
+        import ferrum_hooks
+
+        # The committed file must not carry an entry that says nothing: an
+        # empty reason is how a known failure becomes a silent one.
+        known = ferrum_hooks.known_failures(os.path.dirname(os.path.dirname(HOOKS)))
+        for binary, entry in known.items():
+            self.assertTrue(entry.get("reason"), f"{binary} has no reason recorded")
+            self.assertTrue(entry.get("tracking"), f"{binary} has no owner recorded")
 
 
 class BranchNames(unittest.TestCase):  # J
@@ -276,8 +370,8 @@ class BranchNames(unittest.TestCase):  # J
             "git branch -m chore/release-0.4.0",
             "git switch -c release/0.4.0 origin/develop",
             "git branch -d claude/old-name",
-            "FERRUM_SKIP_PREPUSH=1 git push origin --delete claude/old-name",
-            "FERRUM_SKIP_PREPUSH=1 git push origin :claude/old-name",
+            "FERRUM_SKIP_PREPUSH=checking-the-branch-name git push origin --delete claude/old-name",
+            "FERRUM_SKIP_PREPUSH=checking-the-branch-name git push origin :claude/old-name",
         ):
             self.assertIsNone(self.r.bash(cmd), cmd)
 
@@ -288,7 +382,7 @@ class BranchNames(unittest.TestCase):  # J
             "git branch feat_x",
             "git branch -m feat/x feature/x",
             "git checkout -b feat/",
-            "FERRUM_SKIP_PREPUSH=1 git push -u origin HEAD:claude/x",
+            "FERRUM_SKIP_PREPUSH=checking-the-branch-name git push -u origin HEAD:claude/x",
         ):
             out = self.r.bash(cmd)
             self.assertEqual(decision(out), "deny", cmd)
@@ -296,8 +390,8 @@ class BranchNames(unittest.TestCase):  # J
 
     def test_redirections_are_not_branch_names(self):
         for cmd in (
-            "FERRUM_SKIP_PREPUSH=1 git push -u origin feat/x 2>&1 | tail -1",
-            "FERRUM_SKIP_PREPUSH=1 git push -u origin feat/x > push.log 2>/dev/null",
+            "FERRUM_SKIP_PREPUSH=checking-the-branch-name git push -u origin feat/x 2>&1 | tail -1",
+            "FERRUM_SKIP_PREPUSH=checking-the-branch-name git push -u origin feat/x > push.log 2>/dev/null",
             "git checkout -b feat/y origin/develop >/dev/null 2>&1",
         ):
             self.assertIsNone(self.r.bash(cmd), cmd)
@@ -316,7 +410,7 @@ class BranchNames(unittest.TestCase):  # J
 
     def test_pushing_a_harness_named_branch_is_denied(self):
         sh(self.r.path, "git", "checkout", "-q", "-b", "claude/session-x")
-        self.assertEqual(decision(self.r.bash("FERRUM_SKIP_PREPUSH=1 git push")), "deny")
+        self.assertEqual(decision(self.r.bash("FERRUM_SKIP_PREPUSH=checking-the-branch-name git push")), "deny")
 
 
 class Ruff(unittest.TestCase):  # F, E3

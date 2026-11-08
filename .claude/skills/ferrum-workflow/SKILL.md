@@ -1,6 +1,6 @@
 ---
 name: ferrum-workflow
-description: Entry point for any FERRUM work request — a stage, a feature, a fix, docs. Picks the track (stage / feature / small) and the mode (gated or autonomous), then runs the phases specify → clarify → plan → size → tasks → analyze → implement → verify → deliver → retro with the right skills and approval gates. Use at the start of every task in this repository, and when the user asks to work "autonomously".
+description: Entry point for any FERRUM work request — a stage, a feature, a fix, docs. Picks the track (stage / feature / small) and the mode (gated or autonomous), then runs the phases specify → clarify → plan → size → tasks → analyze → implement → verify → deliver → retro → report with the right skills and approval gates. Use at the start of every task in this repository, and when the user asks to work "autonomously".
 ---
 
 # FERRUM development workflow
@@ -72,6 +72,7 @@ When unsure, size first (`ferrum-size`) and let the size decide. A
 | 8 | Verify | `ferrum-verify` | verification table in the PR | ✓ | ✓ | preflight only |
 | 9 | Deliver | `ferrum-change` §7 | PR, CI green → **G3** | ✓ | ✓ | ✓ |
 | 10 | Retro | `ferrum-lessons`, `ferrum-size` §5 | lessons, sizing calibration | ✓ | ✓ when something happened | — |
+| 11 | Report | `ferrum-report` | `docs/<feature>/<pr>-report.html` | ✓ | ✓ | — |
 
 Release is separate (`ferrum-release`), on the user's decision.
 
@@ -94,9 +95,14 @@ implement, verify, deliver → G3.
 3. Deliver, then report with the PR link, assumptions and the
    verification table → G3.
 
-Retro follows if something happened.
+Retro follows if something happened. After the PR is merged or merge-ready,
+the **report** (phase 11, `ferrum-report`) is written beside the feature's
+design doc: what the architecture is now, whether the code holds up, and
+what the review actually caught.
 
-**Small:** implement, verify (preflight), deliver → G3.
+**Small:** implement, verify (preflight), deliver → G3. A `small` change is
+usually a fix an existing feature's report already covers; write a report
+only when it is a feature in its own right.
 
 ## 5. Status reports
 
