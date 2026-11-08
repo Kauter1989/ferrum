@@ -21,6 +21,7 @@
 #![cfg(target_arch = "wasm32")]
 
 pub mod layout;
+pub mod mode;
 
 use std::sync::Arc;
 
@@ -249,9 +250,19 @@ impl FerrumView {
         Ok(())
     }
 
-    /// Shows the 2D slice view or the 3D volume view.
-    pub fn set_mode(&mut self, mode: FerrumMode) {
-        self.mode = mode;
+    /// Shows the 2D slice, the 3D volume or the MPR layout, by name.
+    ///
+    /// The name is validated: an unknown value is refused and the current mode
+    /// stays as it was. Before this, the panel converted its own string to the
+    /// enum with a chain of ternaries, so a typo fell back to one 2D slice and
+    /// nothing reported it (F1).
+    pub fn set_mode(&mut self, mode: &str) -> Result<(), JsValue> {
+        self.mode = match mode::Mode::parse(mode).map_err(|e| JsValue::from_str(&e))? {
+            mode::Mode::Slice => FerrumMode::Slice2d,
+            mode::Mode::Volume => FerrumMode::Volume3d,
+            mode::Mode::Mpr => FerrumMode::Mpr,
+        };
+        Ok(())
     }
 
     /// The 3D rendering mode (`tissue`, `isosurface`, `mip`, `transfer_function`).

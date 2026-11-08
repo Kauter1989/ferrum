@@ -138,7 +138,6 @@ window.__ModuleLoader__.load({
 			const [error, setError] = React.useState(null);
 			const canvasRef = React.useRef(null);
 			const viewRef = React.useRef(null);
-			const wasmRef = React.useRef(null);
 			const sliceRef = React.useRef(0);
 			const modeRef = React.useRef("mpr");
 
@@ -184,7 +183,6 @@ window.__ModuleLoader__.load({
 				setStatus("loading the renderer…");
 				try {
 					const wasm = await loadWasm(clean);
-					wasmRef.current = wasm;
 					const canvas = canvasRef.current;
 					if (!canvas) throw new Error("the canvas is not ready yet");
 					const view = await wasm.FerrumView.create(canvas);
@@ -218,7 +216,10 @@ window.__ModuleLoader__.load({
 						/* a non-CT volume keeps the default ramp */
 					}
 					sliceRef.current = header.dims[2] / 2;
-					view.set_mode(modeRef.current === "volume" ? wasm.FerrumMode.Volume3d : modeRef.current === "mpr" ? wasm.FerrumMode.Mpr : wasm.FerrumMode.Slice2d);
+					// The mode goes through by name: the module validates it and refuses
+					// an unknown value, where a local ternary would fall back to a
+					// single 2D slice without saying so (F1).
+					view.set_mode(modeRef.current);
 					view.set_render_mode(renderMode);
 					setStatus(view.adapter_info() + " · " + header.dims.join("×") + " · " + header.value_unit);
 					draw();
@@ -280,10 +281,13 @@ window.__ModuleLoader__.load({
 			// The mode bar drives the renderer's layout.
 			React.useEffect(() => {
 				const view = viewRef.current;
-				const wasm = wasmRef.current;
-				if (!view || !wasm) return;
+				// No view before the module loaded and a study was opened: the effect
+				// is inert until then, as the render-mode effect below is.
+				if (!view) return;
 				try {
-					view.set_mode(mode === "volume" ? wasm.FerrumMode.Volume3d : mode === "mpr" ? wasm.FerrumMode.Mpr : wasm.FerrumMode.Slice2d);
+					// By name, so an unknown value is reported here instead of
+					// falling back to a 2D slice (F1).
+					view.set_mode(mode);
 				} catch (e) {
 					setError(e && e.message ? e.message : String(e));
 				}
