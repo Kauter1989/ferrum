@@ -318,19 +318,43 @@ mod tests {
 
     #[test]
     fn path_rules() {
-        let c = AgentConfig {
-            read_roots: vec!["/data/in".into()],
-            workspace_root: Some("/data/ws".into()),
+        // The rules are about paths, not about one operating system: the cases
+        // are built from an absolute root so Windows (C:\…) and Unix (/…) both
+        // exercise the same checks.
+        let base = if cfg!(windows) { "C:\\data" } else { "/data" };
+        let p = |rest: &str| Path::new(base).join(rest.replace('/', std::path::MAIN_SEPARATOR_STR));
+        let c = AgentConfig { read_roots: vec![p("in")], workspace_root: Some(p("ws")), ..AgentConfig::default() };
+        assert_eq!(c.check_source(&p("in/ct/1.dcm")).unwrap(), p("in/ct/1.dcm"));
+        assert_eq!(c.check_source(&p("in/../secret")).unwrap_err().code, ErrorCode::Forbidden);
+        assert_eq!(c.check_source(&p("income")).unwrap_err().code, ErrorCode::Forbidden);
+        assert_eq!(c.resolve_workspace(Path::new("ct1")).unwrap(), p("ws/ct1"));
+        assert_eq!(c.resolve_workspace(Path::new("../x")).unwrap_err().code, ErrorCode::Forbidden);
+        assert_eq!(c.resolve_workspace(&p("tmp/ws")).unwrap_err().code, ErrorCode::Forbidden);
+
+        // A `..` that climbs out of a readable folder is refused in either
+        // spelling. This is the security boundary for what an agent may read,
+        // so both forms are checked: `/data/in/../secret` is an absolute Unix
+        // path and `C:\data\in\..\secret` a Windows one, and each is a rooted
+        // path where the other is not.
+        let rooted = AgentConfig {
+            read_roots: vec![Path::new("/data/in").into(), Path::new(r"C:\data\in").into()],
             ..AgentConfig::default()
         };
-        assert_eq!(c.check_source(Path::new("/data/in/ct/1.dcm")).unwrap(), PathBuf::from("/data/in/ct/1.dcm"));
-        assert_eq!(c.check_source(Path::new("/data/in/../secret")).unwrap_err().code, ErrorCode::Forbidden);
-        assert_eq!(c.check_source(Path::new("/data/income")).unwrap_err().code, ErrorCode::Forbidden);
-        assert_eq!(c.resolve_workspace(Path::new("ct1")).unwrap(), PathBuf::from("/data/ws/ct1"));
-        assert_eq!(c.resolve_workspace(Path::new("../x")).unwrap_err().code, ErrorCode::Forbidden);
-        assert_eq!(c.resolve_workspace(Path::new("/tmp/ws")).unwrap_err().code, ErrorCode::Forbidden);
+        for escape in ["/data/in/../secret", r"C:\data\in\..\secret", "/data/in/sub/../../secret"] {
+            assert_eq!(
+                rooted.check_source(Path::new(escape)).unwrap_err().code,
+                ErrorCode::Forbidden,
+                "an escape was accepted: {escape}"
+            );
+        }
+        // The same folder reached without climbing is allowed, in the spelling
+        // the platform resolves to a rooted path: a leading `/` without a drive
+        // is relative to the current drive on Windows, so it has to name one.
+        let inside = if cfg!(windows) { r"C:\data\in\ct\1.dcm" } else { "/data/in/ct/1.dcm" };
+        assert!(rooted.check_source(Path::new(inside)).is_ok(), "{inside} is inside a readable root");
+
         let open = AgentConfig::default();
-        assert!(open.check_source(Path::new("/anything")).is_ok());
-        assert_eq!(open.resolve_workspace(Path::new("/tmp/./ws")).unwrap(), PathBuf::from("/tmp/ws"));
+        assert!(open.check_source(&p("anything")).is_ok());
+        assert_eq!(open.resolve_workspace(&p("tmp/./ws")).unwrap(), p("tmp/ws"));
     }
 }

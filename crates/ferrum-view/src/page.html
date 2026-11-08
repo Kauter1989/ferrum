@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FERRUM view</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #14151a;
+    --panel: #1d1f26;
+    --line: #2b2e38;
+    --text: #e6e7ea;
+    --dim: #9aa0ad;
+    --accent: #4fb3d9;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    color: var(--text);
+    font: 13px/1.4 "Segoe UI", system-ui, sans-serif;
+    overflow: hidden;
+  }
+  header, footer {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 10px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--line);
+    flex: 0 0 auto;
+  }
+  footer { border-top: 1px solid var(--line); border-bottom: 0; color: var(--dim); }
+  .brand { color: var(--accent); font-weight: 600; letter-spacing: .08em; }
+  .spacer { flex: 1 1 auto; }
+  .hint { color: var(--dim); }
+  button, select {
+    background: #262933;
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 3px 8px;
+    font: inherit;
+  }
+  button:hover, select:hover { border-color: var(--accent); }
+  button.on { border-color: var(--accent); color: var(--accent); }
+  main {
+    position: relative;
+    flex: 1 1 auto;
+    display: grid;
+    place-items: center;
+    min-height: 0;
+    background: #0d0e11;
+    padding: 8px;
+  }
+  img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    image-rendering: auto;
+    cursor: crosshair;
+    user-select: none;
+    -webkit-user-drag: none;
+  }
+  #error {
+    position: absolute;
+    inset: auto 12px 12px 12px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: #3a1f22;
+    border: 1px solid #7b3239;
+    color: #ffd9dc;
+    white-space: pre-wrap;
+  }
+  #probe { color: var(--text); font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">FERRUM</span>
+  <span id="where">—</span>
+  <span id="win"></span>
+  <span class="spacer"></span>
+  <button data-plane="axial">Axial</button>
+  <button data-plane="coronal">Coronal</button>
+  <button data-plane="sagittal">Sagittal</button>
+  <select id="preset">
+    <option value="">Window…</option>
+    <option value="soft_tissue">Soft tissue</option>
+    <option value="brain">Brain</option>
+    <option value="lung">Lung</option>
+    <option value="bone">Bone</option>
+    <option value="full_range">Full range</option>
+  </select>
+  <label><input type="checkbox" id="segments"> Segments</label>
+</header>
+<main>
+  <img id="frame" alt="slice" draggable="false">
+  <div id="error" hidden></div>
+</main>
+<footer>
+  <span id="probe">Click the image to read a value</span>
+  <span class="spacer"></span>
+  <span class="hint">Wheel: slice · Drag: window · Click: value</span>
+</footer>
+<script>
+(function () {
+  "use strict";
+  var query = new URLSearchParams(location.search);
+  var token = query.get("token");
+  var img = document.getElementById("frame");
+  var elWhere = document.getElementById("where");
+  var elWin = document.getElementById("win");
+  var elProbe = document.getElementById("probe");
+  var elError = document.getElementById("error");
+  var preset = document.getElementById("preset");
+  var segments = document.getElementById("segments");
+  var state = null;
+  var shownRev = -1;
+  var busy = false;
+  var drag = null;
+  var lastSent = 0;
+
+  function url(path, extra) {
+    var p = new URLSearchParams(extra || {});
+    if (token) p.set("token", token);
+    var s = p.toString();
+    return path + (s ? "?" + s : "");
+  }
+
+  function fail(message) {
+    elError.hidden = false;
+    elError.textContent = String(message);
+  }
+
+  function clearError() {
+    elError.hidden = true;
+  }
+
+  function describe() {
+    if (!state) return;
+    var count = state.slice_count || 0;
+    elWhere.textContent = state.plane + " " + (state.slice_index + 1) + "/" + count;
+    elWin.textContent = "W " + Math.round(state.window.center) + " / " + Math.round(state.window.width);
+    segments.checked = !!(state.segments && state.segments.shown);
+    for (var i = 0; i < document.querySelectorAll("[data-plane]").length; i++) {
+      var b = document.querySelectorAll("[data-plane]")[i];
+      b.classList.toggle("on", b.dataset.plane === state.plane);
+    }
+    if (state.probe) {
+      var p = state.probe;
+      elProbe.textContent = "voxel " + p.voxel.join(", ") + " · " + p.value + " " + p.unit +
+        " · " + p.patient_mm.map(function (v) { return v.toFixed(1); }).join(", ") + " mm";
+    }
+  }
+
+  function loadFrame() {
+    if (!state || busy) return;
+    busy = true;
+    fetch(url("/api/frame.png", { rev: state.rev }), { credentials: "same-origin" })
+      .then(function (r) {
+        if (!r.ok) throw new Error("frame: HTTP " + r.status);
+        return r.blob();
+      })
+      .then(function (blob) {
+        var object = URL.createObjectURL(blob);
+        img.onload = function () { URL.revokeObjectURL(object); };
+        img.src = object;
+        shownRev = state.rev;
+        clearError();
+      })
+      .catch(function (e) { fail(e.message); })
+      .then(function () { busy = false; });
+  }
+
+  function refresh() {
+    if (busy) return;
+    fetch(url("/api/state"), { credentials: "same-origin" })
+      .then(function (r) {
+        if (!r.ok) throw new Error("state: HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (s) {
+        state = s;
+        describe();
+        if (s.rev !== shownRev) loadFrame();
+      })
+      .catch(function (e) { fail(e.message); });
+  }
+
+  function send(body) {
+    if (busy) return;
+    busy = true;
+    fetch(url("/api/input"), {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    })
+      .then(function (r) {
+        return r.json().then(function (v) {
+          if (!r.ok) throw new Error(v.error || "input: HTTP " + r.status);
+          return v;
+        });
+      })
+      .then(function (s) {
+        state = s;
+        describe();
+        loadFrame();
+      })
+      .catch(function (e) { fail(e.message); })
+      .then(function () { busy = false; });
+  }
+
+  function pixelOf(event) {
+    var r = img.getBoundingClientRect();
+    var sx = img.naturalWidth / r.width;
+    var sy = img.naturalHeight / r.height;
+    return {
+      x: Math.max(0, Math.floor((event.clientX - r.left) * sx)),
+      y: Math.max(0, Math.floor((event.clientY - r.top) * sy))
+    };
+  }
+
+  img.addEventListener("wheel", function (e) {
+    e.preventDefault();
+    if (!state) return;
+    send({ step: e.deltaY > 0 ? 1 : -1 });
+  }, { passive: false });
+
+  img.addEventListener("pointerdown", function (e) {
+    if (!state) return;
+    img.setPointerCapture(e.pointerId);
+    drag = { x: e.clientX, y: e.clientY, center: state.window.center, width: state.window.width, moved: false };
+  });
+
+  img.addEventListener("pointermove", function (e) {
+    if (!drag || !state) return;
+    var dx = e.clientX - drag.x;
+    var dy = e.clientY - drag.y;
+    if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
+    if (!drag.moved || Date.now() - lastSent < 60) return;
+    lastSent = Date.now();
+    var width = Math.max(1, drag.width * (1 + dx / 240));
+    var center = drag.center - dy * (drag.width / 300);
+    send({ window: { center: center, width: width } });
+  });
+
+  img.addEventListener("pointerup", function (e) {
+    if (!state) return;
+    var clicked = drag && !drag.moved;
+    drag = null;
+    if (clicked) send({ probe: pixelOf(e) });
+  });
+
+  img.addEventListener("pointercancel", function () { drag = null; });
+
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "ArrowUp" || e.key === "PageUp") send({ step: -1 });
+    else if (e.key === "ArrowDown" || e.key === "PageDown") send({ step: 1 });
+  });
+
+  for (var i = 0; i < document.querySelectorAll("[data-plane]").length; i++) {
+    document.querySelectorAll("[data-plane]")[i].addEventListener("click", function (e) {
+      send({ plane: e.currentTarget.dataset.plane });
+    });
+  }
+
+  preset.addEventListener("change", function () {
+    if (preset.value) send({ preset: preset.value });
+    preset.value = "";
+  });
+
+  segments.addEventListener("change", function () { send({ segments: segments.checked }); });
+
+  refresh();
+  setInterval(refresh, 700);
+})();
+</script>
+</body>
+</html>

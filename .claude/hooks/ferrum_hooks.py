@@ -19,6 +19,7 @@ except A and B, which deny when they cannot decide safely. Lessons are in
 import hashlib
 import json
 import os
+import pathlib
 import re
 import shlex
 import shutil
@@ -324,17 +325,24 @@ def prepush_checks(root):
             cwd=root,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=600,
         )
         path = os.path.join(root, "skills/ferrum/schemas/commands.json")
         if gen.returncode == 0 and os.path.exists(path):
+            # The checkout may hold CRLF on Windows (git's autocrlf), and a
+            # fresh schema would then read as stale on every Windows machine.
+            stored = ""
             with open(path, encoding="utf-8") as f:
-                if f.read().strip() != gen.stdout.strip():
-                    problems.append(
-                        "skills/ferrum/schemas/commands.json is stale: "
-                        "`cargo run -q -p ferrum-cli -- schema > skills/ferrum/schemas/commands.json`."
-                    )
+                stored = f.read().replace("\r\n", "\n").strip()
+            if stored != gen.stdout.replace("\r\n", "\n").strip():
+                problems.append(
+                    "skills/ferrum/schemas/commands.json is stale: "
+                    "`cargo run -q -p ferrum-cli -- schema > skills/ferrum/schemas/commands.json`."
+                )
     problems += ruff_problems(root, changed)
+    problems += size_problems(root, changed)
     if changed & set(VISUAL_PATHS):
         marker = os.path.join(state_dir(root), "visual-check.json")
         ok = False
@@ -356,6 +364,37 @@ def prepush_checks(root):
             + "\n- ".join(problems)
         )
     return None
+
+
+def size_problems(root, changed):
+    """E4: a branch past the size budget must be split before it is pushed (L36).
+
+    `ferrum-size/calibration.md` sets the classes: M is 1 500 lines and 25
+    files, L is 3 500 and 40, and anything beyond L is XL, which "split into
+    M/L PRs". The rule existed only as prose, so a stage declared L could grow
+    to XL unnoticed; this measures the branch instead.
+    """
+    try:
+        base = git(root, "merge-base", "HEAD", "origin/develop")
+        short = git(root, "diff", "--shortstat", base, "HEAD")
+    except (RuntimeError, subprocess.TimeoutExpired):
+        return []
+    # `--shortstat` omits a part when it is zero ("40 files changed, 2000
+    # insertions(+)" has no deletions), so each number is read by its label.
+    counts = {label: int(value) for value, label in re.findall(r"(\d+) (files?|insertions?|deletions?)", short)}
+    files = counts.get("files", counts.get("file", 0))
+    added = counts.get("insertions", counts.get("insertion", 0))
+    deleted = counts.get("deletions", counts.get("deletion", 0))
+    if not files:
+        return []
+    lines = added + deleted
+    if lines <= 3500 and files <= 40:
+        return []
+    return [
+        f"this branch is {lines} lines in {files} files — beyond size L (3500 lines, 40 files), so it is "
+        "XL and `ferrum-size` says to split it into M/L PRs. Split along the commit boundaries, or say "
+        "in the PR body why the split does not apply (lesson L36)."
+    ]
 
 
 def ruff_problems(root, changed):
@@ -458,7 +497,9 @@ def guard_edit(data):
         root = repo_root(cwd)
     except (RuntimeError, subprocess.TimeoutExpired, OSError):
         return
-    rel = os.path.relpath(os.path.abspath(os.path.join(cwd, path)), root)
+    # Git paths always use forward slashes; on Windows `relpath` gives
+    # backslashes, and every pattern and `git cat-file` below expects `/`.
+    rel = os.path.relpath(os.path.abspath(os.path.join(cwd, path)), root).replace(os.sep, "/")
     if not re.match(r"^docs/decisions/\d{4}-.*\.md$", rel):
         return
     try:
@@ -511,7 +552,8 @@ def post_edit(data):
     except (RuntimeError, subprocess.TimeoutExpired, OSError):
         return
     full = os.path.abspath(os.path.join(cwd, path))
-    rel = os.path.relpath(full, root)
+    # Git paths use forward slashes, and the change matrix is keyed by them.
+    rel = os.path.relpath(full, root).replace(os.sep, "/")
     if rel.endswith(".rs") and os.path.exists(full):
         subprocess.run(["rustfmt", "--edition", "2021", full], cwd=root, capture_output=True, timeout=30)
     parts = []
@@ -596,14 +638,20 @@ def session_start(data):
         lines.append("Lessons: " + "; ".join(t.split(" (")[0] for t in titles))
     target = os.path.join(root, "target")
     if os.path.isdir(target):
+        # `du` is Unix-only; on Windows its absence raised FileNotFoundError
+        # out of the hook and swallowed the whole session-start message.
         try:
-            out = subprocess.run(["du", "-sk", target], capture_output=True, text=True, timeout=5)
-            gb = int(out.stdout.split()[0]) / 1024 / 1024
+            if shutil.which("du") is not None:
+                out = subprocess.run(["du", "-sk", target], capture_output=True, text=True, timeout=5)
+                kb = int(out.stdout.split()[0])
+            else:
+                kb = sum(f.stat().st_size for f in pathlib.Path(target).rglob("*") if f.is_file()) // 1024
+            gb = kb / 1024 / 1024
             if gb > 20:
                 lines.append(
                     f"target/ is {gb:.0f} GB: remove target/llvm-cov-target and target/release if not needed (L15)."
                 )
-        except (subprocess.TimeoutExpired, ValueError, IndexError):
+        except (subprocess.TimeoutExpired, ValueError, IndexError, OSError):
             pass
     if shutil.which("ruff") is None:
         lines.append("ruff is not installed: edited Python files are not linted (pip install ruff; ruff.toml).")

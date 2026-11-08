@@ -30,6 +30,7 @@ flowchart LR
     RX["ferrum-radiomics<br/>feature registry · profiles · segment metrics"]
     AG["ferrum-agent<br/>agent commands · envelope · workspaces"]
     CLI["ferrum-cli<br/>command line"]
+    VW["ferrum-view<br/>local view host · ferrum-view/1"]
 
     V --> UI
     V --> IO
@@ -45,12 +46,19 @@ flowchart LR
     EN -->|"implements SegmentationEngine"| D
     EN -->|"GPU leases"| GL
     CLI --> AG
+    CLI --> VW
+    VW --> A
+    VW --> R
+    VW -->|"workspaces"| IO
     AG --> D
     AG --> IO
     AG -->|"CPU ray caster"| R
     AG -->|"engine commands"| EN
     AG -->|"segment metrics"| RX
     RX --> D
+    WS["ferrum-wasm<br/>WebGPU canvas renderer"]
+    WS -->|"same shaders, frame model"| R
+    WS --> A
 ```
 
 | Crate | Responsibility | Must not |
@@ -66,7 +74,9 @@ flowchart LR
 | `ferrum` | the desktop app: header, start screen and recent studies, studies sidebar, status bar, dialogs (series, load warnings, image type), file dialogs, drag and drop, screenshots, shortcuts; composition root | contain business logic or views (they are `ferrum-ui`'s) |
 | `ferrum-radiomics` | feature registry (stable id, family, unit, definition text), versioned profiles (`quick`), size, shape (surface mesh by marching cubes, principal axes) and first-order intensity features of a segment, the result type that names profile, version and parameters; calls `ferrum_domain::analysis` for the measures the domain already has ([design](radiomics.md), [ADR 0011](decisions/0011-radiomics-crate.md)) | do I/O, know GPUs or UI, copy a measure that `ferrum-domain` has |
 | `ferrum-agent` | agent skill (depends on `ferrum-domain`, `ferrum-io`, `ferrum-engines`, `ferrum-radiomics` and `ferrum-render` without its GPU feature) ([design](agent-skill.md), [CLI and MCP](agent-cli.md), [segmentation](agent-segmentation.md)): commands on JSON parameters with JSON Schemas, `ferrum-agent/1` envelope and error codes, operator configuration, review decisions of a host bound to what was shown (`decisions`, a library API, never an agent command), workspace sessions with a series cache, CPU slice renders with pixel mapping, audit log, MCP server (stdio); engine objects refined from stored prompts, GPU leases (through `ferrum-engines::gpu`), engine sessions cached for MCP, quality checks | depend on wgpu, egui or `ferrum-app` state |
-| `ferrum-cli` | `ferrum-cli` binary: argument parsing to agent calls, exit codes | contain command logic |
+| `ferrum-cli` | `ferrum-cli` binary: argument parsing to agent calls, exit codes; operator-only commands that run a process instead of a call (`gpu hold`, `view serve`) | contain command logic |
+| `ferrum-view` | local view host (`ferrum-view/1`, [design](view-host.md), [ADR 0017](decisions/0017-view-host-crate.md)): one workspace kept open with its `Viewer`, slice frames drawn on the GPU (`VolumeRenderer::render_slice_image`) or with the CPU reference (the `SliceImage` oracle and the `slice.wgsl` overlay rule), a `tiny_http` server on loopback with a token, the self-contained page, the state document, input and the event log; `/api/volume` hands the voxels to a client that renders the study itself | contain business logic, add image-formation code, or know about egui |
+| `ferrum-wasm` | the renderer in a browser ([design](webgpu-panel.md)): `ferrum-render` bound to a `<canvas>` through WebGPU, the same `volume.wgsl` and `frame` model as the desktop, the MPR layout (three slices and the 3D view in one canvas) and the CT presets; builds for `wasm32-unknown-unknown` only, so the native workspace build skips it | add image-formation code, parse files, or contain business logic |
 
 
 ## Extension points

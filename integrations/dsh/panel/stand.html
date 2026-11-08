@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FERRUM WebGPU stand</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #0d0e11; color: #e6e7ea; font: 13px/1.4 "Segoe UI", system-ui, sans-serif; overflow: hidden; }
+  body { display: flex; flex-direction: column; }
+  header { display: flex; gap: 10px; align-items: center; padding: 6px 10px; background: #1d1f26; border-bottom: 1px solid #2b2e38; }
+  canvas { flex: 1 1 auto; width: 100%; min-height: 0; display: block; cursor: grab; }
+  canvas:active { cursor: grabbing; }
+  button, select { background: #262933; color: inherit; border: 1px solid #2b2e38; border-radius: 5px; padding: 3px 8px; font: inherit; }
+  #status { color: #9aa0ad; }
+  #error { color: #ff9aa2; white-space: pre-wrap; padding: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <strong style="color:#4fb3d9;letter-spacing:.08em">FERRUM</strong>
+  <select id="mode">
+    <option value="volume">3D</option>
+    <option value="slice">2D slice</option>
+  </select>
+  <select id="render">
+    <option value="tissue">tissue</option>
+    <option value="isosurface">isosurface</option>
+    <option value="mip">MIP</option>
+    <option value="transfer_function">transfer function</option>
+  </select>
+  <span id="status">starting…</span>
+</header>
+<div id="error" hidden></div>
+<canvas id="view"></canvas>
+<script type="module">
+import init, { FerrumView, FerrumMode, render_modes, planes } from "./ferrum_wasm.js";
+
+const canvas = document.getElementById("view");
+const status = document.getElementById("status");
+const error = document.getElementById("error");
+const modeSelect = document.getElementById("mode");
+const renderSelect = document.getElementById("render");
+
+function fail(message) {
+  error.hidden = false;
+  error.textContent = String(message && message.stack ? message.stack : message);
+  status.textContent = "failed";
+}
+
+/** A synthetic chest-like volume: air, lungs, soft tissue, spine and ribs. */
+function phantom() {
+  const [nx, ny, nz] = [160, 160, 96];
+  const values = new Float32Array(nx * ny * nz);
+  const c = [(nx - 1) / 2, (ny - 1) / 2];
+  for (let k = 0; k < nz; k++) {
+    for (let j = 0; j < ny; j++) {
+      for (let i = 0; i < nx; i++) {
+        const dx = (i - c[0]) / 70;
+        const dy = (j - c[1]) / 52;
+        const r = Math.hypot(dx, dy);
+        const z = (k - nz / 2) / (nz / 2);
+        let v = -1000;
+        if (r <= 1 && Math.abs(z) < 0.95) {
+          v = 40;                                              // soft tissue
+          const lungL = Math.hypot((i - 55) / 26, (j - 80) / 34, (k - nz / 2) / 30);
+          const lungR = Math.hypot((i - 105) / 26, (j - 80) / 34, (k - nz / 2) / 30);
+          if (lungL < 1 || lungR < 1) v = -820;                // lungs
+          const spine = Math.hypot((i - 80) / 10, (j - 118) / 9);
+          if (spine < 1) v = 900;                              // vertebra
+          const heart = Math.hypot((i - 86) / 20, (j - 92) / 16, (k - nz / 2) / 22);
+          if (heart < 1) v = 60;                               // mediastinum
+          for (const [cx, cy] of [[34, 70], [126, 70]]) {      // ribs
+            if (Math.hypot((i - cx) / 7, (j - cy) / 7) < 1) v = 800;
+          }
+          if (r > 0.94) v = -120;                              // fat rim
+        }
+        values[i + j * nx + k * nx * ny] = v + (Math.random() - 0.5) * 20;
+      }
+    }
+  }
+  return { dims: [nx, ny, nz], spacing: [1.0, 1.0, 1.5], values };
+}
+
+async function main() {
+  if (!navigator.gpu) {
+    fail("this window has no WebGPU (navigator.gpu is undefined)");
+    return;
+  }
+  const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
+  status.textContent = adapter ? "WebGPU adapter: " + (adapter.info ? adapter.info.description || adapter.info.vendor : "ok") : "no WebGPU adapter";
+
+  await init();
+  const view = await FerrumView.create(canvas);
+  const { dims, spacing, values } = phantom();
+  view.set_volume(new Uint32Array(dims), new Float32Array(spacing), values);
+  view.set_render_mode("tissue");
+  view.set_window(250, 900);
+  status.textContent = view.adapter_info();
+
+  const dpr = window.devicePixelRatio || 1;
+  function resize() {
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = Math.max(1, Math.round(rect.width * dpr));
+    canvas.height = Math.max(1, Math.round(rect.height * dpr));
+    view.resize(canvas.width, canvas.height);
+  }
+  new ResizeObserver(resize).observe(canvas);
+  resize();
+
+  let drag = null;
+  canvas.addEventListener("pointerdown", (e) => {
+    canvas.setPointerCapture(e.pointerId);
+    drag = { x: e.clientX, y: e.clientY };
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    view.orbit((e.clientX - drag.x) * 0.01, (e.clientY - drag.y) * 0.01);
+    drag = { x: e.clientX, y: e.clientY };
+  });
+  canvas.addEventListener("pointerup", () => { drag = null; });
+  canvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    view.zoom(e.deltaY > 0 ? -0.1 : 0.1);
+  }, { passive: false });
+
+  modeSelect.addEventListener("change", () => {
+    view.set_mode(modeSelect.value === "volume" ? FerrumMode.Volume3d : FerrumMode.Slice2d);
+  });
+  renderSelect.addEventListener("change", () => {
+    try { view.set_render_mode(renderSelect.value); } catch (e) { fail(e); }
+  });
+
+  let frames = 0;
+  let last = performance.now();
+  function loop(now) {
+    try {
+      view.render();
+    } catch (e) {
+      fail(e);
+      return;
+    }
+    frames += 1;
+    if (now - last > 1000) {
+      const fps = (frames * 1000) / (now - last);
+      status.textContent = view.adapter_info() + " · " + fps.toFixed(0) + " fps";
+      frames = 0;
+      last = now;
+    }
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+}
+
+main().catch(fail);
+</script>
+</body>
+</html>

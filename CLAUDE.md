@@ -27,6 +27,8 @@ segmentation engines, and an agent skill (planned). Read
 ferrum (desktop shell) → ferrum-ui (views, panels) → ferrum-app (application) → ferrum-domain ← ferrum-io (data)
                                        ↘ ferrum-processing, ferrum-render (infrastructure)
                                        ↘ ferrum-radiomics → ferrum-domain (segment metrics)
+ferrum-cli → ferrum-view (local view host) → ferrum-app, ferrum-render (gpu), ferrum-io
+ferrum-wasm (browser) → ferrum-render (gpu), ferrum-app, ferrum-processing — builds for wasm32 only
 ```
 
 - `ferrum-domain` has no I/O, no GPU, no UI dependencies; it defines ports
@@ -61,6 +63,20 @@ ferrum (desktop shell) → ferrum-ui (views, panels) → ferrum-app (application
 - No business logic in `ferrum` or `ferrum-ui` widgets — add a use case to
   `Viewer`. `ferrum-ui` opens no windows or file dialogs (no `eframe`, no
   `rfd`); hosts embed it ([ADR 0016](docs/decisions/0016-ferrum-ui-crate.md)).
+- `ferrum-view` implements the local view host `ferrum-view/1`
+  ([design](docs/view-host.md), [ADR 0017](docs/decisions/0017-view-host-crate.md)):
+  one workspace kept open, slice frames on the GPU or the CPU reference,
+  loopback HTTP with a token. Only `ferrum-cli` depends on it (`view serve`,
+  a CLI-only command). It adds no image-formation code and no business
+  logic; protocol changes update `docs/view-host.md` and its tests.
+- `ferrum-wasm` is the same renderer in a browser
+  ([design](docs/webgpu-panel.md)): it binds `ferrum-render` to a `<canvas>`
+  through WebGPU and adds only the MPR layout and the CT presets. It builds
+  for `wasm32-unknown-unknown`; the whole module body is behind
+  `#![cfg(target_arch = "wasm32")]`, so a native `cargo check --workspace`
+  compiles an empty crate. It adds no image-formation code, parses no files
+  and holds no business logic. A harness panel is the consumer; the steps
+  are in `integrations/dsh/README.md`.
 - DICOM tags only through `dicom_dictionary_std::tags` constants — never raw
   tag literals.
 
@@ -83,6 +99,56 @@ cargo bench --workspace
 make coverage                                # coverage report; CI floor in Makefile
 cargo run --release -- <path>                 # the app is the default member
 ```
+
+## Every push is preceded by a local run — a rule, not advice
+
+CI minutes are the project's and are few, and a red CI round spends them on
+what a local command answers for free (L34). So, before **every** push:
+
+1. **`preflight.sh`** — the CI order (fmt, clippy, schema, the workspace
+   tests, optionally coverage). Its last line must read
+   `all checks passed`:
+
+   ```bash
+   .claude/skills/ferrum-change/preflight.sh            # or --quick, --coverage
+   ```
+
+2. **On Windows, in WSL** — the same Linux CI uses, which is where the
+   Linux-only cases and the hooks actually run:
+
+   ```powershell
+   wsl -e bash -lc "cd /mnt/e/projects/ferrum/sources/ferrum && .claude/skills/ferrum-change/preflight.sh"
+   ```
+
+   The WSL distribution must hold LF in shell scripts and data
+   (`.gitattributes`, `core.autocrlf=false`) — a CRLF checkout makes bash
+   refuse the script, which is how the local run was skipped for a whole
+   evening.
+
+3. **What `preflight.sh` does not cover**, run when the change touches it:
+   - `python .claude/hooks/test_hooks.py` after a hook or `test_hooks.py`
+     change (CI job `python-lint`);
+   - `python -m ruff check` and `python -m ruff format --check` on the
+     changed Python files, with `ruff==0.16.9` as CI pins it (the hook warns
+     when ruff is missing — act on that warning);
+   - `python -m pytest <changed test directories>` for Python tests outside
+     cargo (the panel and `ferrum-wasm` source checks);
+   - `node integrations/dsh/plugin/smoke-load.cjs` when the panel bundle
+     changes;
+   - `cargo deny check licenses` when a dependency changes;
+   - skill `ferrum-visual-check` when the change draws pixels or a UI
+     control.
+
+4. **Then push once.** If a push is made without the full local run, the
+   commit message and the PR say which parts were not run — never leave it
+   unsaid.
+
+5. **A red suite is a defect** (L33): fix it in the same branch, or name in
+   the PR the test, the reason and the platform. "It failed before my
+   change" is not an answer.
+
+Step-by-step detail and the platform split (what WSL answers, what the host
+answers): `ferrum-change` §4.
 
 ## Workflow, skills and lessons
 
@@ -135,6 +201,7 @@ judgement.
 | E | a push that fails `cargo fmt --check` or has a stale `commands.json` | blocked |
 | E | a push after a slice/overlay rendering change without a fresh `phantom_render.py` pass | blocked (L1) |
 | E | a push with changed Python files that fail `ruff check` or `ruff format --check` (`ruff.toml`) | blocked |
+| E | a push of a branch past size L (3500 lines, 40 files — `ferrum-size` classes) | blocked; split it (L36) |
 | F | an edited `.rs` file | `rustfmt` |
 | F | an edited `.py` file | `ruff format` and safe fixes; the remaining findings come back as context |
 | G | an edited file in the change matrix | a reminder of what else must change |

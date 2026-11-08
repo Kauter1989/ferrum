@@ -715,6 +715,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "console_error_panic_hook"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a06aeb73f470f66dcdbf7223caeebb85984942f22f1adb2a088cf9668146bbbc"
+dependencies = [
+ "cfg-if",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1516,6 +1526,7 @@ dependencies = [
  "ferrum-domain",
  "ferrum-engines",
  "ferrum-io",
+ "ferrum-view",
  "glam",
  "serde_json",
  "tempfile",
@@ -1638,6 +1649,45 @@ dependencies = [
  "glam",
  "log",
  "tempfile",
+ "wgpu",
+]
+
+[[package]]
+name = "ferrum-view"
+version = "0.3.0"
+dependencies = [
+ "ferrum-app",
+ "ferrum-domain",
+ "ferrum-io",
+ "ferrum-render",
+ "getrandom 0.3.4",
+ "glam",
+ "image",
+ "log",
+ "pollster 0.4.0",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tiny_http",
+ "ureq",
+ "wgpu",
+]
+
+[[package]]
+name = "ferrum-wasm"
+version = "0.3.0"
+dependencies = [
+ "bytemuck",
+ "console_error_panic_hook",
+ "ferrum-domain",
+ "ferrum-processing",
+ "ferrum-render",
+ "glam",
+ "js-sys",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
  "wgpu",
 ]
 

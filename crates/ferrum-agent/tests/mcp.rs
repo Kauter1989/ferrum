@@ -70,7 +70,13 @@ fn comparable(envelope: &Value, ws_root: &str) -> Value {
         p["time"] = Value::Null;
         p["params"] = Value::Null;
     }
-    let text = v.to_string().replace(ws_root, "<ws>");
+    // The two runs write into different workspace folders, so the paths are
+    // replaced before comparing. JSON escapes a Windows separator as `\\`, and
+    // the root arrives with single separators: both spellings are replaced, so
+    // the comparison is about the answer and not about the platform.
+    let escaped = ws_root.replace('\\', "\\\\");
+    let mut text = v.to_string().replace(&escaped, "<ws>");
+    text = text.replace(ws_root, "<ws>");
     let mut v: Value = serde_json::from_str(&text).unwrap();
     walk(&mut v);
     v

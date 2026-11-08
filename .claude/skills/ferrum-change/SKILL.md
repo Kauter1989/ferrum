@@ -76,8 +76,14 @@ DICOM tags only via `dicom_dictionary_std::tags`.
 
 ## 4. Check locally — the same as CI
 
-Run `.claude/skills/ferrum-change/preflight.sh` from the repo root and read its last line (`all checks passed`, L19). It
-runs, in CI order:
+The rule and its checklist live in `CLAUDE.md` (*Every push is preceded by a
+local run*): `preflight.sh`, in WSL on Windows, plus the checks it does not
+cover. Read them there; this section adds only what the command list cannot
+say.
+
+**What the command is** — `.claude/skills/ferrum-change/preflight.sh` from the
+repo root, and its last line must read `all checks passed` (L19). It runs, in
+CI order:
 1. `cargo fmt --all -- --check`;
 2. `cargo clippy --workspace --all-targets -- -D warnings`;
 3. the schema freshness check (`ferrum-cli schema` against
@@ -85,6 +91,43 @@ runs, in CI order:
 4. `FERRUM_REQUIRE_GPU=1 cargo test --workspace -- --test-threads=4`
    (lavapipe: `mesa-vulkan-drivers`);
 5. with `--coverage`, `make coverage-ci` (floor in the `Makefile`).
+
+**Why the order is fix → run → push once** (L34): every CI round costs the
+project minutes it does not have, and a red push spends them on what a local
+run answers for free. CI is then watched for the Linux-specific answers a
+local run cannot give — not for the first look at the code.
+
+**The platform split on Windows** — two runs answer two different questions:
+- **WSL, without `FERRUM_REQUIRE_GPU`**: the Linux answers — hooks, ruff,
+  fmt, clippy, schema, every non-GPU test and the UI tests;
+- **the host (PowerShell)**: the Windows answers and, for now, the GPU
+  renderer tests (`ferrum-render`'s parity suite, 14 tests, green).
+
+The GPU half needs a Mesa new enough for wgpu 30. CI runs `ubuntu-latest`
+(Mesa 24+); a WSL on Ubuntu 22.04 has Mesa 23.2 through `jammy-updates`, and
+there the lavapipe driver segfaults in the first GPU parity test (`SIGSEGV` in
+`gpu_parity`). The tests are not wrong, the driver is old: run the rest
+without `FERRUM_REQUIRE_GPU` and take the GPU answer from the host. The two
+things that make the WSL run work at all are fixed in the repository: the
+working copy holds LF in shell scripts and data (`.gitattributes`,
+`core.autocrlf=false`), and the schema check compares content, not line
+endings.
+
+A push made with only one of the two is a push whose other half CI will judge;
+say which half was checked.
+
+**A red suite is a defect, never a background** (L33). CI runs on Linux; a
+change delivered from Windows or macOS may meet tests that only ever pass on
+one platform. When a test fails before the change as well:
+- fix it in the same branch — a path built with `os.path.relpath`, a Unix
+  tool such as `du`, a fixture written without `encoding`, a root hard-coded
+  as `/data`, a JSON compare that ignores `\\` — these are repository
+  defects, and each one hides the next real failure;
+- if it genuinely cannot be fixed here (a GPU that removes the device, a
+  harness bug), say so in the PR in one sentence with the name of the test
+  and the reason, and still run everything else green.
+
+Never write "it failed before my change" and stop there.
 
 Notes:
 - **Hooks catch some of this before you do** (`CLAUDE.md`, *Hooks*):

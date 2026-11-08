@@ -19,6 +19,9 @@ python3 .claude/skills/ferrum-analyze/analyze.py --stage <N>
 - Add `--coverage` when you added a lot of code: the floor is in the
   `Makefile`.
 - A GPU test that skipped is not a pass (`FERRUM_REQUIRE_GPU=1`).
+- **Before the push, not after it** (`CLAUDE.md`, *Every push is preceded by
+  a local run*; WSL on Windows). A red CI round costs the project minutes it
+  does not have (L34).
 
 ## 2. Level 2 — phantom and visual (anything visible or numeric)
 
