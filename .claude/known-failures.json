@@ -1,0 +1,13 @@
+{
+  "_about": "Tests a machine is known to fail, with the reason and who tracks it. A binary listed here does not block the pre-push gate (ferrum_hooks.py); it is still a defect (L33), and every entry needs a reason and an owner. Remove an entry when its test passes again. Never add one to get a push through: an entry without a real, written cause is the red suite this project stopped accepting.",
+  "ferrum --test ui": {
+    "reason": "egui_kittest's texture readback fails in wgpu-30.0.1 on this Windows machine: `Buffer with 'Texture to bytes output buffer' label is invalid` at map_async (and, on some runs, a panic inside egui-wgpu's renderer). The same copy-and-read works in a standalone probe on the same device, and ferrum-render's GPU parity suite passes, so the renderer is not the cause — the kittest harness on this driver path is. Both failing tests (every_view_mode_renders_the_volume, segments_are_drawn_in_2d_and_3d) pass in WSL on the same code, which is where CI runs them.",
+    "since": "2026-11-08",
+    "tracking": "PR #91 body, section Not verified; re-check when egui_kittest or the graphics driver updates"
+  },
+  "ferrum-render --test gpu_parity": {
+    "reason": "Not a defect in the suite: run on its own it passes all 14 tests (`cargo test -p ferrum-render --features gpu --test gpu_parity`). Under `cargo test --workspace` it dies with `could not execute process ... (never executed)`, os error 2, because the workspace build relinks that binary while the suite runs — a race in the shared `target/debug` directory on this machine, not a failing assertion. CI runs the workspace once on a clean runner and does not see it.",
+    "since": "2026-11-08",
+    "tracking": "Re-check after a cargo upgrade or when the gate retries a workspace run serially; delete this entry once a full run is green"
+  }
+}

@@ -721,6 +721,40 @@ that says so instead of editing the old one.
   what a clinician sees. And when a fix touches "the caller", sweep for every
   caller with `grep` — the one you did not think of is the one that throws.
 
+### L38 — A gate that could be weighed, and was (2026-11, after Stage 26)
+
+- **Symptom:** The local run before CI had been a written rule since L34,
+  repeated in `CLAUDE.md`, `ferrum-workflow` §2, `ferrum-change` §4 and
+  `ferrum-verify` §1. It was still skipped: `preflight.sh` never ran on
+  Windows for an evening, three pushes went red on findings `ruff` answers in
+  a second, and the user had to ask why a green pipeline mattered at all.
+- **Root cause:** Four statements of a rule are still statements. Nothing
+  refused the push. The pre-push hook checked `fmt`, the schema, ruff and the
+  size — but **not `clippy` and not `cargo test`**, which is precisely what CI
+  spends its minutes on. The two checks most likely to fail remotely were the
+  two the gate did not make.
+- **Why it mattered:** A rule an agent can see, understand and skip is a
+  suggestion. The purpose of this rule is not advice-giving, it is making a
+  red pipeline unlikely before it is paid for — a pre-commit hook, in other
+  words, and a hook that runs two-thirds of the checks is not one.
+- **Fix:** The gate now runs `cargo clippy --workspace --all-targets -- -D
+  warnings` and `cargo test --workspace --no-fail-fast` on every push, and
+  refuses with the failing command and the shortest useful excerpt
+  (`clippy_failure`, `tests_failure`). The escape hatch stopped being silent:
+  a bare `FERRUM_SKIP_PREPUSH=1` is refused, and the value must state a
+  reason. `test_hooks.py::LocalRunGate` covers all three cases.
+- **The other half:** the rule's *place* was also wrong. It lived inside
+  phases 7, 8 and 9 at once — written in Verify, applied at the end of
+  Implement, about Deliver. It is now one gate in `CLAUDE.md` with the table of
+  what it refuses on, and the phase skills point at it.
+- **Guard:** the hook itself. A push that fails clippy or the tests does not
+  happen, so the "I judged the run unnecessary" path is closed by
+  construction, not by good intentions.
+- **Rule:** If a rule matters every time, it belongs in a check that cannot be
+  skipped — and the check must cover everything the remote runner will. Prose
+  documents intent; a gate enforces it. When the two disagree, the gate wins
+  and the prose is the thing that needs fixing.
+
 ## What worked
 
 ### W1 — Field test on the user's GPU with a throw-away script (2026-10, Stage 17)
