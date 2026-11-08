@@ -43,7 +43,7 @@ VISUAL_PATHS = (
     "crates/ferrum-agent/src/commands/tiles.rs",
     "crates/ferrum-domain/src/segmentation.rs",
 )
-SKIP_PREPUSH = "FERRUM_SKIP_PREPUSH=1"
+SKIP_PREPUSH = "FERRUM_SKIP_PREPUSH="
 
 # G: file pattern -> what else must change (ferrum-change §2).
 MATRIX = [
@@ -297,13 +297,90 @@ def check_push(cwd, root, args, branch, command):
     )
     if tags:
         return ask("Pushing tags publishes a version; releases need the user's word (ferrum-release, G3).")
-    if SKIP_PREPUSH in command:
+    if "FERRUM_SKIP_PREPUSH=" in command:
+        # The escape hatch stays, but only as an explicit, recorded act: a bare
+        # `FERRUM_SKIP_PREPUSH=1` is refused, and the value has to say why, so
+        # the reason lands in the transcript and in the PR. A silent skip is
+        # what let a red suite reach CI (L34).
+        reason = re.search(r"FERRUM_SKIP_PREPUSH=(\S+)", command)
+        if not reason or reason.group(1) == "1" or len(reason.group(1)) < 10:
+            return deny(
+                "Skipping the local run needs a reason: write "
+                "`FERRUM_SKIP_PREPUSH=<why> git push …` with at least a short clause instead of "
+                "`FERRUM_SKIP_PREPUSH=1`. The local run is the gate before CI, not a suggestion (L34)."
+            )
         return None
     return prepush_checks(root)
 
 
+def clippy_failure(output: str) -> str:
+    """The first few clippy errors, short enough to act on."""
+    errors = [line.strip() for line in output.splitlines() if line.startswith("error")]
+    head = "; ".join(errors[:3]) if errors else "see the output"
+    return f"`cargo clippy --workspace --all-targets -- -D warnings` fails: {head}."
+
+
+def tests_failure(output: str) -> str:
+    """The failing test binaries and tests, not the whole log."""
+    failing = [line.strip() for line in output.splitlines() if line.startswith("error: test failed")]
+    crates = [line.strip() for line in output.splitlines() if re.match(r"^\s+Running .*\(target", line)]
+    summary = "; ".join(failing[:4]) if failing else "see the output"
+    if not failing and crates:
+        summary = "a test binary failed; " + crates[0]
+    return (
+        f"`cargo test --workspace` fails: {summary}. Fix it or, if it cannot be "
+        "fixed here, name the test and the reason in the PR (L33) — never push a red suite."
+    )
+
+
+def known_failures(root) -> dict:
+    """Tests this machine (or CI) is known to fail, with the reason on the record.
+
+    A red suite is a defect (L33), not a background, so ignoring one has to be
+    a written decision rather than a mental note:
+    `.claude/known-failures.json` maps a failing test binary to the reason it
+    fails and who tracks it. It is committed, unlike `.claude/state/`, because
+    the decision belongs to the repository and to everyone who runs the gate.
+    A binary listed there does not block the gate; it is reported instead, so
+    the reason stays visible on every push.
+    """
+    path = os.path.join(root, ".claude", "known-failures.json")
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return {}
+    return {k: v for k, v in data.items() if not k.startswith("_")} if isinstance(data, dict) else {}
+
+
+def tests_passed_except(output: str, known: dict) -> list:
+    """Which failing binaries are known; a run that fails only for them passes.
+
+    Cargo reports a failure in two shapes — `error: test failed, to rerun pass
+    `-p foo --test bar`` per binary, and a trailing `error: N targets failed:`
+    followed by an indented list — so both are read. Line endings are
+    normalised first: cargo's output carries `\\r\\n` on Windows, and a trailing
+    carriage return defeats a match anchored with `$`.
+    """
+    failed = []
+    for line in output.replace("\r\n", "\n").replace("\r", "\n").splitlines():
+        m = re.search(r"error: test failed.*?`-p\s+([^`]+)`", line)
+        if m:
+            failed.append(m.group(1).strip())
+            continue
+        m = re.match(r"^\s+`-p\s+([^`]+)`\s*$", line)
+        if m:
+            failed.append(m.group(1).strip())
+    return [f for f in failed if f in known]
+
+
 def prepush_checks(root):
-    """E1 fmt + schema freshness, E2 visual-check marker. Deny on failure."""
+    """E1 fmt, clippy and the tests; E2 visual-check marker; E4 size. Deny on failure.
+
+    This is the pre-commit gate for the pipeline: the point is not to help the
+    author, it is to make a red CI round unlikely before it is paid for
+    (L34). Everything a push can break locally is checked here.
+    """
     problems = []
     cargo = os.path.exists(os.path.join(root, "Cargo.toml"))
     if cargo:
@@ -312,6 +389,59 @@ def prepush_checks(root):
         )
         if fmt.returncode != 0:
             problems.append("`cargo fmt --all -- --check` fails: run `cargo fmt --all` and commit.")
+        # Clippy and the tests are what CI spends most of its minutes on, and
+        # the two that fail most often for something local would have shown.
+        clippy = subprocess.run(
+            ["cargo", "clippy", "--workspace", "--all-targets", "--", "-D", "warnings"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=1800,
+        )
+        if clippy.returncode != 0:
+            problems.append(clippy_failure(clippy.stderr))
+        # The same invocation CI uses (`--test-threads=4`): running it
+        # differently would answer a different question. GPU tests are not
+        # forced here — lavapipe is a CI feature, and `FERRUM_REQUIRE_GPU`
+        # belongs to `preflight.sh`, which knows whether this machine can.
+        env = dict(os.environ)
+        env.pop("FERRUM_REQUIRE_GPU", None)
+        # A `%TEMP%` the sandbox has closed turns every test that writes a file
+        # into a failure — 54 binaries "failing" for a reason that has nothing
+        # to do with the code (`os error 5`, the GPU lock directory). Point it
+        # inside the repository, as the CI runner's own temp dir is writable.
+        scratch = os.path.join(root, "target", "gate-tmp")
+        try:
+            os.makedirs(scratch, exist_ok=True)
+            env["TEMP"] = env["TMP"] = scratch
+        except OSError:
+            pass
+        tests = subprocess.run(
+            ["cargo", "test", "--workspace", "--no-fail-fast", "--", "--test-threads=4"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+            timeout=3600,
+        )
+        if tests.returncode != 0:
+            combined = tests.stdout + tests.stderr
+            known = known_failures(root)
+            forgiven = tests_passed_except(combined, known)
+            failed = [line for line in combined.splitlines() if line.startswith("error: test failed")]
+            failed += [line for line in combined.splitlines() if re.match(r"^\s+`-p\s+[^`]+`\s*$", line)]
+            if not failed or len(forgiven) < len(failed):
+                problems.append(tests_failure(combined))
+            else:
+                # Not silent: a known failure still gets said out loud on every
+                # push, so nobody mistakes it for a green suite.
+                for binary in sorted(set(forgiven)):
+                    reason = str(known.get(binary, {}).get("reason", "no reason recorded")).split(". ")[0]
+                    print(f"pre-push: known failure, not blocking: {binary} — {reason}.", file=sys.stderr)
     try:
         base = git(root, "merge-base", "HEAD", "origin/develop")
         changed = set(git(root, "diff", "--name-only", base, "HEAD").splitlines())
@@ -360,8 +490,10 @@ def prepush_checks(root):
             )
     if problems:
         deny(
-            "Pre-push checks failed (prefix the push with FERRUM_SKIP_PREPUSH=1 only in an emergency):\n- "
+            "The local run before CI failed — this is the gate, and CI would fail the same way:\n- "
             + "\n- ".join(problems)
+            + "\nFix these, then push. To push anyway, write "
+            "`FERRUM_SKIP_PREPUSH=<why> git push …` so the reason is on the record (L34)."
         )
     return None
 

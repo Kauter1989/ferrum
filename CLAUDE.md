@@ -100,13 +100,34 @@ make coverage                                # coverage report; CI floor in Make
 cargo run --release -- <path>                 # the app is the default member
 ```
 
-## Every push is preceded by a local run — a rule, not advice
+## Every push is preceded by a local run — a gate, not advice
 
-CI minutes are the project's and are few, and a red CI round spends them on
-what a local command answers for free (L34). So, before **every** push:
+This is the project's pre-commit hook, and its purpose is narrow and
+mechanical: **make a red pipeline unlikely before it is paid for.** CI
+minutes are the project's and are few; a round that fails on `fmt`, `clippy`
+or a test a local command answers in a minute is a round bought for nothing
+(L34). So the run is not a checklist item an agent may weigh and skip — the
+pre-push hook refuses a push that fails it.
 
-1. **`preflight.sh`** — the CI order (fmt, clippy, schema, the workspace
-   tests, optionally coverage). Its last line must read
+**What the hook runs, and refuses on** (`ferrum_hooks.py`, every push):
+
+| Check | On failure |
+|---|---|
+| `cargo fmt --all -- --check` | refused |
+| `cargo clippy --workspace --all-targets -- -D warnings` | refused |
+| `cargo test --workspace --no-fail-fast` | refused, naming the failing test binaries |
+| schema freshness (`ferrum-cli schema`) | refused |
+| ruff on the changed Python files | refused |
+| the visual-check marker after a rendering change | refused (L1) |
+| branch size past L | refused (L36) |
+
+The refusal names the failing command and the shortest useful excerpt, so the
+fix is obvious: it is what CI would have said, said before the push.
+
+Before **every** push:
+
+1. **`preflight.sh`** — the same order as CI, and wider than the hook (it also
+   runs the GPU parity suite and `analyze.py`). Its last line must read
    `all checks passed`:
 
    ```bash
@@ -155,7 +176,7 @@ answers): `ferrum-change` §4.
 Start every task with the skill `ferrum-workflow`, adapted from Spec
 Kit.
 - **Phases:** specify → clarify → plan → size → tasks → analyze →
-  implement → verify → deliver → retro.
+  implement → verify → deliver → retro → report.
 - **Tracks:** stage, feature or small.
 - **Modes:**
   - *gated*: G1 spec, G2 design, G3 merge;
@@ -181,6 +202,7 @@ wasted rounds, each with the guard that now catches it. The skills in
 | `ferrum-visual-check` | anything that draws pixels (`phantom_render.py`) |
 | `ferrum-field-test` | scripts for the user's GPU machine and their results |
 | `ferrum-release` | version bump, `develop` → `main`, `release.yml` |
+| `ferrum-report` | the HTML report on a merged feature: architecture, patterns, review history |
 | `ferrum-lessons` | failures and successes, each with a guard; retro |
 
 `develop` and `main` change only through merged PRs. Pushing a feature
@@ -198,9 +220,7 @@ judgement.
 | B | a commit with volume or DICOM files, or binaries > 1 MiB outside `docs/images/` | blocked |
 | C | a rewrite of a merged ADR | blocked; appending an amendment is fine |
 | D | merging a PR, the release workflow, pushing tags | asks the user |
-| E | a push that fails `cargo fmt --check` or has a stale `commands.json` | blocked |
-| E | a push after a slice/overlay rendering change without a fresh `phantom_render.py` pass | blocked (L1) |
-| E | a push with changed Python files that fail `ruff check` or `ruff format --check` (`ruff.toml`) | blocked |
+| E | a push that fails the local gate: `cargo fmt`, `clippy -D warnings`, `cargo test --workspace`, a stale `commands.json`, ruff on changed Python, or the visual-check marker | blocked; the reason is named |
 | E | a push of a branch past size L (3500 lines, 40 files — `ferrum-size` classes) | blocked; split it (L36) |
 | F | an edited `.rs` file | `rustfmt` |
 | F | an edited `.py` file | `ruff format` and safe fixes; the remaining findings come back as context |
@@ -209,9 +229,11 @@ judgement.
 | I | context compaction | logged to `.claude/state/compactions.log` for `ferrum-size` |
 | J | creating, renaming or pushing a branch whose name breaks skill `new-branch` (e.g. `claude/…`) | blocked |
 
-`FERRUM_SKIP_PREPUSH=1 git push …` skips only E, and only in an
-emergency. Run `python3 .claude/hooks/test_hooks.py` after changing a
-hook (CI runs it in the job `python-lint`).
+`FERRUM_SKIP_PREPUSH=<why> git push …` skips the gate E, and only with a
+stated reason: a bare `FERRUM_SKIP_PREPUSH=1` is refused, because a silent
+skip is what let a red suite reach CI (L34). Run
+`python3 .claude/hooks/test_hooks.py` after changing a hook (CI runs it in
+the job `python-lint`).
 
 ### Review agents
 
