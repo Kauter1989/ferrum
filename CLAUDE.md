@@ -201,6 +201,7 @@ judgement.
 | E | a push that fails `cargo fmt --check` or has a stale `commands.json` | blocked |
 | E | a push after a slice/overlay rendering change without a fresh `phantom_render.py` pass | blocked (L1) |
 | E | a push with changed Python files that fail `ruff check` or `ruff format --check` (`ruff.toml`) | blocked |
+| E | a push of a branch past size L (3500 lines, 40 files — `ferrum-size` classes) | blocked; split it (L36) |
 | F | an edited `.rs` file | `rustfmt` |
 | F | an edited `.py` file | `ruff format` and safe fixes; the remaining findings come back as context |
 | G | an edited file in the change matrix | a reminder of what else must change |

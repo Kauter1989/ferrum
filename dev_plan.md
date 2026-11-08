@@ -686,7 +686,12 @@ name, and a segment the agent saves appears on the next state read. Open:
 
 ## Stage 26 — The study in a browser panel (WASM + WebGPU) 🚧
 
-**Size:** L ([design](docs/webgpu-panel.md) with the measurements).
+**Size:** declared **L**, measured **XL** — 5 386 lines in 55 files, against a
+budget of 3 500 lines and 40 files for L ([design](docs/webgpu-panel.md) with
+the measurements). The stage should have been split while it was being built,
+along the boundaries its commits already followed (`ferrum-wasm`,
+`ferrum-view` + routes, the harness panel); it was not, and that is recorded
+as L36. The lesson is now enforced: a push of a branch past size L is blocked.
 
 **Why.** A panel that shows a streamed image is a picture, not a view: no
 rotation, no scrolling through slices, no real time. A person in a harness
@@ -771,6 +776,13 @@ of the WebGPU path (it needs a headed browser, [design](docs/webgpu-panel.md)).
 right sidebar and draws MPR and 3D at 144 fps on a 512×512×252 CT. The
 criteria marked ✅ were verified by test, by looking at the image, or on the
 user's machine as noted in the PR table; automation for 26.1–26.2 is open.
+
+All four tasks landed in **one PR (#91, XL)**, which the `PR` column should
+have shown as a split before the first push — see *Size* above and L36.
+PR #89 carried the first 25 files of the same branch and was closed as
+contained in #91. Follow-ups not taken in this PR: a short-lived, rotating
+token for `ferrum-view/1` (an ADR first), and the consolidation of the CPU
+segment overlay, which is a third copy of the `slice.wgsl` rule.
 
 ## Roadmap
 

@@ -647,6 +647,40 @@ that says so instead of editing the old one.
   drawn by the platform, not by the page: give it explicit colours and a
   `color-scheme`, and never rely on `inherit` across that boundary.
 
+### L36 — A stage declared L that grew to XL, and the hard stop nobody took (2026-11, Stage 26)
+
+- **Symptom:** `dev_plan.md` records Stage 26 as **Size: L** and its
+  implementation table has an empty `PR` column. The branch it produced,
+  `feat/webgpu-panel`, is **+5386 / −33 across 55 files** — class XL by the
+  budget in `ferrum-size/calibration.md` (L is ≤ 3500 lines, ≤ 40 files; XL
+  must be "split into M/L PRs"). It ran for days, was pushed eleven times,
+  and was only reviewed after the user asked whether the review step had been
+  skipped.
+- **Root cause:** Size was estimated once, before the work, from the design;
+  nothing re-measured it as the work grew. The branch's own commits show the
+  natural split that was available and never taken: `ferrum-wasm` (5 files),
+  `ferrum-view` (11), the DeepSeek Harness panel (10), plus the docs.
+- **Why the stop was missed:** `ferrum-workflow` §2 names "grow beyond size M
+  during implementation" as a **hard stop, even in autonomous mode**. The
+  check is written as a rule but has no trigger: no hook and no checklist item
+  asks for the diff size, so nothing fires when a branch passes a budget. The
+  estimate was treated as a formality instead of a commitment.
+- **What it cost:** one PR that cannot be reviewed in one sitting (which is
+  how two tests that could not fail, an unauthenticated CORS header and two
+  weakened tests reached the branch), a duplicated open PR (#89 carried the
+  first 25 files of the same branch and was merged into this one), and two
+  review agents asked to judge 55 files.
+- **Guard:** measured, not remembered —
+  `git diff --shortstat origin/develop...HEAD` before a push. `ferrum-size`
+  §5 should be checked against the actual numbers whenever a stage closes,
+  and the implementation table's `PR` column must be filled before the first
+  push, not after.
+- **Rule:** The size estimate is a commitment, not a formality. Re-measure
+  with `git diff --shortstat` before each push; when a stage crosses its class
+  (M → L, L → XL), stop and split — the commit boundaries usually show where.
+  A stage that ends XL has produced work nobody can review properly, whatever
+  its tests say.
+
 ## What worked
 
 ### W1 — Field test on the user's GPU with a throw-away script (2026-10, Stage 17)

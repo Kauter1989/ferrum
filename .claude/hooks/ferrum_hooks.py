@@ -325,17 +325,24 @@ def prepush_checks(root):
             cwd=root,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=600,
         )
         path = os.path.join(root, "skills/ferrum/schemas/commands.json")
         if gen.returncode == 0 and os.path.exists(path):
+            # The checkout may hold CRLF on Windows (git's autocrlf), and a
+            # fresh schema would then read as stale on every Windows machine.
+            stored = ""
             with open(path, encoding="utf-8") as f:
-                if f.read().strip() != gen.stdout.strip():
-                    problems.append(
-                        "skills/ferrum/schemas/commands.json is stale: "
-                        "`cargo run -q -p ferrum-cli -- schema > skills/ferrum/schemas/commands.json`."
-                    )
+                stored = f.read().replace("\r\n", "\n").strip()
+            if stored != gen.stdout.replace("\r\n", "\n").strip():
+                problems.append(
+                    "skills/ferrum/schemas/commands.json is stale: "
+                    "`cargo run -q -p ferrum-cli -- schema > skills/ferrum/schemas/commands.json`."
+                )
     problems += ruff_problems(root, changed)
+    problems += size_problems(root, changed)
     if changed & set(VISUAL_PATHS):
         marker = os.path.join(state_dir(root), "visual-check.json")
         ok = False
@@ -357,6 +364,37 @@ def prepush_checks(root):
             + "\n- ".join(problems)
         )
     return None
+
+
+def size_problems(root, changed):
+    """E4: a branch past the size budget must be split before it is pushed (L36).
+
+    `ferrum-size/calibration.md` sets the classes: M is 1 500 lines and 25
+    files, L is 3 500 and 40, and anything beyond L is XL, which "split into
+    M/L PRs". The rule existed only as prose, so a stage declared L could grow
+    to XL unnoticed; this measures the branch instead.
+    """
+    try:
+        base = git(root, "merge-base", "HEAD", "origin/develop")
+        short = git(root, "diff", "--shortstat", base, "HEAD")
+    except (RuntimeError, subprocess.TimeoutExpired):
+        return []
+    # `--shortstat` omits a part when it is zero ("40 files changed, 2000
+    # insertions(+)" has no deletions), so each number is read by its label.
+    counts = {label: int(value) for value, label in re.findall(r"(\d+) (files?|insertions?|deletions?)", short)}
+    files = counts.get("files", counts.get("file", 0))
+    added = counts.get("insertions", counts.get("insertion", 0))
+    deleted = counts.get("deletions", counts.get("deletion", 0))
+    if not files:
+        return []
+    lines = added + deleted
+    if lines <= 3500 and files <= 40:
+        return []
+    return [
+        f"this branch is {lines} lines in {files} files — beyond size L (3500 lines, 40 files), so it is "
+        "XL and `ferrum-size` says to split it into M/L PRs. Split along the commit boundaries, or say "
+        "in the PR body why the split does not apply (lesson L36)."
+    ]
 
 
 def ruff_problems(root, changed):
