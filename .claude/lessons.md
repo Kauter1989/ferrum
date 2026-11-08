@@ -681,6 +681,46 @@ that says so instead of editing the old one.
   A stage that ends XL has produced work nobody can review properly, whatever
   its tests say.
 
+### L37 — An unknown mode rendered a plausible picture and said nothing (2026-11, Stage 26 → F1)
+
+- **Symptom:** `FerrumView::set_mode` took a `FerrumMode` enum and the panel
+  converted its own mode string to it with nested ternaries
+  (`mode === "volume" ? … : mode === "mpr" ? … : Slice2d`). Any other value —
+  a typo, a saved state, a name a later version adds — silently drew **one 2D
+  slice** to a person who had asked for MPR, and nothing in the picture, the
+  console or the log said so. Found by the user asking whether the PR's tests
+  proved the version works, and then driving it by hand; not by a test, and
+  not by either review agent, which had passed the branch twice.
+- **Root cause:** The setter had no way to refuse anything: a `u32` that is
+  not a known variant is not a validation error in wasm-bindgen, and the
+  method returned `()`. The conversion lived on the caller's side, where a
+  ternary gives every input an answer — including inputs nobody meant.
+  `set_render_mode` next to it did the opposite (takes a string, returns
+  `Err` naming the value), so the crate already knew the right shape.
+- **Why every test missed it:** The tests checked that the modes were
+  *offered* and that the pane rendered, never what an unknown value does. A
+  fallback is invisible to an assertion that only looks at good input — the
+  same family as the tests that could not fail in #91.
+- **Fix:** `src/mode.rs`, outside the wasm gate so it is testable on the host:
+  `Mode::parse` refuses anything but `slice`/`volume`/`mpr` and names the
+  value; `set_mode(&str) -> Result<(), JsValue>`; all three call sites (the
+  bundle twice, `panel/stand.html` once) pass their string through and report
+  a refusal. `tests/mode_names.rs` and the panel test cover it, both
+  mutation-checked.
+- **The review caught what I did not:** my first version fixed the two call
+  sites in the bundle and left the third in `panel/stand.html`, which then
+  threw an uncaught type error. The panel test read only the bundle, so the
+  test could not see it either. The test now sweeps **every page that calls
+  `set_mode`**.
+- **Guard:** `Mode::parse` is the single place a name becomes a mode;
+  `test_panel.py` fails if any page converts a mode itself, and
+  `mode_names.rs` fails if an unknown name is accepted.
+- **Rule:** An API that takes a caller-converted value cannot refuse a wrong
+  one. Validate at the boundary by name and return an error that names the
+  value; never let a fallback stand in for a refusal where the choice decides
+  what a clinician sees. And when a fix touches "the caller", sweep for every
+  caller with `grep` — the one you did not think of is the one that throws.
+
 ## What worked
 
 ### W1 — Field test on the user's GPU with a throw-away script (2026-10, Stage 17)

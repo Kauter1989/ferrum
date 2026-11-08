@@ -21,6 +21,7 @@ PLUGIN = Path(__file__).resolve().parents[1] / "plugin"
 MANIFEST = PLUGIN / "package.json"
 BUNDLE = PLUGIN / "lib" / "client.js"
 SMOKE = PLUGIN / "smoke-load.cjs"
+STAND = Path(__file__).resolve().parents[1] / "panel" / "stand.html"
 
 
 def node() -> str:
@@ -95,3 +96,42 @@ def test_the_mode_dropdown_states_its_own_colours():
 
     for mode in ("tissue", "isosurface", "mip", "transfer_function"):
         assert f'"{mode}"' in text, f"the dropdown does not offer {mode}"
+
+
+def test_the_mode_reaches_the_view_by_name_so_an_unknown_one_is_reported():
+    """F1.1-b: no caller converts its mode string itself.
+
+    It used to map with nested ternaries (`mode === "volume" ? … : mode ===
+    "mpr" ? … : Slice2d`), so any other value silently rendered one 2D slice.
+    Now the string goes to `set_mode`, which refuses an unknown value and
+    leaves the current mode alone.
+
+    Every page that calls `set_mode` is checked, not only the bundle: the
+    stand-alone probe page was the third caller and kept the ternary after the
+    bundle was fixed, which is exactly how a fix stops being a fix.
+    """
+    pages = [BUNDLE, STAND]
+    for page in pages:
+        text = page.read_text(encoding="utf-8")
+        calls = [line.strip() for line in text.splitlines() if "set_mode(" in line]
+        assert calls, f"{page.name} never sets the view mode"
+        for call in calls:
+            assert "FerrumMode" not in call, f"{page.name} still converts the mode itself: {call}"
+            assert "?" not in call, f"{page.name} still falls back through a ternary: {call}"
+
+    bundle = BUNDLE.read_text(encoding="utf-8")
+    calls = [line.strip() for line in bundle.splitlines() if "set_mode(" in line]
+    assert any("set_mode(mode)" in c for c in calls), "the mode effect does not pass its string through"
+    assert any("set_mode(modeRef.current)" in c for c in calls), "the load path does not pass its string through"
+
+    # The stand page reads its own select, and reports a refusal instead of
+    # throwing out of the listener.
+    stand = STAND.read_text(encoding="utf-8")
+    assert "set_mode(modeSelect.value)" in stand, "the stand page does not pass its select value through"
+    after = stand[stand.index("set_mode(modeSelect.value)") :][:160]
+    assert "catch" in after, "the stand page does not catch a refusal"
+
+    # The three values the panel can hold are the three the module accepts.
+    for mode in ("slice", "volume", "mpr"):
+        assert f'"{mode}"' in bundle, f"the panel does not offer mode {mode}"
+        assert f'"{mode}"' in stand, f"the stand page does not offer mode {mode}"

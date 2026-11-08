@@ -22,6 +22,7 @@
   <select id="mode">
     <option value="volume">3D</option>
     <option value="slice">2D slice</option>
+    <option value="mpr">MPR</option>
   </select>
   <select id="render">
     <option value="tissue">tissue</option>
@@ -125,7 +126,9 @@ async function main() {
   }, { passive: false });
 
   modeSelect.addEventListener("change", () => {
-    view.set_mode(modeSelect.value === "volume" ? FerrumMode.Volume3d : FerrumMode.Slice2d);
+    // By name: the module refuses an unknown value and names it, so a bad
+    // option is reported here instead of throwing out of the listener (F1).
+    try { view.set_mode(modeSelect.value); } catch (e) { fail(e); }
   });
   renderSelect.addEventListener("change", () => {
     try { view.set_render_mode(renderSelect.value); } catch (e) { fail(e); }

@@ -784,6 +784,63 @@ contained in #91. Follow-ups not taken in this PR: a short-lived, rotating
 token for `ferrum-view/1` (an ADR first), and the consolidation of the CPU
 segment overlay, which is a third copy of the `slice.wgsl` rule.
 
+## Stage F1 — An unknown view mode is applied silently (bug, known cause) 🚧
+
+**Track:** feature (a bug with a known cause, `ferrum-workflow` §1).
+**Mode:** autonomous; **Size:** S. **Found by:** a live check after #91 was
+merged, not by a test.
+
+**The defect.** `crates/ferrum-wasm`'s `FerrumView::set_mode` takes a
+`FerrumMode`, and the panel converts its own string to it with a chain of
+ternaries in `integrations/dsh/plugin/lib/client.js` (lines 221 and 286):
+
+```js
+view.set_mode(mode === "volume" ? wasm.FerrumMode.Volume3d
+            : mode === "mpr"   ? wasm.FerrumMode.Mpr
+                               : wasm.FerrumMode.Slice2d);
+```
+
+Any string that is not `"volume"` or `"mpr"` — a typo, a value from a saved
+state, a word a future version adds — silently renders **one 2D slice**, and
+nothing reports it. `set_mode` itself cannot refuse anything: a `u32` that is
+not a known variant is not a validation error in wasm-bindgen, and the setter
+returns `()`. The sibling `set_render_mode` does it right: it takes a string
+and returns `Err` with the value in the message.
+
+**Why it matters.** The mode decides what a person sees. A silent fallback
+turns "the panel shows the wrong thing" into "the panel shows something", and
+a clinician reading a single slice while believing it is MPR is exactly the
+failure this project cannot afford.
+
+**Criteria**
+
+- [F1.1-a] `FerrumView::set_mode` takes the mode by name (`"slice"`,
+  `"volume"`, `"mpr"`) and returns `Err` naming the value for anything else,
+  leaving the current mode unchanged. The same three names the panel already
+  uses; `FerrumMode` stays as the typed field behind it.
+- [F1.1-b] The panel stops converting strings itself: it passes its mode
+  string through and reports the error instead of rendering a fallback.
+- [F1.1-c] A test covers both: an unknown name is refused and the mode is
+  unchanged, and every name the panel can produce is accepted.
+
+**Verification**
+
+| Criterion | Level | Evidence | Outcome |
+|---|---|---|---|
+| F1.1-a | test | `crates/ferrum-wasm/tests/mode_names.rs` — an unknown name is refused and the error names it; the fit's neighbours (`layout.rs`) follow the same host-test pattern | ✅ |
+| F1.1-b | test | `integrations/dsh/tests/test_panel.py::test_the_mode_reaches_the_view_by_name_so_an_unknown_one_is_reported` — covers the bundle **and** `panel/stand.html`, which kept the ternary until the review found it | ✅ |
+| F1.1-c | test | the same two files; both mutation-checked (a `Ok(Mode::Slice)` fallback fails 3 tests, the old ternary fails the panel test) | ✅ |
+| F1.1-a | live | the rebuilt module in a browser: `mpr`, `volume`, `slice` accepted; `"mprr"`, `"3d"`, `""` refused with `unknown mode "…": expected one of slice, volume, mpr` | ✅ |
+
+**Out of scope:** the other follow-ups of #91 (rotating tokens, the CPU
+overlay consolidation, the tests that cannot fail that the review listed).
+
+**Implementation**
+
+| Task | What | Criteria | PR | State |
+|---|---|---|---|---|
+| F1.1 | the mode reaches the view by name and an unknown one is refused | F1.1-a, F1.1-b, F1.1-c | 1 | ✅ |
+
 ## Roadmap
 
 Updated 2026-10-19, after Stage 20. Order is a proposal; each stage
