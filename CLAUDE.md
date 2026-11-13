@@ -202,11 +202,20 @@ wasted rounds, each with the guard that now catches it. The skills in
 | `ferrum-visual-check` | anything that draws pixels (`phantom_render.py`) |
 | `ferrum-field-test` | scripts for the user's GPU machine and their results |
 | `ferrum-release` | version bump, `develop` → `main`, `release.yml` |
-| `ferrum-report` | the HTML report on a merged feature: architecture, patterns, review history |
+| `ferrum-report` | the HTML report: before a merge (G3, with a code map) and after it (phase 11) |
 | `ferrum-lessons` | failures and successes, each with a guard; retro |
 
 `develop` and `main` change only through merged PRs. Pushing a feature
 branch is fine. Merging needs the user's word, in every mode.
+
+**The merge decision (G3) is presented with a report.** Before a PR is
+offered for merging, it carries an HTML report on the same template as the
+final one (`ferrum-report` §0), with a **code map**: every architectural
+claim linked to the `file:lines` that implement it, pinned to the PR head
+SHA and stating that SHA. The person merges after reading the code, not on
+trust; a PR without its report is not ready for G3, however green its CI.
+The report is posted to the PR, not committed — after the merge, phase 11
+writes the final one from the merged tree into `docs/<feature>/`.
 
 ### Hooks
 
