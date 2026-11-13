@@ -195,8 +195,20 @@ did not.
    The body holds the analyze report, the verification table
    (`ferrum-verify`) and, in autonomous mode, the *Assumptions*. Then
    watch CI and reviews, and drive the PR to green.
-4. Merge only when the user says so. Use a merge commit, as in the
-   repo's history.
+4. **Write the G3 report and post it to the PR.** Before asking for the
+   merge, produce the HTML report on the final template's structure
+   (`ferrum-report` §0 and §4.5) with a **code map**: each architectural
+   claim linked to the `file:lines` that implement it, links pinned to the
+   PR head SHA, and the SHA stated in the report. Post it as a PR comment;
+   do not commit it, the code is not merged yet. Check every code-map entry
+   after the last rebase and the last `cargo fmt` — a line number that moved
+   is worse than none.
+5. Ask for G3 with the report link and one paragraph: what the change is,
+   what was verified, what was not, what is open. A merge request without
+   the report is not a G3 request.
+6. Merge only when the user says so. Use a merge commit, as in the
+   repo's history. After the merge, regenerate the report from the merged
+   tree as phase 11 (`ferrum-report`, `docs/<feature>/`).
 
 ## 8. Record (retro)
 

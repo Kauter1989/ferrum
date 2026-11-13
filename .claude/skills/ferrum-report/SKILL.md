@@ -1,6 +1,6 @@
 ---
 name: ferrum-report
-description: Write the self-contained HTML report on a merged or merge-ready feature PR (or a stage of several PRs) — architectural changes, code analysis with design patterns, and a review history with fixed, rejected and deferred findings and an honest quality assessment. Use after the PR merges or when the user asks for a report on it. The report goes beside the feature's design doc in docs/<feature>/; every number is derived from git, never from memory. Not a substitute for the lessons entry — lessons.md is for the next agent, this report is for the person reviewing the feature.
+description: Write the self-contained HTML report on a feature PR — architectural changes, code analysis with design patterns, a code map linking each claim to its file:lines, and a review history with fixed, rejected and deferred findings plus an honest quality assessment. Written twice: before the merge for G3 (posted to the PR, with the code map pinned to the head SHA) and after it as phase 11 (committed beside the feature's design doc in docs/<feature>/). Use before asking the user to merge, after the merge, or when the user asks for a report on a PR. Every number is derived from git, never from memory. Not a substitute for the lessons entry — lessons.md is for the next agent, this report is for the person deciding and reviewing.
 ---
 
 # Feature report
@@ -15,12 +15,41 @@ The reference implementation is
 it once before writing a new one, and copy its structure and CSS rather
 than designing a different page.
 
+## 0. Two moments, one template
+
+The same page is written **twice in a PR's life**, and the second one is not
+a rewrite of the first — it is the same template with the gaps filled.
+
+| Moment | When | Where it lives | What it must answer |
+|---|---|---|---|
+| **Pre-merge** (G3) | before the person decides to merge | posted to the PR, **not committed** | "should I merge this, and where is it?" |
+| **Post-merge** | after the merge, as phase 11 | committed to `docs/<feature>/` | "what happened, and what did we learn?" |
+
+**The pre-merge report is a gate input, not an artifact.** G3 is the
+person's decision to merge; a decision made without reading the code is a
+decision made on trust. The report is what makes the code reviewable in one
+sitting: the same sections as the final report, plus a **code map** — where
+each thing actually is — so the person can open any claim and see the lines.
+
+- It goes in a **PR comment**, as a `file://`-less, self-contained page
+  attached or pasted, or as a comment that links the rendered file. It is
+  never committed: the branch is not merged yet, and a report about
+  unmerged code must not become part of the history it describes.
+- Its **code map** is the difference from the final report (see §4.5): every
+  architectural statement carries a link to the lines that implement it.
+- The **final report** keeps the same structure, drops nothing that was in
+  the pre-merge one, and changes the tense: "will do / is intended" becomes
+  "did / does". If the merge changed the code after the pre-merge report —
+  a rebase, a fix from review — the final report is regenerated from the
+  merged tree, never copied forward.
+
 ## 1. Track and place
 
 - **Track: `small`** (`ferrum-workflow` §1) — this is `docs` work.
   Branch `docs/<feature>-report` from a fresh `origin/develop`
   (`new-branch`), the report in one commit, the commit trail in review
-  (`ferrum-change` §7).
+  (`ferrum-change` §7). The **pre-merge** report breaks this rule on
+  purpose: it is a PR comment with no commit, because §0.
 - **The file goes beside the feature's design doc:**
 
   ```
@@ -122,6 +151,49 @@ h2 3. Review stages
      h3 Chronology
 footer   sources and the commands the numbers came from
 ```
+
+### 4.5 The code map — required before G3, kept afterwards
+
+A person deciding whether to merge must be able to reach the code behind
+every claim. The report carries a **code map**: for each architectural
+statement, the file, the lines and the symbol that implement it.
+
+```
+h2 4. Where it lives
+     table: what · file:lines · symbol · why here
+     "what"      one sentence a reader who did not write the code can check
+     "file:lines"an exact range, e.g. crates/ferrum-wasm/src/mode.rs:33-45
+     "symbol"    the function, type or trait that does the work
+     "why here"  the layering rule it satisfies (CLAUDE.md) or the lesson it avoids
+```
+
+Rules that make the map worth having:
+
+- **Lines, not just files.** `mode.rs` alone says nothing; `mode.rs:33-45`
+  points at `Mode::parse`. Give a range that a reader can select and read in
+  one screen — roughly 10 to 40 lines, not the whole file.
+- **Every claim in sections 1 and 2 has an entry.** A diagram arrow, a
+  "reuses the renderer" sentence, a "this cannot fall back" statement: each
+  one names where it is true. A claim without a line is a claim nobody can
+  check.
+- **Links are relative paths in the page, absolute in the PR.** In the HTML
+  put `crates/…/mode.rs:33-45` as the visible text and, in the `file://` case,
+  no `href` that pretends to work; when the file is rendered on GitHub, link
+  `<owner>/<repo>/blob/<sha>/crates/…/mode.rs#L33-L45`. **Pin the SHA, not the
+  branch name**: a branch moves, and a line number that moved with it is
+  worse than none.
+- **Before G3 the SHA is the PR head**, so the links must be regenerated if
+  the branch is rebased after the report. Say in the PR which SHA the report
+  describes; a reader comparing it with `HEAD` sees immediately if it drifted.
+- **Line numbers come from the tree, never from memory.** Get them with
+  `grep -n` or `rg -n` for the symbol being cited, once per entry, and check
+  the range still contains it after formatting (`cargo fmt` moves lines).
+- **The final report keeps the map**, with the lines re-read from the merged
+  tree — the phase-11 report is the same page, so its code map describes the
+  code that is now on `develop`, not the one that was on the branch.
+
+The map is also what makes review cheap later: the reviewer can open
+`server.rs:236-260` and see the CORS decision, instead of searching for it.
 
 ### Self-contained, offline
 
@@ -228,6 +300,14 @@ Open the page in a browser and look at it. Then check:
 | No requests | everything inline; the network panel stays empty on load |
 | Both themes | light and dark (emulate `prefers-color-scheme: dark`); diagram legible in both |
 | No console errors | the console is empty |
+| **Code map resolves** | every `file:lines` opens and the cited symbol is inside that range — check each one, not a sample; after `cargo fmt`, re-check |
+| **Every claim is mapped** | walk sections 1 and 2: each sentence that states what the code does has an entry in the code map |
+| **The SHA is the one being merged** | the report says which commit it describes and it equals the PR head at the moment of the G3 comment |
+
+The **code map check is not optional before G3**: the whole point of the
+report there is that a person can verify it, and a wrong line number is a
+misleading one. Do it after the last rebase and after the last formatting
+commit, and say in the PR body which SHA was checked.
 
 State in the commit message **which check was made** — for example
 "rendered the page from `file://` in Chrome at 1280 px and 1000 px, light

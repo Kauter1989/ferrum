@@ -53,6 +53,12 @@ When unsure, size first (`ferrum-size`) and let the size decide. A
   - grow beyond size M during implementation.
 - **Merging always waits for the user's word (G3).** So do pushes to
   `develop` or `main`, and releases.
+- **G3 is presented with a report, never with a request alone.** Before
+  asking the person to merge, the PR carries an HTML report on the same
+  template as the final one (`ferrum-report` §0), with a **code map**: every
+  architectural claim linked to the lines that implement it, pinned to the
+  PR head SHA. The person merges after reading the code, not on trust.
+  A PR whose report is missing is not ready for G3, however green its CI.
 - **Every push is preceded by a local run** of the checks CI would make
   (`CLAUDE.md`, *Every push is preceded by a local run*; in WSL on Windows).
   CI minutes are few; a red round spends them on what a local command answers
@@ -70,9 +76,9 @@ When unsure, size first (`ferrum-size`) and let the size decide. A
 | 6 | Analyze | `ferrum-analyze` | coverage report (`analyze.py`) | ✓ | ✓ | — |
 | 7 | Implement | `ferrum-change` | commits on a feature branch | ✓ | ✓ | ✓ |
 | 8 | Verify | `ferrum-verify` | verification table in the PR | ✓ | ✓ | preflight only |
-| 9 | Deliver | `ferrum-change` §7 | PR, CI green → **G3** | ✓ | ✓ | ✓ |
+| 9 | Deliver | `ferrum-change` §7, `ferrum-report` §0 | PR, CI green, **the G3 report** → **G3** | ✓ | ✓ | ✓ |
 | 10 | Retro | `ferrum-lessons`, `ferrum-size` §5 | lessons, sizing calibration | ✓ | ✓ when something happened | — |
-| 11 | Report | `ferrum-report` | `docs/<feature>/<pr>-report.html` | ✓ | ✓ | — |
+| 11 | Report | `ferrum-report` §0 | the final report in `docs/<feature>/<pr>-report.html`, after the merge | ✓ | ✓ | — |
 
 Release is separate (`ferrum-release`), on the user's decision.
 
@@ -82,23 +88,26 @@ Release is separate (`ferrum-release`), on the user's decision.
 1. Specify and clarify, then present the spec in chat → G1.
 2. Plan, size and tasks, then present the design and the PR split →
    G2.
-3. Per PR of the split: analyze, implement, verify, deliver → G3.
+3. Per PR of the split: analyze, implement, verify, deliver; then the
+   **G3 report** (HTML, code map, PR head SHA) posted to the PR → G3.
 4. Retro after the stage.
 
 **Gated feature:** one message with the spec (criteria with IDs),
 questions, a plan sketch, size M and tasks → G1. Then analyze,
-implement, verify, deliver → G3.
+implement, verify, deliver, the **G3 report** → G3.
 
 **Autonomous feature:**
 1. Specify, writing `assumed:` instead of questions.
 2. Plan, size (must be M), tasks, analyze, implement, verify.
-3. Deliver, then report with the PR link, assumptions and the
+3. Deliver, then the **G3 report** plus the PR link, assumptions and the
    verification table → G3.
 
-Retro follows if something happened. After the PR is merged or merge-ready,
-the **report** (phase 11, `ferrum-report`) is written beside the feature's
-design doc: what the architecture is now, whether the code holds up, and
-what the review actually caught.
+Retro follows if something happened. After the PR is merged, the **final
+report** (phase 11, `ferrum-report`) is written beside the feature's design
+doc: the same template as the G3 report, re-read from the merged tree, with
+the review history and what it cost. The two reports are one page at two
+moments; the second supersedes the first in the repository, and the first
+stays in the PR as the record of what was decided.
 
 **Small:** implement, verify (preflight), deliver → G3. A `small` change is
 usually a fix an existing feature's report already covers; write a report
