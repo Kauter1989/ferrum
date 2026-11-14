@@ -133,7 +133,7 @@ mod tests {
         if !symlink(&root, &root.join("loop")) {
             return;
         }
-        let files = collect_files(&[root.clone()]).unwrap();
+        let files = collect_files(std::slice::from_ref(&root)).unwrap();
         assert_eq!(files, vec![root.join("x.dcm")]);
     }
 
@@ -146,15 +146,15 @@ mod tests {
         std::fs::create_dir_all(root.join("a/b")).unwrap();
         std::fs::write(root.join("a/b/file.dcm"), b"1").unwrap();
         // a/b is depth 2: a file inside it is collected at the bound…
-        let files = collect_bounded(&[root.clone()], 2, 100).unwrap();
+        let files = collect_bounded(std::slice::from_ref(&root), 2, 100).unwrap();
         assert_eq!(files, vec![root.join("a/b/file.dcm")]);
         // …and one level more is refused.
         std::fs::create_dir_all(root.join("a/b/c")).unwrap();
-        let err = collect_bounded(&[root.clone()], 2, 100).unwrap_err();
+        let err = collect_bounded(std::slice::from_ref(&root), 2, 100).unwrap_err();
         assert!(matches!(err, RepositoryError::Limit(_)), "{err}");
         assert!(err.to_string().contains("deeper than 2 levels"), "{err}");
         // The entry bound: visiting a third entry is refused.
-        let err = collect_bounded(&[root.clone()], 8, 2).unwrap_err();
+        let err = collect_bounded(std::slice::from_ref(&root), 8, 2).unwrap_err();
         assert!(matches!(err, RepositoryError::Limit(_)), "{err}");
         assert!(err.to_string().contains("more than 2 entries"), "{err}");
         // Explicitly passed files are honoured, symlinks or not: the
@@ -203,7 +203,7 @@ mod tests {
             return;
         }
         assert!(symlink(&outside.join("y.dcm"), &root.join("link-file")));
-        let files = collect_files(&[root.clone()]).unwrap();
+        let files = collect_files(std::slice::from_ref(&root)).unwrap();
         assert_eq!(files, vec![root.join("a/x.dcm")]);
     }
 
