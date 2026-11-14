@@ -139,3 +139,38 @@ fn a_source_tree_deeper_than_the_limit_is_reported() {
     write_phantom(&deep.join("phantom.nii.gz"));
     assert_eq!(f.err("study scan", json!({ "paths": [f.root] })), "limit");
 }
+
+#[test]
+fn a_depth_changing_link_cannot_split_the_check_from_the_scan() {
+    // covers F2.1-a (security-review regression): the link points deeper
+    // than its spelling; `..` behind it is lexical, and the lexical
+    // target lies outside the root, so the scan is refused.
+    let f = fixture();
+    let deep = f.root.join("x/y");
+    std::fs::create_dir_all(&deep).unwrap();
+    if !symlink(&deep, &f.root.join("link")) {
+        return;
+    }
+    let escape = f.root.join("link/../../outside/secret.nii.gz");
+    assert_eq!(f.err("study scan", json!({ "paths": [escape] })), "forbidden");
+    // One `..` less lands on the real phantom inside the root: allowed.
+    let env = f.run("study scan", json!({ "paths": [f.root.join("link/../phantom.nii.gz")] }));
+    assert_eq!(env["ok"], true, "{env:#}");
+    assert_eq!(env["data"]["series"][0]["dims"], json!([4, 4, 4]));
+}
+
+#[test]
+fn a_crafted_manifest_cannot_point_the_load_outside_the_root() {
+    // covers F2.1-c: Study::load checks every recorded file path before
+    // hashing or scanning it; a rewritten workspace.json cannot turn the
+    // load into a read of the outside phantom.
+    let f = fixture();
+    let ws = f._dir.path().join("ws");
+    let env = f.run("study open", json!({ "path": f.root.join("phantom.nii.gz"), "workspace": ws }));
+    assert_eq!(env["ok"], true, "{env:#}");
+    let manifest_path = ws.join("workspace.json");
+    let mut m: Value = serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    m["source"]["files"][0]["path"] = json!(f.outside.join("secret.nii.gz"));
+    std::fs::write(&manifest_path, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+    assert_eq!(f.err("study info", json!({ "workspace": ws })), "forbidden");
+}

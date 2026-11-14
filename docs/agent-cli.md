@@ -257,10 +257,11 @@ allow_harness_confirmation = false
   not output DICOM attributes.
 - The read-root check resolves symlinks: a link inside a root that points
   outside it is refused (`forbidden`), for sources and for workspaces
-  alike. The source walk skips the symlinks it discovers and refuses a
-  tree deeper than 8 levels or with more than 100 000 entries (`limit`).
-  Explicitly passed paths are honoured; the check, not the spelling, is
-  the boundary.
+  alike. The check judges exactly the spelling the reader opens, and a
+  workspace load re-checks every recorded source file path. The source
+  walk skips the symlinks (and Windows junctions) it discovers and
+  refuses a tree deeper than 8 levels or with more than 100 000 entries
+  (`limit`). Explicitly passed paths are honoured.
 
 ## MCP server
 

@@ -186,19 +186,19 @@ impl AgentConfig {
 
     /// Checks that a source path may be read and returns it absolute.
     ///
-    /// The comparison resolves symlinks: the source and every read root
-    /// are canonicalised first, so a link inside a root cannot point
-    /// outside it (#82). The returned path keeps the caller's spelling —
-    /// a workspace stores it — because the check, not the spelling, is
-    /// the boundary. A root that cannot be resolved grants nothing.
+    /// The comparison resolves symlinks: the returned path and every read
+    /// root are canonicalised first, so a link inside a root cannot point
+    /// outside it (#82). The check runs on exactly the spelling that is
+    /// returned and that the reader will open — `.` and `..` are resolved
+    /// lexically, as [`absolute`] does, and a `..` behind a depth-changing
+    /// link must not split the checked path from the opened one (security
+    /// review of #82). A root that cannot be resolved grants nothing.
     pub fn check_source(&self, path: &Path) -> Result<PathBuf, AgentError> {
         let abs = absolute(path)?;
         if self.read_roots.is_empty() {
             return Ok(abs);
         }
-        // The raw path, not `abs`: a `..` behind a symlink must reach
-        // the filesystem in order (see `real_path`).
-        let real = real_path(path)?;
+        let real = real_path(&abs)?;
         if self.read_roots.iter().filter_map(|r| real_path(r).ok()).any(|r| real.starts_with(r)) {
             return Ok(abs);
         }
@@ -208,8 +208,9 @@ impl AgentConfig {
 
     /// Resolves a workspace path (relative paths below `workspace_root`)
     /// and checks that it lies below `workspace_root` when one is set.
-    /// The comparison resolves symlinks, as [`Self::check_source`] does;
-    /// a workspace that does not exist yet still resolves.
+    /// The comparison resolves symlinks on the returned spelling, as
+    /// [`Self::check_source`] does; a workspace that does not exist yet
+    /// still resolves.
     pub fn resolve_workspace(&self, path: &Path) -> Result<PathBuf, AgentError> {
         let joined = match (&self.workspace_root, path.is_relative()) {
             (Some(root), true) => root.join(path),
@@ -217,7 +218,7 @@ impl AgentConfig {
         };
         let abs = absolute(&joined)?;
         if let Some(root) = &self.workspace_root {
-            let real = real_path(&joined)?;
+            let real = real_path(&abs)?;
             let root_real = real_path(root).map_err(|e| {
                 AgentError::new(
                     ErrorCode::Forbidden,
@@ -491,12 +492,7 @@ mod tests {
         }
         assert!(symlink(&outside, &root.join("link-dir")));
         let c = AgentConfig { read_roots: vec![root.clone()], ..AgentConfig::default() };
-        for escape in [
-            root.join("link-file"),
-            root.join("link-dir"),
-            root.join("link-dir/secret.nii"),
-            root.join("link-dir/../secret.nii"),
-        ] {
+        for escape in [root.join("link-file"), root.join("link-dir"), root.join("link-dir/secret.nii")] {
             assert_eq!(
                 c.check_source(&escape).unwrap_err().code,
                 ErrorCode::Forbidden,
@@ -504,11 +500,50 @@ mod tests {
                 escape.display()
             );
         }
+        // `..` is lexical (the `absolute` contract): link-dir/../secret.nii
+        // normalises to root/secret.nii — inside the root, and exactly what
+        // the reader opens, so it is allowed.
+        assert_eq!(c.check_source(&root.join("link-dir/../secret.nii")).unwrap(), root.join("secret.nii"));
         // A real file inside the root stays readable, and the returned
         // path keeps the caller's spelling (workspaces store it).
         let ok = root.join("ok.nii");
         std::fs::write(&ok, b"x").unwrap();
         assert_eq!(c.check_source(&ok).unwrap(), ok);
+    }
+
+    #[test]
+    fn a_depth_changing_link_cannot_split_the_check_from_the_read() {
+        // covers F2.1-a (security-review regression): the link points
+        // DEEPER than its spelling, so a `..` behind it resolves differently
+        // in OS order and lexically. The check must judge the lexical
+        // spelling — the one the reader opens — not the OS-order target.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("root");
+        let deep = root.join("x/y");
+        std::fs::create_dir_all(&deep).unwrap();
+        let other = tmp.path().join("patientB");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join("scan.nii"), b"x").unwrap();
+        if !symlink(&deep, &root.join("link")) {
+            return;
+        }
+        std::fs::write(root.join("ok.nii"), b"x").unwrap();
+        let c = AgentConfig { read_roots: vec![root.clone()], ..AgentConfig::default() };
+        // OS order: root/x/y/../../patientB/scan.nii = root/patientB/scan.nii
+        // (inside); lexical: root/link/../../patientB/scan.nii =
+        // tmp/patientB/scan.nii (outside). The reader opens the lexical one,
+        // so it must be refused.
+        let escape = root.join("link/../../patientB/scan.nii");
+        assert_eq!(c.check_source(&escape).unwrap_err().code, ErrorCode::Forbidden);
+        // One `..` less: lexical root/ok.nii is inside — allowed, and the
+        // returned spelling is exactly what will be opened.
+        assert_eq!(c.check_source(&root.join("link/../ok.nii")).unwrap(), root.join("ok.nii"));
+        // The workspace boundary holds the same way.
+        let cw = AgentConfig { workspace_root: Some(root.clone()), ..AgentConfig::default() };
+        assert_eq!(
+            cw.resolve_workspace(Path::new("link/../../patientB/scan.nii")).unwrap_err().code,
+            ErrorCode::Forbidden
+        );
     }
 
     #[test]

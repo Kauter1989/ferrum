@@ -137,6 +137,32 @@ mod tests {
         assert_eq!(files, vec![root.join("x.dcm")]);
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn walk_skips_junctions() {
+        // covers F2.2-a: a junction needs no privilege on Windows, and
+        // std's file_type marks it a symlink — the walk must skip it like
+        // one (verified against rustc 1.99; this test pins it).
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(root.join("x.dcm"), b"1").unwrap();
+        std::fs::write(outside.join("y.dcm"), b"1").unwrap();
+        let made = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-Command", "New-Item -ItemType Junction -Path $args[0] -Target $args[1] | Out-Null"])
+            .arg(root.join("j"))
+            .arg(&outside)
+            .status();
+        if !matches!(made, Ok(s) if s.success()) {
+            eprintln!("skipping the junction case: cannot create a junction");
+            return;
+        }
+        let files = collect_files(std::slice::from_ref(&root)).unwrap();
+        assert_eq!(files, vec![root.join("x.dcm")]);
+    }
+
     #[test]
     fn walk_bounds_depth_and_entries() {
         // covers F2.2-b: the bounds trigger on small trees, at the exact

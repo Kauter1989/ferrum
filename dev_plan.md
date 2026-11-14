@@ -874,16 +874,21 @@ calls today (canonical path, no symlink below a source folder, depth ≤ 8,
 
 **Criteria**
 
-- [F2.1-a] `check_source` canonicalises the source and every read root
-  before comparing: a symlink inside a root that points outside it is
-  refused with `forbidden` — as a file, as a folder, through the link,
-  and with a `..` behind the link. A root named through a symlink grants
-  exactly its target. The returned path keeps the caller's spelling
-  (workspaces store it); the check, not the spelling, is the boundary.
+- [F2.1-a] `check_source` canonicalises the returned path and every read
+  root before comparing: a symlink inside a root that points outside it
+  is refused with `forbidden` — as a file, as a folder, through the link.
+  A root named through a symlink grants exactly its target. The check
+  judges exactly the spelling that is returned and that the reader opens
+  (`.` and `..` resolved lexically): a `..` behind a depth-changing link
+  must not split the checked path from the opened one (security review).
 - [F2.1-b] `resolve_workspace` holds the same boundary against
   `workspace_root`; a workspace that does not exist yet still resolves.
+- [F2.1-c] `Study::load` scans the checked source path and re-checks
+  every recorded file path of the manifest before hashing or scanning
+  it: a crafted `workspace.json` cannot point the load outside the roots.
 - [F2.2-a] `collect_files` does not follow the symlinks it discovers
-  while descending (folder and file links are skipped); explicitly
+  while descending (folder and file links are skipped; on Windows
+  junctions too — std marks them symlinks, pinned by a test); explicitly
   passed paths are honoured as before; a link loop terminates.
 - [F2.2-b] The walk is bounded: depth ≤ 8 and ≤ 100 000 entries (the
   harness guard's numbers). Exceeding either is refused with `limit`
@@ -899,11 +904,12 @@ calls today (canonical path, no symlink below a source folder, depth ≤ 8,
 
 | Criterion | Level | Evidence | Outcome |
 |---|---|---|---|
-| F2.1-a | test | `config.rs::symlink_out_of_a_read_root_is_refused`, `a_symlinked_read_root_grants_exactly_its_target`; `tests/read_roots.rs::scan_refuses_a_symlink_to_a_file_outside_the_root`, `open_refuses_a_symlink_to_a_file_outside_the_root`, `open_refuses_a_symlinked_folder_outside_the_root` | pending |
-| F2.1-b | test | `config.rs::workspace_symlink_escape_is_refused` | pending |
-| F2.2-a | test | `files.rs::walk_does_not_follow_symlinks`, `walk_survives_a_symlink_loop`; `tests/read_roots.rs::a_folder_holding_an_escape_link_scans_only_its_real_files` | pending |
+| F2.1-a | test | `config.rs::symlink_out_of_a_read_root_is_refused`, `a_symlinked_read_root_grants_exactly_its_target`, `a_depth_changing_link_cannot_split_the_check_from_the_read`; `tests/read_roots.rs::scan_refuses_a_symlink_to_a_file_outside_the_root`, `open_refuses_a_symlink_to_a_file_outside_the_root`, `open_refuses_a_symlinked_folder_outside_the_root`, `a_depth_changing_link_cannot_split_the_check_from_the_scan` | pending |
+| F2.1-b | test | `config.rs::workspace_symlink_escape_is_refused`, the workspace case of `a_depth_changing_link_cannot_split_the_check_from_the_read` | pending |
+| F2.1-c | test | `tests/read_roots.rs::a_crafted_manifest_cannot_point_the_load_outside_the_root` | pending |
+| F2.2-a | test | `files.rs::walk_does_not_follow_symlinks`, `walk_survives_a_symlink_loop`, `walk_skips_junctions` (Windows); `tests/read_roots.rs::a_folder_holding_an_escape_link_scans_only_its_real_files` | pending |
 | F2.2-b | test | `files.rs::walk_bounds_depth_and_entries`; `tests/read_roots.rs::a_source_tree_deeper_than_the_limit_is_reported` | pending |
-| F2.3 | mutation | the new tests run red on the unfixed code before the implementation lands | pending |
+| F2.3 | mutation | the new tests run red on the unfixed code before the implementation lands; the depth-changing-link regression was found by the security review and its test runs red on the first fix draft | pending |
 
 **Out of scope:** the TOCTOU window between the check and the read, and
 hard links (both need write access to a data root; the issue documents
@@ -914,7 +920,7 @@ choice, no agent boundary).
 
 | Task | What | Criteria | PR | State |
 |---|---|---|---|---|
-| F2.1 | canonical comparison in `check_source` / `resolve_workspace` | F2.1-a, F2.1-b | 1 | |
+| F2.1 | canonical comparison of the returned spelling in `check_source` / `resolve_workspace`; the load re-checks the manifest's file paths | F2.1-a, F2.1-b, F2.1-c | 1 | |
 | F2.2 | no-follow bounded walk in `collect_files`; `RepositoryError::Limit` | F2.2-a, F2.2-b | 1 | |
 | F2.3 | the tests, red first; docs and CHANGELOG | F2.3 | 1 | |
 

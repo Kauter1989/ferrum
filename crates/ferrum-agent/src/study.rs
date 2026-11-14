@@ -196,12 +196,18 @@ impl Study {
         }
         let workspace = Workspace::open(root)?;
         let src = workspace.manifest().source.clone();
-        config.check_source(&src.path)?;
+        let source = config.check_source(&src.path)?;
+        // A crafted manifest must not turn the load into a read outside
+        // the roots: every recorded file path is checked before it is
+        // hashed or scanned (security review of #82).
+        for path in src.file_paths() {
+            config.check_source(&path)?;
+        }
         if let Some(hit) = cache.as_deref().and_then(|c| c.get(root, &workspace)) {
             return Self::from_workspace(workspace, hit.volume, hit.metadata)?.with_volumes(hit.volumes, src.volume);
         }
         workspace.verify_sources()?;
-        let found = scan(std::slice::from_ref(&src.path))?;
+        let found = scan(std::slice::from_ref(&source))?;
         let series = found.iter().find(|s| s.id == src.series_id).ok_or_else(|| {
             AgentError::new(ErrorCode::SourceChanged, "the workspace's series is no longer in its source")
         })?;
