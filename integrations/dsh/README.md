@@ -53,9 +53,9 @@ Open a workspace first — the agent does this with `study open`, the desktop
 app with *Open workspace*:
 
 ```powershell
-.\target\release\ferrum-cli.exe study open --workspace ws\ct1 --source D:\data\ct1
+.\target\release\ferrum-cli.exe study open --workspace ws\ct1 D:\data\ct1
 .\target\release\ferrum-cli.exe view serve --workspace ws\ct1
-{"url":"http://127.0.0.1:41234","token":"8f3c…","workspace":"ws\\ct1","backend":"gpu"}
+{"url":"http://127.0.0.1:41234","token":"8f3c…","workspace":"C:\\work\\ws\\ct1","backend":"gpu"}
 ```
 
 The panel takes the study from `/api/volume` (the voxels, once) and does not
@@ -70,7 +70,7 @@ Append the entry from `plugin/cordis.patch.snippet.yml` to the profile's
 ```yaml
 - insert:
     - id: ferrum-panel
-      name: 'file:///E:/projects/ferrum/sources/ferrum/integrations/dsh/plugin/lib/index.js'
+      name: 'file:///<checkout>/integrations/dsh/plugin/lib/index.js'
 ```
 
 A **FERRUM** row appears in the left sidebar and a **FERRUM** button in the

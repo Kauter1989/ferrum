@@ -52,3 +52,34 @@ fn a_workspace_outside_the_root_is_refused() {
     assert_eq!(envelope["ok"], false);
     assert_eq!(envelope["error"]["code"], "forbidden", "{text}");
 }
+
+// covers 25.1-a: an absolute path outside the root is refused as well
+#[test]
+fn an_absolute_workspace_outside_the_root_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = config_with_root(dir.path());
+    let outside = dir.path().join("elsewhere");
+    let out = cli()
+        .args(["--config", config.to_str().unwrap(), "view", "serve", "-w", outside.to_str().unwrap(), "--port", "0"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    let envelope: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(envelope["error"]["code"], "forbidden", "{text}");
+}
+
+// covers 25.1-a: a lexical escape through the root normalises away and stays refused
+#[test]
+fn a_lexical_escape_through_the_root_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = config_with_root(dir.path());
+    let out = cli()
+        .args(["--config", config.to_str().unwrap(), "view", "serve", "-w", "ws/../../outside", "--port", "0"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    let envelope: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(envelope["error"]["code"], "forbidden", "{text}");
+}

@@ -13,7 +13,7 @@
 
 - insert:
     - id: ferrum-panel
-      name: 'file:///E:/projects/ferrum/sources/ferrum/integrations/dsh/plugin/lib/index.js'
+      name: 'file:///<checkout>/integrations/dsh/plugin/lib/index.js'
 
 # Variant if the package is installed under the profile's node_modules (a
 # `link:`/`file:` dependency plus `pnpm install` in the profile):

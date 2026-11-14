@@ -872,6 +872,18 @@ stage starts with its spec at gate G1. Sizes follow `ferrum-size`.
 
 ### Backlog (feature or small, any time)
 
+- **Workspace boundary hardening (security review S2, 0.4.0 prep):** the
+  root check in `AgentConfig::resolve_workspace` / `check_source` is
+  lexical; a symlink or junction inside the root can point outside it.
+  Pre-existing and shared by every command, read-only in `view serve`.
+  Canonicalise the joined path when it exists and re-check the root, in
+  one place for all commands, with a symlink test.
+- **`view serve` without a configuration (security review N1):** the hello
+  line carries no "no operator configuration" warning, unlike the agent
+  envelopes; add a note when `config.is_default`.
+- **Duplicate `Cache-Control` on `/panel/` (security review N4):**
+  `max-age=60` then `no-store` is appended; the doc says every answer is
+  `no-store`. Harmless, but make the code match the doc.
 - **Faster PET frame switch:** a 4D `.nii.gz` is decompressed from the
   start for every frame (1.1 s for 586 MB); decompress once into a
   temporary cache, or read uncompressed `.nii` directly.
