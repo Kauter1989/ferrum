@@ -74,7 +74,7 @@ impl VolumeRepository for DicomRepository {
 
     fn scan(&self, paths: &[PathBuf], progress: &dyn ProgressSink) -> Result<Vec<SeriesDescriptor>, RepositoryError> {
         let files: Vec<PathBuf> =
-            collect_files(paths).into_par_iter().filter(|f| detect(f) == FileKind::Dicom).collect();
+            collect_files(paths)?.into_par_iter().filter(|f| detect(f) == FileKind::Dicom).collect();
         if files.is_empty() {
             return Err(RepositoryError::NothingFound);
         }

@@ -486,7 +486,7 @@ impl VolumeRepository for NiftiRepository {
     }
 
     fn scan(&self, paths: &[PathBuf], progress: &dyn ProgressSink) -> Result<Vec<SeriesDescriptor>, RepositoryError> {
-        let files: Vec<PathBuf> = collect_files(paths).into_iter().filter(|f| detect(f) == FileKind::Nifti).collect();
+        let files: Vec<PathBuf> = collect_files(paths)?.into_iter().filter(|f| detect(f) == FileKind::Nifti).collect();
         let total = files.len().max(1);
         let out: Vec<SeriesDescriptor> = files
             .iter()

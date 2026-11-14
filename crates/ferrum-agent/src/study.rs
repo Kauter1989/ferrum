@@ -49,6 +49,7 @@ pub fn scan(paths: &[PathBuf]) -> Result<Vec<SeriesDescriptor>, AgentError> {
         ferrum_domain::RepositoryError::NothingFound => {
             AgentError::not_found("no DICOM or NIfTI series found").hint("give a DICOM folder or a .nii/.nii.gz file")
         }
+        ferrum_domain::RepositoryError::Limit(msg) => AgentError::new(ErrorCode::Limit, msg),
         other => AgentError::internal(other.to_string()),
     })
 }

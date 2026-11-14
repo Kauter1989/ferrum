@@ -315,6 +315,13 @@ allow_harness_confirmation = false
   pixel data is a known limit: the skill warns that some series contain
   it.
 - Source data is opened read-only. All writes stay in the workspace.
+- The read-root check resolves symlinks before comparing: a link inside a
+  root that points outside it is refused (`forbidden`), for sources and
+  for workspaces alike. The source walk does not follow the symlinks it
+  discovers, and a tree deeper than 8 levels or with more than 100 000
+  entries is refused (`limit`). Residual risks: a link swapped between
+  the check and the read (TOCTOU), and hard links, which only someone
+  with write access to a data root can create.
 - `ferrum-cli` makes no network calls except to the allow-listed
   engines, which never receive identifiers.
 

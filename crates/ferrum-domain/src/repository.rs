@@ -64,6 +64,9 @@ pub enum RepositoryError {
     /// An operating-system level I/O error.
     #[error("I/O error: {0}")]
     Io(String),
+    /// A size, depth or count limit was reached while scanning.
+    #[error("limit reached: {0}")]
+    Limit(String),
     /// The user cancelled the operation.
     #[error("operation cancelled")]
     Cancelled,
