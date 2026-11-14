@@ -14,6 +14,7 @@ pub mod dicom;
 pub mod engine_inputs;
 pub mod error;
 pub mod files;
+pub mod identifiers;
 pub mod nifti;
 pub mod provenance;
 pub mod segments;
@@ -27,6 +28,7 @@ pub use annotations::{annotation_report_json, annotations_from_json, read_annota
 pub use dicom::DicomRepository;
 pub use engine_inputs::EngineInput;
 pub use error::IoError;
+pub use identifiers::read_patient_identifiers;
 pub use nifti::{read_label_nifti, read_nifti, write_label_nifti, write_nifti, NiftiRepository};
 pub use segments::{read_segments, segments_from_json, segments_json, write_segments};
 pub use workspace::{sha256_file, SourceFile, Workspace, WorkspaceManifest, WorkspaceSource, WorkspaceStore};

@@ -246,6 +246,19 @@ pub fn study_info(obj: &InMemDicomObject) -> ferrum_domain::StudyInfo {
     }
 }
 
+/// Patient identification of a DICOM object — the privacy scan's source
+/// ([#74](https://github.com/Kauter1989/ferrum/issues/74)). The values stay
+/// inside FERRUM; the scan returns positions only.
+pub fn patient_identifiers(obj: &InMemDicomObject) -> ferrum_domain::PatientIdentifiers {
+    let s = |tag| str_of(obj, tag).unwrap_or_default();
+    ferrum_domain::PatientIdentifiers {
+        name: s(tags::PATIENT_NAME),
+        patient_id: s(tags::PATIENT_ID),
+        birth_date: s(tags::PATIENT_BIRTH_DATE),
+        accession_number: s(tags::ACCESSION_NUMBER),
+    }
+}
+
 /// Selected, human-readable attributes shown in the info dialog.
 pub fn describe(obj: &InMemDicomObject) -> Vec<(String, String)> {
     const SHOWN: [(Tag, &str); 20] = [
