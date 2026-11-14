@@ -30,7 +30,7 @@ def stage_section(text: str, stage: str) -> str:
     m = re.search(rf"^## Stage {re.escape(stage)}\b.*?$", text, re.M)
     if not m:
         sys.exit(f"no '## Stage {stage}' heading in dev_plan.md")
-    rest = text[m.end():]
+    rest = text[m.end() :]
     n = re.search(r"^## ", rest, re.M)
     return rest[: n.start()] if n else rest
 
@@ -49,7 +49,8 @@ def main() -> int:
     p.add_argument("--root", default=".", help="repository root")
     a = p.parse_args()
     stage = a.stage
-    sec = stage_section(open(os.path.join(a.root, "dev_plan.md"), encoding="utf-8").read(), stage)
+    with open(os.path.join(a.root, "dev_plan.md"), encoding="utf-8") as f:
+        sec = stage_section(f.read(), stage)
 
     id_re = re.compile(rf"\[({re.escape(stage)}\.\d+-[a-z])\]")
     struck = set(re.findall(rf"~~\s*\[({re.escape(stage)}\.\d+-[a-z])\]", sec))
@@ -65,7 +66,8 @@ def main() -> int:
     tests, cited = {}, set()
     for path in walk(a.root, CODE_EXT):
         try:
-            text = open(path, encoding="utf-8").read()
+            with open(path, encoding="utf-8") as f:
+                text = f.read()
         except (UnicodeDecodeError, OSError):
             continue
         for cid in set(cite_re.findall(text)):
@@ -75,14 +77,15 @@ def main() -> int:
     levels = {}
     docs = os.path.join(a.root, "docs")
     for path in walk(docs, (".md",)) if os.path.isdir(docs) else []:
-        for line in open(path, encoding="utf-8"):
-            if not line.lstrip().startswith("|"):
-                continue
-            low = line.lower()
-            for cid in set(cite_re.findall(line)):
-                for lv in LEVELS:
-                    if re.search(rf"\b{lv}\b", low):
-                        levels.setdefault(cid, set()).add(lv)
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                if not line.lstrip().startswith("|"):
+                    continue
+                low = line.lower()
+                for cid in set(cite_re.findall(line)):
+                    for lv in LEVELS:
+                        if re.search(rf"\b{lv}\b", low):
+                            levels.setdefault(cid, set()).add(lv)
 
     missing = []
     print(f"Stage {stage}: {len(criteria)} criteria, {len(struck)} struck through\n")
