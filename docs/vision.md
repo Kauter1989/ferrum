@@ -158,5 +158,12 @@ review by qualified people.
 | Review queue in the desktop app (*Open workspace*) | ✅ |
 | Agent skill with segmentation engines | ✅ |
 | DICOM SEG and SR export | ✅ v0.2.0 |
+| Loader warnings, DICOM in canonical LPS, multi-volume MR/PET series (echoes, b-values, phases, PET frames) with switching and agent volume ids | ✅ 0.4.0 |
+| Quantitative segment profiles (`quick`, `clinical`) in the app, CLI and MCP; lossless HU grid storage | ✅ 0.4.0 |
+| GPU leases shared with external processes (`ferrum-gpu-lock/1`), engine unload, `gpu hold` | ✅ 0.4.0 |
+| Host decision API (`ferrum_agent::decisions`) and workspace change notifications | ✅ 0.4.0 |
+| Embeddable viewer crate `ferrum-ui` (views and panels; events and the example host next) | ✅ 0.4.0 |
+| Local view host `ferrum-view/1` (`ferrum-cli view serve`) and the DeepSeek Harness plugin | ✅ 0.4.0 |
+| The study in a browser panel: the renderer in WebAssembly + WebGPU (`ferrum-wasm`) | ✅ 0.4.0 |
 
 The detailed plan with user stories is in [dev_plan.md](../dev_plan.md).

@@ -26,6 +26,11 @@ in the panel has no such limit and is the real-time path the demo needs.
 
 ## 1. Build the pieces
 
+**From a release archive:** the built module (`ferrum_wasm.js`,
+`ferrum_wasm_bg.wasm`) already sits next to `ferrum-cli`, and this folder
+ships in the archive as `integrations/dsh/` — skip the build and start the
+host (§2). The steps below are for running from a checkout.
+
 ```powershell
 cargo build --release -p ferrum-cli
 integrations\dsh\panel\build.cmd          # needs: rustup target add wasm32-unknown-unknown

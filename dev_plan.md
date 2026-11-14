@@ -224,7 +224,7 @@ label records which engine proposed it and who confirmed it.
 | 16.5 | As an **annotator**, I want one obvious way to create a segment, offered only where it works, so that I do not get lost between view modes and panels. | Every tool and setting is offered only in the view modes where it acts (tools on slices: 2D and MPR; eraser: 3D; panel tabs per mode), enforced in `ferrum-app`; no segmentation from the 3D view; a *Segment* toolbar group with a built-in region tool that needs no engine and the AI tools (disabled with the reason until an engine connects); a step-by-step guide in the panel and in the view; no empty "Add segment". ✅ |
 | 16.6 | As an **annotator**, I want the region tool to segment a whole organ (liver, lung) on noisy CT, not only a small lesion, so that one click gives a usable starting segment. | [16.6-a] The reference value is the median of the smoothed values around the seed, so a noisy seed voxel does not decide (a 200 HU outlier at the seed of a 60 HU organ still yields ≥ 3 500 of the 4 096 voxels); [16.6-b] with ±40 HU noise a 16³ organ phantom is segmented to 3 500–4 300 voxels and a vessel crossing it is filled, also when it leaves the organ through its surface; [16.6-c] a 1 mm bridge to a second structure is cut by an opening of 1.5 mm and leaks without it; [16.6-d] a lesion 3 mm wide survives an opening of 3 mm unchanged (27 voxels); [16.6-e] smoothing of 1 mm does not shrink a sharp-edged ball (895 voxels with and without smoothing, opening and hole filling; strong smoothing recovers only the outermost boundary layer and shrinks small structures — stated in the panel hint); [16.6-i] smoothing and opening are in millimetres: on 5 mm slices a bridge 4 mm wide and one slice thick is cut by an opening of 3 mm and leaks without it; [16.6-k] when the click is not in the core left by the opening (a thin spot), the core nearest to the click survives, never a larger organ elsewhere; [16.6-l] the default tolerance is a tenth of the window width, at most 40 (the automatic window of a whole CT is over 1 000 wide and would leak on the first click); [16.6-m] the click grows the region on a worker thread: the click returns at once (`Viewer::region_pending`), the segment appears when the job finishes; a second click meanwhile is refused with a message and starts no job; *Cancel* (or clearing the segmentation, or opening another study) stops it and no segment is created even if the job had just finished; voxels labelled since the click are never overwritten; the cancel flag is checked every 65 536 grown voxels and between the later steps; [16.6-n] the tolerance is chosen at every click until the user sets it: 300 for an aerated seed (below −500 in a CT-like volume), otherwise as in 16.6-l; the panel shows the value used and a checkbox *Automatic tolerance*; moving the slider switches it off (on MSD lung CT the default of 40 grew nothing and ±200…±400 gives Dice 0.92–0.97 against the lung of the click; field test, `docs/testing.md`); [16.6-j] on real CT the default settings give Dice ≥ 0.90 against the reference on MSD Task03 liver cases (field test; measured on four cases: 0.951, 0.961, 0.958 and 0.883 — the last because the reference includes a hypodense tumour at the surface; see `docs/testing.md`); [16.6-f] the failures are told apart: seed outside the grid, seed already in a segment, region larger than the limit (message names the limit, the tolerance and the opening); the default limit is 8 000 ml (a lung is about 6 000 ml); [16.6-h] a seed on an edge or a vessel is never rejected (the region always contains the seed; "too large" is reported only for the size limit); [16.6-g] the panel offers smoothing (0–6 mm), bridge cutting (0–15 mm), hole filling and a size limit up to 20 000 ml. |
 | 16.7 | As a **harness developer** ([#71](https://github.com/Kauter1989/ferrum/issues/71)), I want a person's review decision recorded through a library API, bound to what was shown, so that only the host's decision channel decides and every decision can be checked. | [16.7-a] `ferrum_agent::decisions::revision` gives an item's SHA-256 (64 hex digits) in the fixed encoding `ferrum-review-revision/1` over the source hash, the open volume and the item's content (annotation: kind, plane, slice, points, text, value, name; segment: name and voxels), stable while the item does not change; review state and display properties are not part of it; a pinned test fixes the encoding. ✅ [16.7-b] `record` appends an audit entry with `source: host`, `by`, `revision`, the host's `shown_sha256`, `source_sha256` and the volume, then writes confirm or reject for the named person into the workspace like the desktop review queue; a workspace lock serialises hosts. ✅ [16.7-c] A stale revision (the item's name or voxels changed since it was shown) is refused with `source_changed`, and an item someone has decided on already with `forbidden`; nothing is recorded. An empty, multi-line or bidi-formatted name, a hash that is not 64 hex digits, an unknown item or a workspace outside the root is refused. ✅ [16.7-d] It is not an agent command: no command or schema takes it, and `review confirm`/`reject` still need the operator switch. ✅ |
-| 16.8 | As a **harness developer** ([#72](https://github.com/Kauter1989/ferrum/issues/72)), I want to be told when the agent, the viewer or the review panel changes a workspace so that each of them shows the others' changes at once instead of reading everything again. | [16.8-a] `ferrum_io::workspace::changes` gives typed changes: a segment added, removed, revised (name, colour, visibility, opacity or its voxels) or reviewed (with its new status); an annotation added, removed, revised or reviewed; the open volume switched (with its key, e.g. `b1000`, or `other` when the manifest holds a key FERRUM does not generate). [16.8-b] In process, `subscribe(root)` returns a receiver; every save through `Workspace` (agent commands, the viewer, `ferrum_agent::decisions`) sends its changes before the save returns, so a subscriber sees a change made through the agent API in the same event-loop tick. [16.8-c] For changes made by another process, `WorkspaceWatcher::poll` compares the files with the last state it read and gives the same changes; it reads a file again only when its size, modification time or inode changed; a file that cannot be read (not a regular file, too large, malformed) is reported as such and does not stop the other files. [16.8-d] Changes hold labels, ids, statuses and the volume key only: no names, texts, UIDs or paths. A test scans their text for the study's identifiers. [16.8-e] The agent command set does not change. |
+| 16.8 | As a **harness developer** ([#72](https://github.com/Kauter1989/ferrum/issues/72)), I want to be told when the agent, the viewer or the review panel changes a workspace so that each of them shows the others' changes at once instead of reading everything again. | [16.8-a] `ferrum_io::workspace::changes` gives typed changes: a segment added, removed, revised (name, colour, visibility, opacity or its voxels) or reviewed (with its new status); an annotation added, removed, revised or reviewed; the open volume switched (with its key, e.g. `b1000`, or `other` when the manifest holds a key FERRUM does not generate). ✅ [16.8-b] In process, `subscribe(root)` returns a receiver; every save through `Workspace` (agent commands, the viewer, `ferrum_agent::decisions`) sends its changes before the save returns, so a subscriber sees a change made through the agent API in the same event-loop tick. ✅ [16.8-c] For changes made by another process, `WorkspaceWatcher::poll` compares the files with the last state it read and gives the same changes; it reads a file again only when its size, modification time or inode changed; a file that cannot be read (not a regular file, too large, malformed) is reported as such and does not stop the other files. ✅ [16.8-d] Changes hold labels, ids, statuses and the volume key only: no names, texts, UIDs or paths. A test scans their text for the study's identifiers. ✅ [16.8-e] The agent command set does not change. ✅ (PR [#87](https://github.com/Kauter1989/ferrum/pull/87)) |
 
 **16.8 — clarifications (feature, autonomous; `assumed:`):**
 - assumed: a polling watcher (`WorkspaceWatcher::poll`), not OS file notifications, so no new dependency and the same behaviour on Linux, Windows and WSL network drives; the host chooses the interval.
@@ -607,7 +607,7 @@ through `Viewer` or its own code), theming beyond FERRUM's dark theme.
 | 24.T6 licence and badge test in the embedded layout | 24.5-a/b | 2 | |
 | 24.T7 docs, events privacy test | — | 2 | |
 
-## Stage 25 — Local GPU view for a harness (`ferrum-view/1`) 🚧
+## Stage 25 — Local GPU view for a harness (`ferrum-view/1`) ✅
 
 A harness shows FERRUM next to its conversation: the person works with the
 study in the harness window, the frames are made on the local GPU, and the
@@ -674,17 +674,27 @@ events of 25.4-c in Stage 26 through `view events`).
 | 25.T4 server: routes, token and cookie, the self-contained page, body limit | 25.1-b/c, 25.4-a/d, 25.5-a/b/c | 1 | ✅ |
 | 25.T5 `ferrum-cli view serve` and its parse test | 25.1-a/d | 1 | ✅ |
 | 25.T6 docs: `view-host.md`, ADR 0017, architecture, CLAUDE.md, CHANGELOG | 25.4-b | 1 | ✅ |
-| 25.T7 DeepSeek Harness plugin and its smoke script | 25.6-a/b | 2 | |
+| 25.T7 DeepSeek Harness plugin and its smoke script | 25.6-a/b | 2 | ✅ (merged with [#91](https://github.com/Kauter1989/ferrum/pull/91)) |
 
 **Status (PR 1):** the host runs and its tests pass: the page is
 self-contained and refuses a missing token, a CPU frame equals the oracle
 exactly, a GPU frame agrees with the CPU one (mean deviation and the four
 outline sides), input moves one slice per notch and clamps, a pick gives the
 voxel and the value `probe` gives, events are ordered and hold no path or
-name, and a segment the agent saves appears on the next state read. Open:
-25.6 (the harness plugin, PR 2) and the MPR/3D components (Stage 26).
+name, and a segment the agent saves appears on the next state read.
+25.6 (the harness plugin) landed with #91; the MPR/3D components came
+with Stage 26.
 
-## Stage 26 — The study in a browser panel (WASM + WebGPU) 🚧
+**Sandbox check (2026-11-14, release prep, RTX 3080):** the success metric
+measured over loopback as the harness drives it: 43.5 fps scroll+frame
+(≥ 10 required), the first frame in 0.02 s (< 2 s), the host's probe equal
+to `ferrum-cli probe`, the volume's SHA-256 and byte length exact, token
+401 / unknown 404 / wrong method 405, the CPU backend serving the same
+state; `smoke.js`, `smoke-load.cjs` and the panel tests pass. Found and
+fixed here: `view serve` ignored `data.workspace_root` (now resolved like
+the agent commands, with a test).
+
+## Stage 26 — The study in a browser panel (WASM + WebGPU) ✅
 
 **Size:** declared **L**, measured **XL** — 5 386 lines in 55 files, against a
 budget of 3 500 lines and 40 files for L ([design](docs/webgpu-panel.md) with
@@ -784,7 +794,7 @@ contained in #91. Follow-ups not taken in this PR: a short-lived, rotating
 token for `ferrum-view/1` (an ADR first), and the consolidation of the CPU
 segment overlay, which is a third copy of the `slice.wgsl` rule.
 
-## Stage F1 — An unknown view mode is applied silently (bug, known cause) 🚧
+## Stage F1 — An unknown view mode is applied silently (bug, known cause) ✅
 
 **Track:** feature (a bug with a known cause, `ferrum-workflow` §1).
 **Mode:** autonomous; **Size:** S. **Found by:** a live check after #91 was
@@ -843,8 +853,8 @@ overlay consolidation, the tests that cannot fail that the review listed).
 
 ## Roadmap
 
-Updated 2026-10-19, after Stage 20. Order is a proposal; each stage
-starts with its spec at gate G1. Sizes follow `ferrum-size`.
+Updated 2026-11-14, before the 0.4.0 release. Order is a proposal; each
+stage starts with its spec at gate G1. Sizes follow `ferrum-size`.
 
 ### Next
 
@@ -856,8 +866,9 @@ starts with its spec at gate G1. Sizes follow `ferrum-size`.
 | 4 | Stage 22 — PET/CT fusion (below) | stage, L, new ADR | the main way PET is read; needs a second volume in `Dataset` and `GpuSink` |
 | 5 | Stage 16 — the rest: 16.1 confirm all, 16.2 export only confirmed, 16.3 provenance of a corrected segment, 16.4 annotation mode | stage, M per story | open since Stage 16; 16.5–16.6 are done |
 | 6 | Stage 19 — reproducible radiomics and comparison (IBSI, textures, change over time) | stage, XL, G1 again | waits for the release of Stage 18 (its own rule); MR normalisation joins it |
-| 7 | Interactive view host for generative UI ([ADR 0014](docs/decisions/0014-generative-ui-view-host.md), draft): the agent mounts a FERRUM view in the conversation and the person works in it directly | stage, size after G1/G2 | a new direction (merged in #67); its priority against 3–6 is the user's call |
-| 8 | Stage 23 — GPU sharing with an external model server (above, [#68](https://github.com/Kauter1989/ferrum/issues/68)) | stage, XL, 3 PRs | P0 for Medical Harness's Demo 2 (a resident local model on the same 12 GB card); its order against 1–7 is the user's call |
+| 7 | Interactive view host for generative UI — delivered as Stages 25 and 26: `view serve`, the DeepSeek Harness plugin, the WebGPU panel ([ADR 0014](docs/decisions/0014-generative-ui-view-host.md), [ADR 0017](docs/decisions/0017-view-host-crate.md)) | ✅ done | follow-ups open: rotating tokens (an ADR first), the CPU overlay consolidation, WebGPU test automation |
+| 8 | Stage 23 — GPU sharing with an external model server ([#68](https://github.com/Kauter1989/ferrum/issues/68)) — code complete, PRs 1–3 merged | ✅ code; field run open | 23.T9: the 20-call recipe on the user's 12 GB card |
+| 9 | Stage 24 PR 2 — widget events and the example host (24.T4–T7, [design](docs/embeddable-viewer.md)) | feature, M | G1 ✅ G2 ✅; completes the embeddable viewer for the harness's Demo 4; the next feature proposed after the release |
 
 ### Backlog (feature or small, any time)
 
