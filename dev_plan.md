@@ -856,7 +856,8 @@ overlay consolidation, the tests that cannot fail that the review listed).
 **Track:** feature (a bug with a known cause, `ferrum-workflow` §1).
 **Mode:** autonomous; **Size:** M. **Found by:** Medical Harness while
 embedding `ferrum-agent` v0.3.0 ([#82](https://github.com/Kauter1989/ferrum/issues/82),
-request 13 of `docs/ferrum-integration.md` there).
+request 13 of `docs/ferrum-integration.md` there). Closes the S2 backlog
+item of the 0.4.0-prep security review (the same lexical root check).
 
 **The defect.** `AgentConfig::check_source` compares a source path with
 `read_roots` lexically (`absolute` + `normalise`), so a symlink inside a
@@ -956,12 +957,6 @@ stage starts with its spec at gate G1. Sizes follow `ferrum-size`.
 
 ### Backlog (feature or small, any time)
 
-- **Workspace boundary hardening (security review S2, 0.4.0 prep):** the
-  root check in `AgentConfig::resolve_workspace` / `check_source` is
-  lexical; a symlink or junction inside the root can point outside it.
-  Pre-existing and shared by every command, read-only in `view serve`.
-  Canonicalise the joined path when it exists and re-check the root, in
-  one place for all commands, with a symlink test.
 - **`view serve` without a configuration (security review N1):** the hello
   line carries no "no operator configuration" warning, unlike the agent
   envelopes; add a note when `config.is_default`.
