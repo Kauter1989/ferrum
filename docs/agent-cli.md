@@ -255,6 +255,14 @@ allow_harness_confirmation = false
   warns about it.
 - Outputs never contain patient names, IDs or birth dates. The agent does
   not output DICOM attributes.
+- The read-root check resolves symlinks: a link inside a root that points
+  outside it is refused (`forbidden`), for sources and for workspaces
+  alike. The check judges exactly the spelling the reader opens, and a
+  workspace load re-checks every recorded source file path and refuses
+  a manifest path with `..`. The source
+  walk skips the symlinks (and Windows junctions) it discovers and
+  refuses a tree deeper than 8 levels or with more than 100 000 entries
+  (`limit`). Explicitly passed paths are honoured.
 
 ## MCP server
 

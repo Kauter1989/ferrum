@@ -851,6 +851,91 @@ overlay consolidation, the tests that cannot fail that the review listed).
 |---|---|---|---|---|
 | F1.1 | the mode reaches the view by name and an unknown one is refused | F1.1-a, F1.1-b, F1.1-c | 1 | ✅ |
 
+## Stage F2 — The read-root check is lexical; the source walk follows symlinks (bug, known cause) 🚧
+
+**Track:** feature (a bug with a known cause, `ferrum-workflow` §1).
+**Mode:** autonomous; **Size:** M. **Found by:** Medical Harness while
+embedding `ferrum-agent` v0.3.0 ([#82](https://github.com/Kauter1989/ferrum/issues/82),
+request 13 of `docs/ferrum-integration.md` there). Closes the S2 backlog
+item of the 0.4.0-prep security review (the same lexical root check).
+
+**The defect.** `AgentConfig::check_source` compares a source path with
+`read_roots` lexically (`absolute` + `normalise`), so a symlink inside a
+read root that points outside it passes the check and FERRUM reads the
+target. `ferrum_io::files::collect_files` walks a source tree through
+`is_dir()`/`is_file()`, which follow symlinks, with no depth or entry
+bound: a folder inside a root can pull in files from anywhere the process
+can read, and a link loop never terminates. `resolve_workspace` shares
+the lexical pattern.
+
+**Why it matters.** The read roots are the operator's boundary for what
+an agent may read — patient data included. The harness guards its own
+calls today (canonical path, no symlink below a source folder, depth ≤ 8,
+≤ 100 000 entries), but FERRUM embedded without that guard is open.
+
+**Criteria**
+
+- [F2.1-a] `check_source` canonicalises the returned path and every read
+  root before comparing: a symlink inside a root that points outside it
+  is refused with `forbidden` — as a file, as a folder, through the link.
+  A root named through a symlink grants exactly its target. The check
+  judges exactly the spelling that is returned and that the reader opens
+  (`.` and `..` resolved lexically): a `..` behind a depth-changing link
+  must not split the checked path from the opened one (security review).
+- [F2.1-b] `resolve_workspace` holds the same boundary against
+  `workspace_root`; a workspace that does not exist yet still resolves.
+- [F2.1-c] `Study::load` scans the checked source path and re-checks
+  every recorded file path of the manifest before hashing or scanning
+  it; a manifest path with a `..` component is refused outright (the
+  check normalises it lexically, but `verify_sources`, the cache stamps
+  and the DICOM export open the raw spelling in filesystem order —
+  behind a symlink the two diverge; legitimate manifests never hold one).
+  A crafted `workspace.json` cannot point the load outside the roots.
+- [F2.2-a] `collect_files` does not follow the symlinks it discovers
+  while descending (folder and file links are skipped; on Windows
+  junctions too — std marks them symlinks, pinned by a test); explicitly
+  passed paths are honoured as before; a link loop terminates.
+- [F2.2-b] The walk is bounded: depth ≤ 8 and ≤ 100 000 entries (the
+  harness guard's numbers). Exceeding either is refused with `limit`
+  (`RepositoryError::Limit`, additive), never silently cut (L37).
+- [F2.3] Tests that can fail: unit cases in `config.rs` and `files.rs`,
+  and command-level contract tests (`study scan` / `study open`) with a
+  symlink to a file outside the root, a folder holding such a link, a
+  symlinked folder, and a tree past the depth bound. Windows skips the
+  symlink cases when the runner holds no privilege; CI runs them on
+  Linux.
+
+**Verification**
+
+| Criterion | Level | Evidence | Outcome |
+|---|---|---|---|
+| F2.1-a | test | `config.rs::symlink_out_of_a_read_root_is_refused`, `a_symlinked_read_root_grants_exactly_its_target`, `a_depth_changing_link_cannot_split_the_check_from_the_read`; `tests/read_roots.rs::scan_refuses_a_symlink_to_a_file_outside_the_root`, `open_refuses_a_symlink_to_a_file_outside_the_root`, `open_refuses_a_symlinked_folder_outside_the_root`, `a_depth_changing_link_cannot_split_the_check_from_the_scan` | ✅ Linux + Windows (symlink cases skip without the privilege; CI runs them) |
+| F2.1-b | test | `config.rs::workspace_symlink_escape_is_refused`, the workspace case of `a_depth_changing_link_cannot_split_the_check_from_the_read` | ✅ |
+| F2.1-c | test | `tests/read_roots.rs::a_crafted_manifest_cannot_point_the_load_outside_the_root`, `a_crafted_manifest_with_parent_components_is_refused` | ✅ Linux + Windows (the `..` case needs a symlink: skips without the privilege) |
+| F2.2-a | test | `files.rs::walk_does_not_follow_symlinks`, `walk_survives_a_symlink_loop`, `walk_skips_junctions` (Windows, no privilege needed); `tests/read_roots.rs::a_folder_holding_an_escape_link_scans_only_its_real_files` | ✅ |
+| F2.2-b | test | `files.rs::walk_bounds_depth_and_entries`; `tests/read_roots.rs::a_source_tree_deeper_than_the_limit_is_reported` | ✅ |
+| F2.3 | mutation | nine tests red on the unfixed code (Linux) before the fix; the depth-changing-link regression red on the first draft, and the crafted-manifest `..` regression red without the guard (both mutation-checked) | ✅ |
+
+**Local run:** WSL (Ubuntu 22.04): `cargo fmt --check`, `clippy --workspace
+--all-targets -D warnings`, schema freshness, `cargo test --workspace`
+without `FERRUM_REQUIRE_GPU` — all green. Host (Windows): `gpu_parity`
+14/14 with `FERRUM_REQUIRE_GPU=1`, `ferrum-domain`/`ferrum-io`/
+`ferrum-agent` suites green. The WSL GPU half is the documented old-Mesa
+case (lavapipe segfault, `ferrum-change` §4); the host answers it.
+
+**Out of scope:** the TOCTOU window between the check and the read, and
+hard links (both need write access to a data root; the issue documents
+them as residual); the desktop's own file dialogs (a person's explicit
+choice, no agent boundary).
+
+**Implementation**
+
+| Task | What | Criteria | PR | State |
+|---|---|---|---|---|
+| F2.1 | canonical comparison of the returned spelling in `check_source` / `resolve_workspace`; the load re-checks the manifest's file paths | F2.1-a, F2.1-b, F2.1-c | 1 | ✅ |
+| F2.2 | no-follow bounded walk in `collect_files`; `RepositoryError::Limit` | F2.2-a, F2.2-b | 1 | ✅ |
+| F2.3 | the tests, red first; docs and CHANGELOG | F2.3 | 1 | ✅ |
+
 ## Roadmap
 
 Updated 2026-11-14, before the 0.4.0 release. Order is a proposal; each
@@ -872,12 +957,6 @@ stage starts with its spec at gate G1. Sizes follow `ferrum-size`.
 
 ### Backlog (feature or small, any time)
 
-- **Workspace boundary hardening (security review S2, 0.4.0 prep):** the
-  root check in `AgentConfig::resolve_workspace` / `check_source` is
-  lexical; a symlink or junction inside the root can point outside it.
-  Pre-existing and shared by every command, read-only in `view serve`.
-  Canonicalise the joined path when it exists and re-check the root, in
-  one place for all commands, with a symlink test.
 - **`view serve` without a configuration (security review N1):** the hello
   line carries no "no operator configuration" warning, unlike the agent
   envelopes; add a note when `config.is_default`.

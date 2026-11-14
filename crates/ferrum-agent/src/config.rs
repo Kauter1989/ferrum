@@ -185,9 +185,21 @@ impl AgentConfig {
     }
 
     /// Checks that a source path may be read and returns it absolute.
+    ///
+    /// The comparison resolves symlinks: the returned path and every read
+    /// root are canonicalised first, so a link inside a root cannot point
+    /// outside it (#82). The check runs on exactly the spelling that is
+    /// returned and that the reader will open — `.` and `..` are resolved
+    /// lexically, as [`absolute`] does, and a `..` behind a depth-changing
+    /// link must not split the checked path from the opened one (security
+    /// review of #82). A root that cannot be resolved grants nothing.
     pub fn check_source(&self, path: &Path) -> Result<PathBuf, AgentError> {
         let abs = absolute(path)?;
-        if self.read_roots.is_empty() || self.read_roots.iter().any(|r| abs.starts_with(normalise(r))) {
+        if self.read_roots.is_empty() {
+            return Ok(abs);
+        }
+        let real = real_path(&abs)?;
+        if self.read_roots.iter().filter_map(|r| real_path(r).ok()).any(|r| real.starts_with(r)) {
             return Ok(abs);
         }
         Err(AgentError::new(ErrorCode::Forbidden, format!("{} is outside the readable data roots", abs.display()))
@@ -196,20 +208,32 @@ impl AgentConfig {
 
     /// Resolves a workspace path (relative paths below `workspace_root`)
     /// and checks that it lies below `workspace_root` when one is set.
+    /// The comparison resolves symlinks on the returned spelling, as
+    /// [`Self::check_source`] does; a workspace that does not exist yet
+    /// still resolves.
     pub fn resolve_workspace(&self, path: &Path) -> Result<PathBuf, AgentError> {
         let joined = match (&self.workspace_root, path.is_relative()) {
             (Some(root), true) => root.join(path),
             _ => path.to_path_buf(),
         };
         let abs = absolute(&joined)?;
-        match &self.workspace_root {
-            Some(root) if !abs.starts_with(normalise(root)) => Err(AgentError::new(
-                ErrorCode::Forbidden,
-                format!("workspace {} is outside the workspace root", abs.display()),
-            )
-            .hint("use a workspace name relative to the workspace root")),
-            _ => Ok(abs),
+        if let Some(root) = &self.workspace_root {
+            let real = real_path(&abs)?;
+            let root_real = real_path(root).map_err(|e| {
+                AgentError::new(
+                    ErrorCode::Forbidden,
+                    format!("workspace root {} cannot be resolved: {}", root.display(), e.message),
+                )
+            })?;
+            if !real.starts_with(root_real) {
+                return Err(AgentError::new(
+                    ErrorCode::Forbidden,
+                    format!("workspace {} is outside the workspace root", abs.display()),
+                )
+                .hint("use a workspace name relative to the workspace root"));
+            }
         }
+        Ok(abs)
     }
 }
 
@@ -243,6 +267,78 @@ fn normalise(path: &Path) -> PathBuf {
         }
     }
     out
+}
+
+/// The path with symlinks resolved, for root comparisons only.
+///
+/// The deepest existing ancestor is canonicalised: the OS resolves
+/// symlinks and `..` in filesystem order, which lexical normalisation
+/// cannot — a `..` behind a link climbs out of the link's target, not
+/// out of the link's spelling. The remaining components are then applied
+/// lexically; the canonical base holds no symlinks, so a `..` in the
+/// tail cannot climb through one. A path that does not exist yet keeps
+/// its lexical tail (the reader reports the missing file). An error
+/// other than "not found" refuses the path: a root that cannot be
+/// resolved must not grant access.
+fn real_path(path: &Path) -> Result<PathBuf, AgentError> {
+    let abs = absolute_raw(path)?;
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+    let mut base: &Path = &abs;
+    loop {
+        match std::fs::canonicalize(base) {
+            Ok(canon) => return Ok(apply_tail(canon, &tail)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                match base.components().next_back() {
+                    Some(std::path::Component::Normal(name)) => tail.push(name.to_os_string()),
+                    Some(std::path::Component::ParentDir) => tail.push(std::ffi::OsString::from("..")),
+                    Some(std::path::Component::CurDir) => {}
+                    // A root or prefix: nothing on this path exists.
+                    _ => return Ok(normalise(&abs)),
+                }
+                match base.parent() {
+                    Some(parent) => base = parent,
+                    None => return Ok(normalise(&abs)),
+                }
+            }
+            Err(e) => return Err(AgentError::bad_request(format!("{}: {e}", base.display()))),
+        }
+    }
+}
+
+/// Absolute without normalising `.` and `..`: a `..` behind a symlink
+/// must reach the filesystem in component order. `std::path::absolute`
+/// normalises lexically on Windows, which would erase the link before
+/// the check ever sees it.
+fn absolute_raw(path: &Path) -> Result<PathBuf, AgentError> {
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+    #[cfg(windows)]
+    if matches!(path.components().next(), Some(std::path::Component::Prefix(_))) {
+        // Drive-relative (`C:foo`): only the OS can resolve it, and its
+        // resolver normalises `..` lexically. Refuse rather than check a
+        // spelling the filesystem will not read.
+        return Err(AgentError::bad_request(format!(
+            "{}: a drive-relative path cannot be checked against the read roots; use an absolute path",
+            path.display()
+        )));
+    }
+    let cwd = std::env::current_dir().map_err(|e| AgentError::bad_request(format!("{}: {e}", path.display())))?;
+    Ok(cwd.join(path))
+}
+
+/// Applies the not-yet-existing tail of a path to its canonical base,
+/// innermost component first. The base holds no symlinks, so `..` here
+/// is the real parent.
+fn apply_tail(mut base: PathBuf, tail: &[std::ffi::OsString]) -> PathBuf {
+    for part in tail.iter().rev() {
+        if part == std::ffi::OsStr::new("..") {
+            base.pop();
+        } else {
+            base.push(part);
+        }
+    }
+    base
 }
 
 #[cfg(test)]
@@ -356,5 +452,134 @@ mod tests {
         let open = AgentConfig::default();
         assert!(open.check_source(&p("anything")).is_ok());
         assert_eq!(open.resolve_workspace(&p("tmp/./ws")).unwrap(), p("tmp/ws"));
+    }
+
+    /// Creates a symlink; on Windows this needs a privilege the test
+    /// runner may not hold, so a failed creation reports and skips the
+    /// case. CI runs Linux, where every case runs.
+    fn symlink(target: &Path, link: &Path) -> bool {
+        #[cfg(unix)]
+        let r = std::os::unix::fs::symlink(target, link);
+        #[cfg(windows)]
+        let r = if target.is_dir() {
+            std::os::windows::fs::symlink_dir(target, link)
+        } else {
+            std::os::windows::fs::symlink_file(target, link)
+        };
+        match r {
+            Ok(()) => true,
+            Err(e) => {
+                eprintln!("skipping a symlink case: {e}");
+                false
+            }
+        }
+    }
+
+    #[test]
+    fn symlink_out_of_a_read_root_is_refused() {
+        // covers F2.1-a: a symlink inside a read root that points outside
+        // it must not pass the check — as a file, as a folder, through a
+        // folder, or with a `..` behind the link.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("root");
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let secret = outside.join("secret.nii");
+        std::fs::write(&secret, b"x").unwrap();
+        if !symlink(&secret, &root.join("link-file")) {
+            return;
+        }
+        assert!(symlink(&outside, &root.join("link-dir")));
+        let c = AgentConfig { read_roots: vec![root.clone()], ..AgentConfig::default() };
+        for escape in [root.join("link-file"), root.join("link-dir"), root.join("link-dir/secret.nii")] {
+            assert_eq!(
+                c.check_source(&escape).unwrap_err().code,
+                ErrorCode::Forbidden,
+                "an escape was accepted: {}",
+                escape.display()
+            );
+        }
+        // `..` is lexical (the `absolute` contract): link-dir/../secret.nii
+        // normalises to root/secret.nii — inside the root, and exactly what
+        // the reader opens, so it is allowed.
+        assert_eq!(c.check_source(&root.join("link-dir/../secret.nii")).unwrap(), root.join("secret.nii"));
+        // A real file inside the root stays readable, and the returned
+        // path keeps the caller's spelling (workspaces store it).
+        let ok = root.join("ok.nii");
+        std::fs::write(&ok, b"x").unwrap();
+        assert_eq!(c.check_source(&ok).unwrap(), ok);
+    }
+
+    #[test]
+    fn a_depth_changing_link_cannot_split_the_check_from_the_read() {
+        // covers F2.1-a (security-review regression): the link points
+        // DEEPER than its spelling, so a `..` behind it resolves differently
+        // in OS order and lexically. The check must judge the lexical
+        // spelling — the one the reader opens — not the OS-order target.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("root");
+        let deep = root.join("x/y");
+        std::fs::create_dir_all(&deep).unwrap();
+        let other = tmp.path().join("patientB");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join("scan.nii"), b"x").unwrap();
+        if !symlink(&deep, &root.join("link")) {
+            return;
+        }
+        std::fs::write(root.join("ok.nii"), b"x").unwrap();
+        let c = AgentConfig { read_roots: vec![root.clone()], ..AgentConfig::default() };
+        // OS order: root/x/y/../../patientB/scan.nii = root/patientB/scan.nii
+        // (inside); lexical: root/link/../../patientB/scan.nii =
+        // tmp/patientB/scan.nii (outside). The reader opens the lexical one,
+        // so it must be refused.
+        let escape = root.join("link/../../patientB/scan.nii");
+        assert_eq!(c.check_source(&escape).unwrap_err().code, ErrorCode::Forbidden);
+        // One `..` less: lexical root/ok.nii is inside — allowed, and the
+        // returned spelling is exactly what will be opened.
+        assert_eq!(c.check_source(&root.join("link/../ok.nii")).unwrap(), root.join("ok.nii"));
+        // The workspace boundary holds the same way.
+        let cw = AgentConfig { workspace_root: Some(root.clone()), ..AgentConfig::default() };
+        assert_eq!(
+            cw.resolve_workspace(Path::new("link/../../patientB/scan.nii")).unwrap_err().code,
+            ErrorCode::Forbidden
+        );
+    }
+
+    #[test]
+    fn a_symlinked_read_root_grants_exactly_its_target() {
+        // covers F2.1-a: roots are canonicalised too, so a root named
+        // through a link grants the target folder — and nothing beside it.
+        let tmp = tempfile::tempdir().unwrap();
+        let real = tmp.path().join("real");
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::write(real.join("ok.nii"), b"x").unwrap();
+        let link = tmp.path().join("link");
+        if !symlink(&real, &link) {
+            return;
+        }
+        let c = AgentConfig { read_roots: vec![link.clone()], ..AgentConfig::default() };
+        assert!(c.check_source(&link.join("ok.nii")).is_ok());
+        assert!(c.check_source(&real.join("ok.nii")).is_ok(), "the target itself is inside the root");
+        std::fs::write(tmp.path().join("sibling.nii"), b"x").unwrap();
+        assert_eq!(c.check_source(&tmp.path().join("sibling.nii")).unwrap_err().code, ErrorCode::Forbidden);
+    }
+
+    #[test]
+    fn workspace_symlink_escape_is_refused() {
+        // covers F2.1-b: the workspace root holds the same boundary, and
+        // a workspace that does not exist yet still resolves.
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path().join("ws");
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir_all(&ws).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        if !symlink(&outside, &ws.join("escape")) {
+            return;
+        }
+        let c = AgentConfig { workspace_root: Some(ws.clone()), ..AgentConfig::default() };
+        assert_eq!(c.resolve_workspace(Path::new("escape")).unwrap_err().code, ErrorCode::Forbidden);
+        assert_eq!(c.resolve_workspace(Path::new("escape/new")).unwrap_err().code, ErrorCode::Forbidden);
+        assert_eq!(c.resolve_workspace(Path::new("ct1")).unwrap(), ws.join("ct1"));
     }
 }
