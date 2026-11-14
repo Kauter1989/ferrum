@@ -904,12 +904,19 @@ calls today (canonical path, no symlink below a source folder, depth ≤ 8,
 
 | Criterion | Level | Evidence | Outcome |
 |---|---|---|---|
-| F2.1-a | test | `config.rs::symlink_out_of_a_read_root_is_refused`, `a_symlinked_read_root_grants_exactly_its_target`, `a_depth_changing_link_cannot_split_the_check_from_the_read`; `tests/read_roots.rs::scan_refuses_a_symlink_to_a_file_outside_the_root`, `open_refuses_a_symlink_to_a_file_outside_the_root`, `open_refuses_a_symlinked_folder_outside_the_root`, `a_depth_changing_link_cannot_split_the_check_from_the_scan` | pending |
-| F2.1-b | test | `config.rs::workspace_symlink_escape_is_refused`, the workspace case of `a_depth_changing_link_cannot_split_the_check_from_the_read` | pending |
-| F2.1-c | test | `tests/read_roots.rs::a_crafted_manifest_cannot_point_the_load_outside_the_root` | pending |
-| F2.2-a | test | `files.rs::walk_does_not_follow_symlinks`, `walk_survives_a_symlink_loop`, `walk_skips_junctions` (Windows); `tests/read_roots.rs::a_folder_holding_an_escape_link_scans_only_its_real_files` | pending |
-| F2.2-b | test | `files.rs::walk_bounds_depth_and_entries`; `tests/read_roots.rs::a_source_tree_deeper_than_the_limit_is_reported` | pending |
-| F2.3 | mutation | the new tests run red on the unfixed code before the implementation lands; the depth-changing-link regression was found by the security review and its test runs red on the first fix draft | pending |
+| F2.1-a | test | `config.rs::symlink_out_of_a_read_root_is_refused`, `a_symlinked_read_root_grants_exactly_its_target`, `a_depth_changing_link_cannot_split_the_check_from_the_read`; `tests/read_roots.rs::scan_refuses_a_symlink_to_a_file_outside_the_root`, `open_refuses_a_symlink_to_a_file_outside_the_root`, `open_refuses_a_symlinked_folder_outside_the_root`, `a_depth_changing_link_cannot_split_the_check_from_the_scan` | ✅ Linux + Windows (symlink cases skip without the privilege; CI runs them) |
+| F2.1-b | test | `config.rs::workspace_symlink_escape_is_refused`, the workspace case of `a_depth_changing_link_cannot_split_the_check_from_the_read` | ✅ |
+| F2.1-c | test | `tests/read_roots.rs::a_crafted_manifest_cannot_point_the_load_outside_the_root` | ✅ Linux + Windows |
+| F2.2-a | test | `files.rs::walk_does_not_follow_symlinks`, `walk_survives_a_symlink_loop`, `walk_skips_junctions` (Windows, no privilege needed); `tests/read_roots.rs::a_folder_holding_an_escape_link_scans_only_its_real_files` | ✅ |
+| F2.2-b | test | `files.rs::walk_bounds_depth_and_entries`; `tests/read_roots.rs::a_source_tree_deeper_than_the_limit_is_reported` | ✅ |
+| F2.3 | mutation | nine tests red on the unfixed code (Linux) before the fix; the depth-changing-link regression red on the first draft (mutation-checked) | ✅ |
+
+**Local run:** WSL (Ubuntu 22.04): `cargo fmt --check`, `clippy --workspace
+--all-targets -D warnings`, schema freshness, `cargo test --workspace`
+without `FERRUM_REQUIRE_GPU` — all green. Host (Windows): `gpu_parity`
+14/14 with `FERRUM_REQUIRE_GPU=1`, `ferrum-domain`/`ferrum-io`/
+`ferrum-agent` suites green. The WSL GPU half is the documented old-Mesa
+case (lavapipe segfault, `ferrum-change` §4); the host answers it.
 
 **Out of scope:** the TOCTOU window between the check and the read, and
 hard links (both need write access to a data root; the issue documents
@@ -920,9 +927,9 @@ choice, no agent boundary).
 
 | Task | What | Criteria | PR | State |
 |---|---|---|---|---|
-| F2.1 | canonical comparison of the returned spelling in `check_source` / `resolve_workspace`; the load re-checks the manifest's file paths | F2.1-a, F2.1-b, F2.1-c | 1 | |
-| F2.2 | no-follow bounded walk in `collect_files`; `RepositoryError::Limit` | F2.2-a, F2.2-b | 1 | |
-| F2.3 | the tests, red first; docs and CHANGELOG | F2.3 | 1 | |
+| F2.1 | canonical comparison of the returned spelling in `check_source` / `resolve_workspace`; the load re-checks the manifest's file paths | F2.1-a, F2.1-b, F2.1-c | 1 | ✅ |
+| F2.2 | no-follow bounded walk in `collect_files`; `RepositoryError::Limit` | F2.2-a, F2.2-b | 1 | ✅ |
+| F2.3 | the tests, red first; docs and CHANGELOG | F2.3 | 1 | ✅ |
 
 ## Roadmap
 
