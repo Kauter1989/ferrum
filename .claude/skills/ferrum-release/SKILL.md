@@ -55,15 +55,11 @@ When CI is green, merge it with a merge commit.
 - **ADR numbers stay unique.** Check that the merge leaves each number
   once in `docs/decisions/`
   (`git ls-tree --name-only origin/main docs/decisions/` against `develop`).
-  - **Open for the next release:** `main` has
-    `0011-generative-ui-view-host.md` (PR #48). `develop` holds the same
-    draft as `0014-generative-ui-view-host.md` because 0011 is the
-    radiomics ADR there. A plain merge keeps `main`'s file as a
-    duplicate. Before the release PR, merge `origin/main` into a branch
-    from `develop`, delete `0011-generative-ui-view-host.md` there, and
-    merge that PR into `develop`. After the release, check that `main`
-    has only `0011-radiomics-crate.md` and `0014-generative-ui-view-host.md`.
-    Then remove this item.
+- **Test-merge the open PRs slated for the release** (L43). A clean git
+  merge is not a semantically correct one: a fix branch that predates the
+  bump lands its CHANGELOG entry under `[Unreleased]`, not `[X.Y.Z]`.
+  Merge each such PR into a throwaway branch from `develop` and check
+  where its entries land; move them with a small docs PR if needed.
 - **Title:** "Release X.Y.Z".
 - **Body:** the user-visible changes grouped as in the CHANGELOG, and
   the PRs it contains.
@@ -84,6 +80,12 @@ Dispatch `.github/workflows/release.yml` on `main` with the input
 Follow the run to the end (it takes 4–15 minutes). Then confirm:
 - the release `vX.Y.Z` exists and has its archives;
 - the tag points at the `Release X.Y.Z (#N)` commit.
+
+A build job cancelled at provisioning with "The configuration … is not
+supported" means the runner label is retired (L44): check the current
+image, fix the label in `release.yml`, verify with a dry run from the fix
+branch, and re-dispatch. The tag is created only by the publish job, so a
+failed run leaves nothing to clean up.
 
 ## 5. Afterwards
 
