@@ -354,6 +354,11 @@ Label bridges. The scenarios they serve, step by step, are in
   read the terminal. `gpu hold` starts a program, so it is an operator
   tool of the command line only: it is not an agent command, has no
   schema and is not an MCP tool.
+- `ferrum-cli view serve --workspace W [--port N] [--cpu]` serves the open
+  workspace as a local view host (`ferrum-view/1`): loopback only, a token,
+  slices on the GPU or the CPU reference. Like `gpu hold`, it is an operator
+  tool of the command line only — not an agent command, no schema, not an
+  MCP tool. See [docs/view-host.md](view-host.md).
 - The desktop app reads the same `[network]` settings from
   `$FERRUM_AGENT_CONFIG`. An engine of a group takes its lease when a
   session opens, and the AI panel shows "Waiting for GPU: <holder>" with

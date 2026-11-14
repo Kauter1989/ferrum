@@ -6,7 +6,7 @@ device, draws MPR (axial, coronal, sagittal) and a 3D volume into a `<canvas>`
 in the panel. There is no frame server and no streamed image: the voxels are
 taken once from the view host and every frame after that is drawn by the GPU
 of the machine — measured at 144 fps for a 512×512×252 CT on an RTX 3080
-([`docs/webgpu-panel.md`](../../../docs/webgpu-panel.md)).
+([`docs/webgpu-panel.md`](https://github.com/Kauter1989/ferrum/blob/main/docs/webgpu-panel.md)).
 
 Why not an `<iframe>` of the host's page: the Desktop window is loaded from
 the `dsh-app://` scheme, a secure context, and Chromium does not render
@@ -58,6 +58,10 @@ app with *Open workspace*:
 {"url":"http://127.0.0.1:41234","token":"8f3c…","workspace":"C:\\work\\ws\\ct1","backend":"gpu"}
 ```
 
+From a release archive the binaries sit at the archive root, so the same
+commands are `.\ferrum-cli.exe study open …` and `.\ferrum-cli.exe view serve …`
+(no `target\release\`); the panel module is already beside them.
+
 The panel takes the study from `/api/volume` (the voxels, once) and does not
 need the host to render anything; `backend` then only describes the host's
 own rendering, which the panel does not use.
@@ -105,7 +109,7 @@ node integrations\dsh\smoke.js http://127.0.0.1:41234 <token>    # the host over
 ## Limits
 
 - The panel shows the study, not the segments yet: overlays in the browser
-  are the next step (Stage 26).
+  are a follow-up (Stage 26 shipped without them).
 - The whole volume crosses the wire once as f32 (264 MB for 512×512×252):
   fine on loopback, and compression or a 16-bit transfer is a later task.
 - The panel does not start the host; the operator runs one command.
