@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FERRUM · PR #99 — граница read-root: симлинки и пределы обхода</title>
+<style>
+  :root {
+    --bg: #fbfbfd; --fg: #1d1f26; --muted: #5b6070; --line: #e2e5ec;
+    --accent: #1f6feb; --ok: #1a7f37; --warn: #9a6700; --bad: #b42318;
+    --card: #ffffff; --code: #f3f4f7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12141a; --fg: #e6e7ea; --muted: #a2a8b6; --line: #2a2e38;
+      --accent: #6ba6ff; --ok: #4ac26b; --warn: #d4a72c; --bad: #ff7b72;
+      --card: #191c23; --code: #1f232c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.6 -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  main { max-width: 1080px; margin: 0 auto; padding: 40px 24px 80px; }
+  h1 { font-size: 30px; line-height: 1.25; margin: 0 0 8px; letter-spacing: -0.02em; }
+  h2 { font-size: 21px; margin: 44px 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 16px; margin: 26px 0 8px; }
+  p, li { color: var(--fg); }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 28px; }
+  .pill {
+    font-size: 13px; padding: 3px 10px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--card); color: var(--muted);
+  }
+  .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+  .pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px 20px; margin: 14px 0;
+  }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 13px; }
+  code { background: var(--code); padding: 1px 5px; border-radius: 4px; }
+  pre { background: var(--code); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; overflow-x: auto; }
+  pre code { background: none; padding: 0; }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 14px; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .tag { font-size: 12px; font-weight: 600; padding: 2px 7px; border-radius: 5px; white-space: nowrap; }
+  .t-block { background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--bad); }
+  .t-should { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+  .t-nit { background: color-mix(in srgb, var(--muted) 16%, transparent); color: var(--muted); }
+  .t-fixed { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+  .stat { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+  .stat b { display: block; font-size: 26px; line-height: 1.2; }
+  .stat span { color: var(--muted); font-size: 13px; }
+  .diagram { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin: 16px 0; overflow-x: auto; color: var(--fg); }
+  .diagram svg { display: block; width: 100%; min-width: 720px; height: auto; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .diagram .node { fill: var(--code); stroke: var(--line); stroke-width: 1; }
+  .diagram .node.accent { fill: color-mix(in srgb, var(--accent) 12%, var(--code)); stroke: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+  .diagram .node.strong { fill: color-mix(in srgb, var(--ok) 12%, var(--code)); stroke: color-mix(in srgb, var(--ok) 45%, var(--line)); }
+  .diagram .n-title { fill: var(--fg); font-size: 15px; font-weight: 600; text-anchor: middle; }
+  .diagram .n-sub { fill: var(--muted); font-size: 12px; text-anchor: middle; }
+  .diagram .zone { fill: var(--muted); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; font-weight: 600; }
+  .diagram .edge { fill: none; stroke: currentColor; stroke-opacity: .45; stroke-width: 1.6; }
+  .diagram .edge.dashed { stroke-dasharray: 5 4; }
+  .diagram .e-label { fill: var(--muted); font-size: 11.5px; text-anchor: middle; }
+  .diagram-caption { color: var(--muted); font-size: 13px; margin: -4px 0 18px; }
+  ul { padding-left: 22px; }
+  li { margin: 4px 0; }
+  .note { border-left: 3px solid var(--accent); padding-left: 14px; color: var(--muted); margin: 14px 0; }
+  footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>PR #99 — граница read-root: симлинки и пределы обхода</h1>
+<p class="sub">Финальный технический отчёт (phase 11): архитектура, анализ кода, история ревью. FERRUM, ноябрь 2026. Описывает merge-коммит <code>52bb981</code> в <code>develop</code> (2026-11-14, 16:05 MSK); code map перечитан из смерженного дерева. Пред-мердж версия этого отчёта была опубликована в PR до решения G3.</p>
+
+<div class="meta">
+  <span class="pill">Ветка <code>fix/82-read-root-symlinks</code> → <code>develop</code></span>
+  <span class="pill ok">Смержен 2026-11-14</span>
+  <span class="pill">8 коммитов + merge</span>
+  <span class="pill">11 файлов, +759 / −34</span>
+  <span class="pill ok">Размер M — в бюджете</span>
+  <span class="pill ok">CI: 5/5 зелёный</span>
+</div>
+
+<div class="grid">
+  <div class="stat"><b>0</b><span>новых крейтов</span></div>
+  <div class="stat"><b>16</b><span>новых тестов (9 красных до фикса + 2 мутации)</span></div>
+  <div class="stat"><b>4</b><span>замечания двух ревью</span></div>
+  <div class="stat"><b>3 + 1</b><span>исправлено + опровергнуто probe'ом</span></div>
+  <div class="stat"><b>14/14</b><span>GPU-parity на хосте Windows</span></div>
+  <div class="stat"><b>1</b><span>урок записан (L39)</span></div>
+</div>
+
+<h2>1. Архитектурные изменения</h2>
+
+<p>
+  Задача — <a href="https://github.com/Kauter1989/ferrum/issues/82">#82</a> (P1, безопасность):
+  операторская граница чтения <code>data.read_roots</code> обходилась симлинком внутри корня,
+  а обход дерева источников следовал за ссылками без ограничений глубины и числа записей.
+  Нашёл Medical Harness при встраивании <code>ferrum-agent</code> v0.3.0; харнесс прикрывает
+  свои вызовы собственной проверкой, но FERRUM без этой обвязки был открыт. Это defence in depth.
+</p>
+
+<h3>Изменённые модули</h3>
+
+<table>
+  <thead><tr><th>Модуль</th><th>Что изменилось</th></tr></thead>
+  <tbody>
+    <tr><td><code>ferrum-agent/src/config.rs</code></td><td><code>check_source</code> / <code>resolve_workspace</code> сравнивают каноническую форму <em>возвращаемой</em> нотации с каноническими корнями (<code>real_path</code>, <code>absolute_raw</code>, <code>apply_tail</code>). Корень, который не резолвится, не даёт доступа.</td></tr>
+    <tr><td><code>ferrum-agent/src/study.rs</code></td><td><code>Study::load</code> сканирует проверенный путь и перепроверяет каждый путь файла из манифеста до хеширования/сканирования; <code>scan</code> мапит <code>RepositoryError::Limit</code> в код конверта <code>limit</code>.</td></tr>
+    <tr><td><code>ferrum-io/src/files.rs</code></td><td><code>collect_files</code> → <code>Result</code>: пропускает обнаруженные симлинки (и junction'ы Windows), ограничен глубиной ≤ 8 и ≤ 100 000 записей; превышение — ошибка, не молчаливая обрезка.</td></tr>
+    <tr><td><code>ferrum-domain/src/repository.rs</code></td><td>Аддитивный вариант <code>RepositoryError::Limit(String)</code> — чистый тип ошибки, без I/O.</td></tr>
+    <tr><td><code>ferrum-io</code> (dicom, nifti)</td><td>Проброс <code>?</code> — по одной строке на ридер.</td></tr>
+    <tr><td>docs / CHANGELOG / dev_plan</td><td>agent-skill.md §11, agent-cli.md, запись Fixed, Stage F2 с критериями и таблицей верификации.</td></tr>
+  </tbody>
+</table>
+
+<h3>Связи</h3>
+
+<div class="diagram">
+<svg viewBox="0 0 1020 400" role="img" aria-label="Путь команды: check_source канонизирует возвращаемую нотацию и сравнивает с корнями; ридеры вызывают ограниченный collect_files; Limit доходит до конверта как limit">
+  <defs>
+    <marker id="arw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="currentColor" opacity=".55"/>
+    </marker>
+  </defs>
+
+  <rect x="16" y="16" width="988" height="120" rx="12" fill="none" stroke="currentColor" stroke-opacity=".18" stroke-dasharray="5 5"/>
+  <text x="32" y="40" class="zone">ferrum-agent — граница оператора</text>
+
+  <rect x="16" y="170" width="988" height="120" rx="12" fill="none" stroke="currentColor" stroke-opacity=".18" stroke-dasharray="5 5"/>
+  <text x="32" y="194" class="zone">ferrum-io — единственное место, где читаются файлы</text>
+
+  <rect x="40" y="56" width="200" height="64" rx="10" class="node"/>
+  <text x="140" y="82" class="n-title">study scan / open</text>
+  <text x="140" y="100" class="n-sub">commands/study.rs · study.rs</text>
+
+  <rect x="300" y="56" width="230" height="64" rx="10" class="node accent"/>
+  <text x="415" y="82" class="n-title">check_source</text>
+  <text x="415" y="100" class="n-sub">канон возвращаемой нотации</text>
+
+  <rect x="590" y="56" width="200" height="64" rx="10" class="node accent"/>
+  <text x="690" y="82" class="n-title">real_path</text>
+  <text x="690" y="100" class="n-sub">предок + хвост, fail-closed</text>
+
+  <rect x="830" y="56" width="150" height="64" rx="10" class="node strong"/>
+  <text x="905" y="82" class="n-title">forbidden</text>
+  <text x="905" y="100" class="n-sub">вне корней</text>
+
+  <rect x="40" y="210" width="230" height="64" rx="10" class="node"/>
+  <text x="155" y="236" class="n-title">Dicom / Nifti scan</text>
+  <text x="155" y="254" class="n-sub">проверенные пути</text>
+
+  <rect x="330" y="210" width="250" height="64" rx="10" class="node accent"/>
+  <text x="455" y="236" class="n-title">collect_files</text>
+  <text x="455" y="254" class="n-sub">no-follow · depth ≤ 8 · ≤ 100k</text>
+
+  <rect x="640" y="210" width="180" height="64" rx="10" class="node strong"/>
+  <text x="730" y="236" class="n-title">Limit → limit</text>
+  <text x="730" y="254" class="n-sub">явный отказ, не обрезка</text>
+
+  <path d="M240,88 L300,88" class="edge" marker-end="url(#arw)"/>
+  <path d="M530,88 L590,88" class="edge" marker-end="url(#arw)"/>
+  <path d="M790,88 L830,88" class="edge dashed" marker-end="url(#arw)"/>
+  <text x="810" y="78" class="e-label">отказ</text>
+  <path d="M140,120 L140,210" class="edge" marker-end="url(#arw)"/>
+  <text x="190" y="170" class="e-label">только проверенная нотация</text>
+  <path d="M270,242 L330,242" class="edge" marker-end="url(#arw)"/>
+  <path d="M580,242 L640,242" class="edge dashed" marker-end="url(#arw)"/>
+  <text x="610" y="232" class="e-label">превышен предел</text>
+
+  <text x="40" y="330" class="n-sub" text-anchor="start">Study::load: check_source(source.path) + каждый файл манифеста → до verify_sources и кэша</text>
+  <text x="40" y="352" class="n-sub" text-anchor="start">Сплошные стрелки — поток данных; пунктир — отказ. Возвращаемая нотация и есть открываемая.</text>
+</svg>
+</div>
+<p class="diagram-caption">Граница чтения замкнута в двух местах: каноническое сравнение возвращаемой нотации (agent) и ограниченный обход без следования ссылкам (io).</p>
+
+<h3>Слоистость</h3>
+<ul>
+  <li><code>ferrum-domain</code> остаётся без I/O: <code>Limit(String)</code> — чистый вариант ошибки порта; исчерпывающих <code>match</code> по <code>RepositoryError</code> в workspace нет (проверено grep'ом по всем крейтам).</li>
+  <li>Файлы по-прежнему разбираются только в <code>ferrum-io</code>; <code>collect_files</code> — единственная реализация обхода, лимиты живут в ней, а не в адаптерах.</li>
+  <li>Проводной контракт не изменён: код <code>limit</code> уже существовал в конверте <code>ferrum-agent/1</code>; команды, схемы, протокол движков, формат workspace и шейдеры не тронуты (<code>commands.json</code> свежий, package-тесты зелёные).</li>
+</ul>
+
+<h2>2. Анализ кода и паттерны</h2>
+
+<h3>Проверяй то, что открываешь</h3>
+<p>
+  Первый драфт проверял OS-порядок резолва, а возвращал лексическую нотацию — ревью нашло
+  расхождение за симлинком, указывающим <em>глубже</em> своей нотации. Финал: канонизируется
+  ровно та нотация, которую вернёт функция и откроет ридер; <code>..</code> остаётся лексическим
+  (контракт <code>absolute</code>), поэтому проверенный и открытый путь не могут разойтись.
+</p>
+<pre><code>let abs = absolute(path)?;          // лексическая нотация — её и откроют
+let real = real_path(&amp;abs)?;        // её каноническая форма
+if roots.iter().filter_map(|r| real_path(r).ok()).any(|r| real.starts_with(r)) {
+    return Ok(abs);                 // проверено == открыто
+}</code></pre>
+
+<h3>Fail-closed на границе</h3>
+<p>
+  <code>real_path</code> канонизирует глубжайший существующий предок (NotFound — подъём вверх),
+  хвост применяет лексически на базе без симлинков; любая ошибка кроме NotFound — отказ.
+  Корень, который не резолвится, не даёт ничего. Drive-relative пути (<code>C:foo</code>) на
+  Windows отказываются: их резолвер нормализует <code>..</code> лексически и скрыл бы ссылку.
+</p>
+
+<h3>Явный отказ вместо молчаливой обрезки (L37)</h3>
+<p>
+  Превышение глубины или числа записей — <code>RepositoryError::Limit</code> с путём и пределом
+  в сообщении, до конверта как <code>limit</code>. Обход не «усекает тихо» и не падает на
+  петле из ссылок: обнаруженные симлинки пропускаются, петля завершается.
+</p>
+
+<h3>Где паттерны уместны, а где нет</h3>
+<ul>
+  <li><strong>Уместно:</strong> каноническое сравнение на границе оператора; единый ограниченный обход в io; аддитивный вариант ошибки порта вместо строкового хака.</li>
+  <li><strong>Спорно:</strong> лексический <code>..</code> может удивить (OS-порядок дал бы другой результат за ссылкой) — но это существующий контракт <code>absolute</code>, и теперь он честен: что проверено, то и открыто. Альтернатива (возвращать канонический путь) ломала бы формат путей в workspace на Windows (verbatim <code>\\?\</code>).</li>
+  <li><strong>Не делалось:</strong> TOCTOU-окно между проверкой и чтением и hard links — остаточные риски, требуют прав записи в корень данных, задокументированы в issue и docs.</li>
+</ul>
+
+<h3>Тесты, которые не могут упасть</h3>
+<table>
+  <thead><tr><th>Мутация</th><th>Что падает</th></tr></thead>
+  <tbody>
+    <tr><td>Старый лексический <code>check_source</code> (до фикса)</td><td>9 тестов красные на Linux: побег файлом/папкой/через папку, симлинк-корень, workspace-побег, обход следует ссылкам, глубина без предела</td></tr>
+    <tr><td>Первый драфт: <code>real_path(path)</code> вместо <code>real_path(&amp;abs)</code></td><td><code>a_depth_changing_link_cannot_split_the_check_from_the_read</code> — проверено мутацией (FAILED), затем возврат</td></tr>
+    <tr><td>Молчаливая обрезка вместо <code>Limit</code></td><td><code>walk_bounds_depth_and_entries</code>, <code>a_source_tree_deeper_than_the_limit_is_reported</code> (ожидают код <code>limit</code>)</td></tr>
+    <tr><td>Следование junction'ам на Windows</td><td><code>walk_skips_junctions</code> — junction создаётся без привилегий, тест работает на хосте</td></tr>
+    <tr><td>Отказ guard'а <code>..</code> в манифесте (замена <code>?</code> на <code>.ok()</code>)</td><td><code>a_crafted_manifest_with_parent_components_is_refused</code> — проверено мутацией (FAILED: <code>bad_request</code> вместо <code>forbidden</code>), затем возврат</td></tr>
+  </tbody>
+</table>
+
+<h2>3. Этапы ревью</h2>
+
+<h3>Security-ревью (первый драфт)</h3>
+<table>
+  <thead><tr><th>Уровень</th><th>Замечание</th><th>Решение</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><span class="tag t-block">high</span></td>
+      <td>Проверка резолвит OS-порядок, а ридер открывает лексическую нотацию: симлинк глубже своей нотации + <code>..</code> уводит чтение (и запись workspace) за корень. Подтверждено probe'ом ревьюера.</td>
+      <td><span class="tag t-fixed">Fixed.</span> Коммит <code>d00432b</code>: канонизируется возвращаемая нотация; <code>Study::load</code> перепроверяет пути файлов манифеста; регрессионные тесты (unit + command-level), mutation-check красный на первом драфте.</td>
+    </tr>
+    <tr>
+      <td><span class="tag t-block">high</span></td>
+      <td>Junction'ы Windows якобы не помечаются std как симлинки → обход следует им (ревьюер не мог проверить на Windows).</td>
+      <td><span class="tag t-fixed">Rejected.</span> Эмпирически опровергнуто на этой машине: rustc 1.99, <code>New-Item -ItemType Junction</code> → <code>DirEntry::file_type().is_symlink() == true</code>, <code>is_dir() == false</code>; <code>canonicalize</code> резолвит junction в цель. Поведение закреплено тестом <code>walk_skips_junctions</code> (без привилегий).</td>
+    </tr>
+  </tbody>
+</table>
+<div class="card">
+  <strong>Остаточные риски (задокументированы):</strong> TOCTOU между проверкой и чтением; hard links (нужны права записи в корень данных); явно переданные пути уважаются (агент сначала канонизирует цель, desktop — явный выбор человека); без конфигурации читается всё (существующее поведение, конверт предупреждает).
+</div>
+
+<h3>Code-ревью (финальный diff)</h3>
+<table>
+  <thead><tr><th>Уровень</th><th>Замечание</th><th>Решение</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><span class="tag t-block">blocking</span></td>
+      <td><code>study.rs</code>: re-check манифеста отбрасывал проверенную нотацию — <code>verify_sources</code>, кэш <code>stamps</code> и DICOM-экспорт открывают сырую. Crafted <code>files[].path = "link/../secret.nii"</code> проходит лексическую проверку, но OS резолвит за ссылкой — наружу (чтение + size-оракул + условный экспорт идентификаторов). Тот же класс расхождения, что поймал security-reviewer в первом драфте.</td>
+      <td><span class="tag t-fixed">Fixed.</span> Коммит <code>55b9766</code>: <code>refuse_parent_components</code> отказывает любой <code>..</code> в пути источника и каждого файла манифеста до использования. Легитимные манифестов <code>..</code> не содержат (<code>create()</code> пишет чистые относительные/абсолютные пути), а без <code>..</code> сырая и лексическая нотации резолвятся идентично. Регрессионный тест <code>a_crafted_manifest_with_parent_components_is_refused</code> (относительный путь файла под папкой-источником и сам путь источника), mutation-check красный без guard'а.</td>
+    </tr>
+    <tr>
+      <td><span class="tag t-nit">nit</span></td>
+      <td><code>dev_plan</code>: pending-строки верификации и пустые колонки PR/State.</td>
+      <td><span class="tag t-fixed">Fixed.</span> Коммит <code>18b8b3e</code>: таблица верификации заполнена, State ✅, локальный прогон описан с платформенным разделением.</td>
+    </tr>
+  </tbody>
+</table>
+<p>
+  Ревьюером прослежено и признано чистым: <code>real_path</code>/<code>absolute_raw</code>/<code>apply_tail</code>
+  (несуществующие пути, корни с <code>..</code>, UNC, ELOOP, dangling links, права, drive-relative);
+  <code>collect_bounded</code> (пределы, junction'ы, явные пути, сортировка); цепочка
+  <code>Limit</code> и слоистость (исчерпывающих <code>match</code> по <code>RepositoryError</code> нет;
+  замечание на будущее: enum не <code>#[non_exhaustive]</code> — downstream-матч сломался бы при
+  обновлении, в workspace таких нет); тесты могут падать; бюджет качества; матрица изменений.
+</p>
+
+<h3>Оценка качества решения</h3>
+<table>
+  <thead><tr><th>Аспект</th><th>Оценка</th><th>Обоснование</th></tr></thead>
+  <tbody>
+    <tr><td>Архитектура</td><td><span class="tag t-fixed">strong</span></td><td>Граница замкнута в двух слоях по правилам слоистости; порт расширен аддитивно; проводной контракт не тронут.</td></tr>
+    <tr><td>Тесты</td><td><span class="tag t-fixed">strong</span></td><td>14 новых тестов, красное до фикса доказано (9 на Linux + мутация первого драфта); точные значения, safety-пути первыми; junction-тест без привилегий.</td></tr>
+    <tr><td>Документация</td><td><span class="tag t-fixed">strong</span></td><td>CHANGELOG, agent-skill §11, agent-cli, dev_plan F2 с критериями и таблицей верификации; остаточные риски названы честно.</td></tr>
+    <tr><td>Процесс</td><td><span class="tag t-should">weak → исправлен</span></td><td>Первый драфт внёс регрессию (проверка ≠ открытие) — поймал security-reviewer; второй раунд (code-reviewer) нашёл тот же класс в путях манифеста. Оба пойманы до пуша, не CI; обе регрессии mutation-checked. Дисковый кризис C: (WSL vhdx) прервал верификацию; WSL перенесён на E:, кэши очищены, прогоны повторены на финальном коде.</td></tr>
+    <tr><td>Полнота верификации</td><td><span class="tag t-should">good</span></td><td>WSL: fmt/clippy/schema/все тесты; GPU-тесты (gpu_parity, view_host GPU) в WSL падают SIGSEGV на Mesa 23.2 lavapipe — документированный случай старого драйвера (ferrum-change §4), их отвечает хост: gpu_parity 14/14 и view_host 13/13 с FERRUM_REQUIRE_GPU=1. UI-сюит в WSL один раз флаканул под параллельной нагрузкой полного прогона, отдельный прогон 19/19. Coverage локально не гонялся (CI гоняет; новый код покрыт тестами).</td></tr>
+  </tbody>
+</table>
+
+<h3>Хронология</h3>
+<ul>
+  <li>Триаж 10 открытых issues → единственный баг #82 подтверждён в коде; пользователь выбрал «исправить до релиза 0.4.0».</li>
+  <li>11 тестов написаны; 9 запущены красными на Linux (WSL) до реализации.</li>
+  <li>Первый драфт: каноническое сравнение + ограниченный обход; clippy 1.99 поймал новый линт в тестах.</li>
+  <li>Security-ревью: регрессия «проверка ≠ открытие» (high) и junction-гипотеза (high, опровергнута probe'ом).</li>
+  <li>Исправление регрессии + guard манифеста + 3 новых теста; мутация регрессионного теста проверена красным.</li>
+  <li>Code-ревью финального diff: блокирующее расхождение «проверка ≠ открытие» в путях манифеста (verify_sources/stamps/экспорт) → guard <code>..</code> + регрессионный тест, мутация красная.</li>
+  <li>Дисковый кризис C: → перенос WSL на E: (85.9 GB vhdx), чистка сборочных кэшей WSL (~37 GB), финальные прогоны на финальном коде.</li>
+  <li>Пока шёл фикс, develop уехал: #96 (правила issues), #97 (ADR), #98/#100 (релиз 0.4.0), #102 (ruff). Ребейз + update-merge; запись CHANGELOG дважды съезжала в [0.4.0] — возвращена в [Unreleased] (фикс выходит после релиза).</li>
+  <li>Финальный head 7516dd0: CI 5/5 зелёный (check 6m, coverage 3m11s, licenses, bridge, python-lint). G3: пользователь одобрил мерж.</li>
+  <li>Мерж 52bb981 (2026-11-14 16:05 MSK), issue #82 закрыт с резюме. Урок L39 записан; этот отчёт — phase 11 из смерженного дерева.</li>
+</ul>
+
+<h2>4. Где это лежит (code map)</h2>
+<p>Ссылки закреплены за merge-коммит <code>52bb981d4b36cfc618bc070b05d03f6ef21117f9</code>. Номера строк перечитаны из смерженного дерева (grep по символам).</p>
+<table>
+  <thead><tr><th>Что</th><th>file:lines</th><th>Символ</th><th>Почему здесь</th></tr></thead>
+  <tbody>
+    <tr><td>Граница чтения: канон возвращаемой нотации против канонических корней</td><td><a href="https://github.com/Kauter1989/ferrum/blob/52bb981d4b36cfc618bc070b05d03f6ef21117f9/crates/ferrum-agent/src/config.rs#L196-L207">config.rs:196-207</a></td><td><code>check_source</code></td><td>Операторская граница — в конфиге агента; проверено == открыто</td></tr>
+    <tr><td>Та же граница для workspace (включая ещё не существующий)</td><td><a href="https://github.com/Kauter1989/ferrum/blob/52bb981d4b36cfc618bc070b05d03f6ef21117f9/crates/ferrum-agent/src/config.rs#L214-L237">config.rs:214-237</a></td><td><code>resolve_workspace</code></td><td>Запись не должна выходить за workspace_root</td></tr>
+    <tr><td>Канонизация: глубжайший существующий предок, хвост на базе без ссылок, fail-closed</td><td><a href="https://github.com/Kauter1989/ferrum/blob/52bb981d4b36cfc618bc070b05d03f6ef21117f9/crates/ferrum-agent/src/config.rs#L283-L306">config.rs:283-306</a></td><td><code>real_path</code></td><td>Единственная реализация резолва для сравнения</td></tr>
+    <tr><td>Абсолютный путь без лексической нормализации; отказ drive-relative на Windows</td><td><a href="https://github.com/Kauter1989/ferrum/blob/52bb981d4b36cfc618bc070b05d03f6ef21117f9/crates/ferrum-agent/src/config.rs#L312-L328">config.rs:312-328</a></td><td><code>absolute_raw</code></td><td>std::path::absolute на Windows стёр бы ссылку до проверки</td></tr>
+    <tr><td>Хвост несуществующей части на канонической базе</td><td><a href="https://github.com/Kauter1989/ferrum/blob/52bb981d4b36cfc618bc070b05d03f6ef21117f9/crates/ferrum-agent/src/config.rs#L333-L342">config.rs:333-342</a></td><td><code>apply_tail</code></td><td>База без симлинков — <code>..</code> безопасен</td></tr>
+    <tr><td>Пределы обхода (числа харнесс-гарда)</td><td><a href="https://github.com/Kauter1989/ferrum/blob/52bb981d4b36cfc618bc070b05d03f6ef21117f9/crates/ferrum-io/src/files.rs#L21-L26">files.rs:21-26</a></td><td><code>MAX_WALK_DEPTH / MAX_WALK_ENTRIES</code></td><td>Одна реализация обхода — пределы в ней</td></tr>
+    <tr><td>Обход: no-follow, глубина, счётчик записей, явный Limit</td><td><a href="https://github.com/Kauter1989/ferrum/blob/52bb981d4b36cfc618bc070b05d03f6ef21117f9/crates/ferrum-io/src/files.rs#L44-L90">files.rs:44-90</a></td><td><code>collect_bounded</code></td><td>L37: отказ, не молчаливая обрезка; петля завершается</td></tr>
+    <tr><td>Аддитивный вариант ошибки порта</td><td><a href="https://github.com/Kauter1989/ferrum/blob/52bb981d4b36cfc618bc070b05d03f6ef21117f9/crates/ferrum-domain/src/repository.rs#L67-L69">repository.rs:67-69</a></td><td><code>RepositoryError::Limit</code></td><td>Домен без I/O; исчерпывающих match нет</td></tr>
+    <tr><td>Limit → код конверта limit</td><td><a href="https://github.com/Kauter1989/ferrum/blob/52bb981d4b36cfc618bc070b05d03f6ef21117f9/crates/ferrum-agent/src/study.rs#L47-L55">study.rs:47-55</a></td><td><code>scan</code></td><td>Проводной контракт не расширен — код уже был</td></tr>
+    <tr><td>Load: отказ <code>..</code> + проверенный источник + каждый путь манифеста до хеширования и кэша</td><td><a href="https://github.com/Kauter1989/ferrum/blob/52bb981d4b36cfc618bc070b05d03f6ef21117f9/crates/ferrum-agent/src/study.rs#L212-L233">study.rs:212-233</a></td><td><code>Study::load</code></td><td>Crafted workspace.json в модели угроз; проверено == открыто</td></tr>
+    <tr><td>Отказ <code>..</code> в путях манифеста (лексический check ≠ OS-порядок читателей)</td><td><a href="https://github.com/Kauter1989/ferrum/blob/52bb981d4b36cfc618bc070b05d03f6ef21117f9/crates/ferrum-agent/src/study.rs#L57-L70">study.rs:57-70</a></td><td><code>refuse_parent_components</code></td><td>Легитимные манифесты <code>..</code> не содержат; без него нотации резолвятся идентично</td></tr>
+    <tr><td>Командные контракты безопасности (8 тестов)</td><td><a href="https://github.com/Kauter1989/ferrum/blob/52bb981d4b36cfc618bc070b05d03f6ef21117f9/crates/ferrum-agent/tests/read_roots.rs#L1-L206">read_roots.rs:1-206</a></td><td><code>tests/read_roots.rs</code></td><td>Синтетика в рантайме; cite // covers F2.…</td></tr>
+    <tr><td>Junction-тест Windows (без привилегий)</td><td><a href="https://github.com/Kauter1989/ferrum/blob/52bb981d4b36cfc618bc070b05d03f6ef21117f9/crates/ferrum-io/src/files.rs#L140-L165">files.rs:140-165</a></td><td><code>walk_skips_junctions</code></td><td>Закрепляет опровергнутое замечание ревью</td></tr>
+  </tbody>
+</table>
+
+<footer>
+  Источники: <code>git diff --shortstat 52bb981^1 52bb981</code> → 11 файлов, +759/−34;
+  <code>git log --oneline 52bb981^1..52bb981^2</code> → 8 коммитов (7e3da75, ca70cb2, d00432b, 18b8b3e, 55b9766, 8476fa9, 284f5b2 update-merge, 7516dd0);
+  номера строк — grep по смерженному дереву. Прогоны: WSL Ubuntu 22.04 (fmt, clippy -D warnings,
+  schema, cargo test --workspace --no-fail-fast; GPU-тесты — документированный SIGSEGV Mesa 23.2,
+  их ответил хост), хост Windows (gpu_parity 14/14, view_host 13/13 с FERRUM_REQUIRE_GPU=1,
+  сюиты ferrum-domain/io/agent). CI на head 7516dd0: check, licenses, coverage, bridge, python-lint — все зелёные.
+  Урок: L39 («проверенный путь ≠ открытый путь») в .claude/lessons.md.
+  Отчёт описывает merge 52bb981d4b36cfc618bc070b05d03f6ef21117f9 в develop.
+</footer>
+
+</main>
+</body>
+</html>
