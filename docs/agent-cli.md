@@ -25,9 +25,12 @@ Every command prints one JSON envelope on stdout:
 
 ```json
 { "api": "ferrum-agent/1", "ok": true, "data": { … }, "warnings": [ … ],
-  "provenance": { "ferrum": "FERRUM 0.3.0", "command": "probe", "params": { … },
+  "provenance": { "ferrum": "FERRUM 0.4.0", "command": "probe", "params": { … },
                   "source_sha256": "…", "renderer": "cpu", "time": "2026-10-01T12:00:00Z" } }
 ```
+
+When the open series holds several volumes, `provenance` also has
+`volume: {series, label}`: the volume the values come from.
 
 | Exit code | Meaning |
 |---|---|
@@ -61,10 +64,10 @@ workspace paths are placed under the operator's `data.workspace_root`.
 
 | Command | What it does |
 |---|---|
-| `study scan <paths…>` | Lists series: pseudonymised id, format, modality, dims, description |
-| `study open -w W <path> [--series S] [--modality M]` | Creates or reuses the workspace W for a series (SHA-256 of every source file) and describes it; `--modality` declares the modality of a source that carries none (NIfTI), e.g. `CT` for values in HU, and is kept in the workspace |
-| `study info -w W` | Dims, spacing, LPS origin and direction, value unit, slice counts, window presets, annotation and segment counts |
-| `view slice -w W --plane P (--slice-number N \| --at POINT) [--window lung\|C,W] [--size PX] [--overlay segments [--segment-style outline\|fill\|fill_outline] [--segment-opacity A]]` | Renders a slice to `renders/r-NNNN.png` with a sidecar JSON |
+| `study scan <paths…>` | Lists series: pseudonymised id, format, modality, dims, description. A series of several volumes (echoes, b-values, phases, PET frames; [design](multi-volume.md)) gives one entry per volume: its own `series` id, `group` (the pseudonymised id of the series) and `volume` (`number` from 1, `count`, `label` such as `b = 1000` or `echo 2, TE = 40 ms`, `complete`, and `b_value`, `echo_time_ms`, `echo_number`, `temporal_position`, `frame_time_s` when known) |
+| `study open -w W <path> [--series S] [--modality M]` | Creates or reuses the workspace W for a series (SHA-256 of every source file) and describes it. `--series` takes a series or a volume id from `study scan`; a series of several volumes, named or the only one in the source, opens volume 1 and warns how to choose. A workspace belongs to the series: opening another volume of it in W switches the volume and keeps segments and annotations (an incomplete volume needs a workspace of its own); another series is refused; `--modality` declares the modality of a source that carries none (NIfTI), e.g. `CT` for values in HU, and is kept in the workspace. What the reader could not show as stored is in `warnings` (several images per slice position: one volume shown; a 4D NIfTI: volume 1 shown; irregular gaps, spacing taken from the header, no pixel spacing) |
+| `study info -w W` | Dims, spacing, LPS origin and direction, value unit, `value_range` (the range the voxels are stored over: for whole-unit CT data up to twice as wide as the data, [ADR 0012](decisions/0012-lossless-grid-storage.md); values are read back exactly), slice counts, window presets, annotation and segment counts; for a series of several volumes, `volume` (the open one) and `volumes` (`series`, `number`, `label`, `complete` of each) |
+| `view slice -w W --plane P (--slice-number N \| --at POINT) [--window lung\|C,W] [--size PX] [--overlay segments [--segment-style outline\|fill\|fill_outline] [--segment-opacity A]]` | Renders a slice to `renders/r-NNNN.png` with a sidecar JSON. Without `--window`, the window stored in the series is used, else 0.5–99.5 % of the voxel values (as in the desktop app; MR and PET store none) |
 | `view montage -w W --plane P [--from N] [--to N] [--step N] [--columns N] [--window …] [--size PX]` | Several slices of one plane as a grid; every tile labelled with its slice number (default: at most 16 tiles) |
 | `view mpr -w W POINT [--window …] [--size PX]` | Axial, coronal and sagittal slices through a point, with a crosshair |
 | `view volume -w W [--mode mip\|isosurface\|transfer_function] [--threshold V] [--preset soft_tissue_bone\|lung_vessels\|bone] [--view anterior\|…\|inferior] [--size PX]` | 3D render on the CPU from a standard viewpoint |
@@ -77,11 +80,14 @@ workspace paths are placed under the operator's `data.workspace_root`.
 | `segment list -w W` | Segments with voxel count, ml and provenance |
 | `segment threshold -w W --seed POINT --min V --max V [--max-ml ML] [--name N] [--agent ID]` | 6-connected region growing from a seed within a value range, as a proposed segment; existing segments are kept |
 | `segment rename\|delete -w W …` | Only segments the agent created or asked an engine for |
-| `segment shape -w W L` | Shape from the voxels: ml, extent in mm, slice ranges and largest slices, axial long and short axis with end points, border contact, components, laterality (for names with *left*/*right*) |
+| `segment shape -w W L [--solid-min V]` | Shape from the voxels: ml, extent in mm, slice ranges and largest slices, axial long and short axis with end points, border contact, components, laterality (for names with *left*/*right*); with `--solid-min`, the same axes, ml and share of the voxels at or above V (the solid part of a part-solid lesion; the threshold is the caller's, a measurement, not a classification) |
+| `segment distance -w W L --to M` | Shortest distance from segment L to the outer surface of segment M, its holes filled (e.g. a lesion inside a lung segment to the pleura): mm between voxel centres, the two closest points (voxel and LPS mm), `inside` (L lies within M with its holes filled), uncertainty of one (the largest) voxel spacing; neighbouring voxels are one spacing apart |
+| `segment metrics -w W L [--profile quick\|clinical] [--bin-width W] [--hu-range MIN,MAX]… [--describe]` | Quantitative profile of a segment from its voxels and values (`ferrum-radiomics`, [design](radiomics.md)): `quick` has the size (voxels, mm³ and ml, extent per grid axis, centroid in LPS mm, axial long and short axis, largest slices) and the first-order statistics (mean, population std, min, max, range, nearest-rank p5–p95, IQR). `clinical` adds the shape: area and volume of a marching-cubes surface mesh, surface-to-volume ratio, compactness 1 and 2, sphericity, spherical disproportion, and the major, minor and least axis (length, elongation, flatness, direction in LPS; a direction is `null` with a reason when two axes are equally long), the convex hull of the mesh (volume, area, solidity, convexity), the maximum 3D diameter between voxel centres, and the connectivity (26-connected pieces and the share of the largest, 6-connected cavities and their volume, Euler number, image sides touched). The envelope's `warnings` name `fragmented` (largest piece below 95 % of the voxels), `has_holes` and `touches_border`; they never change the mask. `clinical` also has the distribution of the HU values: skewness and excess kurtosis (`null` with a reason when all values are equal), energy (HU²), RMS, mean and robust mean absolute deviation, histogram entropy (bits) and uniformity on bins of `--bin-width` HU (default 25, bins `[k·w, (k+1)·w)` anchored at 0 HU, recorded in `params`), and the intensity-volume histogram: V10 and V90 (share of the volume at or above 10 % and 90 % of the range), I10 and I90 (the highest value that 10 % and 90 % of the volume reaches), plus the `ivh` curve (101 samples). `hu_ranges` reports the share of voxels in each `--hu-range` (half-open, not overlapping, touching is fine; overlapping or empty ranges are `bad_request`) and the share outside all of them; without any, built-in orientation ranges are used and marked `default` (not clinical thresholds). Numbers keep six significant digits. The result names the profile and its version, the unit and the parameters, and carries the segment with its provenance. Intensity features need a CT study in HU: a NIfTI file without a modality is refused with a hint (`study open --modality CT`). `--describe` adds the definition of every feature |
 | `segment components -w W L [--min-ml ML] [--split]` | 26-connected components, largest first, with centroid, box and ml; `--split` makes a segment of each further component of at least `--min-ml` |
 | `segment compare -w W A B [--b-workspace W2]` | Dice, Jaccard, volumes and difference, HD95 and Hausdorff distance in mm, centroid distance; B may be in another workspace of the same series |
 | `segment edit -w W L --op keep_largest\|fill_holes\|restrict_to_box\|remove_small [--box A B] [--min-ml ML]` | Deterministic clean-up of a segment the agent created or asked an engine for |
-| `engine list` | Every allowed engine: reachable, name, version, modes, `deterministic`, `research_only`, GPU group |
+| `engine list` | Every allowed engine: reachable, name, version, modes, `deterministic`, `research_only`, GPU group, `unload`, `resident_mib` (reported by the engine, advisory) and `expected_peak_mib` |
+| `engine unload [--engine URL \| --group G]` | Asks idle engines to unload their model and free all their GPU memory (Stage 23): per engine `unloaded`, `busy` (sessions or jobs open; nothing is stopped, `retry_after_s`), `unsupported` or `unreachable`. Not a decision on results; the next session reloads the model |
 | `engine info [--engine URL]` | Capabilities, labels, `deterministic`, `research_only` and licence of a `ferrum-engine/1` engine |
 | `segment interactive -w W [--engine URL] [--name N] [--agent ID] [--segment L [--append \| --undo]] [--from-segment L] [--roi A B \| --whole-volume] [--min-ml ML] [--max-ml ML] [--modality M] PROMPT…` | Prompts an interactive engine ([below](#segmentation-engines)): `+POINT` / `-POINT`, `±box:POINT:POINT`, `±lasso:P1;P2;P3`, `±scribble:P1;P2`. A new object becomes a segment proposed by the engine; `--segment` refines one made earlier |
 | `segment auto -w W [--engine URL] [--label NAME]… [--name-prefix P] [--modality M] [--agent ID]` | Runs an automatic engine (e.g. TotalSegmentator); every structure found becomes a segment proposed by the engine, with checks; existing segments keep their voxels |
@@ -175,6 +181,25 @@ A harness may confirm or reject items only when the operator sets
 `review.allow_harness_confirmation = true`. It must name the person
 (`--by`), and the decision goes to the audit log.
 
+A host with its own decision channel (a person signed in, no model tool in
+between) uses the library API `ferrum_agent::decisions` instead. It is
+**not** an agent command: no agent reaches it through FERRUM. FERRUM does
+not authenticate anyone: the host authenticates the person, passes their
+name, and must never expose `record` as a model tool.
+- `revision(config, workspace, item)` gives the item's SHA-256 (source hash
+  plus the open volume of a multi-volume series plus the item's content;
+  review state is not part of it). Read it when the item is shown.
+- `record(config, workspace, decision)` takes the item, confirm or reject,
+  the person, that revision and the host's SHA-256 of what it showed. It
+  refuses with `source_changed` if the item changed since it was shown and
+  with `forbidden` if someone has decided on it already or a person drew
+  it (a decision is never overwritten; the desktop app can reopen it). It appends the audit entry (both hashes, the source
+  hash and the volume; `"source": "host"`) and then writes the decision
+  like the desktop review queue. It does not need the operator switch.
+- Both take an optional `VolumeCache`, so a host showing many items does
+  not load the study for each. The encoding of the revision is in
+  [workspace-format.md](workspace-format.md).
+
 ## Workspace and audit
 
 **Workspace:**
@@ -209,6 +234,9 @@ salt = "site-secret"
 [network]
 engines = ["http://127.0.0.1:8765", "http://127.0.0.1:8766"]   # segmentation engines the agent may use
 gpu_groups = { gpu0 = ["http://127.0.0.1:8765", "http://127.0.0.1:8766"] }  # engines sharing a GPU: one call at a time
+gpu_capacity_mib = { gpu0 = 11264 }   # optional: leases of the group must fit (a model server can stay)
+gpu_peaks_mib = { "http://127.0.0.1:8765" = 6000 }   # optional: GPU memory of one call (whole engine process)
+gpu_lock_dir = "/run/user/1000/ferrum/gpu"   # optional; default per user (docs/gpu-sharing.md)
 
 [limits]
 max_render_px = 1024
@@ -227,6 +255,14 @@ allow_harness_confirmation = false
   warns about it.
 - Outputs never contain patient names, IDs or birth dates. The agent does
   not output DICOM attributes.
+- The read-root check resolves symlinks: a link inside a root that points
+  outside it is refused (`forbidden`), for sources and for workspaces
+  alike. The check judges exactly the spelling the reader opens, and a
+  workspace load re-checks every recorded source file path and refuses
+  a manifest path with `..`. The source
+  walk skips the symlinks (and Windows junctions) it discovers and
+  refuses a tree deeper than 8 levels or with more than 100 000 entries
+  (`limit`). Explicitly passed paths are honoured.
 
 ## MCP server
 
@@ -290,8 +326,44 @@ Label bridges. The scenarios they serve, step by step, are in
 
 **One GPU, several engines:**
 - `network.gpu_groups` names engines that share a GPU. FERRUM runs one
-  engine call of a group at a time, across processes (a lock file per
-  group in the temporary folder), waiting up to `engine_job_timeout_s`.
+  engine call of a group at a time, across processes, waiting up to
+  `engine_job_timeout_s` and reporting the wait as MCP progress ("waiting
+  for GPU group gpu0: llama-server (pid 4242) holds 6144 MiB; this call
+  needs 6000 MiB").
+- The lock is a lease of `ferrum-gpu-lock/1` in a per-user directory
+  (`$XDG_RUNTIME_DIR/ferrum/gpu`, else `~/.cache/ferrum/gpu`; never `/tmp`).
+  Another process, such as a model server, can join the group with the
+  crate `ferrum-gpu-lock` or by following the protocol
+  ([gpu-sharing.md](gpu-sharing.md)).
+- With `network.gpu_capacity_mib`, an engine call runs next to other
+  holders when its expected peak fits. Its peak is
+  `network.gpu_peaks_mib`; an engine that reports
+  `limits.expected_peak_mib` can raise it but never lower it. Without a capacity, a group admits one holder
+  at a time; without a peak, a call takes the whole group. A group that
+  stays full gives `engine_unavailable` naming its holders. A call that
+  waited a second or more warns "waited N s for GPU group G".
+- `ferrum-cli gpu hold --group G [--lease-mib N] [--name NAME]
+  [--timeout-s S] -- <command> [args…]` wraps a process outside FERRUM,
+  such as `llama-server`, in a `resident` lease of group G. It waits for
+  room (default `engine_job_timeout_s`), runs the command, and releases
+  the lease when the command exits. It returns the command's exit code, or
+  1 with an error envelope if the lease cannot be taken. Its notes go to
+  stderr. On Unix the command runs in its own process group: Ctrl-C or
+  SIGTERM sent to `gpu hold` reaches the command once as SIGINT, and the
+  lease stays held until the command has exited. The command does not
+  read the terminal. `gpu hold` starts a program, so it is an operator
+  tool of the command line only: it is not an agent command, has no
+  schema and is not an MCP tool.
+- `ferrum-cli view serve --workspace W [--port N] [--cpu]` serves the open
+  workspace as a local view host (`ferrum-view/1`): loopback only, a token,
+  slices on the GPU or the CPU reference. Like `gpu hold`, it is an operator
+  tool of the command line only — not an agent command, no schema, not an
+  MCP tool. See [docs/view-host.md](view-host.md).
+- The desktop app reads the same `[network]` settings from
+  `$FERRUM_AGENT_CONFIG`. An engine of a group takes its lease when a
+  session opens, and the AI panel shows "Waiting for GPU: <holder>" with
+  Cancel while it waits. Cancel sends nothing and leaves no empty
+  segment.
 - On a 12 GB card, nnInteractive and the full TotalSegmentator model fit
   only in turn; the bridges free their GPU memory between calls
   ([ai-demo.md](ai-demo.md#one-gpu-for-all-engines)).
@@ -387,5 +459,9 @@ Note:
 - NIfTI files carry no modality, so their values have no unit. If you
   know the file is CT, open it with `--modality CT`; values are then
   reported in HU (`modality_source: declared`).
+- A series with several images per slice position (echoes, b-values,
+  phases, frames) and a 4D NIfTI file show one volume, with a warning;
+  choosing another volume is not supported yet. Irregular slice gaps are
+  reported, not resampled: the volume uses the median gap.
 - The command line reloads the series for each call (a CT series in about
   0.3 s); the MCP server keeps it in memory.

@@ -55,4 +55,28 @@ pub trait ResultStore: Send + Sync {
 
     /// Appends a review decision to the audit log.
     fn log(&self, decision: &ReviewDecision) -> Result<(), String>;
+
+    /// The modality declared for the study, if any: a NIfTI file carries
+    /// none, so the person who opens it says what it is. `None` when none
+    /// was declared (the source's own modality applies).
+    fn modality(&self) -> Option<String> {
+        None
+    }
+
+    /// Keeps the declared modality of the study (`CT`, `MR`, …).
+    fn set_modality(&self, _modality: &str) -> Result<(), String> {
+        Err("this store cannot keep a modality".into())
+    }
+
+    /// The open volume of a multi-volume series (the id of its
+    /// descriptor); `None` for a single-volume series, or volume 1.
+    fn volume(&self) -> Option<String> {
+        None
+    }
+
+    /// Keeps the open volume of the series; a store that cannot keep it
+    /// ignores it (the study then reopens on volume 1).
+    fn set_volume(&self, _volume: &str) -> Result<(), String> {
+        Ok(())
+    }
 }

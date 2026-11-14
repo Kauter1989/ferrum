@@ -164,6 +164,52 @@ fn probe_stats_and_measurements_have_known_answers() {
 }
 
 #[test]
+fn renders_without_a_stored_window_use_the_percentile_window() {
+    // covers 2.7-h
+    let f = fixture(AgentConfig::default());
+    let range = f.open()["value_range"].clone();
+    let (min, max) = (range[0].as_f64().unwrap(), range[1].as_f64().unwrap());
+    let span = max - min;
+    // 48 000 voxels in 256 bins over the stored range (ADR 0012: it can be
+    // wider than −1000..1000). 0.5 % ends in the air bin (bin 0); 99.5 %
+    // leaves out only the 216 cube voxels and ends in the bin of the
+    // sphere's 100. The window runs between the upper edges of those bins.
+    let edge = |bin: f64| min + (bin + 1.0) * span / 256.0;
+    let (lo, hi) = (edge(0.0), edge(((100.0 - min) / span * 256.0).floor()));
+    assert!(lo < -900.0 && (95.0..110.0).contains(&hi), "{lo} {hi}");
+    let r = f.ok("view slice", json!({ "plane": "axial", "slice_number": 16, "size": 40 }));
+    close(&r["window"]["center"], (lo + hi) / 2.0, 1e-2);
+    close(&r["window"]["width"], hi - lo, 1e-2);
+    let full = f.ok("view slice", json!({ "plane": "axial", "slice_number": 16, "size": 40, "window": "full_range" }));
+    close(&full["window"]["center"], (min + max) / 2.0, 1e-2);
+    close(&full["window"]["width"], span, 1e-2);
+}
+
+#[test]
+fn a_4d_file_opens_with_a_warning() {
+    // covers 2.7-e, 2.7-f
+    let f = fixture(AgentConfig::default());
+    let path = f.data.join("phantom.nii");
+    ferrum_io::write_nifti(&phantom(), &path).unwrap();
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes[40..42].copy_from_slice(&4i16.to_le_bytes());
+    bytes[48..50].copy_from_slice(&2i16.to_le_bytes());
+    let body = bytes[352..].to_vec();
+    bytes.extend_from_slice(&body);
+    std::fs::write(&path, bytes).unwrap();
+    let warned = |env: &Value| {
+        env["warnings"].as_array().unwrap().iter().any(|w| w.as_str().unwrap().contains("volume 1 of 2 is shown"))
+    };
+    let env = f.run("study open", json!({ "path": path }));
+    assert_eq!(env["data"]["dims"], json!([40, 40, 30]));
+    assert!(warned(&env), "{env:#}");
+    assert!(warned(&f.run("study info", json!({}))), "study info repeats it");
+    // a 3D file has no such warning
+    let g = fixture(AgentConfig::default());
+    assert!(!warned(&g.run("study open", json!({ "path": g.data.join("phantom.nii.gz") }))));
+}
+
+#[test]
 fn slice_renders_map_pixels_back_to_voxels() {
     let f = fixture(AgentConfig::default());
     f.open();
@@ -376,7 +422,7 @@ fn changed_sources_and_bad_calls_are_reported() {
     let env = f.run("study info", json!({}));
     assert_eq!(env["error"]["code"], "source_changed");
     assert!(env["error"]["hint"].as_str().is_some());
-    assert_eq!(Agent::commands().count(), 33);
+    assert_eq!(Agent::commands().count(), 36);
 }
 
 #[test]

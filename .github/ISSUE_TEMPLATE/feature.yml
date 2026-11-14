@@ -1,0 +1,54 @@
+name: Feature request
+description: Propose a new capability. One topic per issue; search for duplicates first.
+title: "[Feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Follow the structure of existing feature issues (for example #75).
+        The maintainer assigns type and priority labels during triage.
+        Never put patient data or identifiers in an issue — not in the
+        text, logs or screenshots.
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Why is this needed? Who asks for it, and what is blocked or painful today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should FERRUM do? Keep it to one topic; name ports, protocols or crates if relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: Testable criteria. For each one, say how it is verified — test, visual or field.
+      placeholder: |
+        - On synthetic DICOM …, a test asserts …
+        - A visual check shows …
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: Your estimate; the maintainer may change it during triage. See CONTRIBUTING.md for the full definitions.
+      options:
+        - "P0 — blocker: demo/release cannot proceed; data loss or patient safety"
+        - "P1 — high: needed for the next demo/milestone; security hardening"
+        - "P2 — medium: planned capability, not blocking now"
+        - "P3 — low: exploratory, nice to have"
+    validations:
+      required: true
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: Out of scope
+      description: Optional. What this issue deliberately does not cover.
+    validations:
+      required: false

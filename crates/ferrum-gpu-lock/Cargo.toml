@@ -1,0 +1,16 @@
+[package]
+name = "ferrum-gpu-lock"
+description = "GPU-group leases shared between processes (ferrum-gpu-lock/1): FERRUM's engines and a model server on one card."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+# No FERRUM dependency: hosts such as Medical Harness use this crate as is.
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", default-features = false, features = ["std", "process", "fs"] }
+
+[lints]
+workspace = true

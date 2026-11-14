@@ -10,14 +10,14 @@ underscores) and a `ferrum-cli` sub-command. The parameters are listed in
 ## Study
 | Command | Key parameters | Returns |
 |---|---|---|
-| `study scan` | `paths` | series: pseudonymised id, format, modality, dims, description |
-| `study open` | `workspace`, `path`, `series?`, `modality?` (for NIfTI, e.g. `CT`) | dims, spacing, LPS origin and direction, value unit, slice counts, window presets |
-| `study info` | `workspace` | the same, plus annotation and segment counts with pending reviews |
+| `study scan` | `paths` | series: pseudonymised id, format, modality, dims, description; one entry per volume of a multi-volume series, with `group` (its series) and `volume` (`number`, `count`, `label`, `complete`, `b_value`, `echo_time_ms`, `echo_number`, `temporal_position`, `frame_time_s`) |
+| `study open` | `workspace`, `path`, `series?` (a series or volume id; another volume of the workspace's series switches to it, keeping segments and annotations), `modality?` (for NIfTI, e.g. `CT`) | dims, spacing, LPS origin and direction, value unit, slice counts, window presets; `warnings` when the series could not be shown as stored (one volume of several, irregular or assumed spacing) |
+| `study info` | `workspace` | the same, plus annotation and segment counts with pending reviews; `volume` and `volumes` of a multi-volume series (value provenance names the `volume`) |
 
 ## Looking
 | Command | Key parameters | Returns |
 |---|---|---|
-| `view slice` | `plane`, `slice_number` or `at`, `window?`, `size?`, `overlays?` (`segments`), `segment_style?` (`outline`, `fill`, `fill_outline`), `segment_opacity?` | PNG + sidecar with `pixel_to_voxel`, `pixel_to_patient_mm` |
+| `view slice` | `plane`, `slice_number` or `at`, `window?` (default: the series' own, else 0.5–99.5 % of the values), `size?`, `overlays?` (`segments`), `segment_style?` (`outline`, `fill`, `fill_outline`), `segment_opacity?` | PNG + sidecar with `pixel_to_voxel`, `pixel_to_patient_mm` |
 | `view montage` | `plane`, `from?`, `to?`, `step?`, `columns?`, `window?` | grid of labelled slices, one mapping per tile |
 | `view mpr` | `at`, `window?` | axial, coronal and sagittal through a point, crosshair |
 | `view volume` | `mode` (`mip`, `isosurface` + `threshold`, `transfer_function` + `preset`), `view` | 3D render; no pixel mapping |
@@ -43,7 +43,9 @@ underscores) and a `ferrum-cli` sub-command. The parameters are listed in
 ## Measuring segments
 | Command | Key parameters | Returns |
 |---|---|---|
-| `segment shape` | `segment` | ml; extent in mm; slice ranges and largest slices; axial long and short axis with end points and slice number; border contact; components; laterality for names with left/right |
+| `segment shape` | `segment`, `solid_min` | ml; extent in mm; slice ranges and largest slices; axial long and short axis with end points and slice number; border contact; components; laterality for names with left/right; with `solid_min`, `solid`: the same axes, ml and share of the voxels ≥ that value (you choose the threshold; report it as a measurement, never as a category) |
+| `segment distance` | `segment`, `to` | shortest distance in mm from `segment` to the outer surface of `to` (holes filled: a lesion in a lung segment is measured to the lung's border), the two closest points, `inside`, `uncertainty_mm`; measure distances between structures with this, not with picked points; report share, axes and distances as measured, never map them to a nodule category or stage |
+| `segment metrics` | `segment`, `profile?` (`quick` or `clinical`), `bin_width?` (HU, default 25), `hu_ranges?` (`[[min, max], …]`, half-open, not overlapping), `describe?` | profile name and version; unit; per feature `value`, `unit` (and `reason` if undefined): size (voxels, mm³, ml, extent per grid axis, centroid in LPS mm, axial long and short axis, largest slices) and first-order HU statistics (mean, std, min, max, range, p5–p95, IQR); `clinical` adds the shape (surface area, compactness, sphericity, principal axes with elongation, flatness and directions, a direction is `null` with a reason when two axes are equally long), the convex hull (volume, area, solidity, convexity), the maximum 3D diameter, and the connectivity (pieces, largest-piece share, cavities and their volume, Euler number, image sides touched; `warnings` name `fragmented`, `has_holes`, `touches_border`) and the HU distribution (skewness and kurtosis, energy, RMS, deviations, histogram entropy and uniformity on `bin_width`, V10/V90/I10/I90 and the `ivh` curve, `hu_ranges` shares with the share outside; the defaults are marked `default` and are not clinical thresholds); `describe` adds each definition. Needs a CT study: declare NIfTI with `study open --modality CT` |
 | `segment components` | `segment`, `min_ml?`, `split?` | components (largest first) with centroid, box, ml; `split` makes a segment of each further one |
 | `segment compare` | `a`, `b`, `b_workspace?` | Dice, Jaccard, volumes and difference, HD95, Hausdorff, centroid distance |
 | `segment edit` | `segment`, `op` (`keep_largest`, `fill_holes`, `restrict_to_box` + `box`, `remove_small` + `min_ml`) | ml before and after |
@@ -51,7 +53,8 @@ underscores) and a `ferrum-cli` sub-command. The parameters are listed in
 ## Segmentation engines
 | Command | Key parameters | Returns |
 |---|---|---|
-| `engine list` | — | every allowed engine: reachable, name, modes, `research_only`, `gpu_group` |
+| `engine list` | — | every allowed engine: reachable, name, modes, `research_only`, `gpu_group`, `unload`, `resident_mib` (reported by the engine), `expected_peak_mib` |
+| `engine unload` | `engine` or `group` | asks idle engines to free their GPU memory: per engine `unloaded`, `busy` (open sessions; nothing is stopped), `unsupported`, `unreachable`. Use it when a heavier engine or another program needs the card; the next call reloads the model |
 | `engine info` | `engine?` | capabilities (prompts, labels), `deterministic`, `research_only`, licence |
 | `segment interactive` | `prompts` (`point`, `box`, `scribble`/`lasso` with `points` on one slice), `name?`, `segment?` + `append?`/`undo?`, `from_segment?`, `roi?`/`whole_volume?`, `min_ml?`/`max_ml?`, `modality?`, `agent?`, `engine?` | the segment (new or refined), `revision`, `roi`, `checks` |
 | `segment auto` | `labels?`, `name_prefix?`, `modality?`, `agent?`, `engine?` | one segment per structure found, each with `checks` |

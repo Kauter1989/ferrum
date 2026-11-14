@@ -61,6 +61,7 @@ impl MockEngine {
                 planar_boxes_only: false,
                 undo: true,
                 deterministic: true,
+                unload: true,
             },
             modalities: Vec::new(),
             labels: vec![
@@ -71,6 +72,8 @@ impl MockEngine {
             license: "MIT — region growing, no model (tests and demos)".into(),
             max_voxels: 0,
             session_ttl_s: 0,
+            expected_peak_mib: None,
+            resident_mib: None,
         }
     }
 }
@@ -82,6 +85,11 @@ impl SegmentationEngine for MockEngine {
 
     fn open_session(&self, volume: &Volume, _modality: &str) -> Result<Box<dyn InteractiveSession>, EngineError> {
         Ok(Box::new(MockSession::new(volume.clone(), self.params)))
+    }
+
+    /// Nothing to unload: the mock has no model.
+    fn unload(&self) -> Result<(), EngineError> {
+        Ok(())
     }
 }
 

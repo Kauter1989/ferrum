@@ -7,6 +7,7 @@ use dicom_object::{mem::InMemDicomObject, OpenFileOptions, Tag};
 use ferrum_domain::WindowLevel;
 use glam::{DVec3, Vec2};
 
+use super::frames::{self, orientation_of, pixel_spacing_of, position_of, FrameInfo};
 use crate::error::IoError;
 
 /// Photometric interpretation relevant for display.
@@ -56,6 +57,89 @@ pub struct SliceHeader {
     pub window: Option<WindowLevel>,
     /// Photometric interpretation.
     pub photometric: Photometric,
+    /// What tells this image apart from others at the same position.
+    pub stack: StackKey,
+    /// Geometry and stack key of every frame of an Enhanced multi-frame
+    /// file, in file order; empty for a classic file, or when not every
+    /// frame has a position.
+    pub frames_info: Vec<FrameInfo>,
+}
+
+/// What tells apart several images at one slice position (echoes,
+/// b-values, phases, frames of a dynamic series), in the order the loader
+/// sorts them by; a missing value sorts last.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct StackKey {
+    /// Temporal Position Identifier (phase of a dynamic series).
+    pub temporal_position: Option<i64>,
+    /// Echo Numbers (first value).
+    pub echo_number: Option<i64>,
+    /// Effective Echo Time in ms (Enhanced MR, per frame).
+    pub echo_time: Option<f64>,
+    /// Diffusion b-value in s/mm².
+    pub b_value: Option<f64>,
+    /// Acquisition Number.
+    pub acquisition_number: Option<i64>,
+    /// Trigger Time in ms.
+    pub trigger_time: Option<f64>,
+    /// Frame Reference Time in ms (start of a frame of a dynamic PET).
+    pub frame_reference_time: Option<f64>,
+    /// A derived isotropic (trace) diffusion image: Diffusion
+    /// Directionality `ISOTROPIC`, or a b-value above 0 with a zero
+    /// gradient direction.
+    pub isotropic: Option<bool>,
+    /// Complex Image Component (`MAGNITUDE`, `PHASE`, `REAL`, `IMAGINARY`).
+    pub component: Option<String>,
+}
+
+impl StackKey {
+    fn of(obj: &InMemDicomObject) -> Self {
+        Self {
+            temporal_position: int_of(obj, tags::TEMPORAL_POSITION_IDENTIFIER),
+            echo_number: int_of(obj, tags::ECHO_NUMBERS),
+            echo_time: f64_of(obj, tags::ECHO_TIME),
+            b_value: f64_of(obj, tags::DIFFUSION_B_VALUE),
+            acquisition_number: int_of(obj, tags::ACQUISITION_NUMBER),
+            trigger_time: f64_of(obj, tags::TRIGGER_TIME),
+            frame_reference_time: f64_of(obj, tags::FRAME_REFERENCE_TIME),
+            isotropic: isotropic_of(obj, obj, f64_of(obj, tags::DIFFUSION_B_VALUE)),
+            component: str_of(obj, tags::COMPLEX_IMAGE_COMPONENT).filter(|c| !c.is_empty()),
+        }
+    }
+
+    /// Orders two keys field by field; a present value sorts before a
+    /// missing one.
+    pub fn order(&self, other: &Self) -> std::cmp::Ordering {
+        fn int(a: Option<i64>, b: Option<i64>) -> std::cmp::Ordering {
+            a.unwrap_or(i64::MAX).cmp(&b.unwrap_or(i64::MAX))
+        }
+        fn float(a: Option<f64>, b: Option<f64>) -> std::cmp::Ordering {
+            a.unwrap_or(f64::INFINITY).total_cmp(&b.unwrap_or(f64::INFINITY))
+        }
+        int(self.temporal_position, other.temporal_position)
+            .then(int(self.echo_number, other.echo_number))
+            .then(float(self.echo_time, other.echo_time))
+            .then(float(self.b_value, other.b_value))
+            .then(int(self.acquisition_number, other.acquisition_number))
+            .then(float(self.trigger_time, other.trigger_time))
+            .then(float(self.frame_reference_time, other.frame_reference_time))
+            .then(self.isotropic.cmp(&other.isotropic))
+    }
+}
+
+/// Whether a diffusion image is the derived isotropic (trace) image:
+/// Diffusion Directionality in `directionality`, else a zero gradient
+/// direction in `gradient` at a b-value above 0. `None` when neither says.
+pub(crate) fn isotropic_of(
+    directionality: &InMemDicomObject,
+    gradient: &InMemDicomObject,
+    b_value: Option<f64>,
+) -> Option<bool> {
+    if let Some(d) = str_of(directionality, tags::DIFFUSION_DIRECTIONALITY).filter(|d| !d.is_empty()) {
+        return Some(d.eq_ignore_ascii_case("ISOTROPIC"));
+    }
+    let g = f64s_of(gradient, tags::DIFFUSION_GRADIENT_ORIENTATION).filter(|g| g.len() >= 3)?;
+    Some(b_value.is_some_and(|b| b > 0.0) && g.iter().all(|v| v.abs() < 1e-6))
 }
 
 pub(crate) fn str_of(obj: &InMemDicomObject, tag: Tag) -> Option<String> {
@@ -86,17 +170,22 @@ impl SliceHeader {
         if rows <= 0 || columns <= 0 {
             return Err(IoError::invalid(path, "image has zero rows or columns"));
         }
-        let pixel_spacing = f64s_of(obj, tags::PIXEL_SPACING)
-            .or_else(|| f64s_of(obj, tags::IMAGER_PIXEL_SPACING))
-            .filter(|v| v.len() >= 2 && v[0] > 0.0 && v[1] > 0.0)
-            // DICOM order is (row spacing, column spacing)
-            .map(|v| Vec2::new(v[1] as f32, v[0] as f32));
-        let position =
-            f64s_of(obj, tags::IMAGE_POSITION_PATIENT).filter(|v| v.len() >= 3).map(|v| DVec3::new(v[0], v[1], v[2]));
-        let orientation = f64s_of(obj, tags::IMAGE_ORIENTATION_PATIENT)
-            .filter(|v| v.len() >= 6)
-            .map(|v| (DVec3::new(v[0], v[1], v[2]), DVec3::new(v[3], v[4], v[5])))
-            .filter(|(r, c)| r.length() > 0.5 && c.length() > 0.5);
+        let groups = frames::read(obj).unwrap_or_default();
+        let pixel_spacing = pixel_spacing_of(obj)
+            .or_else(|| {
+                f64s_of(obj, tags::IMAGER_PIXEL_SPACING)
+                    .filter(|v| v.len() >= 2 && v[0] > 0.0 && v[1] > 0.0)
+                    .map(|v| Vec2::new(v[1] as f32, v[0] as f32))
+            })
+            .or(groups.pixel_spacing);
+        let frame_count = int_of(obj, tags::NUMBER_OF_FRAMES).filter(|&n| n > 0).unwrap_or(1) as u32;
+        // Per-frame geometry only when every frame of the file has it.
+        let frames_info =
+            if groups.frames.len() == frame_count as usize && groups.frames.iter().all(|f| f.position.is_some()) {
+                groups.frames
+            } else {
+                Vec::new()
+            };
         let window = match (f64_of(obj, tags::WINDOW_CENTER), f64_of(obj, tags::WINDOW_WIDTH)) {
             (Some(c), Some(w)) if w > 0.0 => Some(WindowLevel::new(c as f32, w as f32)),
             _ => None,
@@ -113,16 +202,18 @@ impl SliceHeader {
             modality: str_of(obj, tags::MODALITY).unwrap_or_default(),
             rows: rows as u32,
             columns: columns as u32,
-            frames: int_of(obj, tags::NUMBER_OF_FRAMES).filter(|&n| n > 0).unwrap_or(1) as u32,
+            frames: frame_count,
             pixel_spacing,
-            slice_thickness: f64_of(obj, tags::SLICE_THICKNESS).filter(|v| *v > 0.0),
+            slice_thickness: f64_of(obj, tags::SLICE_THICKNESS).filter(|v| *v > 0.0).or(groups.slice_thickness),
             spacing_between_slices: f64_of(obj, tags::SPACING_BETWEEN_SLICES).filter(|v| *v > 0.0),
-            position,
-            orientation,
+            position: position_of(obj),
+            orientation: orientation_of(obj).or(groups.orientation),
             instance_number: int_of(obj, tags::INSTANCE_NUMBER),
             slice_location: f64_of(obj, tags::SLICE_LOCATION),
             window,
             photometric,
+            stack: StackKey::of(obj),
+            frames_info,
         })
     }
 

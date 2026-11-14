@@ -143,6 +143,32 @@ pub enum Command {
         #[arg(long)]
         workspace_root: Option<PathBuf>,
     },
+    /// Shared GPU groups (operator tool; not an agent command).
+    #[command(subcommand)]
+    Gpu(Gpu),
+}
+
+/// `gpu …`.
+#[derive(Debug, Subcommand)]
+pub enum Gpu {
+    /// Holds a lease of a GPU group while a command (e.g. a model server) runs.
+    Hold {
+        /// The GPU group (network.gpu_groups).
+        #[arg(long)]
+        group: String,
+        /// The lease in MiB (default: the whole group).
+        #[arg(long)]
+        lease_mib: Option<u64>,
+        /// Holder name in the lock record (default: the program's name).
+        #[arg(long)]
+        name: Option<String>,
+        /// Seconds to wait for room (default: limits.engine_job_timeout_s).
+        #[arg(long)]
+        timeout_s: Option<u64>,
+        /// The command and its arguments, after `--`.
+        #[arg(last = true, required = true)]
+        command: Vec<std::ffi::OsString>,
+    },
 }
 
 /// `study …`.
@@ -177,6 +203,18 @@ pub enum Study {
 /// `view …`.
 #[derive(Debug, Subcommand)]
 pub enum View {
+    /// Serve the workspace as a local view host for a harness (not an agent
+    /// command): prints one JSON line and serves until Ctrl-C.
+    Serve {
+        #[command(flatten)]
+        ws: Ws,
+        /// Port on 127.0.0.1; 0 lets the system choose one.
+        #[arg(long, default_value_t = 0)]
+        port: u16,
+        /// Draw frames with the CPU reference renderer instead of the GPU.
+        #[arg(long)]
+        cpu: bool,
+    },
     /// Several slices of one plane as a labelled grid.
     Montage {
         #[command(flatten)]
@@ -285,8 +323,17 @@ pub enum EngineCmd {
         #[arg(long)]
         engine: Option<String>,
     },
-    /// Every allowed engine: reachable, name, modes, licence, GPU group.
+    /// Every allowed engine: reachable, name, modes, licence, GPU group, GPU memory.
     List,
+    /// Ask idle engines to unload their model and free their GPU memory.
+    Unload {
+        /// Engine URL (default: the first allowed one).
+        #[arg(long)]
+        engine: Option<String>,
+        /// Every engine of this GPU group.
+        #[arg(long)]
+        group: Option<String>,
+    },
 }
 
 /// `eval …`.
@@ -496,6 +543,38 @@ pub enum Segment {
         ws: Ws,
         /// Segment label.
         segment: u64,
+        /// Also measure the voxels at or above this value (e.g. HU of the solid part of a lesion).
+        #[arg(long, allow_hyphen_values = true)]
+        solid_min: Option<f64>,
+    },
+    /// Shortest distance from a segment to the surface of another, with the closest points.
+    Distance {
+        #[command(flatten)]
+        ws: Ws,
+        /// Segment label.
+        segment: u64,
+        /// Label of the segment whose surface is measured to.
+        #[arg(long)]
+        to: u64,
+    },
+    /// Quantitative profile of a segment: size and first-order HU statistics.
+    Metrics {
+        #[command(flatten)]
+        ws: Ws,
+        /// Segment label.
+        segment: u64,
+        /// Which features to compute: quick (size, statistics) or clinical (adds shape, connectivity, distribution).
+        #[arg(long, default_value = "quick")]
+        profile: String,
+        /// Histogram bin width in HU for entropy and uniformity (default 25).
+        #[arg(long)]
+        bin_width: Option<f64>,
+        /// A HU range MIN,MAX (half-open, repeat for several, not overlapping) to report the share of voxels in.
+        #[arg(long = "hu-range", value_parser = parse_hu_range, allow_hyphen_values = true)]
+        hu_range: Vec<[f64; 2]>,
+        /// Add the definition text of every feature.
+        #[arg(long)]
+        describe: bool,
     },
     /// Connected components of a segment; --split makes segments of them.
     Components {
@@ -587,6 +666,14 @@ pub struct Decision {
 }
 
 /// `v:i,j,k`, `mm:x,y,z` or `r-0001:x,y` → JSON point.
+/// `MIN,MAX` of two numbers: a HU range.
+fn parse_hu_range(s: &str) -> Result<[f64; 2], String> {
+    let bad = || format!("HU range {s:?}: expected MIN,MAX, e.g. -100,0");
+    let (lo, hi) = s.split_once(',').ok_or_else(bad)?;
+    let num = |x: &str| x.trim().parse::<f64>().ok().filter(|v| v.is_finite()).ok_or_else(bad);
+    Ok([num(lo)?, num(hi)?])
+}
+
 pub fn parse_point(s: &str) -> Result<Value, String> {
     let (kind, rest) =
         s.split_once(':').ok_or_else(|| format!("point {s:?}: expected v:i,j,k, mm:x,y,z or r-0001:x,y"))?;
@@ -686,6 +773,9 @@ impl Command {
             }
             Command::Engine(EngineCmd::Info { engine }) => call("engine info", vec![("engine", some(engine.clone()))]),
             Command::Engine(EngineCmd::List) => call("engine list", vec![]),
+            Command::Engine(EngineCmd::Unload { engine, group }) => {
+                call("engine unload", vec![("engine", some(engine.clone())), ("group", some(group.clone()))])
+            }
             Command::Probe { ws: w, point } => call("probe", vec![ws(w), ("point", Some(parse_point(point)?))]),
             Command::Stats { ws: w, bx, sphere, radius_mm, segment, annotation } => {
                 let bx = bx.as_ref().map(|b| -> Result<Value, String> {
@@ -745,6 +835,7 @@ impl Command {
                 }
             },
             Command::Mcp { workspace_root } => ("mcp".to_owned(), json!({ "workspace_root": workspace_root })),
+            Command::Gpu(_) => return Err("gpu commands are run by main, not the agent".into()),
         })
     }
 }
@@ -752,6 +843,7 @@ impl Command {
 fn view_call(v: &View) -> Result<(String, Value), String> {
     let call = |name: &str, fields: Vec<(&str, Option<Value>)>| (name.to_owned(), object(fields));
     Ok(match v {
+        View::Serve { .. } => return Err("view serve is run by main, not by the agent".into()),
         View::Slice { ws: w, plane, slice_number, at, window, size, overlays, display } => call(
             "view slice",
             [
@@ -911,9 +1003,24 @@ fn segment_call(s: &Segment) -> Result<(String, Value), String> {
                 ("modality", some(modality.clone())),
             ]),
         ),
-        Segment::Shape { ws: w, segment } => {
-            ("segment shape".into(), object(vec![ws(w), ("segment", Some(json!(segment)))]))
+        Segment::Shape { ws: w, segment, solid_min } => (
+            "segment shape".into(),
+            object(vec![ws(w), ("segment", Some(json!(segment))), ("solid_min", some(*solid_min))]),
+        ),
+        Segment::Distance { ws: w, segment, to } => {
+            ("segment distance".into(), object(vec![ws(w), ("segment", Some(json!(segment))), ("to", Some(json!(to)))]))
         }
+        Segment::Metrics { ws: w, segment, profile, bin_width, hu_range, describe } => (
+            "segment metrics".into(),
+            object(vec![
+                ws(w),
+                ("segment", Some(json!(segment))),
+                ("profile", Some(json!(profile))),
+                ("bin_width", some(*bin_width)),
+                ("hu_ranges", (!hu_range.is_empty()).then(|| json!(hu_range))),
+                ("describe", flag(*describe)),
+            ]),
+        ),
         Segment::Components { ws: w, segment, min_ml, split } => (
             "segment components".into(),
             object(vec![ws(w), ("segment", Some(json!(segment))), ("min_ml", some(*min_ml)), ("split", flag(*split))]),
@@ -950,6 +1057,26 @@ fn segment_call(s: &Segment) -> Result<(String, Value), String> {
 mod tests {
     use super::*;
 
+    // covers 25.1-a, 25.1-d
+    #[test]
+    fn view_serve_is_a_cli_command_not_an_agent_call() {
+        let cli = Cli::try_parse_from(["ferrum-cli", "view", "serve", "--workspace", "ws/ct1"]).unwrap();
+        match cli.command {
+            Command::View(View::Serve { ws, port, cpu }) => {
+                assert_eq!((ws.workspace.as_str(), port, cpu), ("ws/ct1", 0, false));
+            }
+            other => panic!("expected view serve, got {other:?}"),
+        }
+        let cli =
+            Cli::try_parse_from(["ferrum-cli", "view", "serve", "-w", "ws/ct1", "--port", "8765", "--cpu"]).unwrap();
+        match cli.command {
+            Command::View(View::Serve { port, cpu, .. }) => assert_eq!((port, cpu), (8765, true)),
+            other => panic!("expected view serve, got {other:?}"),
+        }
+        let call = Cli::try_parse_from(["ferrum-cli", "view", "serve", "-w", "ws"]).unwrap().command.to_call();
+        assert!(call.is_err(), "view serve is run by main, never by the agent");
+    }
+
     #[test]
     fn points_and_windows() {
         assert_eq!(parse_point("v:1,2,3").unwrap(), json!({ "voxel": [1.0, 2.0, 3.0] }));
@@ -975,6 +1102,63 @@ mod tests {
         assert_eq!(parse_window("lung").unwrap(), json!("lung"));
         assert_eq!(parse_window("-600,1500").unwrap(), json!({ "center": -600.0, "width": 1500.0 }));
         assert!(parse_window("a,b").is_err());
+    }
+
+    // covers 18.4-b, 18.12-b
+    #[test]
+    fn segment_metrics_flags_become_parameters() {
+        let call = |args: &[&str]| Cli::try_parse_from(args).unwrap().command.to_call().unwrap();
+        let (name, params) =
+            call(&["ferrum-cli", "segment", "metrics", "-w", "ws", "3", "--profile", "quick", "--describe"]);
+        assert_eq!(name, "segment metrics");
+        assert_eq!(
+            (params["segment"].as_u64(), params["profile"].as_str(), params["describe"].as_bool()),
+            (Some(3), Some("quick"), Some(true))
+        );
+        let (_, plain) = call(&["ferrum-cli", "segment", "metrics", "-w", "ws", "3"]);
+        assert_eq!(plain["profile"], "quick", "the default profile is sent");
+        assert!(plain.get("describe").is_none(), "describe is off unless asked for");
+        assert!(
+            Cli::try_parse_from(["ferrum-cli", "segment", "metrics", "-w", "ws"]).is_err(),
+            "the label is required"
+        );
+        let (_, clinical) = call(&["ferrum-cli", "segment", "metrics", "-w", "ws", "3", "--profile", "clinical"]);
+        assert_eq!(clinical["profile"], "clinical");
+        assert!(clinical.get("bin_width").is_none() && clinical.get("hu_ranges").is_none(), "nothing is sent unasked");
+        let (_, tuned) = call(&[
+            "ferrum-cli",
+            "segment",
+            "metrics",
+            "-w",
+            "ws",
+            "3",
+            "--profile",
+            "clinical",
+            "--bin-width",
+            "10",
+            "--hu-range",
+            "-100,0",
+            "--hu-range",
+            "0,100.5",
+        ]);
+        assert_eq!(tuned["bin_width"], 10.0);
+        assert_eq!(tuned["hu_ranges"], json!([[-100.0, 0.0], [0.0, 100.5]]));
+        for bad in ["100", "a,b", "1,2,3", "nan,1"] {
+            assert!(
+                Cli::try_parse_from(["ferrum-cli", "segment", "metrics", "-w", "ws", "3", "--hu-range", bad]).is_err(),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    // covers 17.8-d
+    fn segment_measurements_become_calls() {
+        let call = |args: &[&str]| Cli::try_parse_from(args).unwrap().command.to_call().unwrap();
+        let (_, p) = call(&["ferrum-cli", "segment", "shape", "-w", "ws", "1", "--solid-min", "-300"]);
+        assert_eq!(p["solid_min"], -300.0);
+        let (name, p) = call(&["ferrum-cli", "segment", "distance", "-w", "ws", "3", "--to", "5"]);
+        assert_eq!((name.as_str(), p["segment"].as_u64(), p["to"].as_u64()), ("segment distance", Some(3), Some(5)));
     }
 
     #[test]
@@ -1082,6 +1266,9 @@ mod tests {
         assert_eq!(p["split"], true);
         assert_eq!(call(&["ferrum-cli", "segment", "shape", "-w", "ws", "1"]).0, "segment shape");
         assert_eq!(call(&["ferrum-cli", "engine", "list"]).0, "engine list");
+        // covers 23.4-c
+        let (name, p) = call(&["ferrum-cli", "engine", "unload", "--group", "card"]);
+        assert_eq!((name.as_str(), p["group"].as_str(), p.get("engine")), ("engine unload", Some("card"), None));
         let (name, p) = call(&["ferrum-cli", "run", "probe", "--params", r#"{"workspace":"w"}"#]);
         assert_eq!((name.as_str(), p["workspace"].as_str()), ("probe", Some("w")));
         let (name, p) = call(&["ferrum-cli", "review", "reject", "-w", "ws", "--segment", "2", "--by", "dr.k"]);

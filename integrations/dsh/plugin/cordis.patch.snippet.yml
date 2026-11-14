@@ -1,0 +1,23 @@
+# Enable the FERRUM view plugin — copy this entry into your profile patch.
+#
+# Where it goes: the top-level YAML list of the desktop profile's patch file,
+#   C:\Users\<you>\.dsh\profiles\desktop\cordis.patch.yml
+# Then restart the harness (its HMR also re-reads the profile patch).
+#
+# Replace the path with this checkout's absolute path. Point `name` at the
+# package's HOST entry (`lib/index.js`), not at the directory: ESM has no
+# directory imports, and the module system finds the nearest package.json
+# above it to read `exports["./client"]`.
+#
+# Enable snippet:
+
+- insert:
+    - id: ferrum-panel
+      name: 'file:///<checkout>/integrations/dsh/plugin/lib/index.js'
+
+# Variant if the package is installed under the profile's node_modules (a
+# `link:`/`file:` dependency plus `pnpm install` in the profile):
+#
+# - insert:
+#     - id: ferrum-panel
+#       name: 'ferrum-dsh-panel'

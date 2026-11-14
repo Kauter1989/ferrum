@@ -35,7 +35,7 @@ flowchart TB
 | Shaders | `ferrum-render/tests/shader_validation.rs` | WGSL parses and validates with naga (no GPU needed); `MODE` override exists; uniform block sizes equal the Rust `#[repr(C)]` structs |
 | GPU parity | `ferrum-render/tests/gpu_parity.rs` | GPU image vs CPU reference (mean abs. difference < 2.5/255, < 2 % outliers) for tissue, isosurface, MIP, TF-DVR, clip box + view cut + cut surface, oblique plane, eraser mask, ambient occlusion; empty-space skipping leaves the image unchanged in every mode; GPU slice rendering equals domain slice extraction ±2/255; oversized volumes downsample to fit the device |
 | CPU renderer | `ferrum-render/src/cpu/raycast.rs` | shading sanity, picking, mask effect, TF lookup |
-| Application | `ferrum-app/tests/use_cases.rs`, `src/tools.rs` | load flow (auto-load, series choice, errors), GPU synchronisation uploads only what changed (volume, LUT, occupancy, full vs partial mask, AO), eraser + undo + reset (3D only), tools offered per view mode, the segmentation workflow and the region tool (`tests/workflow.rs`), background AO, filters replace dataset, slice navigation, windowing, MPR navigation, measurements in mm from screen input, text annotation flow, probe, slice rect fitting, reload resets state; every 2D tool state machine |
+| Application | `ferrum-app/tests/use_cases.rs`, `src/tools.rs` | load flow (auto-load, series choice, errors), GPU synchronisation uploads only what changed (volume, LUT, occupancy, full vs partial mask, AO), eraser + undo + reset (3D only), tools offered per view mode, the segmentation workflow and the region tool (`tests/workflow.rs`; noise-robust growing, bridge cutting and hole filling in `ferrum-domain/src/region.rs`), background AO, filters replace dataset, slice navigation, windowing, MPR navigation, measurements in mm from screen input, text annotation flow, probe, slice rect fitting, reload resets state; every 2D tool state machine |
 | UI | `ferrum/tests/ui.rs` | the real `ViewerApp` driven through the accessibility tree (welcome screen, mode/tool/render-mode switching, the tools and settings each view mode offers, the segmentation path with the region tool and AI engines, Details tab) and full-window wgpu renders of 2D, 3D (4 modes) and MPR asserting the views are drawn |
 
 ## Oracles
@@ -64,6 +64,17 @@ Reference numbers (4-core container, llvmpipe software GPU):
 histogram 1.5 Gvoxel/s, bricks 2 Gvoxel/s, AO 256³ in 48 ms, DICOM
 128-slice load in 50 ms; empty-space skipping speeds up GPU rendering
 1.5–5× (isosurface 23.8 → 4.6 ms at 256² on llvmpipe).
+
+## Field tests
+
+Things CI cannot run: real studies, drivers, engines. The scripts are
+throw-away (skill `ferrum-field-test`); the results are recorded here, with
+the criterion they verify.
+
+| Criterion | Level | What was run | Result |
+|---|---|---|---|
+| 16.6-j (region tool on whole organs) | field | MSD Task03 liver, cases 0, 53, 82, 105 (0.6–0.7 × 0.6–0.7 × 0.7–5 mm), commit `af36501`; the seed is a typical reference voxel, Dice against the reference (liver and tumour) over tolerances ±15 … ±100 HU with the default settings (smoothing 1.5 mm, opening 5 mm, fill holes) | best Dice 0.951, 0.961, 0.883, 0.958 against 0.779, 0.539, 0.564, 0.462 for the old raw method; the working range is ±20 … ±40 HU (narrower stays small, wider leaks and is refused by the size limit). Below 0.90 on case 82: the reference includes a hypodense tumour at the surface, which no threshold fills. One click takes 1–3 s on the 0.7 × 0.7 × 5 mm cases and 10–25 s on the 0.6 × 0.6 × 0.8 mm cases (60 M voxel box); the click runs as a background job (16.6-m): through `Viewer::start_region_at` on real data the click returns in 0.09 s (liver_53) and 0.45 s (liver_82, the 136 M voxel label-map snapshot), the job takes 1.6 s and 10 s, and the Dice is identical to the direct run (0.961, 0.883) |
+| 16.6-n (region tool on lung) | field | MSD Task06 lung, cases 057, 028, 083, 073 (0.78–0.91 × 0.78–0.91 × 0.6–2.5 mm); there is no human lung mask in the set, so the reference is a *classical* one (air below −320 HU, outside air removed, two largest components, holes filled) cut into the lung of the click with the 5 mm core of the opening; the seed is the deepest voxel of the larger lung; tolerances ±25 … ±400 HU, default settings | one click grows one lung (the thin airways between the lungs are cut), 99 % of it inside the reference; Dice against that lung 0.950 (±200) … 0.970 (±400) on 057, 0.923 … 0.962 on 028, 0.939 … 0.969 on 073; case 083 is not scored (the reference did not split its lungs). ±50 and below grows nothing and ±100 half of a lung: the default of 40 was useless, hence the automatic tolerance 300. The old method, which grows both lungs through the trachea, reached Dice 0.91–0.96 against both lungs at ±200 … ±300 but with a speckled mask. Visually the outline follows the lung wall, vessels and nodules inside are filled |
 
 ## Adding tests
 

@@ -18,8 +18,17 @@ const SECRETS: [&str; 9] =
     ["DOE^JANE", "JANE", "MRN-4711", "19700101", "ACC-0815", "20240428", "St Example Hospital", STUDY_UID, SERIES_UID];
 
 /// 16 × 16 × 8 CT in HU with a bright block, and patient data in the header.
+/// The last slice is 4 mm from its neighbour instead of 2, so that loading
+/// warns (covers 2.7-f).
 fn write_ct(dir: &Path) {
+    write_images(dir, None);
+}
+
+/// [`write_ct`], as the echo `echo` of a multi-echo series when given
+/// (Echo Number and Echo Time set, files and instance UIDs of their own).
+fn write_images(dir: &Path, echo: Option<u32>) {
     std::fs::create_dir_all(dir).unwrap();
+    let n = echo.unwrap_or(0);
     for k in 0..8u32 {
         let pixels: Vec<u16> = (0..256u32)
             .map(|p| {
@@ -35,7 +44,7 @@ fn write_ct(dir: &Path) {
         let text = |t, vr, v: &str| DataElement::new(t, vr, PrimitiveValue::from(v));
         let elements = vec![
             text(tags::SOP_CLASS_UID, VR::UI, uids::CT_IMAGE_STORAGE),
-            text(tags::SOP_INSTANCE_UID, VR::UI, &format!("{SERIES_UID}.{}", k + 1)),
+            text(tags::SOP_INSTANCE_UID, VR::UI, &format!("{SERIES_UID}.{}", k + 1 + 100 * n)),
             text(tags::MODALITY, VR::CS, "CT"),
             text(tags::PATIENT_NAME, VR::PN, "DOE^JANE"),
             text(tags::PATIENT_ID, VR::LO, "MRN-4711"),
@@ -49,7 +58,7 @@ fn write_ct(dir: &Path) {
             text(tags::STUDY_DESCRIPTION, VR::LO, "Chest"),
             text(tags::SERIES_DESCRIPTION, VR::LO, "Axial 2.0"),
             text(tags::INSTANCE_NUMBER, VR::IS, &(k + 1).to_string()),
-            text(tags::IMAGE_POSITION_PATIENT, VR::DS, &format!("-8\\-8\\{}", f64::from(k) * 2.0)),
+            text(tags::IMAGE_POSITION_PATIENT, VR::DS, &format!("-8\\-8\\{}", f64::from(k + k / 7) * 2.0)),
             text(tags::IMAGE_ORIENTATION_PATIENT, VR::DS, "1\\0\\0\\0\\1\\0"),
             text(tags::PIXEL_SPACING, VR::DS, "1\\1"),
             text(tags::SLICE_THICKNESS, VR::DS, "2"),
@@ -65,13 +74,17 @@ fn write_ct(dir: &Path) {
             DataElement::new(tags::PIXEL_REPRESENTATION, VR::US, PrimitiveValue::from(0u16)),
             DataElement::new(tags::PIXEL_DATA, VR::OW, PrimitiveValue::U16(pixels.into())),
         ];
-        let obj = InMemDicomObject::from_element_iter(elements);
+        let mut obj = InMemDicomObject::from_element_iter(elements);
+        if let Some(e) = echo {
+            obj.put(text(tags::ECHO_NUMBERS, VR::IS, &e.to_string()));
+            obj.put(text(tags::ECHO_TIME, VR::DS, &(20 * e).to_string()));
+        }
         let file = obj.with_meta(FileMetaTableBuilder::new().transfer_syntax(uids::EXPLICIT_VR_LITTLE_ENDIAN)).unwrap();
-        file.write_to_file(dir.join(format!("{k:03}.dcm"))).unwrap();
+        file.write_to_file(dir.join(format!("{n}-{k:03}.dcm"))).unwrap();
     }
 }
 
-fn scan(what: &str, text: &str, found: &mut Vec<String>) {
+fn scan_text(what: &str, text: &str, found: &mut Vec<String>) {
     for s in SECRETS {
         if text.contains(s) {
             found.push(format!("{s:?} in {what}"));
@@ -99,6 +112,11 @@ fn session(agent: &Agent, ws: &str, src: &Path) -> Vec<Value> {
         ),
         ("annotate list", json!({ "workspace": ws })),
         ("segment threshold", json!({ "workspace": ws, "seed": { "voxel": [8, 8, 3] }, "min": 300, "max": 500 })),
+        ("segment threshold", json!({ "workspace": ws, "seed": { "voxel": [1, 1, 3] }, "min": -1100, "max": -900 })),
+        ("segment distance", json!({ "workspace": ws, "segment": 1, "to": 2 })), // covers 17.8-d
+        ("segment shape", json!({ "workspace": ws, "segment": 1, "solid_min": 350 })),
+        ("segment metrics", json!({ "workspace": ws, "segment": 1, "describe": true })), // covers 18.4-d
+        ("segment metrics", json!({ "workspace": ws, "segment": 1, "profile": "clinical", "describe": true })),
         ("segment list", json!({ "workspace": ws })),
         ("review list", json!({ "workspace": ws })),
         ("export bundle", json!({ "workspace": ws, "formats": ["ferrum", "dicom"] })),
@@ -119,19 +137,20 @@ fn outputs_contain_no_identifiers() {
         assert_eq!(e["ok"], true, "{e:#}");
         let mut clean = e.clone();
         clean["provenance"]["params"] = Value::Null; // the harness's own input, echoed
-        scan(&format!("envelope of {}", e["provenance"]["command"]), &clean.to_string(), &mut found);
+        scan_text(&format!("envelope of {}", e["provenance"]["command"]), &clean.to_string(), &mut found);
     }
     assert_eq!(envelopes[2]["data"]["value_unit"], "HU", "a real CT series");
+    assert!(envelopes[1]["warnings"].to_string().contains("slice spacing is irregular"), "{:#}", envelopes[1]);
     for sub in ["renders", "export"] {
         for entry in std::fs::read_dir(ws.join(sub)).unwrap() {
             let path = entry.unwrap().path();
             let bytes = std::fs::read(&path).unwrap();
             let bytes = if path.extension().is_some_and(|e| e == "gz") { gunzip(&bytes) } else { bytes };
-            scan(&path.display().to_string(), &String::from_utf8_lossy(&bytes), &mut found);
+            scan_text(&path.display().to_string(), &String::from_utf8_lossy(&bytes), &mut found);
         }
     }
     // the workspace's own annotation file follows the same rules
-    scan("annotations.json", &std::fs::read_to_string(ws.join("annotations.json")).unwrap(), &mut found);
+    scan_text("annotations.json", &std::fs::read_to_string(ws.join("annotations.json")).unwrap(), &mut found);
     assert!(found.is_empty(), "identifiers leaked: {found:#?}");
 
     // with the operator's consent, dates and accession numbers may be shared
@@ -159,6 +178,35 @@ fn outputs_contain_no_identifiers() {
     let seg = std::fs::read(ws.join("export/segmentation.dcm")).unwrap();
     let text = String::from_utf8_lossy(&seg);
     assert!(text.contains("MRN-4711") && text.contains(STUDY_UID) && text.contains(SERIES_UID), "filed with the study");
+}
+
+#[test]
+fn volume_ids_and_labels_contain_no_identifiers() {
+    // covers 20.3-e
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("incoming/echoes");
+    write_images(&src, Some(1));
+    write_images(&src, Some(2));
+    let ws = dir.path().join("ws/me").to_string_lossy().into_owned();
+    let agent = Agent::default();
+    let scan = agent.run("study scan", &json!({ "paths": [src] }));
+    let entries = scan["data"]["series"].as_array().unwrap();
+    assert_eq!(entries.len(), 2, "{scan:#}");
+    assert_eq!(entries[1]["volume"]["label"], "echo 2, TE = 40 ms");
+    let second = entries[1]["series"].clone();
+    let mut envelopes = vec![scan.clone()];
+    envelopes.extend(session(&agent, &ws, &src));
+    envelopes.push(agent.run("study open", &json!({ "workspace": ws, "path": src, "series": second })));
+    envelopes.push(agent.run("probe", &json!({ "workspace": ws, "point": { "voxel": [8, 8, 3] } })));
+    let mut found = Vec::new();
+    for e in &envelopes {
+        assert_eq!(e["ok"], true, "{e:#}");
+        let mut clean = e.clone();
+        clean["provenance"]["params"] = Value::Null;
+        scan_text(&format!("envelope of {}", e["provenance"]["command"]), &clean.to_string(), &mut found);
+    }
+    assert_eq!(envelopes.last().unwrap()["provenance"]["volume"]["label"], "echo 2, TE = 40 ms");
+    assert!(found.is_empty(), "identifiers leaked: {found:#?}");
 }
 
 fn gunzip(bytes: &[u8]) -> Vec<u8> {

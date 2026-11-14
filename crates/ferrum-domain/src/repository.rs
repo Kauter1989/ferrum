@@ -64,6 +64,9 @@ pub enum RepositoryError {
     /// An operating-system level I/O error.
     #[error("I/O error: {0}")]
     Io(String),
+    /// A size, depth or count limit was reached while scanning.
+    #[error("limit reached: {0}")]
+    Limit(String),
     /// The user cancelled the operation.
     #[error("operation cancelled")]
     Cancelled,
@@ -84,6 +87,38 @@ pub struct SeriesDescriptor {
     pub dims: Dims3,
     /// Files that make up the series.
     pub sources: Vec<PathBuf>,
+    /// Which volume of a multi-volume series this descriptor stands for
+    /// (see [`VolumeRepository::volumes`]); `None` for a whole series.
+    pub volume: Option<VolumeInfo>,
+}
+
+/// One volume of a series that holds several (echoes, diffusion b-values,
+/// dynamic phases, PET frames), as listed by [`VolumeRepository::volumes`].
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct VolumeInfo {
+    /// Id of the series the volume belongs to ([`SeriesDescriptor::id`] of
+    /// the whole series).
+    pub group: String,
+    /// 0-based position among the series' volumes.
+    pub index: u32,
+    /// Number of volumes of the series.
+    pub count: u32,
+    /// What tells the volume apart, for people: `b = 1000`, `TE = 80 ms`,
+    /// `phase 3/20`, `frame 3/33, t = 60 s`, `volume 2/5`.
+    pub label: String,
+    /// Diffusion b-value in s/mm².
+    pub b_value: Option<f64>,
+    /// Echo time in ms.
+    pub echo_time_ms: Option<f64>,
+    /// Echo number.
+    pub echo_number: Option<i64>,
+    /// Temporal position (phase) as stored in the data.
+    pub temporal_position: Option<i64>,
+    /// Start of a PET frame in seconds.
+    pub frame_time_s: Option<f64>,
+    /// The volume has an image at every position of the series, so it
+    /// shares the series' grid.
+    pub complete: bool,
 }
 
 /// Study and series identification of a loaded series, taken from the
@@ -126,6 +161,21 @@ pub struct SeriesMetadata {
     pub study: StudyInfo,
     /// What was opened: the folder of a DICOM series or the NIfTI file.
     pub source: PathBuf,
+    /// What the reader could not show as stored, in plain words (several
+    /// images per slice position, a 4D file, irregular or assumed spacing).
+    /// Never holds identifiers.
+    pub warnings: Vec<String>,
+}
+
+/// The DICOM modality code (`CT`, `MR`, …) that `text` stands for, in upper
+/// case, or why it is not one. A NIfTI file carries no modality; the person
+/// who opens it declares one.
+pub fn parse_modality(text: &str) -> Result<String, String> {
+    let m = text.trim().to_ascii_uppercase();
+    if m.is_empty() || m.len() > 16 || !m.bytes().all(|b| b.is_ascii_alphanumeric()) {
+        return Err(format!("modality {text:?} is not a DICOM modality code (e.g. CT, MR, PT)"));
+    }
+    Ok(m)
 }
 
 /// A fully loaded series.
@@ -145,8 +195,20 @@ pub trait VolumeRepository: Send + Sync {
     /// Finds all series contained in `paths` (files and/or directories).
     fn scan(&self, paths: &[PathBuf], progress: &dyn ProgressSink) -> Result<Vec<SeriesDescriptor>, RepositoryError>;
 
-    /// Loads the series described by `series`.
+    /// Loads the series (or the one volume) described by `series`.
     fn load(&self, series: &SeriesDescriptor, progress: &dyn ProgressSink) -> Result<LoadedSeries, RepositoryError>;
+
+    /// The volumes of `series`, one descriptor each, when it holds several
+    /// (echoes, b-values, phases, frames); `series` itself otherwise.
+    /// [`VolumeRepository::load`] of a returned descriptor reads only that
+    /// volume.
+    fn volumes(
+        &self,
+        series: &SeriesDescriptor,
+        _progress: &dyn ProgressSink,
+    ) -> Result<Vec<SeriesDescriptor>, RepositoryError> {
+        Ok(vec![series.clone()])
+    }
 }
 
 #[cfg(test)]
@@ -167,5 +229,14 @@ mod tests {
     fn errors_have_messages() {
         assert_eq!(RepositoryError::Cancelled.to_string(), "operation cancelled");
         assert!(RepositoryError::Corrupt("x".into()).to_string().contains('x'));
+    }
+
+    #[test]
+    fn modality_codes_are_normalised_or_refused() {
+        assert_eq!(parse_modality(" ct ").unwrap(), "CT");
+        assert_eq!(parse_modality("Mr").unwrap(), "MR");
+        for bad in ["", "   ", "C T", "CT!", "ABCDEFGHIJKLMNOPQ"] {
+            assert!(parse_modality(bad).is_err(), "{bad:?}");
+        }
     }
 }

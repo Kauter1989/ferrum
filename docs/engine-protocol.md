@@ -143,6 +143,15 @@ the tools the engine supports.
   ([agent-segmentation.md](agent-segmentation.md)); an engine that cannot
   guarantee it (e.g. non-deterministic GPU kernels, a remote model
   server) reports `false`, and FERRUM warns that results may differ.
+- `capabilities.unload` (optional, default `false`): the engine serves
+  `POST /v1/unload` (below).
+- `limits.expected_peak_mib` (optional): the GPU memory of the engine
+  process during a call, in MiB, as `nvidia-smi --query-compute-apps`
+  shows it. FERRUM leases the larger of this and the operator's value
+  from a GPU group ([gpu-sharing.md](gpu-sharing.md)); an engine can raise
+  the operator's value but never lower it.
+- `resident_mib` (optional): the GPU memory the engine holds now, in MiB.
+  It is advisory: a process that needs room checks the free memory itself.
 
 ### `POST /v1/sessions`
 
@@ -240,6 +249,15 @@ keeps the volume. Response `204`.
 Frees the session. Response `204`. Servers MUST also free sessions on
 expiry.
 
+### `POST /v1/unload` (optional)
+
+Engines with `capabilities.unload: true` unload their model and free all
+of their GPU memory, including the CUDA context. Response `204`. While a
+session or job is open the engine refuses with `503 busy` and
+`Retry-After`; it never stops running work. The next `POST /v1/sessions`
+loads the model again. An engine without the capability answers `404`.
+The conformance suite checks both answers (Stage 23).
+
 ## 4. Automatic segmentation (optional)
 
 Engines with `capabilities.automatic: true` (for example TotalSegmentator)
@@ -295,6 +313,6 @@ Every label value present in the map becomes a segment, named after
 
 | Engine | Bridge | Prompts | Automatic | Notes |
 |---|---|---|---|---|
-| nnInteractive | [`bridges/`](../bridges) `ferrum-bridge nninteractive` (Python, FastAPI; [demo guide](ai-demo.md)) | point, box (planar), scribble, lasso | — | Weights CC BY-NC-SA 4.0 → `research_only: true`; NVIDIA GPU, ~10 GB VRAM recommended; frees the image on `DELETE`; `deterministic` only with `--deterministic` |
+| nnInteractive | [`bridges/`](../bridges) `ferrum-bridge nninteractive` (Python, FastAPI; [demo guide](ai-demo.md)) | point, box (planar), scribble, lasso | — | Weights CC BY-NC-SA 4.0 → `research_only: true`; NVIDIA GPU, ~10 GB VRAM recommended; frees the image on `DELETE`; the model runs in a worker process that `POST /v1/unload` ends; `deterministic` only with `--deterministic` |
 | MONAI Label | [`bridges/`](../bridges) `ferrum-bridge monailabel` ([demo guide](ai-demo.md#monai-label-your-own-models)) | point (DeepEdit / DeepGrow / SAM2), box (SAM2) | yes: the app's `segmentation` model and its labels | Client of a running MONAI Label server: one MONAI Label session per volume, clicks replayed on `/infer` (undo = replay without the last prompt); `research_only: true` unless `--clinical-weights`; `deterministic: false` |
 | TotalSegmentator | [`bridges/`](../bridges) `ferrum-bridge totalsegmentator` ([demo guide](ai-demo.md)) | — | yes: 117 CT classes (`total`), 50 MR (`total_mr`), other tasks | Code and `total` Apache-2.0; licensed tasks → `research_only: true`; usage statistics disabled by the bridge; each job in a child process (GPU memory freed, cancel ends it) |

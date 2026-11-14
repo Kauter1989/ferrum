@@ -114,10 +114,13 @@ What the measurement shows:
 2. **Release memory when idle.**
    - The TotalSegmentator bridge runs each job in a child process, so
      its memory returns to the driver when the job ends.
-   - The nnInteractive bridge keeps one inference session whose image
-     stays on the GPU after `DELETE` (it only resets the interactions
-     today). It must drop the image and empty PyTorch's cache when the
-     last FERRUM session closes. The weights stay loaded.
+   - The nnInteractive bridge drops the image and empties PyTorch's cache
+     when a FERRUM session closes (`DELETE` or expiry); the weights and the
+     CUDA context stay loaded.
+   - Since Stage 23 the model runs in a worker process. `engine unload`
+     (`POST /v1/unload`) ends it while no session is open, so all of its
+     GPU memory returns to the driver; the next session loads it again
+     ([gpu-sharing.md](gpu-sharing.md) §3.5).
 3. **Crop before upload.** `segment interactive` uploads a region of
    interest, not the whole series (§5.3). The default ROI is the prompts'
    bounding box plus 48 mm, clamped to the volume. A 160 mm cube of a
@@ -402,8 +405,9 @@ allow_research_only = true            # (new) false: research-only engines are `
 ```
 
 - The allow-list stays as it is. `gpu_groups` serialises engine calls
-  with an advisory lock file per group in the temporary folder, so
-  separate CLI processes and the MCP server respect it too.
+  across processes, so separate CLI processes and the MCP server respect
+  it too. Since Stage 23 it is a lease in a per-user directory that
+  processes outside FERRUM can join ([gpu-sharing.md](gpu-sharing.md)).
 - `allow_research_only = false` restricts agents to engines whose licence
   allows the site's use.
 

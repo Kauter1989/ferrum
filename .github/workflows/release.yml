@@ -1,6 +1,9 @@
 # Builds release archives (the ferrum viewer, the ferrum-cli agent tool,
-# the agent skill package and a plugin folder) and publishes them as a
-# GitHub release.
+# the agent skill package, a plugin folder, the browser panel module and
+# the DeepSeek Harness plugin) and publishes them as a GitHub release.
+# The panel module (ferrum_wasm.js, ferrum_wasm_bg.wasm) is placed next to
+# the binaries: `ferrum-cli view serve` serves it at /panel/… from there,
+# so the harness panel works out of the box (integrations/dsh/README.md).
 #
 # Two ways to release:
 # - push a `v*` tag, or
@@ -56,6 +59,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build
         run: cargo build --release --locked -p ferrum -p ferrum-cli --target ${{ matrix.target }}
+      - name: Build the browser panel (wasm)
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo build --release --locked -p ferrum-wasm --target wasm32-unknown-unknown
+      - name: Install wasm-bindgen (the version the workspace resolves)
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen-cli@0.2.129
+      - name: Bind the panel module
+        shell: bash
+        run: wasm-bindgen --target web --out-dir integrations/dsh/panel --out-name ferrum_wasm --no-typescript target/wasm32-unknown-unknown/release/ferrum_wasm.wasm
       - name: Package (tar.gz)
         if: matrix.archive == 'tar.gz'
         shell: bash
@@ -64,6 +78,12 @@ jobs:
           bin=target/${{ matrix.target }}/release
           mkdir -p "$name/skills" "$name/ferrum-plugin/.claude-plugin" "$name/ferrum-plugin/skills" "$name/ferrum-plugin/bin"
           cp "$bin/ferrum" "$bin/ferrum-cli" README.md LICENSE-MIT LICENSE-APACHE "$name"/
+          # The panel module next to the binaries: view serve serves /panel/…
+          # from the executable's folder, so the harness panel works at once.
+          cp integrations/dsh/panel/ferrum_wasm.js integrations/dsh/panel/ferrum_wasm_bg.wasm "$name"/
+          mkdir -p "$name/integrations"
+          cp -R integrations/dsh "$name/integrations/"
+          find "$name/integrations" -name '__pycache__' -type d -exec rm -rf {} +
           cp -R skills/ferrum "$name/skills/"
           cp -R skills/ferrum "$name/ferrum-plugin/skills/"
           cp skills/plugin/plugin.json "$name/ferrum-plugin/.claude-plugin/plugin.json"
@@ -80,6 +100,12 @@ jobs:
           $plugin = "$name/ferrum-plugin"
           New-Item -ItemType Directory $name, "$name/skills", "$plugin/.claude-plugin", "$plugin/skills", "$plugin/bin" -Force | Out-Null
           Copy-Item "$bin/ferrum.exe", "$bin/ferrum-cli.exe", README.md, LICENSE-MIT, LICENSE-APACHE $name
+          # The panel module next to the binaries: view serve serves /panel/…
+          # from the executable's folder, so the harness panel works at once.
+          Copy-Item integrations/dsh/panel/ferrum_wasm.js, integrations/dsh/panel/ferrum_wasm_bg.wasm $name
+          New-Item -ItemType Directory "$name/integrations" -Force | Out-Null
+          Copy-Item -Recurse integrations/dsh "$name/integrations/dsh"
+          Get-ChildItem "$name/integrations" -Recurse -Directory -Filter '__pycache__' | Remove-Item -Recurse -Force
           Copy-Item -Recurse skills/ferrum "$name/skills/"
           Copy-Item -Recurse skills/ferrum "$plugin/skills/"
           Copy-Item skills/plugin/plugin.json "$plugin/.claude-plugin/plugin.json"

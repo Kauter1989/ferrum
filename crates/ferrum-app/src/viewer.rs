@@ -19,13 +19,17 @@ use crate::jobs::{FilterKind, JobEvent, JobQueue};
 use crate::tools::{InputKind, ProbeReading, SliceContext, ToolController, ToolInput, ToolKind, ToolOutcome};
 
 mod ai;
+mod metrics;
 mod review;
 mod segments;
+mod volumes;
 mod workflow;
 
 pub use ai::{AiState, AiStatus};
+pub use metrics::{MetricsOutcome, MetricsState, MetricsView};
 pub use review::ReviewEntry;
 pub use segments::{RegionSettings, SegmentSummary, SegmentationState};
+pub use volumes::{VolumeEntry, VOLUME_CACHE_BYTES};
 pub use workflow::SegmentationStep;
 
 /// Layout of the main area.
@@ -236,6 +240,7 @@ pub struct Viewer {
     tool_ctl: ToolController,
     annotations: AnnotationSet,
     segments: SegmentationState,
+    metrics: MetricsState,
     ai: AiState,
     /// Latest probe reading.
     pub probe: Option<ProbeReading>,
@@ -248,6 +253,15 @@ pub struct Viewer {
     pub pending_text: Option<(SliceKey, Vec2)>,
     workspace: Option<review::WorkspaceSession>,
     pending_workspace: Option<Arc<dyn ferrum_domain::ResultStore>>,
+    /// The load warnings of the dataset have not been dismissed yet.
+    load_warnings_unseen: bool,
+    /// The open series when it holds several volumes.
+    series: Option<volumes::OpenSeries>,
+    /// Volumes of the open series loaded before.
+    volume_cache: volumes::VolumeCache,
+    /// The window the viewer chose itself; while it is shown, a volume
+    /// switch replaces it with the new volume's.
+    window_followed: Option<WindowLevel>,
 }
 
 impl Viewer {
@@ -265,6 +279,7 @@ impl Viewer {
             tool_ctl: ToolController::default(),
             annotations: AnnotationSet::default(),
             segments: SegmentationState::default(),
+            metrics: MetricsState::default(),
             ai: AiState::new(),
             probe: None,
             status: Status { message: "Open a DICOM folder or NIfTI file to start".into(), ..Status::default() },
@@ -272,6 +287,10 @@ impl Viewer {
             pending_text: None,
             workspace: None,
             pending_workspace: None,
+            load_warnings_unseen: false,
+            series: None,
+            volume_cache: volumes::VolumeCache::default(),
+            window_followed: None,
         }
     }
 
@@ -280,6 +299,25 @@ impl Viewer {
     /// The loaded dataset.
     pub fn dataset(&self) -> Option<&Dataset> {
         self.dataset.as_ref()
+    }
+
+    /// What the reader could not show as stored in the loaded series
+    /// (several images per slice position, a 4D file, irregular or assumed
+    /// spacing); empty without a dataset.
+    pub fn load_warnings(&self) -> &[String] {
+        self.dataset.as_ref().map_or(&[], |d| d.metadata.warnings.as_slice())
+    }
+
+    /// Whether the load warnings are still to be shown to the person (once
+    /// after each load, until [`Viewer::dismiss_load_warnings`]).
+    pub fn load_warnings_unseen(&self) -> bool {
+        self.load_warnings_unseen && !self.load_warnings().is_empty()
+    }
+
+    /// The person has read the load warnings; they stay in the series
+    /// information.
+    pub fn dismiss_load_warnings(&mut self) {
+        self.load_warnings_unseen = false;
     }
 
     /// Starts scanning files/directories.
@@ -298,7 +336,8 @@ impl Viewer {
         self.status.message = format!("Loading {}…", series.description);
         self.status.progress = Some(0.0);
         self.series_choice = None;
-        self.jobs.load(self.repo.clone(), series);
+        let wanted = self.pending_workspace.as_ref().and_then(|w| w.volume());
+        self.jobs.load(self.repo.clone(), series, wanted);
     }
 
     /// Cancels a running scan/load.
@@ -321,6 +360,7 @@ impl Viewer {
         let revision = self.bump_revision();
         let LoadedSeries { volume, metadata } = loaded;
         let window = metadata.default_window;
+        self.load_warnings_unseen = !metadata.warnings.is_empty();
         let dataset = Dataset::new(volume, metadata, revision);
         let dims = dataset.volume.dims().as_uvec3();
         self.slices = SliceState {
@@ -328,12 +368,15 @@ impl Viewer {
             window: window.unwrap_or_else(|| Self::auto_window_for(&dataset)),
             ..SliceState::default()
         };
+        self.follow_window(self.slices.window);
+        self.series = None;
         let settings = self.volume.settings;
         self.volume =
             VolumeViewState { settings, tf_revision: self.volume.tf_revision + 1, ..VolumeViewState::default() };
         self.volume.mask_generation = self.bump_revision();
         self.annotations.clear();
         self.clear_segmentation();
+        self.metrics = MetricsState::default();
         self.segments.region = RegionSettings::for_window(self.slices.window);
         self.reset_ai_session();
         self.tool_ctl.cancel();
@@ -358,11 +401,7 @@ impl Viewer {
     }
 
     fn auto_window_for(d: &Dataset) -> WindowLevel {
-        let lo = d.histogram.percentile(0.005);
-        let hi = d.histogram.percentile(0.995).max(lo + 1e-3);
-        let r = d.volume.range();
-        let (a, b) = (r.denormalize(lo), r.denormalize(hi));
-        WindowLevel::new((a + b) * 0.5, b - a)
+        WindowLevel::auto(d.volume.range(), d.histogram.counts())
     }
 
     /// Processes finished background work. Call once per frame.
@@ -403,9 +442,16 @@ impl Viewer {
                     self.series_choice = Some(series);
                 }
             }
-            JobEvent::Loaded(Ok(loaded)) => {
+            JobEvent::Loaded(Ok(study)) => {
                 self.status.progress = None;
-                self.install(*loaded);
+                self.install_study(*study);
+            }
+            JobEvent::VolumeLoaded { id, result: Ok(loaded) } => self.finish_volume(&id, *loaded),
+            JobEvent::VolumeLoaded { result: Err(e), .. } => {
+                self.status.progress = None;
+                self.fail_volume();
+                self.status.message = format!("The volume could not be loaded: {e}");
+                self.status.errors.push(e.to_string());
             }
             JobEvent::Scanned(Err(e)) | JobEvent::Loaded(Err(e)) => {
                 self.status.progress = None;
@@ -418,6 +464,8 @@ impl Viewer {
                     self.volume.ao = Some((revision, threshold, ao));
                 }
             }
+            JobEvent::Region { request, result } => self.finish_region(request, result),
+            e @ JobEvent::Metrics { .. } => self.finish_metrics(e),
             JobEvent::Filtered { revision, kind, result } => match result {
                 Ok(v) if self.dataset.as_ref().is_some_and(|d| d.revision == revision) => {
                     let rev = self.bump_revision();
@@ -477,10 +525,28 @@ impl Viewer {
         }
     }
 
+    /// The window (centre and width, in the volume's units) of the slice
+    /// views.
+    pub fn window(&self) -> WindowLevel {
+        self.slices.window
+    }
+
+    /// Replaces the window of the slice views (centre and width in the
+    /// volume's units); a width below [`WindowLevel::MIN_WIDTH`] is clamped.
+    pub fn set_window(&mut self, window: WindowLevel) {
+        self.slices.window = window;
+    }
+
+    /// The slice index shown for `axis` (0-based, clamped to the volume).
+    pub fn slice_index(&self, axis: SliceAxis) -> u32 {
+        self.slices.index(axis)
+    }
+
     /// Sets the window from the 0.5–99.5 % histogram percentiles.
     pub fn auto_window(&mut self) {
         if let Some(d) = &self.dataset {
             self.slices.window = Self::auto_window_for(d);
+            self.window_followed = Some(self.slices.window);
         }
     }
 
@@ -596,7 +662,7 @@ impl Viewer {
                 self.ai_prompt(p.clone());
             }
             ToolOutcome::Seed(voxel) => {
-                if let Err(e) = self.grow_region_at(*voxel) {
+                if let Err(e) = self.start_region_at(*voxel) {
                     self.status.message = e;
                 }
             }

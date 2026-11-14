@@ -12,6 +12,7 @@ ferrum-domain.workspace = true
 ferrum-io.workspace = true
 ferrum-render.workspace = true
 ferrum-engines.workspace = true
+ferrum-radiomics.workspace = true
 glam.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -19,6 +20,10 @@ toml.workspace = true
 image.workspace = true
 base64.workspace = true
 log.workspace = true
+ctrlc.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

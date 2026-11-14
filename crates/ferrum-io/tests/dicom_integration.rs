@@ -7,7 +7,7 @@ mod common;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use common::{phantom_value, write_series, SyntheticSlice};
+use common::{phantom_value, write_enhanced, write_series, EnhancedFrame, SyntheticSlice};
 use dicom_dictionary_std::uids;
 use ferrum_domain::{Dims3, NoProgress, ProgressSink, RepositoryError, VolumeRepository};
 use ferrum_io::{CompositeRepository, DicomRepository};
@@ -81,6 +81,55 @@ fn applies_rescale_and_signed_pixels() {
     assert_eq!((w.center, w.width), (40.0, 400.0));
 }
 
+// covers 18.13-a
+#[test]
+fn ct_hounsfield_units_come_back_exactly_with_rescale_and_with_halves() {
+    // a CT series: stored value 0..=4095 with intercept -1024, so -1024 to 3071 HU
+    let dir = tempfile::tempdir().unwrap();
+    write_series(dir.path(), 8, 8, 3, 1.0, |s| {
+        s.intercept = -1024.0;
+        for (p, px) in s.pixels.iter_mut().enumerate() {
+            *px = ((p as u32 * 61 + s.instance as u32 * 1009) % 4096) as u16;
+        }
+    });
+    let l = load_single(dir.path());
+    for k in 0..3u32 {
+        for j in 0..8u32 {
+            for i in 0..8u32 {
+                let stored = ((j * 8 + i) * 61 + (k + 1) * 1009) % 4096;
+                let expected = stored as f32 - 1024.0;
+                assert_eq!(l.volume.physical(i, j, k), Some(expected), "voxel ({i},{j},{k})");
+            }
+        }
+    }
+    // a slope of one half (PET-like) gives halves, which are on the grid too
+    let dir = tempfile::tempdir().unwrap();
+    write_series(dir.path(), 4, 4, 2, 1.0, |s| {
+        s.slope = 0.5;
+        for (p, px) in s.pixels.iter_mut().enumerate() {
+            *px = (p as u16 * 3 + 1) * 7;
+        }
+    });
+    let l = load_single(dir.path());
+    for j in 0..4u32 {
+        for i in 0..4u32 {
+            let expected = ((j * 4 + i) as u16 * 3 + 1) as f32 * 7.0 * 0.5;
+            assert_eq!(l.volume.physical(i, j, 1), Some(expected), "voxel ({i},{j})");
+        }
+    }
+    // a series that is inverted (MONOCHROME1) keeps the grid
+    let dir = tempfile::tempdir().unwrap();
+    write_series(dir.path(), 4, 4, 2, 1.0, |s| s.photometric = "MONOCHROME1");
+    let l = load_single(dir.path());
+    let (lo, hi) = (l.volume.range().min, l.volume.range().max);
+    for j in 0..4u32 {
+        for i in 0..4u32 {
+            let v = l.volume.physical(i, j, 0).unwrap();
+            assert_eq!(v, v.round(), "whole units stay whole when inverted: {v} in {lo}..{hi}");
+        }
+    }
+}
+
 #[test]
 fn monochrome1_is_inverted() {
     let dir = tempfile::tempdir().unwrap();
@@ -116,6 +165,50 @@ fn orders_by_instance_number_without_positions() {
     let l = load_single(dir.path());
     assert_phantom(&l.volume, 4, 4, 4);
     assert!((l.volume.spacing().z - 2.5).abs() < 1e-6, "falls back to slice thickness");
+    // covers 2.7-d
+    assert_eq!(l.metadata.warnings.len(), 1, "{:?}", l.metadata.warnings);
+    assert!(l.metadata.warnings[0].contains("ordered by Instance Number"), "{:?}", l.metadata.warnings);
+}
+
+#[test]
+fn a_regular_series_loads_without_warnings() {
+    // covers 2.7-c
+    let dir = tempfile::tempdir().unwrap();
+    write_series(dir.path(), 6, 8, 5, 2.0, |_| {});
+    assert_eq!(load_single(dir.path()).metadata.warnings, Vec::<String>::new());
+}
+
+#[test]
+fn two_echoes_load_as_the_first_echo_with_a_warning() {
+    // covers 2.7-a, 2.7-b
+    let dir = tempfile::tempdir().unwrap();
+    let (rows, cols, n) = (4u16, 6u16, 3u32);
+    // Echo 2 is written first, with lower Instance Numbers and other values:
+    // only Echo Numbers tells the echoes apart.
+    for e in [2i32, 1] {
+        for k in 0..n {
+            let mut s = SyntheticSlice::new(rows, cols, 100.0 + f64::from(k) * 2.0, (2 - e) * n as i32 + k as i32 + 1);
+            s.echo = Some(e);
+            s.pixels = (0..u32::from(rows) * u32::from(cols))
+                .map(|p| phantom_value(p % u32::from(cols), p / u32::from(cols), k) + (e as u16 - 1) * 5000)
+                .collect();
+            s.write(&dir.path().join(format!("e{e}_{k}.dcm")));
+        }
+    }
+    let l = load_single(dir.path());
+    assert_phantom(&l.volume, u32::from(rows), u32::from(cols), n);
+    assert_eq!(l.metadata.warnings.len(), 1, "{:?}", l.metadata.warnings);
+    assert!(l.metadata.warnings[0].contains("2 images at each of its 3 slice positions"), "{:?}", l.metadata.warnings);
+}
+
+#[test]
+fn missing_pixel_spacing_is_reported() {
+    // covers 2.7-d
+    let dir = tempfile::tempdir().unwrap();
+    write_series(dir.path(), 4, 4, 3, 1.0, |s| s.pixel_spacing = [0.0, 0.0]);
+    let l = load_single(dir.path());
+    assert_eq!(l.volume.spacing().x, 1.0);
+    assert_eq!(l.metadata.warnings, vec!["the series carries no pixel spacing: 1 mm per pixel is assumed".to_string()]);
 }
 
 #[test]
@@ -128,6 +221,60 @@ fn loads_multiframe_file() {
     let l = load_single(dir.path());
     assert_phantom(&l.volume, 4, 5, 3);
     assert!((l.volume.spacing().z - 1.25).abs() < 1e-6);
+    // covers 20.1-e: without per-frame positions the file-order warning stays
+    assert_eq!(l.metadata.warnings.len(), 1, "{:?}", l.metadata.warnings);
+    assert!(l.metadata.warnings[0].contains("per-frame positions are not read"), "{:?}", l.metadata.warnings);
+}
+
+/// A frame at slice `k` (z = 10 + 2.5 k) of phase `t`: the phantom plus
+/// 5000 per later phase, stored with a per-frame intercept.
+fn enhanced_frame(rows: u16, cols: u16, k: u32, t: i32, intercept: f64) -> EnhancedFrame {
+    let (rows, cols) = (u32::from(rows), u32::from(cols));
+    EnhancedFrame {
+        position: [0.0, 0.0, 10.0 + 2.5 * f64::from(k)],
+        temporal: Some(t),
+        intercept,
+        pixels: (0..rows * cols)
+            .map(|p| {
+                let physical = f64::from(phantom_value(p % cols, p / cols, k)) + 5000.0 * f64::from(t - 1);
+                (physical - intercept) as u16
+            })
+            .collect(),
+    }
+}
+
+#[test]
+fn enhanced_frames_are_placed_by_their_own_positions() {
+    // covers 20.1-a, 20.1-b, 20.1-c, 20.1-d, 20.1-e, 20.1-f
+    let dir = tempfile::tempdir().unwrap();
+    let (rows, cols) = (4u16, 6u16);
+    // 4 positions × 2 phases, stored with phase 2 first and positions
+    // running downwards; every frame has its own intercept.
+    let mut frames = Vec::new();
+    for (n, (k, t)) in (0..4u32).rev().flat_map(|k| [(k, 2), (k, 1)]).enumerate() {
+        frames.push(enhanced_frame(rows, cols, k, t, -100.0 * (n % 3) as f64));
+    }
+    write_enhanced(&dir.path().join("mr.dcm"), rows, cols, "1.2.3.20", &frames, false);
+    let l = load_single(dir.path());
+    assert_phantom(&l.volume, u32::from(rows), u32::from(cols), 4);
+    assert_eq!(l.volume.spacing(), Vec3::new(0.9, 0.7, 2.5));
+    assert_eq!(l.volume.geometry().origin, Vec3::new(0.0, 0.0, 10.0));
+    assert_eq!(l.metadata.warnings.len(), 1, "{:?}", l.metadata.warnings);
+    assert!(l.metadata.warnings[0].contains("2 images at each of its 4 slice positions"), "{:?}", l.metadata.warnings);
+}
+
+#[test]
+fn several_enhanced_files_of_a_series_are_ordered_together() {
+    // covers 20.1-b, 20.1-e
+    let dir = tempfile::tempdir().unwrap();
+    let (rows, cols) = (4u16, 6u16);
+    let frames = |ks: [u32; 2]| ks.map(|k| enhanced_frame(rows, cols, k, 1, 0.0));
+    write_enhanced(&dir.path().join("a.dcm"), rows, cols, "1.2.3.21", &frames([2, 0]), true);
+    write_enhanced(&dir.path().join("b.dcm"), rows, cols, "1.2.3.21", &frames([3, 1]), true);
+    let l = load_single(dir.path());
+    assert_phantom(&l.volume, u32::from(rows), u32::from(cols), 4);
+    assert_eq!(l.volume.spacing(), Vec3::new(0.9, 0.7, 2.5));
+    assert_eq!(l.metadata.warnings, Vec::<String>::new());
 }
 
 #[test]
@@ -219,4 +366,167 @@ fn loads_repository_sample_series() {
     // non-trivial content
     let nonzero = v.data().iter().filter(|&&x| x > 0).count();
     assert!(nonzero > v.data().len() / 10);
+}
+
+/// Writes `n` sagittal slices (rows along +y, columns along −z) at
+/// x = 10 − 2k: the normal points to −x, so slice k = 0 is the patient's
+/// leftmost. Pixel (c, r) of slice k holds `phantom_value(c, r, k)`.
+fn write_sagittal(dir: &std::path::Path, rows: u16, cols: u16, n: u32) {
+    write_series(dir, rows, cols, n, 1.0, |s| {
+        let k = (s.instance - 1) as f64;
+        s.position = [10.0 - 2.0 * k, 0.0, 0.0];
+        s.row_dir = [0.0, 1.0, 0.0];
+        s.col_dir = [0.0, 0.0, -1.0];
+    });
+}
+
+#[test]
+fn a_sagittal_series_is_stored_in_lps() {
+    // covers 2.8-a, 2.8-b, 2.8-c
+    let dir = tempfile::tempdir().unwrap();
+    let (rows, cols, n) = (4u16, 6u16, 5u32);
+    write_sagittal(dir.path(), rows, cols, n);
+    let l = load_single(dir.path());
+    let v = &l.volume;
+    // i: left → right of the screen is the patient's right → left (+x), j: +y, k: +z
+    assert_eq!(v.dims(), Dims3::new(n, u32::from(cols), u32::from(rows)));
+    assert_eq!(v.spacing(), Vec3::new(2.0, 0.6, 0.8));
+    assert_eq!(v.geometry().direction, glam::Mat3::IDENTITY);
+    for (i, j, k) in [(0, 0, 0), (n - 1, 5, 3), (2, 1, 2), (4, 0, 3)] {
+        // canonical (i, j, k) ← slice n−1−i, column j, row rows−1−k
+        let (c, r, s) = (j, u32::from(rows) - 1 - k, n - 1 - i);
+        assert_eq!(v.physical(i, j, k).unwrap(), f32::from(phantom_value(c, r, s)), "voxel {i},{j},{k}");
+        // and it sits where the file put that pixel
+        let file = Vec3::new(10.0 - 2.0 * s as f32, 0.6 * c as f32, -0.8 * r as f32);
+        let here = v.voxel_to_patient(Vec3::new(i as f32, j as f32, k as f32));
+        assert!((here - file).length() < 1e-4, "voxel {i},{j},{k}: {here} vs {file}");
+    }
+}
+
+#[test]
+fn axial_series_with_reversed_rows_or_feet_first_are_stored_in_lps() {
+    // covers 2.8-a
+    for (row, col, step) in [([-1.0, 0.0, 0.0], [0.0, 1.0, 0.0], 1.0), ([1.0, 0.0, 0.0], [0.0, -1.0, 0.0], 1.0)] {
+        let dir = tempfile::tempdir().unwrap();
+        write_series(dir.path(), 4, 6, 3, step, |s| {
+            s.row_dir = row;
+            s.col_dir = col;
+        });
+        let v = load_single(dir.path()).volume;
+        assert_eq!(v.geometry().direction, glam::Mat3::IDENTITY, "{row:?} {col:?}");
+        assert_eq!(v.dims(), Dims3::new(6, 4, 3));
+        // the stored pixel (0, 0) of the slice at z = 100 sits at its file position
+        let target = Vec3::new(0.0, 0.0, 100.0);
+        let o = (target - v.geometry().origin) / v.spacing();
+        let (i, j, k) = (o.x.round() as u32, o.y.round() as u32, o.z.round() as u32);
+        assert!((o - o.round()).abs().max_element() < 1e-4, "{o}");
+        assert_eq!(v.physical(i, j, k).unwrap(), f32::from(phantom_value(0, 0, 0)), "{row:?} {col:?}");
+    }
+}
+
+/// Writes `n` positions × `values.len()` volumes; `set` marks the volume
+/// of each slice. Volume `v` holds the phantom plus `5000 · v`.
+fn write_volumes(dir: &std::path::Path, n: u32, values: &[f64], set: impl Fn(&mut SyntheticSlice, f64)) {
+    let (rows, cols) = (4u16, 6u16);
+    for (v, &value) in values.iter().enumerate() {
+        for k in 0..n {
+            // later volumes first, with lower Instance Numbers
+            let inst = ((values.len() - 1 - v) as u32 * n + k + 1) as i32;
+            let mut s = SyntheticSlice::new(rows, cols, 100.0 + f64::from(k) * 2.0, inst);
+            set(&mut s, value);
+            s.pixels = (0..u32::from(rows) * u32::from(cols))
+                .map(|p| phantom_value(p % u32::from(cols), p / u32::from(cols), k) + 5000 * v as u16)
+                .collect();
+            s.write(&dir.join(format!("v{v}_{k}.dcm")));
+        }
+    }
+}
+
+/// Every volume of the single series of `dir`, loaded: (label, volume, warnings).
+fn load_volumes(dir: &std::path::Path) -> Vec<(ferrum_domain::SeriesDescriptor, ferrum_domain::LoadedSeries)> {
+    let repo = DicomRepository;
+    let series = repo.scan(&[dir.to_path_buf()], &NoProgress).unwrap();
+    assert_eq!(series.len(), 1, "the volumes are one series");
+    repo.volumes(&series[0], &NoProgress)
+        .unwrap()
+        .into_iter()
+        .map(|d| {
+            let l = repo.load(&d, &NoProgress).unwrap();
+            (d, l)
+        })
+        .collect()
+}
+
+fn assert_volume(v: &ferrum_domain::Volume, n: u32, offset: f32) {
+    assert_eq!(v.dims(), Dims3::new(6, 4, n));
+    for &(i, j, k) in &[(0, 0, 0), (5, 3, n - 1), (2, 1, 1)] {
+        let expected = f32::from(phantom_value(i, j, k)) + offset;
+        assert_eq!(v.physical(i, j, k).unwrap(), expected, "voxel {i},{j},{k}");
+    }
+}
+
+#[test]
+fn each_echo_loads_as_its_own_volume() {
+    // covers 20.4-a, 20.4-d
+    let dir = tempfile::tempdir().unwrap();
+    write_volumes(dir.path(), 3, &[1.0, 2.0], |s, v| s.echo = Some(v as i32));
+    let vols = load_volumes(dir.path());
+    assert_eq!(vols.len(), 2);
+    for (v, (d, l)) in vols.iter().enumerate() {
+        let info = d.volume.as_ref().unwrap();
+        assert_eq!((info.index, info.count, info.label.as_str()), (v as u32, 2, ["echo 1", "echo 2"][v]));
+        assert_eq!(info.echo_number, Some(v as i64 + 1));
+        assert!(info.complete);
+        assert_eq!(d.sources.len(), 3, "a volume holds only its own files");
+        assert_eq!(d.dims, Dims3::new(6, 4, 3));
+        assert_volume(&l.volume, 3, 5000.0 * v as f32);
+        assert_eq!(l.metadata.warnings, Vec::<String>::new(), "one volume, nothing hidden");
+        assert!(l.metadata.attributes.iter().any(|(k, val)| k == "Volume" && val.starts_with(&info.label)));
+    }
+    assert_ne!(vols[0].0.id, vols[1].0.id);
+    // the series itself still loads as before: volume 1, with the 2.7 warning
+    let repo = DicomRepository;
+    let whole = repo.load(&repo.scan(&[dir.path().to_path_buf()], &NoProgress).unwrap()[0], &NoProgress).unwrap();
+    assert_volume(&whole.volume, 3, 0.0);
+    assert!(whole.metadata.warnings[0].contains("one volume of 2 is shown"));
+}
+
+#[test]
+fn dynamic_pet_frames_load_by_frame_time() {
+    // covers 20.4-b, 20.4-d
+    let dir = tempfile::tempdir().unwrap();
+    write_volumes(dir.path(), 3, &[0.0, 30000.0, 90000.0], |s, t| s.frame_time = Some(t));
+    let vols = load_volumes(dir.path());
+    let names: Vec<_> = vols.iter().map(|(d, _)| d.volume.as_ref().unwrap().label.clone()).collect();
+    assert_eq!(names, vec!["frame 1/3, t = 0 s", "frame 2/3, t = 30 s", "frame 3/3, t = 90 s"]);
+    assert_eq!(vols[2].0.volume.as_ref().unwrap().frame_time_s, Some(90.0));
+    for (v, (_, l)) in vols.iter().enumerate() {
+        assert_volume(&l.volume, 3, 5000.0 * v as f32);
+    }
+}
+
+#[test]
+fn phases_of_an_enhanced_file_load_as_volumes() {
+    // covers 20.4-a, 20.4-d
+    let dir = tempfile::tempdir().unwrap();
+    let (rows, cols) = (4u16, 6u16);
+    let frames: Vec<EnhancedFrame> =
+        (0..4u32).rev().flat_map(|k| [(k, 2), (k, 1)]).map(|(k, t)| enhanced_frame(rows, cols, k, t, 0.0)).collect();
+    write_enhanced(&dir.path().join("mr.dcm"), rows, cols, "1.2.3.22", &frames, false);
+    let vols = load_volumes(dir.path());
+    let names: Vec<_> = vols.iter().map(|(d, _)| d.volume.as_ref().unwrap().label.clone()).collect();
+    assert_eq!(names, vec!["phase 1/2", "phase 2/2"]);
+    for (t, (d, l)) in vols.iter().enumerate() {
+        assert_eq!(d.sources.len(), 1);
+        assert_phantom_offset(&l.volume, 4, 5000.0 * t as f32);
+        assert_eq!(l.metadata.warnings, Vec::<String>::new());
+        assert_eq!(l.volume.geometry().origin, Vec3::new(0.0, 0.0, 10.0));
+    }
+}
+
+fn assert_phantom_offset(v: &ferrum_domain::Volume, n: u32, offset: f32) {
+    assert_eq!(v.dims(), Dims3::new(6, 4, n));
+    for &(i, j, k) in &[(0, 0, 0), (5, 0, 0), (0, 3, 1), (2, 3, n - 1)] {
+        assert_eq!(v.physical(i, j, k).unwrap(), f32::from(phantom_value(i, j, k)) + offset, "voxel {i},{j},{k}");
+    }
 }

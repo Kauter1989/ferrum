@@ -418,7 +418,8 @@ fn engines_are_listed_and_grouped() {
     let f = Fixture::new();
     let agent = f.configured(|c| {
         c.engines.push("http://127.0.0.1:9".into());
-        c.gpu_groups = vec![(format!("seg-{}", std::process::id()), vec![f.url.clone()])];
+        c.gpu.groups = vec![(format!("seg-{}", std::process::id()), vec![f.url.clone()])];
+        c.gpu.lock_dir = Some(f.dir.path().join("gpu"));
     });
     let list = ok(&agent, "engine list", json!({}));
     let engines = list["data"]["engines"].as_array().unwrap();

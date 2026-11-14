@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use ferrum_domain::{
     Dims3, Geometry, IntensityRange, LabelMap, LoadedSeries, ProgressSink, RepositoryError, SeriesDescriptor,
-    SeriesMetadata, Volume, VolumeRepository,
+    SeriesMetadata, Volume, VolumeInfo, VolumeRepository,
 };
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
@@ -43,6 +43,9 @@ pub struct NiftiHeader {
     /// RAS world position of the centre of voxel `(0, 0, 0)`; zero when the
     /// file has no orientation.
     pub origin: Vec3,
+    /// Number of 3D volumes in the file (`dim[4] × … × dim[7]`); only the
+    /// first is read.
+    pub volumes: u64,
 }
 
 /// RAS ↔ LPS (the conversion is its own inverse).
@@ -244,6 +247,7 @@ impl NiftiHeader {
             description: String::from_utf8_lossy(&desc_bytes[..end]).into_owned(),
             axes,
             origin: if origin.is_finite() { origin } else { Vec3::ZERO },
+            volumes: (4..=7).map(|i| u64::from(d(i))).product(),
         })
     }
 
@@ -260,17 +264,20 @@ impl NiftiHeader {
 
 /// Reads the header and every voxel of the first 3D volume as physical
 /// values (scaling applied), in stored order.
-fn read_values(path: &Path) -> Result<(Vec<f32>, NiftiHeader), IoError> {
+fn read_values(path: &Path, volume: u64) -> Result<(Vec<f32>, NiftiHeader), IoError> {
     let bytes = read_all(path)?;
     let h = NiftiHeader::parse(&bytes, path)?;
     let bpv =
         h.bytes_per_voxel().ok_or_else(|| IoError::decode(path, format!("unsupported datatype {}", h.datatype)))?;
-    let n = h.dims.voxel_count();
-    let end = h.vox_offset + n * bpv;
-    if bytes.len() < end {
-        return Err(IoError::invalid(path, "voxel data truncated"));
+    if volume >= h.volumes {
+        return Err(IoError::invalid(path, format!("no volume {} in a file of {}", volume + 1, h.volumes)));
     }
-    let raw = &bytes[h.vox_offset..end];
+    let n = h.dims.voxel_count();
+    // checked: the offset and the dims come from the file
+    let size = n.checked_mul(bpv);
+    let start = size.and_then(|s| usize::try_from(volume).ok()?.checked_mul(s)?.checked_add(h.vox_offset));
+    let range = start.zip(size).and_then(|(a, s)| Some(a..a.checked_add(s)?)).filter(|r| r.end <= bytes.len());
+    let raw = range.map(|r| &bytes[r]).ok_or_else(|| IoError::invalid(path, "voxel data truncated"))?;
     let (le, dt) = (h.little_endian, h.datatype);
     let slope = if h.scl_slope == 0.0 || !h.scl_slope.is_finite() { 1.0 } else { h.scl_slope };
     let inter = if h.scl_inter.is_finite() { h.scl_inter } else { 0.0 };
@@ -317,7 +324,13 @@ fn canonical_geometry(h: &NiftiHeader, r: &Reorientation) -> Geometry {
 /// Reads a NIfTI-1 file into a volume (first 3D volume if 4D), reoriented
 /// into the canonical LPS frame when the header carries an orientation.
 pub fn read_nifti(path: &Path) -> Result<(Volume, NiftiHeader), IoError> {
-    let (values, h) = read_values(path)?;
+    read_nifti_volume(path, 0)
+}
+
+/// Reads volume `volume` (0-based) of a NIfTI-1 file, decoding only its
+/// voxels, reoriented like [`read_nifti`].
+pub fn read_nifti_volume(path: &Path, volume: u64) -> Result<(Volume, NiftiHeader), IoError> {
+    let (values, h) = read_values(path, volume)?;
     let orientation = h.axes.map(Reorientation::from_ras_axes).unwrap_or(Reorientation::IDENTITY);
     let (values, dims, spacing) = orientation.apply(&values, h.dims, h.spacing);
     let geometry = canonical_geometry(&h, &orientation);
@@ -328,7 +341,7 @@ pub fn read_nifti(path: &Path) -> Result<(Volume, NiftiHeader), IoError> {
 /// `volume` (axis permutation and flips only). Fails if the values are not
 /// integers in `0..=255` or the grids differ in size.
 pub fn read_label_nifti(path: &Path, volume: &Volume) -> Result<LabelMap, IoError> {
-    let (values, h) = read_values(path)?;
+    let (values, h) = read_values(path, 0)?;
     if let Some(v) = values.iter().find(|v| !(v.fract() == 0.0 && (0.0..=255.0).contains(*v))) {
         return Err(IoError::invalid(path, format!("label value {v} is not an integer in 0..=255")));
     }
@@ -363,7 +376,9 @@ fn volume_from_physical_par(dims: Dims3, spacing: Vec3, values: &[f32]) -> Resul
         .fold(|| (f32::INFINITY, f32::NEG_INFINITY), |(a, b), &v| (a.min(v), b.max(v)))
         .reduce(|| (f32::INFINITY, f32::NEG_INFINITY), |(a, b), (c, d)| (a.min(c), b.max(d)));
     let (min, max) = if min.is_finite() { (min, max) } else { (0.0, 1.0) };
-    let range = IntensityRange::new(min, max)?;
+    let range = IntensityRange::for_data(min, max, |min, step| {
+        values.par_iter().all(|v| IntensityRange::is_on_grid(*v, min, step))
+    })?;
     let data = values.par_iter().map(|&v| range.to_storage(v)).collect();
     Ok(Volume::new(dims, spacing, range, data)?)
 }
@@ -471,21 +486,14 @@ impl VolumeRepository for NiftiRepository {
     }
 
     fn scan(&self, paths: &[PathBuf], progress: &dyn ProgressSink) -> Result<Vec<SeriesDescriptor>, RepositoryError> {
-        let files: Vec<PathBuf> = collect_files(paths).into_iter().filter(|f| detect(f) == FileKind::Nifti).collect();
+        let files: Vec<PathBuf> = collect_files(paths)?.into_iter().filter(|f| detect(f) == FileKind::Nifti).collect();
         let total = files.len().max(1);
         let out: Vec<SeriesDescriptor> = files
             .iter()
             .enumerate()
             .filter_map(|(i, f)| {
                 progress.report((i + 1) as f32 / total as f32, "Reading NIfTI headers");
-                let mut head = vec![0u8; HEADER_SIZE];
-                let ok = if f.to_string_lossy().to_ascii_lowercase().ends_with(".gz") {
-                    File::open(f).ok().and_then(|x| GzDecoder::new(x).read_exact(&mut head).ok())
-                } else {
-                    File::open(f).ok().and_then(|mut x| x.read_exact(&mut head).ok())
-                };
-                ok?;
-                let h = NiftiHeader::parse(&head, f).ok()?;
+                let h = read_header(f)?;
                 let name = f.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                 Some(SeriesDescriptor {
                     id: f.to_string_lossy().into_owned(),
@@ -494,6 +502,7 @@ impl VolumeRepository for NiftiRepository {
                     modality: String::new(),
                     dims: h.dims,
                     sources: vec![f.clone()],
+                    volume: None,
                 })
             })
             .collect();
@@ -504,16 +513,51 @@ impl VolumeRepository for NiftiRepository {
         }
     }
 
+    fn volumes(
+        &self,
+        series: &SeriesDescriptor,
+        _progress: &dyn ProgressSink,
+    ) -> Result<Vec<SeriesDescriptor>, RepositoryError> {
+        let path = series.sources.first().ok_or(RepositoryError::NothingFound)?;
+        let h = read_header(path).ok_or(RepositoryError::NothingFound)?;
+        if series.volume.is_some() || h.volumes <= 1 {
+            return Ok(vec![series.clone()]);
+        }
+        let count = u32::try_from(h.volumes).unwrap_or(u32::MAX);
+        let names = sidecar_names(path, count);
+        Ok((0..count)
+            .map(|k| {
+                let mut info = names[k as usize].clone();
+                info.group = series.id.clone();
+                info.index = k;
+                info.count = count;
+                info.complete = true;
+                SeriesDescriptor {
+                    id: format!("{}{}n{}", series.id, crate::dicom::VOLUME_SEPARATOR, k + 1),
+                    description: format!("{} — {}", info.label, series.description),
+                    volume: Some(info),
+                    ..series.clone()
+                }
+            })
+            .collect())
+    }
+
     fn load(&self, series: &SeriesDescriptor, progress: &dyn ProgressSink) -> Result<LoadedSeries, RepositoryError> {
         let path = series.sources.first().ok_or(RepositoryError::NothingFound)?;
         progress.report(0.1, "Reading NIfTI");
-        let (volume, h) = read_nifti(path)?;
+        let index = series.volume.as_ref().map_or(0, |v| u64::from(v.index));
+        let (volume, h) = read_nifti_volume(path, index)?;
         progress.report(1.0, "Volume loaded");
-        let attributes = vec![
+        // a chosen volume hides nothing
+        let warnings = if series.volume.is_some() { Vec::new() } else { load_warnings(&h) };
+        let mut attributes = vec![
             ("Format".into(), "NIfTI-1".into()),
             ("Datatype".into(), h.datatype.to_string()),
             ("Description".into(), h.description.clone()),
         ];
+        if let Some(v) = &series.volume {
+            attributes.push(("Volume".into(), format!("{} ({} of {})", v.label, v.index + 1, v.count)));
+        }
         Ok(LoadedSeries {
             volume,
             metadata: SeriesMetadata {
@@ -524,8 +568,72 @@ impl VolumeRepository for NiftiRepository {
                 attributes,
                 study: ferrum_domain::StudyInfo::default(),
                 source: path.clone(),
+                warnings,
             },
         })
+    }
+}
+
+/// The header of a NIfTI file (gzip or not), reading only its first bytes.
+fn read_header(f: &Path) -> Option<NiftiHeader> {
+    let mut head = vec![0u8; HEADER_SIZE];
+    if f.to_string_lossy().to_ascii_lowercase().ends_with(".gz") {
+        File::open(f).ok().and_then(|x| GzDecoder::new(x).read_exact(&mut head).ok())?;
+    } else {
+        File::open(f).ok().and_then(|mut x| x.read_exact(&mut head).ok())?;
+    }
+    NiftiHeader::parse(&head, f).ok()
+}
+
+/// The path of a BIDS sidecar of the NIfTI file `f` (`.bval`, `.json`).
+fn sidecar(f: &Path, ext: &str) -> PathBuf {
+    let name = f.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let base = name.strip_suffix(".gz").unwrap_or(&name);
+    let base = base.strip_suffix(".nii").unwrap_or(base);
+    f.with_file_name(format!("{base}.{ext}"))
+}
+
+/// Names of the `count` volumes of `f`: from a BIDS `.bval` (b-values) or
+/// a `.json` with `FrameTimesStart` (PET frames), else `volume k/N`.
+fn sidecar_names(f: &Path, count: u32) -> Vec<VolumeInfo> {
+    let n = count as usize;
+    let bvals: Option<Vec<f64>> = std::fs::read_to_string(sidecar(f, "bval"))
+        .ok()
+        .map(|t| t.split_whitespace().filter_map(|v| v.parse().ok()).collect())
+        .filter(|v: &Vec<f64>| v.len() == n);
+    let frames: Option<Vec<f64>> = std::fs::read_to_string(sidecar(f, "json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|j| j["FrameTimesStart"].as_array().map(|a| a.iter().filter_map(|v| v.as_f64()).collect()))
+        .filter(|v: &Vec<f64>| v.len() == n);
+    (0..n)
+        .map(|k| match (&bvals, &frames) {
+            (Some(b), _) => {
+                // repeated b-values (diffusion directions) are numbered
+                let same = b.iter().filter(|x| **x == b[k]).count();
+                let nth = b[..=k].iter().filter(|x| **x == b[k]).count();
+                let label = if same > 1 { format!("b = {}, {nth}/{same}", b[k]) } else { format!("b = {}", b[k]) };
+                VolumeInfo { label, b_value: Some(b[k]), ..VolumeInfo::default() }
+            }
+            (None, Some(t)) => VolumeInfo {
+                label: format!("frame {}/{n}, t = {} s", k + 1, t[k]),
+                frame_time_s: Some(t[k]),
+                ..VolumeInfo::default()
+            },
+            (None, None) => VolumeInfo { label: format!("volume {}/{n}", k + 1), ..VolumeInfo::default() },
+        })
+        .collect()
+}
+
+/// What the reader could not show as stored.
+fn load_warnings(h: &NiftiHeader) -> Vec<String> {
+    if h.volumes > 1 {
+        vec![format!(
+            "the file holds {} volumes (4D: time points, b-values, echoes or channels); volume 1 of {} is shown",
+            h.volumes, h.volumes
+        )]
+    } else {
+        Vec::new()
     }
 }
 
@@ -538,6 +646,27 @@ mod tests {
         let dims = Dims3::new(5, 4, 3);
         let vals: Vec<f32> = (0..dims.voxel_count()).map(|i| i as f32 * 10.0 - 200.0).collect();
         Volume::from_physical(dims, Vec3::new(0.5, 0.75, 2.0), &vals).unwrap()
+    }
+
+    // covers 18.13-a
+    #[test]
+    fn a_ct_in_whole_hounsfield_units_is_read_back_exactly() {
+        let dims = Dims3::new(12, 10, 8);
+        // -1000 for air, tissue around 40 with whole-unit noise, and one 1500 HU voxel
+        let mut vals: Vec<f32> = (0..dims.voxel_count()).map(|i| (40 + (i * 37 % 91) as i32 - 45) as f32).collect();
+        vals[0] = -1000.0;
+        vals[5] = 1500.0;
+        let v = Volume::from_physical(dims, Vec3::new(0.8, 0.8, 2.5), &vals).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["ct.nii", "ct.nii.gz"] {
+            let p = dir.path().join(name);
+            write_nifti(&v, &p).unwrap();
+            let (back, _) = read_nifti(&p).unwrap();
+            for (idx, expected) in vals.iter().enumerate() {
+                let (i, j, k) = ((idx % 12) as u32, ((idx / 12) % 10) as u32, (idx / 120) as u32);
+                assert_eq!(back.physical(i, j, k), Some(*expected), "{name} voxel {idx}");
+            }
+        }
     }
 
     #[test]
@@ -569,6 +698,111 @@ mod tests {
         assert_eq!(s[0].dims, Dims3::new(5, 4, 3));
         let l = repo.load(&s[0], &NoProgress).unwrap();
         assert_eq!(l.volume.dims(), Dims3::new(5, 4, 3));
+        assert!(l.metadata.warnings.is_empty(), "a 3D file loads without warnings");
+    }
+
+    /// A 4D file of two volumes: [`sample_volume`] and the same values in
+    /// reverse order (same range, so the same scaling), at `path`.
+    fn two_volumes(path: &Path) -> (Volume, Volume) {
+        let a = sample_volume();
+        let mut vals: Vec<f32> = (0..a.dims().voxel_count()).map(|i| i as f32 * 10.0 - 200.0).collect();
+        vals.reverse();
+        let b = Volume::from_physical(a.dims(), a.spacing(), &vals).unwrap();
+        let tmp = path.with_extension("b.nii");
+        write_nifti(&a, path).unwrap();
+        write_nifti(&b, &tmp).unwrap();
+        let mut bytes = std::fs::read(path).unwrap();
+        let other = std::fs::read(&tmp).unwrap();
+        std::fs::remove_file(&tmp).unwrap();
+        assert_eq!(bytes[..HEADER_SIZE], other[..HEADER_SIZE], "same header, same scaling");
+        let h = NiftiHeader::parse(&bytes, path).unwrap();
+        bytes[40..42].copy_from_slice(&4i16.to_le_bytes());
+        bytes[48..50].copy_from_slice(&2i16.to_le_bytes());
+        bytes.extend_from_slice(&other[h.vox_offset..]);
+        std::fs::write(path, &bytes).unwrap();
+        (a, b)
+    }
+
+    fn volumes_of(path: &Path) -> Vec<SeriesDescriptor> {
+        let repo = NiftiRepository;
+        let s = repo.scan(&[path.to_path_buf()], &NoProgress).unwrap();
+        repo.volumes(&s[0], &NoProgress).unwrap()
+    }
+
+    #[test]
+    fn each_volume_of_a_4d_file_loads_on_its_own() {
+        // covers 20.4-c, 20.4-d
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dwi.nii");
+        let (a, b) = two_volumes(&path);
+        let vols = volumes_of(&path);
+        let names: Vec<_> = vols.iter().map(|d| d.volume.as_ref().unwrap().label.clone()).collect();
+        assert_eq!(names, vec!["volume 1/2", "volume 2/2"]);
+        assert_ne!(vols[0].id, vols[1].id);
+        for (d, expected) in vols.iter().zip([&a, &b]) {
+            let l = NiftiRepository.load(d, &NoProgress).unwrap();
+            for (i, j, k) in [(0, 0, 0), (4, 3, 2), (1, 2, 1)] {
+                assert_eq!(l.volume.physical(i, j, k), expected.physical(i, j, k), "{} voxel {i},{j},{k}", d.id);
+            }
+            assert!(l.metadata.warnings.is_empty(), "{:?}", l.metadata.warnings);
+        }
+        // a 3D file is one volume
+        let flat = dir.path().join("t1.nii");
+        write_nifti(&a, &flat).unwrap();
+        assert_eq!(volumes_of(&flat).len(), 1);
+        assert!(volumes_of(&flat)[0].volume.is_none());
+    }
+
+    #[test]
+    fn bids_sidecars_name_the_volumes() {
+        // covers 20.4-c
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sub-01_dwi.nii");
+        two_volumes(&path);
+        std::fs::write(dir.path().join("sub-01_dwi.bval"), "0 1000\n").unwrap();
+        let v = volumes_of(&path);
+        let info = v[1].volume.as_ref().unwrap();
+        assert_eq!((v[0].volume.as_ref().unwrap().label.as_str(), info.label.as_str()), ("b = 0", "b = 1000"));
+        assert_eq!(info.b_value, Some(1000.0));
+        // repeated b-values are numbered (diffusion directions)
+        std::fs::write(dir.path().join("sub-01_dwi.bval"), "1000 1000\n").unwrap();
+        let v = volumes_of(&path);
+        assert_eq!(v[1].volume.as_ref().unwrap().label, "b = 1000, 2/2");
+        // a PET sidecar with frame starts, and a .bval of the wrong length is ignored
+        let pet = dir.path().join("sub-01_pet.nii");
+        two_volumes(&pet);
+        std::fs::write(dir.path().join("sub-01_pet.json"), r#"{"FrameTimesStart": [0, 30], "Units": "Bq/mL"}"#)
+            .unwrap();
+        std::fs::write(dir.path().join("sub-01_pet.bval"), "0 1000 2000").unwrap();
+        let v = volumes_of(&pet);
+        assert_eq!(v[1].volume.as_ref().unwrap().label, "frame 2/2, t = 30 s");
+        assert_eq!(v[1].volume.as_ref().unwrap().frame_time_s, Some(30.0));
+    }
+
+    #[test]
+    fn a_4d_file_shows_its_first_volume_and_says_so() {
+        // covers 2.7-e
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dwi.nii");
+        write_nifti(&sample_volume(), &path).unwrap();
+        // Turn it into 4D with 3 volumes: dim[0] = 4, dim[4] = 3, the
+        // first volume's voxels stored three times.
+        let mut bytes = std::fs::read(&path).unwrap();
+        let h = NiftiHeader::parse(&bytes, &path).unwrap();
+        bytes[40..42].copy_from_slice(&4i16.to_le_bytes());
+        bytes[48..50].copy_from_slice(&3i16.to_le_bytes());
+        let body = bytes[h.vox_offset..].to_vec();
+        bytes.extend_from_slice(&body);
+        bytes.extend_from_slice(&body);
+        std::fs::write(&path, &bytes).unwrap();
+        let repo = NiftiRepository;
+        let s = repo.scan(&[path], &NoProgress).unwrap();
+        let l = repo.load(&s[0], &NoProgress).unwrap();
+        assert_eq!(l.volume.dims(), Dims3::new(5, 4, 3));
+        assert_eq!(l.volume.physical(1, 0, 0), sample_volume().physical(1, 0, 0));
+        assert_eq!(l.metadata.warnings.len(), 1, "{:?}", l.metadata.warnings);
+        assert!(l.metadata.warnings[0].contains("holds 3 volumes"), "{:?}", l.metadata.warnings);
+        assert!(l.metadata.warnings[0].contains("volume 1 of 3 is shown"), "{:?}", l.metadata.warnings);
     }
 
     #[test]

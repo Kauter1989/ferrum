@@ -25,6 +25,7 @@ pub mod engine;
 pub mod geometry;
 pub mod mask;
 pub mod provenance;
+pub mod region;
 pub mod render_settings;
 pub mod report;
 pub mod repository;
@@ -41,17 +42,18 @@ pub use camera::{OrbitCamera, ViewPreset};
 pub use clip::{ClipBox, ClipPlane, ClipSettings};
 pub use color::{Rgb, Rgba8};
 pub use engine::{
-    EngineCapabilities, EngineError, EngineInfo, EngineLabel, InteractiveSession, JobState, JobStatus, Prompt,
-    PromptKind, PromptResult, SegmentationEngine, ENGINE_PROTOCOL,
+    EngineCapabilities, EngineError, EngineInfo, EngineLabel, EngineObserver, InteractiveSession, JobState, JobStatus,
+    Prompt, PromptKind, PromptResult, SegmentationEngine, ENGINE_PROTOCOL,
 };
 pub use geometry::{Aabb, Dims3, Ray};
 pub use mask::{EraseStroke, EraserBrush, MaskHistory, VoxelMask};
 pub use provenance::{Author, Provenance, ReviewStatus, Timestamp};
+pub use region::{grow_region_robust, RegionError, RegionParams};
 pub use render_settings::{RenderMode, RenderSettings, TissueThresholds};
 pub use report::{AnnotationRecord, AnnotationReport};
 pub use repository::{
-    CancelFlag, LoadedSeries, NoProgress, ProgressSink, RepositoryError, SeriesDescriptor, SeriesMetadata, StudyInfo,
-    VolumeRepository,
+    parse_modality, CancelFlag, LoadedSeries, NoProgress, ProgressSink, RepositoryError, SeriesDescriptor,
+    SeriesMetadata, StudyInfo, VolumeInfo, VolumeRepository,
 };
 pub use review::{ResultStore, ReviewDecision, ReviewItem};
 pub use segmentation::{
@@ -60,4 +62,7 @@ pub use segmentation::{
 pub use slice::{SliceAxis, SliceImage, SliceView};
 pub use transfer::{ControlPoint, CtPreset, TransferFunction, TransferFunctionError};
 pub use volume::{Geometry, IntensityRange, Volume, VolumeError};
-pub use window::{WindowLevel, WindowPreset};
+pub use window::{
+    histogram_percentile, storage_bin, storage_histogram, WindowLevel, WindowPreset, AUTO_WINDOW_BINS,
+    AUTO_WINDOW_HIGH, AUTO_WINDOW_LOW,
+};

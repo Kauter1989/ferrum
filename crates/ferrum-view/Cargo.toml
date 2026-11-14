@@ -1,0 +1,31 @@
+[package]
+name = "ferrum-view"
+description = "Local view host (ferrum-view/1): keeps a Viewer alive, renders slices on the GPU or the CPU reference and serves them over loopback to a harness."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+ferrum-app.workspace = true
+ferrum-domain.workspace = true
+ferrum-io.workspace = true
+ferrum-render = { workspace = true, features = ["gpu"] }
+glam.workspace = true
+image.workspace = true
+log.workspace = true
+pollster.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tiny_http.workspace = true
+wgpu.workspace = true
+getrandom.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+ureq.workspace = true
+
+[lints]
+workspace = true

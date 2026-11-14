@@ -30,6 +30,23 @@ fn main() -> ExitCode {
         },
         None => AgentConfig::default(),
     };
+    if let cli::Command::Gpu(cli::Gpu::Hold { group, lease_mib, name, timeout_s, command }) = cli.command {
+        let timeout = std::time::Duration::from_secs(timeout_s.unwrap_or(config.engine_job_timeout_s));
+        let h = ferrum_agent::gpu::Hold { group, lease_mib, name, timeout, command };
+        return gpu_hold(&config, &h);
+    }
+    if let cli::Command::View(cli::View::Serve { ws, port, cpu }) = cli.command {
+        // Resolve like the agent commands do: relative workspaces live below
+        // the operator's workspace_root, and a workspace outside it is refused.
+        let workspace = match config.resolve_workspace(std::path::Path::new(&ws.workspace)) {
+            Ok(path) => path,
+            Err(e) => {
+                println!("{}", ferrum_agent::envelope::error_envelope(&e));
+                return ExitCode::from(1);
+            }
+        };
+        return view_serve(&workspace, port, cpu);
+    }
     let (command, params) = match cli.command.to_call() {
         Ok(call) => call,
         Err(message) => {
@@ -72,6 +89,55 @@ fn main() -> ExitCode {
         ExitCode::SUCCESS
     } else {
         ExitCode::from(1)
+    }
+}
+
+/// `view serve`: prints one JSON line (`url`, `token`, `workspace`,
+/// `backend`) and serves the workspace until Ctrl-C. CLI only, never an MCP
+/// tool (like `gpu hold`).
+fn view_serve(workspace: &std::path::Path, port: u16, cpu: bool) -> ExitCode {
+    use ferrum_view::{BackendPreference, ServeOptions, Session, ViewServer};
+    let preference = if cpu { BackendPreference::Cpu } else { BackendPreference::Auto };
+    let session = match Session::open(workspace, preference) {
+        Ok(session) => session,
+        Err(e) => {
+            eprintln!("ferrum-cli view serve: {e}");
+            return ExitCode::from(1);
+        }
+    };
+    let mut server = match ViewServer::start(session, ServeOptions { port }) {
+        Ok(server) => server,
+        Err(e) => {
+            eprintln!("ferrum-cli view serve: {e}");
+            return ExitCode::from(1);
+        }
+    };
+    println!(
+        "{}",
+        json!({
+            "url": server.url(),
+            "token": server.token(),
+            "workspace": server.workspace(),
+            "backend": server.backend(),
+        })
+    );
+    if std::io::Write::flush(&mut std::io::stdout()).is_err() {
+        eprintln!("ferrum-cli view serve: cannot write to stdout");
+        return ExitCode::from(1);
+    }
+    server.wait();
+    ExitCode::SUCCESS
+}
+
+/// `gpu hold`: notes go to stderr, so the command's own output stays as it
+/// is; exits with the command's exit code, or 1 with an error envelope.
+fn gpu_hold(config: &AgentConfig, h: &ferrum_agent::gpu::Hold) -> ExitCode {
+    match ferrum_agent::gpu::hold(config, h, &mut |n| eprintln!("ferrum-cli gpu hold: {n}")) {
+        Ok(code) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
+        Err(e) => {
+            println!("{}", ferrum_agent::envelope::error_envelope(&e));
+            ExitCode::from(1)
+        }
     }
 }
 

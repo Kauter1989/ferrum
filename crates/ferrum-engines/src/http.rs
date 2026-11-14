@@ -156,6 +156,16 @@ impl SegmentationEngine for HttpEngine {
         wire::info_from_json(&client.get_json("/info")?)
     }
 
+    fn unload(&self) -> Result<(), EngineError> {
+        let client = Client { config: self.config.clone() };
+        match client.post_empty("/unload") {
+            Ok(_) => Ok(()),
+            // an engine without the endpoint (protocol v1 before Stage 23)
+            Err(EngineError::NotFound) => Err(EngineError::Unsupported("unload".into())),
+            Err(e) => Err(e),
+        }
+    }
+
     fn open_session(&self, volume: &Volume, modality: &str) -> Result<Box<dyn InteractiveSession>, EngineError> {
         let client = Client { config: self.config.clone() };
         let (header, bytes) = wire::encode_volume(volume, modality);

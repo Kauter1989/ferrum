@@ -10,6 +10,7 @@ authors.workspace = true
 [dependencies]
 ferrum-domain.workspace = true
 ferrum-processing.workspace = true
+ferrum-radiomics.workspace = true
 ferrum-render.workspace = true
 glam.workspace = true
 log.workspace = true

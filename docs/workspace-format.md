@@ -62,7 +62,7 @@ Written by *Export annotations* and into workspaces. Version 2 adds
 {
   "format": "ferrum-annotations",
   "version": 2,
-  "generator": "FERRUM 0.3.0",
+  "generator": "FERRUM 0.4.0",
   "source": { "name": "lung_053", "path": "/data/lung_053" },
   "study": { "study_instance_uid": "…", "series_instance_uid": "…", "modality": "CT", "…": "…" },
   "volume": { "dims": [512, 512, 252], "spacing_mm": [0.78, 0.78, 1.25], "frame": "LPS voxel grid: …" },
@@ -102,7 +102,7 @@ what NIfTI cannot hold.
 {
   "format": "ferrum-segments",
   "version": 1,
-  "generator": "FERRUM 0.3.0",
+  "generator": "FERRUM 0.4.0",
   "segments": [
     { "label": 1, "name": "liver", "color": [230, 85, 75], "visible": true, "opacity": 0.5,
       "voxels": 18234, "volume_ml": 412.7, "provenance": { "…": "…" } }
@@ -141,7 +141,7 @@ ws/ct1/
 {
   "format": "ferrum-workspace",
   "version": 1,
-  "generator": "FERRUM 0.3.0",
+  "generator": "FERRUM 0.4.0",
   "created": "2026-10-01T12:00:00Z",
   "source": {
     "path": "/data/incoming/series-17",
@@ -152,9 +152,20 @@ ws/ct1/
 }
 ```
 
+**Volume (version 2):** for a series of several volumes (echoes, b-values,
+phases, PET frames; [design](multi-volume.md)), `source.series_id` names
+the series and `source.volume` the open volume (`<series id>#v=<key>`).
+Such a manifest is written as version 2; one without `source.volume` stays
+version 1, and a version 1 manifest of a multi-volume series opens volume
+1. Opening another volume of the series switches `source.volume`;
+annotations and segments stay, because the volumes share the grid.
+Readers that know only version 1 refuse version 2 rather than open the wrong volume.
+
 **Modality:** the manifest may hold `"modality": "CT"`: the modality
 declared for a source that carries none (NIfTI) by `study open
---modality`. A DICOM series keeps its own.
+--modality`, or by the person in the desktop app's *Image type* dialog,
+which writes it here and reads it when it opens the workspace. A DICOM
+series keeps its own.
 
 **Sources:**
 - Source files are referenced and hashed (SHA-256), never copied or
@@ -176,7 +187,7 @@ can refine the object later by replaying them
 ([agent-segmentation.md](agent-segmentation.md)).
 
 ```json
-{ "format": "ferrum-engine-inputs", "version": 1, "generator": "FERRUM 0.3.0",
+{ "format": "ferrum-engine-inputs", "version": 1, "generator": "FERRUM 0.4.0",
   "objects": [ { "label": 7, "created": "2026-10-03T10:00:00Z",
                  "engine": "http://127.0.0.1:8765", "engine_name": "nnInteractive", "engine_version": "2.6.0 (nnInteractive_v1.0)",
                  "roi": { "min": [180, 140, 60], "max": [330, 290, 120] }, "revision": 2, "seeds": 0,
@@ -199,6 +210,69 @@ can refine the object later by replaying them
   when missing.
 - The agent interface writes one line per command (command, parameters,
   outputs, hashes). Review decisions are logged there too.
+- A decision a host recorded through `ferrum_agent::decisions` (16.7) has
+  `"source": "host"`; `params` holds the item (`segment` or `annotation`),
+  `by` (the name the host gave), `revision` (the item's revision when it
+  was shown) and `shown_sha256` (the host's hash of what it showed). Like
+  an agent command's entry, it has `source_sha256` and, for a multi-volume
+  series, `volume` (`{"series", "label"}`) at the top level. The entry is
+  written before the decision; if writing the decision then fails, a
+  second entry with `"ok": false` follows. `.decisions.lock` in the
+  workspace serialises decisions of several hosts.
+
+  ```json
+  {"time":"…","command":"review confirm","source":"host","params":{"segment":3,"by":"Dr. K. Example","revision":"9a…","shown_sha256":"5f…"},"ok":true,"source_sha256":"c1…"}
+  ```
+
+**Change notifications (16.8):** `ferrum_io::workspace::changes` tells
+the agent, the viewer and a host's panels what changed in a workspace.
+Changes are computed by comparing the files with the state read before,
+so they are the same whichever process wrote them:
+- `subscribe(root)` returns a `Subscription`. Every save through
+  `Workspace` in this process sends its changes before the save returns,
+  together with what other processes changed since the last save. The
+  workspace need not exist yet. Dropping the subscription unsubscribes.
+  The channel is unbounded, so the host drains it.
+- `WorkspaceWatcher::poll()` finds changes made by other processes. It
+  reads a file again only when its size, modification time or (on Unix)
+  inode changed. A same-size rewrite within the clock's resolution of a
+  filesystem with coarse times (FAT, some network mounts) can be missed.
+  A label map that changed while `segments.json` did not is held back for
+  one poll, because a save may be between its two renames. The watcher
+  also reports this process's own saves, so a host that uses both gets
+  those twice.
+
+The kinds are:
+- a segment added, removed, revised (name, colour, visibility, opacity or
+  voxels) or reviewed (new status);
+- an annotation added, removed, revised (kind, plane, slice, points, text,
+  name) or reviewed;
+- the open volume switched, with its key: the part after `#v=` when it
+  has the form FERRUM generates (`b1000`, `te80-e2`, `n3`), otherwise
+  `other`;
+- a file that cannot be read.
+
+Only regular files are read: no symbolic links, FIFOs or devices. JSON
+files are limited to 64 MiB and the label map to 2 GiB decompressed, and
+only `uint8` label maps are read. An unreadable file is reported once,
+and its items keep their last state. Changes hold labels, ids, statuses
+and the volume key only. They never hold names, texts, UIDs, paths or the
+reviewer.
+
+**Item revision (`ferrum-review-revision/1`):** SHA-256 over, in order,
+strings as a u64 little-endian byte length and their UTF-8 bytes, and
+integers as u64 little-endian:
+- the tag `ferrum-review-revision/1`, the source hash, the open volume's id
+  (empty for a single-volume series);
+- an annotation: `"annotation"`, its id, type, plane, name, text, unit, the
+  slice index, its value with 3 decimals (empty without one), the number
+  of points and each point in voxels as `"i,j,k"` with 3 decimals;
+- a segment: `"segment"`, its label, its name, its box (min then max, six
+  integers) and one byte (0 or 1) per voxel of the box, `i` fastest
+  (`"empty"` instead of box and bytes for a segment without voxels).
+
+Review state and display properties (colour, opacity, visibility) are not
+part of it. A change of the encoding changes the tag.
 
 **Privacy:**
 - The manifest holds paths and hashes only.

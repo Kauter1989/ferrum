@@ -16,12 +16,26 @@ fn phantom(path: &Path, value: f32) {
     ferrum_io::write_nifti(&Volume::from_physical(dims, Vec3::new(1.0, 1.0, 2.0), &values).unwrap(), path).unwrap();
 }
 
+/// [`phantom`] as an uncompressed 4D file of 2 volumes, so that loading
+/// warns (covers 2.7-f).
+fn phantom_4d(path: &Path, value: f32) {
+    phantom(path, value);
+    let mut bytes = std::fs::read(path).unwrap();
+    bytes[40..42].copy_from_slice(&4i16.to_le_bytes());
+    bytes[48..50].copy_from_slice(&2i16.to_le_bytes());
+    let body = bytes[352..].to_vec();
+    bytes.extend_from_slice(&body);
+    std::fs::write(path, bytes).unwrap();
+}
+
 /// The session both transports run.
 fn script(ws: &str, src: &Path) -> Vec<(&'static str, Value)> {
     vec![
-        ("study open", json!({ "workspace": ws, "path": src })),
+        ("study open", json!({ "workspace": ws, "path": src, "modality": "CT" })),
         ("study info", json!({ "workspace": ws })),
         ("view slice", json!({ "workspace": ws, "plane": "axial", "slice_number": 6, "window": "bone", "size": 48 })),
+        // covers 2.7-h: the default window is the same over both transports
+        ("view slice", json!({ "workspace": ws, "plane": "axial", "slice_number": 6, "size": 48 })),
         ("probe", json!({ "workspace": ws, "point": { "render": "r-0001", "pixel": [40, 10] } })),
         (
             "stats",
@@ -35,6 +49,10 @@ fn script(ws: &str, src: &Path) -> Vec<(&'static str, Value)> {
             "segment threshold",
             json!({ "workspace": ws, "seed": { "voxel": [20, 5, 5] }, "min": 0, "max": 900, "agent": "t" }),
         ),
+        // covers 18.4-c
+        ("segment metrics", json!({ "workspace": ws, "segment": 1, "describe": true })),
+        ("segment metrics", json!({ "workspace": ws, "segment": 1, "profile": "clinical", "describe": true })),
+        ("segment metrics", json!({ "workspace": ws, "segment": 1, "profile": "nope" })),
         (
             "annotate add",
             json!({ "workspace": ws, "kind": "distance", "plane": "axial", "points": [{ "voxel": [1, 1, 2] }, { "voxel": [5, 1, 2] }] }),
@@ -52,7 +70,13 @@ fn comparable(envelope: &Value, ws_root: &str) -> Value {
         p["time"] = Value::Null;
         p["params"] = Value::Null;
     }
-    let text = v.to_string().replace(ws_root, "<ws>");
+    // The two runs write into different workspace folders, so the paths are
+    // replaced before comparing. JSON escapes a Windows separator as `\\`, and
+    // the root arrives with single separators: both spellings are replaced, so
+    // the comparison is about the answer and not about the platform.
+    let escaped = ws_root.replace('\\', "\\\\");
+    let mut text = v.to_string().replace(&escaped, "<ws>");
+    text = text.replace(ws_root, "<ws>");
     let mut v: Value = serde_json::from_str(&text).unwrap();
     walk(&mut v);
     v
@@ -85,8 +109,8 @@ fn call(server: &mut McpServer, id: u64, command: &str, args: &Value) -> Value {
 #[test]
 fn mcp_and_command_line_give_the_same_json() {
     let dir = tempfile::tempdir().unwrap();
-    let src = dir.path().join("p.nii.gz");
-    phantom(&src, 400.0);
+    let src = dir.path().join("p.nii");
+    phantom_4d(&src, 400.0);
     let (cli_ws, mcp_ws) = (dir.path().join("cli"), dir.path().join("mcp"));
     let agent = Agent::default();
     let mut server = McpServer::new(Agent::default());
@@ -97,6 +121,10 @@ fn mcp_and_command_line_give_the_same_json() {
         let result = call(&mut server, i as u64, command, &b);
         let via_mcp = &result["structuredContent"];
         assert_eq!(comparable(&direct, &cli_root), comparable(via_mcp, &mcp_root), "{command}");
+        if command.starts_with("study ") && direct["ok"] == true {
+            let w = direct["warnings"].to_string();
+            assert!(w.contains("volume 1 of 2 is shown"), "{command}: {w}");
+        }
         assert_eq!(result["isError"], direct["ok"] != true);
         let text: Value = serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
         assert_eq!(&text, via_mcp, "text and structured content agree");
@@ -143,4 +171,25 @@ fn cached_series_are_never_stale() {
     let v = call(&mut server, 4, "probe", &probe);
     assert_eq!(v["isError"], true);
     assert_eq!(v["structuredContent"]["error"]["code"], "source_changed");
+}
+
+#[test]
+fn switching_volumes_is_not_served_from_the_cache() {
+    // covers 20.3-c, 20.3-e
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("p.nii");
+    phantom_4d(&src, 400.0);
+    let ws = dir.path().join("ws").to_string_lossy().into_owned();
+    let mut server = McpServer::new(Agent::default());
+    let scan = call(&mut server, 1, "study scan", &json!({ "paths": [src] }));
+    let second = scan["structuredContent"]["data"]["series"][1]["series"].clone();
+    let probe = json!({ "workspace": ws, "point": { "voxel": [20, 0, 0] } });
+    call(&mut server, 2, "study open", &json!({ "workspace": ws, "path": src }));
+    let v = call(&mut server, 3, "probe", &probe);
+    assert_eq!(v["structuredContent"]["provenance"]["volume"]["label"], "volume 1/2");
+    call(&mut server, 4, "study open", &json!({ "workspace": ws, "path": src, "series": second }));
+    let v = call(&mut server, 5, "probe", &probe);
+    assert_eq!(v["structuredContent"]["provenance"]["volume"]["label"], "volume 2/2");
+    let direct = Agent::default().run("probe", &probe);
+    assert_eq!(comparable(&direct, &ws), comparable(&v["structuredContent"], &ws), "CLI and MCP agree");
 }

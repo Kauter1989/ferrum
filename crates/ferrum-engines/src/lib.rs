@@ -10,8 +10,11 @@
 //! * [`MockEngine`] — deterministic in-process engine without a model, for
 //!   tests and demos;
 //! * [`server`] — reference protocol server for any engine, used by the
-//!   conformance tests and the `mock_server` example.
+//!   conformance tests and the `mock_server` example;
+//! * [`gpu`] — GPU groups: the lease an engine call of a shared card takes
+//!   (`ferrum-gpu-lock/1`, ADR 0015).
 
+pub mod gpu;
 pub mod http;
 pub mod mock;
 pub mod server;

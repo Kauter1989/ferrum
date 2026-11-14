@@ -262,3 +262,45 @@ fn non_dicom_sources_and_nothing_to_export() {
     let wrong = SegmentationSet::new(ferrum_domain::Dims3::new(2, 2, 2));
     assert!(exporter.write_seg(&seg_path, &volume, &wrong).is_err());
 }
+
+#[test]
+fn a_segmentation_of_a_sagittal_series_lies_on_the_lps_grid() {
+    // covers 2.8-d
+    let dir = tempfile::tempdir().unwrap();
+    let src_dir = dir.path().join("src");
+    std::fs::create_dir_all(&src_dir).unwrap();
+    common::write_series(&src_dir, 4, 6, 5, 1.0, |s| {
+        let k = (s.instance - 1) as f64;
+        s.position = [10.0 - 2.0 * k, 0.0, 0.0];
+        s.row_dir = [0.0, 1.0, 0.0];
+        s.col_dir = [0.0, 0.0, -1.0];
+    });
+    let repo = DicomRepository;
+    let series = repo.scan(std::slice::from_ref(&src_dir), &NoProgress).unwrap().remove(0);
+    let volume = repo.load(&series, &NoProgress).unwrap().volume;
+    let d = volume.dims();
+    let mut data = vec![0u8; d.voxel_count()];
+    data[d.index(1, 2, 3)] = 1;
+    let mut seg = Segment::new(1, "lesion");
+    seg.provenance = Provenance::human(Timestamp(1_790_000_000));
+    let set = SegmentationSet::from_labels(LabelMap::from_data(d, data).unwrap(), vec![seg]);
+    let source = read_source(&series.sources).unwrap();
+    let opts = DicomExportOptions { keep_uids: true, ..DicomExportOptions::default() };
+    let path = dir.path().join("seg.dcm");
+    DicomExporter::new(Some(&source), &opts).write_seg(&path, &volume, &set).unwrap().unwrap();
+    let obj = open_file(&path).unwrap();
+    let shared = first(&obj, &[tags::SHARED_FUNCTIONAL_GROUPS_SEQUENCE, tags::PLANE_ORIENTATION_SEQUENCE]);
+    let iop: Vec<f64> =
+        str_at(&shared, tags::IMAGE_ORIENTATION_PATIENT).split('\\').map(|v| v.trim().parse().unwrap()).collect();
+    assert_eq!(iop, vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0], "axial frames of the LPS grid");
+    let frames = items(&obj, tags::PER_FRAME_FUNCTIONAL_GROUPS_SEQUENCE);
+    assert_eq!(frames.len(), 1);
+    assert!(items(&frames[0], tags::DERIVATION_IMAGE_SEQUENCE).is_empty(), "no sagittal image lies in an axial frame");
+    let pos = str_at(&first(&frames[0], &[tags::PLANE_POSITION_SEQUENCE]), tags::IMAGE_POSITION_PATIENT);
+    let parsed: Vec<f32> = pos.split('\\').map(|v| v.trim().parse().unwrap()).collect();
+    let expected = volume.voxel_to_patient(glam::Vec3::new(0.0, 0.0, 3.0));
+    assert!((glam::Vec3::from_slice(&parsed) - expected).length() < 1e-3, "{pos} vs {expected}");
+    let referenced = items(&first(&obj, &[tags::REFERENCED_SERIES_SEQUENCE]), tags::REFERENCED_INSTANCE_SEQUENCE);
+    assert_eq!(referenced.len(), 5, "the whole source series is referenced");
+    keep_samples(&[&path], "sagittal");
+}

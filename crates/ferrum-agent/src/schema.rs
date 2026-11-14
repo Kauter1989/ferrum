@@ -81,7 +81,7 @@ fn view_slice() -> (&'static str, Value) {
                     "slice_number": integer(1, "1-based slice number"),
                     "at": point("the slice through this point (instead of slice_number)"),
                     "window": {
-                        "description": "window preset or explicit window (default: the series' own)",
+                        "description": "window preset or explicit window (default: the series' own, else 0.5–99.5 % of the voxel values, as in the desktop app)",
                         "oneOf": [
                             { "type": "string", "enum": ["full_range", "brain", "soft_tissue", "lung", "bone"] },
                             obj(json!({ "center": number("window centre"), "width": number("window width") }), &["center", "width"]),
@@ -99,7 +99,7 @@ fn view_slice() -> (&'static str, Value) {
 
 fn window_param() -> Value {
     json!({
-        "description": "window preset or explicit window (default: the series' own)",
+        "description": "window preset or explicit window (default: the series' own, else 0.5–99.5 % of the voxel values, as in the desktop app)",
         "oneOf": [
             { "type": "string", "enum": ["full_range", "brain", "soft_tissue", "lung", "bone"] },
             obj(json!({ "center": number("window centre"), "width": number("window width") }), &["center", "width"]),
@@ -201,8 +201,18 @@ fn engine_schema(command: &str) -> Option<(&'static str, Value)> {
             obj(json!({ "engine": engine_param() }), &[]),
         ),
         "engine list" => (
-            "Every engine the operator allows: whether it answers, name, version, modes, research_only and GPU group.",
+            "Every engine the operator allows: whether it answers, name, version, modes, research_only, GPU group, whether it can unload, and the GPU memory it reports holding (resident_mib, advisory) and expects per call (expected_peak_mib).",
             obj(json!({}), &[]),
+        ),
+        "engine unload" => (
+            "Asks idle engines to unload their model and free all of their GPU memory, so another program (a local model server) or a heavier engine has room on a shared card. Give engine (one URL) or group (every engine of a GPU group); without either, the default engine. Each engine answers unloaded, busy (it has open sessions or jobs: nothing is stopped), unsupported, unreachable or error (with the message). The next session loads the model again, which takes time. Never touches results.",
+            obj(
+                json!({
+                    "engine": engine_param(),
+                    "group": { "type": "string", "description": "a GPU group of the operator configuration (network.gpu_groups)" },
+                }),
+                &[],
+            ),
         ),
         "segment interactive" => (
             "Prompts an interactive engine (points, boxes, scribbles, lassos). A new object becomes a segment proposed by the engine; segment refines an object made earlier (append adds to its stored prompts, undo drops the last); from_segment redoes a segment you made, seeded with lassos from its mask. Only a region around the prompts is uploaded. The result carries quality checks.",
@@ -263,8 +273,44 @@ fn mask_schema(command: &str) -> Option<(&'static str, Value)> {
     let label = || integer(1, "segment label");
     Some(match command {
         "segment shape" => (
-            "Shape of a segment from its voxels: volume, extent in mm, slice ranges and largest slices, axial long and short axis with end points, border contact, components and, for segments named left or right, the side it lies on. Measure segments with this, never from images.",
-            obj(json!({ "workspace": workspace(), "segment": label() }), &["workspace", "segment"]),
+            "Shape of a segment from its voxels: volume, extent in mm, slice ranges and largest slices, axial long and short axis with end points, border contact, components and, for segments named left or right, the side it lies on. With solid_min, also the axial long and short axis, volume and share of the segment's voxels at or above that value (the solid part of a part-solid lesion); the caller chooses the threshold, and the result is a measurement, not a classification. Measure segments with this, never from images.",
+            obj(
+                json!({
+                    "workspace": workspace(),
+                    "segment": label(),
+                    "solid_min": { "type": "number", "description": "measure the voxels of the segment with a value at or above this (HU on CT), e.g. the solid part of a part-solid lesion; no default" },
+                }),
+                &["workspace", "segment"],
+            ),
+        ),
+        "segment distance" => (
+            "Shortest distance in mm from a segment to the surface of another (e.g. a lesion to the pleura or a fissure), from their voxels: the two closest voxel centres with voxel and LPS mm coordinates, whether the segment lies inside the other, and an uncertainty of one voxel spacing. The other segment's holes are filled first, so a lesion inside a lung segment is measured to the lung's border. Measure distances between structures with this, not with picked points.",
+            obj(
+                json!({
+                    "workspace": workspace(),
+                    "segment": label(),
+                    "to": integer(1, "label of the segment whose surface the distance is measured to"),
+                }),
+                &["workspace", "segment", "to"],
+            ),
+        ),
+        "segment metrics" => (
+            "Quantitative profile of a segment from its voxels and values: size (volume, extent, centroid in LPS mm, axial axes, largest slices), with profile clinical also shape (surface area, compactness, sphericity, principal axes and their directions), and first-order HU statistics (mean, std, min, max, percentiles, range, IQR); clinical adds the distribution of the values (skewness, kurtosis, energy, deviations, histogram entropy and uniformity, intensity-volume histogram) and the share of voxels in HU ranges. The result names the profile and its version and records every parameter. Intensity features need a CT study in HU: a NIfTI file without a declared modality is refused (declare it with study open --modality CT). Never read these numbers off an image.",
+            obj(
+                json!({
+                    "workspace": workspace(),
+                    "segment": label(),
+                    "profile": { "type": "string", "enum": ferrum_radiomics::PROFILES.iter().map(|p| p.name).collect::<Vec<_>>(), "description": "which features to compute (default quick: size and first-order statistics; clinical adds the shape)" },
+                    "describe": { "type": "boolean", "description": "add the definition text of every feature to the result" },
+                    "bin_width": { "type": "number", "exclusiveMinimum": 0, "description": "histogram bin width in HU for entropy and uniformity (default 25); bins are [k * width, (k + 1) * width)" },
+                    "hu_ranges": {
+                        "type": "array",
+                        "items": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+                        "description": "HU ranges as [min, max] pairs, half-open (min <= value < max), not overlapping, to report the share of voxels in each (profile clinical); omit for the built-in orientation ranges, which are marked as defaults and are not clinical thresholds",
+                    },
+                }),
+                &["workspace", "segment"],
+            ),
         ),
         "segment components" => (
             "Connected components (26-connected) of a segment, largest first, with centroid, box and volume. With split, every further component of at least min_ml becomes a new segment; the largest stays.",
@@ -317,17 +363,17 @@ pub fn command_schema(command: &str) -> Option<(&'static str, Value)> {
     };
     Some(match command {
         "study scan" => (
-            "Lists the series in files and folders: pseudonymised id, format, modality, size, description.",
+            "Lists the series in files and folders: pseudonymised id, format, modality, size, description. A series with several volumes (echoes, b-values, phases, PET frames) gives one entry per volume, with volume (number, label, keys) and its series as group.",
             obj(json!({ "paths": { "type": "array", "items": text("a DICOM folder or file, or a NIfTI file"), "minItems": 1 } }), &["paths"]),
         ),
         "study open" => (
-            "Opens a series into a workspace (created if needed; the source files are hashed) and describes it. NIfTI files carry no modality: give modality (e.g. CT) so values are taken as Hounsfield units.",
+            "Opens a series into a workspace (created if needed; the source files are hashed) and describes it. Another volume of the series open in the workspace switches to it, keeping segments and annotations. NIfTI files carry no modality: give modality (e.g. CT) so values are taken as Hounsfield units.",
             obj(
-                json!({ "workspace": workspace(), "path": text("DICOM folder or NIfTI file"), "series": text("series from study scan, when the source holds several"), "modality": text("modality of a source that carries none (NIfTI), e.g. CT; saved in the workspace") }),
+                json!({ "workspace": workspace(), "path": text("DICOM folder or NIfTI file"), "series": text("series or volume from study scan, when the source holds several; a series with several volumes opens volume 1"), "modality": text("modality of a source that carries none (NIfTI), e.g. CT; saved in the workspace") }),
                 &["workspace", "path"],
             ),
         ),
-        "study info" => ("Describes the open study: size, spacing, patient geometry, value unit, window presets, annotation and segment counts.", ws_only()),
+        "study info" => ("Describes the open study: size, spacing, patient geometry, value unit, window presets, annotation and segment counts, and the open volume and all volumes of a multi-volume series.", ws_only()),
         "view slice" => view_slice(),
         "view montage" => views().0,
         "view mpr" => views().1,

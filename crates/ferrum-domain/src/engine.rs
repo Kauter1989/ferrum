@@ -6,6 +6,8 @@
 //! only the vocabulary and the traits, so the application can drive any
 //! engine — remote, mock or future in-process — the same way.
 
+use std::sync::Arc;
+
 use glam::UVec3;
 use thiserror::Error;
 
@@ -64,6 +66,9 @@ pub struct EngineCapabilities {
     /// Replaying the same prompts on a new session gives the same mask
     /// (the protocol's `deterministic`, `true` when an engine omits it).
     pub deterministic: bool,
+    /// The engine can unload its model and free all of its GPU memory while
+    /// idle (`POST /v1/unload`, Stage 23).
+    pub unload: bool,
 }
 
 impl Default for EngineCapabilities {
@@ -76,6 +81,7 @@ impl Default for EngineCapabilities {
             planar_boxes_only: false,
             undo: false,
             deterministic: true,
+            unload: false,
         }
     }
 }
@@ -118,6 +124,13 @@ pub struct EngineInfo {
     pub max_voxels: u64,
     /// Session lifetime without activity in seconds (0 = unknown).
     pub session_ttl_s: u64,
+    /// GPU memory of the engine process during a call, in MiB, as the
+    /// engine expects it (`limits.expected_peak_mib`); it can raise the
+    /// operator's value, never lower it.
+    pub expected_peak_mib: Option<u64>,
+    /// GPU memory the engine reports holding now, in MiB (`resident_mib`);
+    /// advisory: a process that needs room checks the free memory itself.
+    pub resident_mib: Option<u64>,
 }
 
 impl EngineInfo {
@@ -261,6 +274,10 @@ pub enum EngineError {
     /// Any other engine-side failure.
     #[error("engine error: {0}")]
     Internal(String),
+    /// The caller stopped the request before it was sent (e.g. while it
+    /// waited for a shared GPU).
+    #[error("cancelled: {0}")]
+    Cancelled(String),
 }
 
 /// State of an automatic segmentation job.
@@ -322,6 +339,28 @@ pub trait SegmentationEngine: Send + Sync {
     /// Starts an interactive session on `volume` (uploaded once).
     /// `modality` is the DICOM modality string (may be empty).
     fn open_session(&self, volume: &Volume, modality: &str) -> Result<Box<dyn InteractiveSession>, EngineError>;
+
+    /// Unloads the model while no session or job is open, freeing the
+    /// engine's GPU memory; the next session loads it again.
+    /// [`EngineError::Busy`] while sessions are open,
+    /// [`EngineError::Unsupported`] when the engine cannot unload.
+    fn unload(&self) -> Result<(), EngineError> {
+        Err(EngineError::Unsupported("unload".into()))
+    }
+
+    /// Registers who hears that a call waits (e.g. for room on a shared
+    /// GPU) and may stop the wait. Engines that never wait ignore it.
+    fn observe(&self, observer: Arc<dyn EngineObserver>) {
+        let _ = observer;
+    }
+}
+
+/// Hears that an engine call is waiting before it starts (Stage 23: a GPU
+/// group held by another process). Returning `false` stops the wait; the
+/// call then fails without being sent.
+pub trait EngineObserver: Send + Sync {
+    /// The call waits; `note` says for what (e.g. who holds the GPU).
+    fn waiting(&self, note: &str) -> bool;
 }
 
 /// A session on one uploaded volume. Interactive engines refine one target

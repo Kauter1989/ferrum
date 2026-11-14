@@ -70,3 +70,38 @@ make licenses                      # cargo deny check licenses
 The CI job `licenses` fails when a dependency brings a licence outside the
 list. Adding a licence to `deny.toml` is a deliberate decision: copyleft
 licences (GPL, AGPL, LGPL without an alternative) are not accepted.
+
+## Python lint and format
+
+The bridges, scripts and Claude Code hooks are checked with
+[ruff](https://docs.astral.sh/ruff/), using the rules in `ruff.toml`:
+pycodestyle, pyflakes, import order, bugbear, pyupgrade, bandit (`S`,
+security), simplifications and ruff's own rules.
+
+The gate is a ratchet. The repository had about 240 findings when it was
+introduced, so ruff checks the **Python files a branch changes**, not
+the whole tree. Older files are brought in line when they are next
+touched. It runs:
+- after every edit of a `.py` file (Claude Code hook F), which formats
+  the file, applies safe fixes and reports what is left;
+- before every push (hook E) on the files changed since
+  `origin/develop`;
+- in the CI job `python-lint` on the files a pull request changes,
+  together with the hook tests.
+
+```bash
+pipx install ruff==0.16.9      # once; CI uses the same version
+ruff check --fix <files> && ruff format <files>
+```
+
+`S101` (assert) is allowed in tests. `S603`/`S607` (subprocess by name)
+are allowed in `.claude/`, whose hooks run git, cargo and ruff on
+purpose.
+
+## Review agents
+
+Before a PR is pushed, the read-only subagents `code-reviewer` and
+`security-reviewer` (`.claude/agents/`) review the branch
+(`ferrum-change` §6). Their blocking findings are fixed or answered in
+the PR body. They add judgement on top of the automated gates and do not
+replace them.

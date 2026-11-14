@@ -10,6 +10,7 @@ use std::sync::Arc;
 use egui_kittest::kittest::{NodeT, Queryable};
 use egui_kittest::Harness;
 use ferrum::ViewerApp;
+use ferrum_app::MetricsOutcome;
 use ferrum_app::{ToolKind, ViewMode};
 use ferrum_domain::{Annotation, Dims3, RenderMode, SliceAxis, SliceKey, Volume};
 use glam::Vec3;
@@ -39,11 +40,20 @@ fn phantom_file(dir: &Path) -> PathBuf {
     path
 }
 
-fn loaded_app(dir: &Path, render_state: Option<&egui_wgpu::RenderState>) -> ViewerApp {
+/// The phantom opened as a NIfTI file, which says nothing about what it is:
+/// the app asks (see `a_nifti_file_without_a_modality_asks_what_it_is`).
+fn opened_app(dir: &Path, render_state: Option<&egui_wgpu::RenderState>) -> ViewerApp {
     let repo = Arc::new(ferrum_io::CompositeRepository::default());
     let mut app = ViewerApp::new(render_state, repo, vec![phantom_file(dir)]);
     app.viewer.wait_idle();
     assert!(app.viewer.dataset().is_some(), "{:?}", app.viewer.status);
+    app
+}
+
+/// [`opened_app`] after the person said it is a CT, so that no dialog covers the views.
+fn loaded_app(dir: &Path, render_state: Option<&egui_wgpu::RenderState>) -> ViewerApp {
+    let mut app = opened_app(dir, render_state);
+    app.viewer.declare_modality("CT").unwrap();
     app
 }
 
@@ -191,7 +201,7 @@ fn segment_list_edits_segments_in_both_tabs() {
     let dir = tempfile::tempdir().unwrap();
     let mut app = loaded_app(dir.path(), None);
     let mut h = Harness::builder()
-        .with_size(egui::vec2(1200.0, 1400.0))
+        .with_size(egui::vec2(1200.0, 1700.0))
         .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
     h.run();
     // the built-in region tool in the toolbar creates a segment without an engine
@@ -199,6 +209,16 @@ fn segment_list_edits_segments_in_both_tabs() {
     h.run();
     assert_eq!(h.state().viewer.tool, ToolKind::Region);
     assert!(h.get_all_by_label("Tolerance ±").count() > 0, "the settings of the active tool are shown");
+    // covers 16.6-g
+    for label in [
+        "Noise smoothing, mm",
+        "Cut thin bridges, mm",
+        "Fill vessels and holes",
+        "Max volume, ml",
+        "Automatic tolerance",
+    ] {
+        assert!(h.get_all_by_label_contains(label).count() > 0, "{label}");
+    }
     let viewer = &mut h.state_mut().viewer;
     viewer.set_slice_index(SliceAxis::Axial, 20);
     viewer.slice_input(
@@ -207,6 +227,7 @@ fn segment_list_edits_segments_in_both_tabs() {
         glam::Vec2::splat(100.0),
         glam::Vec2::splat(200.0),
     );
+    h.state_mut().viewer.wait_idle();
     h.run();
     assert_eq!(h.state().viewer.segment_summaries().len(), 1);
     h.get_by_label("Delete Region 1").click();
@@ -308,6 +329,85 @@ fn ai_tools_are_visible_but_disabled_until_an_engine_connects() {
     assert_eq!(h.state().viewer.tool, ToolKind::Pan);
 }
 
+/// Prompts the AI point tool at the centre of the axial view.
+fn ai_point(viewer: &mut ferrum_app::Viewer) {
+    viewer.set_slice_index(SliceAxis::Axial, 20);
+    viewer.slice_input(
+        SliceAxis::Axial,
+        ferrum_app::InputKind::Press,
+        glam::Vec2::splat(100.0),
+        glam::Vec2::splat(200.0),
+    );
+}
+
+// covers 23.3-a, 23.3-b, 23.3-c
+#[test]
+fn ai_panel_shows_waiting_for_gpu() {
+    use ferrum_engines::gpu::{GpuSettings, Kind, LockDir, Request};
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = loaded_app(dir.path(), None);
+    let server =
+        ferrum_engines::EngineServer::start(Arc::new(ferrum_engines::MockEngine::default()), "127.0.0.1:0", None)
+            .unwrap();
+    let url = server.url();
+    let locks = dir.path().join("gpu");
+    app.panel.ai.url = url.clone();
+    app.panel.ai.gpu = Ok(GpuSettings {
+        groups: vec![("card".into(), vec![url.clone()])],
+        capacity_mib: vec![("card".into(), 12_000)],
+        peaks_mib: vec![(url.clone(), 7000)],
+        lock_dir: Some(locks.clone()),
+    });
+    // a model server outside FERRUM holds half of the card
+    let request = Request {
+        group: "card",
+        holder: "llama-server",
+        kind: Kind::Resident,
+        lease_mib: Some(6000),
+        capacity_mib: Some(12_000),
+    };
+    let held = LockDir::at(&locks).unwrap().acquire(&request, std::time::Duration::ZERO, &mut |_| true).unwrap();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1200.0, 1000.0))
+        .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
+    h.run();
+    h.get_by_label_contains("Connect").click();
+    h.step();
+    h.state_mut().viewer.wait_ai_idle();
+    h.run();
+    h.get_by_label("AI point").click();
+    h.run();
+    ai_point(&mut h.state_mut().viewer);
+    let start = std::time::Instant::now();
+    while h.state().viewer.ai().waiting().is_none() {
+        assert!(start.elapsed().as_secs() < 10, "never waited for the GPU");
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    h.step();
+    h.get_by_label_contains("Waiting for GPU: llama-server (pid ");
+    h.get_by_label_contains("holds 6000 MiB (group card)");
+    h.get_by_label(&format!("{} Cancel", egui_phosphor::light::X_CIRCLE)).click();
+    h.step();
+    h.state_mut().viewer.wait_ai_idle();
+    h.run();
+    assert!(h.query_by_label_contains("Waiting for GPU").is_none());
+    assert!(h.state().viewer.ai().status().is_connected(), "Cancel keeps the engine connected");
+    assert_eq!(h.state().viewer.ai().target(), None, "nothing was sent");
+    assert!(h.state().viewer.segment_summaries().is_empty(), "no empty AI segment is left");
+
+    // the model server leaves: the next prompt runs
+    drop(held);
+    ai_point(&mut h.state_mut().viewer);
+    h.state_mut().viewer.wait_ai_idle();
+    h.run();
+    let target = h.state().viewer.ai().target().expect("the prompt ran");
+    assert!(h.state().viewer.segmentation().set().unwrap().voxel_count(target) > 1000);
+    let holders = LockDir::at(&locks).unwrap().holders("card").unwrap();
+    assert_eq!(holders.len(), 1, "the desktop's session holds the lease");
+    assert!(holders[0].holder.starts_with("ferrum desktop: "), "{}", holders[0].holder);
+}
+
 #[test]
 fn automatic_segmentation_runs_from_the_panel() {
     let dir = tempfile::tempdir().unwrap();
@@ -380,6 +480,7 @@ fn lit_fraction(img: &image::RgbaImage, rect: egui::Rect) -> f64 {
     lit as f64 / total.max(1) as f64
 }
 
+// covers 24.3-b (the desktop draws through ferrum-ui)
 #[test]
 fn every_view_mode_renders_the_volume() {
     let Some(rs) = gpu_render_state() else {
@@ -420,6 +521,7 @@ fn every_view_mode_renders_the_volume() {
     }
 }
 
+// covers 24.3-b (the desktop draws through ferrum-ui)
 #[test]
 fn segments_are_drawn_in_2d_and_3d() {
     let Some(rs) = gpu_render_state() else {
@@ -520,7 +622,7 @@ fn agent_proposals_are_reviewed_in_the_desktop_app() {
     app.viewer.wait_idle();
     assert_eq!(app.viewer.review_queue().len(), 1, "{:?}", app.viewer.status);
     let mut h = Harness::builder()
-        .with_size(egui::vec2(1200.0, 1400.0))
+        .with_size(egui::vec2(1200.0, 1700.0))
         .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
     h.run();
     h.get_by_label("Open workspace");
@@ -543,4 +645,326 @@ fn agent_proposals_are_reviewed_in_the_desktop_app() {
         (ferrum_domain::ReviewStatus::Confirmed, Some("dr.k"), "agent")
     );
     h.get_by_label_contains("Nothing waits for review");
+}
+
+fn proposed_tumour(app: &mut ViewerApp) -> u8 {
+    let label = add_tumour(app);
+    app.viewer
+        .set_segment_provenance(
+            label,
+            ferrum_domain::Provenance::agent(Some("run-1".into()), ferrum_domain::Timestamp(1)),
+        )
+        .unwrap();
+    label
+}
+
+// covers 18.3-f
+#[test]
+fn a_nifti_file_without_a_modality_asks_what_it_is() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = opened_app(dir.path(), None);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1200.0, 800.0))
+        .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
+    h.run();
+    h.get_by_label("Image type");
+    h.get_by_label_contains("does not say what kind of image it is");
+    assert!(h.state().viewer.needs_modality());
+
+    h.get_by_label("CT (HU)").click();
+    h.run();
+    assert_eq!(h.state().viewer.dataset().unwrap().metadata.modality, "CT");
+    assert!(h.query_by_label("Image type").is_none(), "answered: the dialog is gone");
+
+    // "Not now" leaves the type unknown and does not ask again for this image
+    let dir2 = tempfile::tempdir().unwrap();
+    let app = opened_app(dir2.path(), None);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1200.0, 800.0))
+        .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
+    h.run();
+    h.get_by_label("Not now").click();
+    h.run();
+    assert!(h.query_by_label("Image type").is_none());
+    assert!(!h.state().viewer.value_unit().is_known());
+
+    // another type is typed in; a wrong code is refused with the reason
+    let dir3 = tempfile::tempdir().unwrap();
+    let app = opened_app(dir3.path(), None);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1200.0, 800.0))
+        .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
+    h.run();
+    h.get_by_label("MR").click();
+    h.run();
+    assert_eq!(h.state().viewer.dataset().unwrap().metadata.modality, "MR");
+}
+
+// covers 18.4-e
+#[test]
+fn the_metrics_card_shows_values_with_units_and_says_when_a_segment_is_a_proposal() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = loaded_app(dir.path(), None);
+    let label = proposed_tumour(&mut app);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1200.0, 2400.0))
+        .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
+    h.run();
+    h.get_by_label_contains("Press the ruler on a segment");
+
+    h.get_by_label("Measure Tumour").click();
+    h.step(); // the spinner keeps asking for frames while the job runs, so not `run`
+    h.get_by_label("Measuring…");
+    h.state_mut().viewer.wait_idle();
+    h.run();
+    h.get_by_label("Metrics · Tumour");
+    h.get_by_label("proposed · not confirmed by a person");
+    // 16 x 16 x 16 voxels of 1 mm
+    h.get_by_label("4096");
+    h.get_by_label("4.096 mL");
+    h.get_by_label("4096 mm³");
+    h.get_by_label("Mean");
+    assert!(h.get_all_by_label_contains(" HU").count() >= 8, "intensity values carry their unit");
+    assert!(h.query_by_label_contains("Press the ruler on a segment").is_none(), "the hint gives way to the card");
+
+    // a person confirms it: the note goes
+    h.state_mut().viewer.review_segment(label, ferrum_domain::ReviewStatus::Confirmed, Some("dr.k")).unwrap();
+    h.run();
+    assert!(h.query_by_label("proposed · not confirmed by a person").is_none());
+    // the segment changed: the numbers are marked out of date until measured again
+    let bx = ferrum_domain::VoxelBox::new(glam::UVec3::ZERO, glam::UVec3::new(4, 4, 4));
+    h.state_mut().viewer.apply_segment_mask(label, bx, &vec![1; bx.voxel_count()], false).unwrap();
+    h.run();
+    h.get_by_label_contains("Out of date");
+    h.get_by_label("Measure again").click();
+    h.step();
+    h.state_mut().viewer.wait_idle();
+    h.run();
+    assert!(h.query_by_label_contains("Out of date").is_none());
+    h.get_by_label("4160");
+    // the card closes with the same button
+    h.get_by_label("Measure Tumour").click();
+    h.run();
+    assert!(h.query_by_label("Metrics · Tumour").is_none());
+}
+
+// covers 18.4-f
+#[test]
+fn the_metrics_card_explains_an_unknown_image_type_and_recovers_when_it_is_set() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = opened_app(dir.path(), None);
+    proposed_tumour(&mut app);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1200.0, 2400.0))
+        .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
+    h.run();
+    h.get_by_label("Not now").click();
+    h.run();
+
+    h.get_by_label("Measure Tumour").click();
+    h.run();
+    h.get_by_label_contains("image type is not known");
+    assert!(h.query_by_label("Mean").is_none(), "no value is shown from a guessed unit");
+    assert!(h.query_by_label("Image type").is_none(), "the person already said not now");
+
+    // the card leads back to the question; the answer measures
+    h.get_by_label("Set image type…").click();
+    h.run();
+    h.get_by_label("Image type");
+    h.get_by_label("CT (HU)").click();
+    h.run();
+    assert!(h.query_by_label("Image type").is_none());
+    h.get_by_label("Measure").click();
+    h.step();
+    h.state_mut().viewer.wait_idle();
+    h.run();
+    h.get_by_label("Mean");
+    h.get_by_label("4.096 mL");
+}
+
+// covers 18.11-c, 18.12-a
+#[test]
+fn the_clinical_card_groups_the_features_shows_the_ranges_and_applies_the_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = loaded_app(dir.path(), None);
+    let label = add_tumour(&mut app);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1200.0, 6000.0))
+        .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
+    h.run();
+    h.get_by_label("Measure Tumour").click();
+    h.step();
+    h.state_mut().viewer.wait_idle();
+    h.run();
+    // the groups of the clinical profile, each with its figures and a definition on hover
+    for group in ["Size", "Shape", "Connectivity", "Intensity"] {
+        h.get_by_label(group);
+    }
+    h.get_by_label("Profile clinical 0.3 · values in HU");
+    h.get_by_label("Solidity");
+    h.get_by_label("Pieces");
+    h.get_by_label("Skewness");
+    h.get_by_label("Entropy");
+    h.get_by_label("Maximum 3D diameter");
+    // the tumour touches no side of the image; it has no cavity: no warning on the card
+    assert!(h.query_by_label_contains("⚠").is_none());
+    // the ranges and the curve
+    h.get_by_label("Share of voxels by HU range");
+    h.get_by_label_contains("Default ranges for orientation, not clinical thresholds");
+    h.get_by_label("outside these ranges");
+    h.get_by_label("Intensity-volume histogram");
+    h.get_by_label("Histogram and HU ranges");
+
+    // the settings: open, add a range, apply -> measured again with the new parameters
+    h.get_by_label("Histogram and HU ranges").click();
+    h.run();
+    h.get_by_role_and_label(egui::accesskit::Role::TextInput, "Bin width field").click();
+    h.run();
+    h.get_by_role_and_label(egui::accesskit::Role::TextInput, "Bin width field").type_text("0"); // 25 -> 250
+    h.run();
+    h.get_by_label("Apply and measure again").click();
+    h.step();
+    h.state_mut().viewer.wait_idle();
+    h.run();
+    assert_eq!(h.state().viewer.metrics_params().bin_width, 250.0, "the field is read when applying");
+    let MetricsOutcome::Ready(r) = h.state().viewer.segment_metrics_view(label).unwrap().outcome else { panic!() };
+    assert_eq!(r.bin_width, Some(250.0), "and the card was measured again with it");
+    // nonsense is shown next to the button, and the old parameters stay
+    h.get_by_role_and_label(egui::accesskit::Role::TextInput, "Bin width field").click();
+    h.run();
+    h.get_by_role_and_label(egui::accesskit::Role::TextInput, "Bin width field").type_text("x"); // 250 -> 250x
+    h.run();
+    h.get_by_label("Apply and measure again").click();
+    h.run();
+    h.get_by_label_contains("is not a number");
+    assert_eq!(h.state().viewer.metrics_params().bin_width, 250.0);
+    // back to the defaults: the fields are reset, and applying them gives the default parameters again
+    h.get_by_label("Use defaults").click();
+    h.run();
+    h.get_by_label("Apply and measure again").click();
+    h.step();
+    h.state_mut().viewer.wait_idle();
+    h.run();
+    assert_eq!(h.state().viewer.metrics_params(), &ferrum_radiomics::Params::default());
+    h.get_by_label_contains("Default ranges for orientation");
+
+    // ranges the person set are used, written as they were given, and no longer called defaults
+    let own = ferrum_radiomics::Params {
+        hu_ranges: Some(vec![ferrum_radiomics::HuRange::new(-100.0, 100.0)]),
+        ..Default::default()
+    };
+    h.state_mut().viewer.set_metrics_params(own).unwrap();
+    h.state_mut().viewer.request_segment_metrics(label, ferrum::ui::metrics_card::PROFILE).unwrap();
+    h.step();
+    h.state_mut().viewer.wait_idle();
+    h.run();
+    h.get_by_label("-100 to 100 HU");
+    h.get_by_label_contains("Ranges as you set them");
+    assert!(h.query_by_label_contains("Default ranges for orientation").is_none());
+}
+
+#[test]
+fn load_warnings_are_shown_once_and_kept_in_the_series_information() {
+    // covers 2.7-g
+    let dir = tempfile::tempdir().unwrap();
+    // The phantom as a 4D file of 2 volumes.
+    let path = phantom_file(dir.path());
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes[40..42].copy_from_slice(&4i16.to_le_bytes());
+    bytes[48..50].copy_from_slice(&2i16.to_le_bytes());
+    let body = bytes[352..].to_vec();
+    bytes.extend_from_slice(&body);
+    std::fs::write(&path, bytes).unwrap();
+    let repo = Arc::new(ferrum_io::CompositeRepository::default());
+    let mut app = ViewerApp::new(None, repo, vec![path]);
+    app.viewer.wait_idle();
+    app.viewer.declare_modality("MR").unwrap();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1200.0, 800.0))
+        .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
+    h.run();
+    h.get_by_label("Loaded with warnings");
+    assert_eq!(h.get_all_by_label_contains("volume 1 of 2 is shown").count(), 1);
+    h.get_by_label("OK").click();
+    h.run();
+    assert!(h.query_by_label("Loaded with warnings").is_none(), "dismissed");
+    assert!(!h.state().viewer.load_warnings_unseen());
+    h.get_by_label("Info").click();
+    h.run();
+    h.get_by_label("Series information");
+    h.get_by_label_contains("volume 1 of 2 is shown");
+}
+
+#[test]
+fn a_3d_file_opens_without_a_warning_window() {
+    // covers 2.7-g
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1200.0, 800.0))
+        .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), loaded_app(dir.path(), None));
+    h.run();
+    assert!(h.query_by_label("Loaded with warnings").is_none());
+    assert!(h.state().viewer.load_warnings().is_empty());
+}
+
+/// The phantom as a 4D NIfTI of two volumes, the second at a third of the
+/// first's values, with a BIDS `.bval` naming them `b = 0` and `b = 1000`.
+fn dwi_file(dir: &Path) -> PathBuf {
+    let first = phantom_file(dir);
+    let (v, _) = ferrum_io::read_nifti(&first).unwrap();
+    let dims = v.dims();
+    let mut values = Vec::with_capacity(dims.voxel_count());
+    for k in 0..dims.z {
+        for j in 0..dims.y {
+            for i in 0..dims.x {
+                values.push((v.physical(i, j, k).unwrap() / 3.0).round());
+            }
+        }
+    }
+    values[0] = 1000.0; // the same range, so the same header and scaling
+    let second = dir.join("second.nii");
+    ferrum_io::write_nifti(&Volume::from_physical(dims, v.spacing(), &values).unwrap(), &second).unwrap();
+    let mut bytes = std::fs::read(&first).unwrap();
+    let other = std::fs::read(&second).unwrap();
+    assert_eq!(bytes[..352], other[..352], "same header");
+    bytes[40..42].copy_from_slice(&4i16.to_le_bytes());
+    bytes[48..50].copy_from_slice(&2i16.to_le_bytes());
+    bytes.extend_from_slice(&other[352..]);
+    let dwi = dir.join("dwi.nii");
+    std::fs::write(&dwi, bytes).unwrap();
+    std::fs::write(dir.join("dwi.bval"), "0 1000\n").unwrap();
+    dwi
+}
+
+#[test]
+fn the_volume_row_switches_volumes() {
+    // covers 20.2-a, 20.2-b
+    let dir = tempfile::tempdir().unwrap();
+    let repo = Arc::new(ferrum_io::CompositeRepository::default());
+    let mut app = ViewerApp::new(None, repo, vec![dwi_file(dir.path())]);
+    app.viewer.wait_idle();
+    app.viewer.declare_modality("CT").unwrap();
+    let value = |app: &ViewerApp| app.viewer.dataset().unwrap().volume.physical(24, 24, 20).unwrap();
+    assert_eq!(value(&app), 1000.0);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1200.0, 800.0))
+        .build_ui_state(|ui, app: &mut ViewerApp| app.show(ui, None), app);
+    h.run();
+    h.get_by_label("Volume (1 of 2)");
+    h.get_by_label("Next volume").click();
+    h.step(); // the volume loads in the background: a spinner turns meanwhile
+    h.state_mut().viewer.wait_idle();
+    h.run();
+    assert_eq!(h.state().viewer.current_volume_label().as_deref(), Some("b = 1000"));
+    assert_eq!(value(h.state()), 333.0);
+    h.get_by_label("Volume (2 of 2)");
+
+    // the list names every volume
+    h.get_by_value("b = 1000").click();
+    h.run();
+    h.get_by_label("b = 0").click();
+    h.step();
+    h.state_mut().viewer.wait_idle();
+    assert_eq!(h.state().viewer.current_volume(), Some(0));
+    assert_eq!(value(h.state()), 1000.0);
 }

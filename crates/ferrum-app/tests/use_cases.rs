@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use ferrum_app::{FilterKind, GpuSink, GpuSyncState, InputKind, ToolKind, ToolOutcome, ViewMode, Viewer};
+use ferrum_domain::{storage_histogram, AUTO_WINDOW_BINS};
 use ferrum_domain::{
     Annotation, AnnotationSet, Dims3, LabelMap, LoadedSeries, ProgressSink, Provenance, RenderMode, RepositoryError,
     ReviewStatus, Rgba8, SeriesDescriptor, SeriesMetadata, SliceAxis, SliceKey, StudyInfo, Timestamp, TransferFunction,
@@ -46,6 +47,7 @@ impl FakeRepo {
                     modality: "CT".into(),
                     dims,
                     sources: vec![],
+                    volume: None,
                 };
                 (d, phantom(dims))
             })
@@ -76,6 +78,7 @@ impl VolumeRepository for FakeRepo {
                 attributes: vec![],
                 study: StudyInfo { study_date: "20240428".into(), modality: "CT".into(), ..Default::default() },
                 source: PathBuf::from("/data/phantom"),
+                warnings: vec![],
             },
         })
     }
@@ -513,4 +516,39 @@ fn picking_uses_the_segment_overlay() {
     assert!(v.pick(Vec2::ZERO, 1.0).is_none());
     v.set_segments_shown(false);
     assert_eq!(v.pick(Vec2::ZERO, 1.0), Some(before));
+}
+
+#[test]
+fn without_a_stored_window_the_app_and_the_agent_choose_the_same_one() {
+    // covers 2.7-h
+    let mut viewer = Viewer::new(FakeRepo::new(1));
+    let volume = phantom(Dims3::new(24, 24, 20));
+    let expected = WindowLevel::auto(volume.range(), &storage_histogram(volume.data(), AUTO_WINDOW_BINS));
+    let (min, span) = (volume.range().min, volume.range().span());
+    let metadata = SeriesMetadata { modality: "MR".into(), ..SeriesMetadata::default() };
+    viewer.install(LoadedSeries { volume, metadata });
+    assert_eq!(viewer.slices.window, expected);
+    // 0.5 % ends in the bin of 0, 99.5 % in the bin of 1000: the window runs
+    // between their upper edges (256 bins over the stored range, ADR 0012).
+    let edge = |v: f32| min + ((((v - min) / span * 256.0).floor() + 1.0) / 256.0) * span;
+    let w = viewer.slices.window;
+    assert!((w.lower() - edge(0.0)).abs() < 1e-2 && w.lower() > 0.0, "{w:?}");
+    assert!((w.upper() - edge(1000.0)).abs() < 1e-2 && w.upper() >= 1000.0, "{w:?}");
+}
+
+#[test]
+fn load_warnings_are_shown_until_dismissed_and_kept() {
+    // covers 2.7-g
+    let mut viewer = Viewer::new(FakeRepo::new(1));
+    assert!(viewer.load_warnings().is_empty() && !viewer.load_warnings_unseen());
+    let warnings = vec!["the file holds 2 volumes".to_string()];
+    let metadata = SeriesMetadata { warnings: warnings.clone(), ..SeriesMetadata::default() };
+    viewer.install(LoadedSeries { volume: phantom(Dims3::new(8, 8, 4)), metadata });
+    assert!(viewer.load_warnings_unseen());
+    viewer.dismiss_load_warnings();
+    assert!(!viewer.load_warnings_unseen());
+    assert_eq!(viewer.load_warnings(), warnings.as_slice(), "kept with the series");
+    // the next load without warnings shows nothing
+    viewer.install(LoadedSeries { volume: phantom(Dims3::new(8, 8, 4)), metadata: SeriesMetadata::default() });
+    assert!(viewer.load_warnings().is_empty() && !viewer.load_warnings_unseen());
 }

@@ -1,0 +1,853 @@
+#!/usr/bin/env python3
+"""Claude Code hooks for FERRUM (.claude/settings.json).
+
+One script, one sub-command per hook. Each reads the hook's JSON from stdin.
+- guard-bash   PreToolUse Bash:  A protected branches, B no volume/patient data,
+                                 D ask before pushing tags, E1-E3 pre-push checks,
+                                 J branch names
+- guard-edit   PreToolUse Edit|Write|MultiEdit: C ADRs are append-only
+- ask-release  PreToolUse merge/release MCP tools: D ask the user
+- post-edit    PostToolUse Edit|Write|MultiEdit: F rustfmt and ruff, G matrix reminders
+- session-start SessionStart:     H fresh base, lessons, environment
+- pre-compact  PreCompact:        I compaction log for sizing calibration
+
+Rules: a hook that fails internally lets the action through (fail open),
+except A and B, which deny when they cannot decide safely. Lessons are in
+.claude/lessons.md; the letters match the hook list in CLAUDE.md.
+"""
+
+import hashlib
+import json
+import os
+import pathlib
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import time
+
+PROTECTED = {"develop", "main"}
+# J: branch names (skill new-branch): <type>/<lowercase-words-joined-by-dashes>, or release/<x.y.z>.
+BRANCH_TYPES = ("feat", "fix", "docs", "refactor", "perf", "test", "chore")
+BRANCH_NAME = re.compile(
+    r"^(?:(?:" + "|".join(BRANCH_TYPES) + r")/[a-z0-9]+(?:[.-][a-z0-9]+)*|release/v?\d+\.\d+\.\d+)$"
+)
+CREATE_FLAGS = {"checkout": ("-b", "-B"), "switch": ("-c", "-C", "--create", "--force-create")}
+DATA_EXT = (".nii", ".nii.gz", ".dcm", ".dicom", ".nrrd", ".mha", ".mhd", ".mgz", ".ima")
+BINARY_LIMIT = 1 << 20  # 1 MiB
+# Files whose change must be covered by phantom_render.py (lesson L1).
+VISUAL_PATHS = (
+    "crates/ferrum-render/src/shaders/slice.wgsl",
+    "crates/ferrum-agent/src/commands/view.rs",
+    "crates/ferrum-agent/src/commands/tiles.rs",
+    "crates/ferrum-domain/src/segmentation.rs",
+)
+SKIP_PREPUSH = "FERRUM_SKIP_PREPUSH="
+
+# G: file pattern -> what else must change (ferrum-change §2).
+MATRIX = [
+    (
+        r"crates/ferrum-render/src/shaders/slice\.wgsl$",
+        "slice.wgsl changed: mirror it in the CPU path (ferrum-agent view.rs render_pixels/on_edge, "
+        "SegmentStyle::blend), cover it in gpu_parity.rs, then run ferrum-visual-check (L1).",
+    ),
+    (
+        r"crates/ferrum-agent/src/commands/(view|tiles)\.rs$|crates/ferrum-domain/src/segmentation\.rs$",
+        "Agent render/overlay code changed: keep slice.wgsl in step, keep the exact-geometry test "
+        "(slice_renders_draw_closed_outlines_or_translucent_fills) passing, run "
+        "phantom_render.py before pushing (the pre-push hook checks it) (L1).",
+    ),
+    (
+        r"crates/ferrum-render/src/shaders/volume\.wgsl$|crates/ferrum-render/src/cpu/raycast\.rs$",
+        "Volume image formation changed: volume.wgsl and cpu/raycast.rs must stay mirrored, "
+        "covered by gpu_parity.rs (CLAUDE.md rendering rule).",
+    ),
+    (
+        r"crates/ferrum-agent/src/schema\.rs$",
+        "Agent schema changed: regenerate skills/ferrum/schemas/commands.json (ferrum-cli schema), "
+        "update skills/ferrum/reference/commands.md and docs/agent-cli.md, add a contract test and a "
+        "CLI parse test in crates/ferrum-cli/src/cli.rs (L8).",
+    ),
+    (
+        r"crates/ferrum-cli/src/cli\.rs$",
+        'CLI changed: every new flag needs a parse test (call(&["ferrum-cli", …])) and must land '
+        "on the right subcommand; CLI and MCP give identical JSON (L8).",
+    ),
+    (
+        r"crates/ferrum-engines/src/(wire|client|protocol)[^/]*\.rs$|bridges/ferrum_bridges/protocol\.py$",
+        "Engine protocol code changed: update docs/engine-protocol.md, the conformance suite "
+        "(crates/ferrum-engines/tests/conformance.rs) and the bridges' tests.",
+    ),
+    (
+        r"crates/ferrum-io/src/(workspace|engine_inputs|provenance)\.rs$",
+        "Workspace format code changed: update docs/workspace-format.md (with the version example) "
+        "and keep old files readable.",
+    ),
+    (
+        r"crates/ferrum-agent/src/commands/(masks|interactive|segment)\.rs$",
+        "Segment-mutating agent code changed: rights go through changeable_segment; keep a test that "
+        "expects `forbidden` for a person's or confirmed segment (L7); seeds apart from prompts (L6).",
+    ),
+    (
+        r"crates/ferrum/src/ui/",
+        "Desktop UI changed: logic belongs in ferrum-app (Viewer use cases); run "
+        "`cargo test -p ferrum --test ui` — new rows can push buttons off the test window (L9).",
+    ),
+    (
+        r"crates/ferrum-io/src/(dicom|nifti)[^/]*\.rs$",
+        "Input reader changed: reorient into LPS; check what metadata the format lacks (modality, units) "
+        "and test NIfTI and DICOM (L10).",
+    ),
+]
+
+
+# ------------------------------------------------------------------ helpers
+def read_input() -> dict:
+    try:
+        return json.load(sys.stdin)
+    except (json.JSONDecodeError, ValueError):
+        return {}
+
+
+def emit(event: str, **fields) -> None:
+    out = {"hookSpecificOutput": {"hookEventName": event, **fields}}
+    print(json.dumps(out))
+
+
+class Decision(Exception):
+    """A PreToolUse decision; the first one raised wins."""
+
+    def __init__(self, decision: str, reason: str):
+        super().__init__(reason)
+        self.decision, self.reason = decision, reason
+
+
+def deny(reason: str):
+    raise Decision("deny", reason)
+
+
+def ask(reason: str):
+    raise Decision("ask", reason)
+
+
+def git(cwd: str, *args: str, timeout: float = 10) -> str:
+    out = subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True, timeout=timeout)
+    if out.returncode != 0:
+        raise RuntimeError(out.stderr.strip() or f"git {' '.join(args)} failed")
+    return out.stdout.strip()
+
+
+def repo_root(cwd: str) -> str:
+    return git(cwd, "rev-parse", "--show-toplevel")
+
+
+def state_dir(root: str) -> str:
+    d = os.path.join(root, ".claude", "state")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def visual_hash(root: str) -> str:
+    h = hashlib.sha256()
+    for rel in VISUAL_PATHS:
+        p = os.path.join(root, rel)
+        h.update(rel.encode())
+        if os.path.exists(p):
+            with open(p, "rb") as f:
+                h.update(f.read())
+    return h.hexdigest()
+
+
+# ------------------------------------------------------------------ bash parsing
+HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1[^\n]*\n.*?^\s*\2\s*$", re.S | re.M)
+
+
+def without_heredocs(command: str) -> str:
+    """The command with here-document bodies removed: their lines are data, not commands."""
+    return HEREDOC.sub(lambda m: m.group(0).split("\n", 1)[0].split("<<", 1)[0], command)
+
+
+def segments(command: str):
+    """Shell command split into simple commands (tokens), roughly."""
+    for part in re.split(r"&&|\|\||;|\n|\|", without_heredocs(command)):
+        try:
+            toks = shlex.split(part, comments=True)
+        except ValueError:
+            toks = part.split()
+        # drop leading env assignments (VAR=x cmd)
+        while toks and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", toks[0]):
+            toks = toks[1:]
+        toks = without_redirections(toks)
+        if toks:
+            yield toks
+
+
+REDIRECTION = re.compile(r"^(?:\d*|&)(?:>>?|<)(?:&\d+|&-)?(.*)$")
+
+
+def without_redirections(toks):
+    """Tokens without shell redirections (2>&1, > out.log, 2>/dev/null), which are not arguments."""
+    out, skip = [], False
+    for t in toks:
+        if skip:
+            skip = False
+            continue
+        m = REDIRECTION.match(t)
+        if m:
+            skip = m.group(1) == "" and not re.search(r"&\d+$|&-$", t)  # `>` alone: the target follows
+            continue
+        out.append(t)
+    return out
+
+
+def git_call(toks):
+    """(cwd_override, subcommand, args) for a git invocation, else None."""
+    if not toks or os.path.basename(toks[0]) != "git":
+        return None
+    i, cwd = 1, None
+    while i < len(toks) and toks[i].startswith("-"):
+        if toks[i] == "-C" and i + 1 < len(toks):
+            cwd = toks[i + 1]
+            i += 2
+        elif toks[i] in ("-c", "--git-dir", "--work-tree") and i + 1 < len(toks):
+            i += 2
+        else:
+            i += 1
+    if i >= len(toks):
+        return None
+    return cwd, toks[i], toks[i + 1 :]
+
+
+def branch_of_ref(ref: str) -> str:
+    ref = ref.lstrip("+")
+    for p in ("refs/heads/", "heads/"):
+        if ref.startswith(p):
+            return ref[len(p) :]
+    return ref
+
+
+def push_targets(args):
+    """(flags, remote, refspecs) of `git push`."""
+    flags, pos = [], []
+    skip = False
+    for a in args:
+        if skip:
+            skip = False
+            continue
+        if a in ("-o", "--push-option", "--receive-pack", "--exec", "--repo"):
+            skip = True
+            continue
+        (flags if a.startswith("-") else pos).append(a)
+    return flags, (pos[0] if pos else None), pos[1:]
+
+
+# ------------------------------------------------------------------ J
+def created_branches(sub, args):
+    """Branch names a git command creates or renames to."""
+    if sub in CREATE_FLAGS:
+        return [args[i + 1] for i, a in enumerate(args[:-1]) if a in CREATE_FLAGS[sub]]
+    if sub == "branch":
+        if args[:1] and args[0] in ("-m", "-M", "--move"):
+            return args[-1:] if len(args) >= 2 else []
+        return [] if any(a.startswith("-") for a in args) else args[:1]
+    return []
+
+
+def check_branch_names(names):
+    bad = sorted({n for n in names if n and n not in PROTECTED and n != "HEAD" and not BRANCH_NAME.match(n)})
+    if bad:
+        deny(
+            f"Branch name {', '.join(bad)} does not follow the convention (skill new-branch): "
+            f"<type>/<lowercase-words-joined-by-dashes> with type {', '.join(BRANCH_TYPES)}, or release/<x.y.z>. "
+            "Rename a harness-named branch (claude/…) before the first commit (L17)."
+        )
+
+
+# ------------------------------------------------------------------ A, B, D, E
+def check_push(cwd, root, args, branch, command):
+    flags, _remote, refspecs = push_targets(args)
+    if "--all" in flags or "--mirror" in flags:
+        return deny(
+            "Pushing all branches (--all/--mirror) would update develop/main. Push the feature branch only (L2)."
+        )
+    dests = []
+    for spec in refspecs:
+        dst = spec.split(":", 1)[1] if ":" in spec else spec
+        if spec.startswith(":"):
+            dst = spec[1:]
+        dests.append(branch_of_ref(dst))
+    if not refspecs:
+        dests = [branch] if branch else []
+    hit = sorted({d for d in dests if d in PROTECTED or (d == "HEAD" and branch in PROTECTED)})
+    if hit:
+        return deny(
+            f"Push to {', '.join(hit)} is not allowed: develop and main change only through "
+            "merged PRs (CLAUDE.md, lesson L2). Push the feature branch and open a PR."
+        )
+    if not ({"--delete", "-d"} & set(flags)):
+        created = [branch_of_ref(s.split(":", 1)[-1]) for s in refspecs if not s.startswith(":")]
+        if not refspecs:
+            created = dests
+        check_branch_names([d for d in created if not d.startswith("refs/tags/") and not re.match(r"^v\d", d)])
+    tags = (
+        "--tags" in flags
+        or "--follow-tags" in flags
+        or any(s.startswith("refs/tags/") or re.match(r"^v\d", s) for s in refspecs)
+    )
+    if tags:
+        return ask("Pushing tags publishes a version; releases need the user's word (ferrum-release, G3).")
+    if "FERRUM_SKIP_PREPUSH=" in command:
+        # The escape hatch stays, but only as an explicit, recorded act: a bare
+        # `FERRUM_SKIP_PREPUSH=1` is refused, and the value has to say why, so
+        # the reason lands in the transcript and in the PR. A silent skip is
+        # what let a red suite reach CI (L34).
+        reason = re.search(r"FERRUM_SKIP_PREPUSH=(\S+)", command)
+        if not reason or reason.group(1) == "1" or len(reason.group(1)) < 10:
+            return deny(
+                "Skipping the local run needs a reason: write "
+                "`FERRUM_SKIP_PREPUSH=<why> git push …` with at least a short clause instead of "
+                "`FERRUM_SKIP_PREPUSH=1`. The local run is the gate before CI, not a suggestion (L34)."
+            )
+        return None
+    return prepush_checks(root)
+
+
+def clippy_failure(output: str) -> str:
+    """The first few clippy errors, short enough to act on."""
+    errors = [line.strip() for line in output.splitlines() if line.startswith("error")]
+    head = "; ".join(errors[:3]) if errors else "see the output"
+    return f"`cargo clippy --workspace --all-targets -- -D warnings` fails: {head}."
+
+
+def tests_failure(output: str) -> str:
+    """The failing test binaries and tests, not the whole log."""
+    failing = [line.strip() for line in output.splitlines() if line.startswith("error: test failed")]
+    crates = [line.strip() for line in output.splitlines() if re.match(r"^\s+Running .*\(target", line)]
+    summary = "; ".join(failing[:4]) if failing else "see the output"
+    if not failing and crates:
+        summary = "a test binary failed; " + crates[0]
+    return (
+        f"`cargo test --workspace` fails: {summary}. Fix it or, if it cannot be "
+        "fixed here, name the test and the reason in the PR (L33) — never push a red suite."
+    )
+
+
+def known_failures(root) -> dict:
+    """Tests this machine (or CI) is known to fail, with the reason on the record.
+
+    A red suite is a defect (L33), not a background, so ignoring one has to be
+    a written decision rather than a mental note:
+    `.claude/known-failures.json` maps a failing test binary to the reason it
+    fails and who tracks it. It is committed, unlike `.claude/state/`, because
+    the decision belongs to the repository and to everyone who runs the gate.
+    A binary listed there does not block the gate; it is reported instead, so
+    the reason stays visible on every push.
+    """
+    path = os.path.join(root, ".claude", "known-failures.json")
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return {}
+    return {k: v for k, v in data.items() if not k.startswith("_")} if isinstance(data, dict) else {}
+
+
+def tests_passed_except(output: str, known: dict) -> list:
+    """Which failing binaries are known; a run that fails only for them passes.
+
+    Cargo reports a failure in two shapes — `error: test failed, to rerun pass
+    `-p foo --test bar`` per binary, and a trailing `error: N targets failed:`
+    followed by an indented list — so both are read. Line endings are
+    normalised first: cargo's output carries `\\r\\n` on Windows, and a trailing
+    carriage return defeats a match anchored with `$`.
+    """
+    failed = []
+    for line in output.replace("\r\n", "\n").replace("\r", "\n").splitlines():
+        m = re.search(r"error: test failed.*?`-p\s+([^`]+)`", line)
+        if m:
+            failed.append(m.group(1).strip())
+            continue
+        m = re.match(r"^\s+`-p\s+([^`]+)`\s*$", line)
+        if m:
+            failed.append(m.group(1).strip())
+    return [f for f in failed if f in known]
+
+
+def prepush_checks(root):
+    """E1 fmt, clippy and the tests; E2 visual-check marker; E4 size. Deny on failure.
+
+    This is the pre-commit gate for the pipeline: the point is not to help the
+    author, it is to make a red CI round unlikely before it is paid for
+    (L34). Everything a push can break locally is checked here.
+    """
+    problems = []
+    cargo = os.path.exists(os.path.join(root, "Cargo.toml"))
+    if cargo:
+        fmt = subprocess.run(
+            ["cargo", "fmt", "--all", "--", "--check"], cwd=root, capture_output=True, text=True, timeout=120
+        )
+        if fmt.returncode != 0:
+            problems.append("`cargo fmt --all -- --check` fails: run `cargo fmt --all` and commit.")
+        # Clippy and the tests are what CI spends most of its minutes on, and
+        # the two that fail most often for something local would have shown.
+        clippy = subprocess.run(
+            ["cargo", "clippy", "--workspace", "--all-targets", "--", "-D", "warnings"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=1800,
+        )
+        if clippy.returncode != 0:
+            problems.append(clippy_failure(clippy.stderr))
+        # The same invocation CI uses (`--test-threads=4`): running it
+        # differently would answer a different question. GPU tests are not
+        # forced here — lavapipe is a CI feature, and `FERRUM_REQUIRE_GPU`
+        # belongs to `preflight.sh`, which knows whether this machine can.
+        env = dict(os.environ)
+        env.pop("FERRUM_REQUIRE_GPU", None)
+        # A `%TEMP%` the sandbox has closed turns every test that writes a file
+        # into a failure — 54 binaries "failing" for a reason that has nothing
+        # to do with the code (`os error 5`, the GPU lock directory). Point it
+        # inside the repository, as the CI runner's own temp dir is writable.
+        scratch = os.path.join(root, "target", "gate-tmp")
+        try:
+            os.makedirs(scratch, exist_ok=True)
+            env["TEMP"] = env["TMP"] = scratch
+        except OSError:
+            pass
+        tests = subprocess.run(
+            ["cargo", "test", "--workspace", "--no-fail-fast", "--", "--test-threads=4"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+            timeout=3600,
+        )
+        if tests.returncode != 0:
+            combined = tests.stdout + tests.stderr
+            known = known_failures(root)
+            forgiven = tests_passed_except(combined, known)
+            failed = [line for line in combined.splitlines() if line.startswith("error: test failed")]
+            failed += [line for line in combined.splitlines() if re.match(r"^\s+`-p\s+[^`]+`\s*$", line)]
+            if not failed or len(forgiven) < len(failed):
+                problems.append(tests_failure(combined))
+            else:
+                # Not silent: a known failure still gets said out loud on every
+                # push, so nobody mistakes it for a green suite.
+                for binary in sorted(set(forgiven)):
+                    reason = str(known.get(binary, {}).get("reason", "no reason recorded")).split(". ")[0]
+                    print(f"pre-push: known failure, not blocking: {binary} — {reason}.", file=sys.stderr)
+    try:
+        base = git(root, "merge-base", "HEAD", "origin/develop")
+        changed = set(git(root, "diff", "--name-only", base, "HEAD").splitlines())
+    except (RuntimeError, subprocess.TimeoutExpired):
+        changed = set()
+    if cargo and any(
+        c.startswith("crates/ferrum-agent/src/") or c.startswith("skills/ferrum/schemas/") for c in changed
+    ):
+        gen = subprocess.run(
+            ["cargo", "run", "-q", "-p", "ferrum-cli", "--", "schema"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=600,
+        )
+        path = os.path.join(root, "skills/ferrum/schemas/commands.json")
+        if gen.returncode == 0 and os.path.exists(path):
+            # The checkout may hold CRLF on Windows (git's autocrlf), and a
+            # fresh schema would then read as stale on every Windows machine.
+            stored = ""
+            with open(path, encoding="utf-8") as f:
+                stored = f.read().replace("\r\n", "\n").strip()
+            if stored != gen.stdout.replace("\r\n", "\n").strip():
+                problems.append(
+                    "skills/ferrum/schemas/commands.json is stale: "
+                    "`cargo run -q -p ferrum-cli -- schema > skills/ferrum/schemas/commands.json`."
+                )
+    problems += ruff_problems(root, changed)
+    problems += size_problems(root, changed)
+    if changed & set(VISUAL_PATHS):
+        marker = os.path.join(state_dir(root), "visual-check.json")
+        ok = False
+        if os.path.exists(marker):
+            try:
+                with open(marker, encoding="utf-8") as f:
+                    ok = json.load(f).get("hash") == visual_hash(root)
+            except (OSError, ValueError):
+                ok = False
+        if not ok:
+            problems.append(
+                "Slice/overlay rendering changed since the last passing visual check: run "
+                "`python3 .claude/skills/ferrum-visual-check/phantom_render.py` and look at the "
+                "PNGs (ferrum-visual-check, lesson L1)."
+            )
+    if problems:
+        deny(
+            "The local run before CI failed — this is the gate, and CI would fail the same way:\n- "
+            + "\n- ".join(problems)
+            + "\nFix these, then push. To push anyway, write "
+            "`FERRUM_SKIP_PREPUSH=<why> git push …` so the reason is on the record (L34)."
+        )
+    return None
+
+
+def size_problems(root, changed):
+    """E4: a branch past the size budget must be split before it is pushed (L36).
+
+    `ferrum-size/calibration.md` sets the classes: M is 1 500 lines and 25
+    files, L is 3 500 and 40, and anything beyond L is XL, which "split into
+    M/L PRs". The rule existed only as prose, so a stage declared L could grow
+    to XL unnoticed; this measures the branch instead.
+    """
+    try:
+        base = git(root, "merge-base", "HEAD", "origin/develop")
+        short = git(root, "diff", "--shortstat", base, "HEAD")
+    except (RuntimeError, subprocess.TimeoutExpired):
+        return []
+    # `--shortstat` omits a part when it is zero ("40 files changed, 2000
+    # insertions(+)" has no deletions), so each number is read by its label.
+    counts = {label: int(value) for value, label in re.findall(r"(\d+) (files?|insertions?|deletions?)", short)}
+    files = counts.get("files", counts.get("file", 0))
+    added = counts.get("insertions", counts.get("insertion", 0))
+    deleted = counts.get("deletions", counts.get("deletion", 0))
+    if not files:
+        return []
+    lines = added + deleted
+    if lines <= 3500 and files <= 40:
+        return []
+    return [
+        f"this branch is {lines} lines in {files} files — beyond size L (3500 lines, 40 files), so it is "
+        "XL and `ferrum-size` says to split it into M/L PRs. Split along the commit boundaries, or say "
+        "in the PR body why the split does not apply (lesson L36)."
+    ]
+
+
+def ruff_problems(root, changed):
+    """E3: changed Python files must pass ruff (ruff.toml), as in the CI job python-lint."""
+    ruff = shutil.which("ruff")
+    py = sorted(c for c in changed if c.endswith(".py") and os.path.exists(os.path.join(root, c)))
+    if not ruff or not py:
+        return []
+    check = subprocess.run([ruff, "check", *py], cwd=root, capture_output=True, text=True, timeout=120)
+    fmt = subprocess.run([ruff, "format", "--check", *py], cwd=root, capture_output=True, text=True, timeout=120)
+    if check.returncode == 0 and fmt.returncode == 0:
+        return []
+    return [
+        f"ruff reports problems in changed Python files: `ruff check --fix {' '.join(py)} && ruff format "
+        f"{' '.join(py)}`, then fix what is left (ruff.toml)."
+    ]
+
+
+def candidate_files(root, adds_or_all):
+    files = set(git(root, "diff", "--cached", "--name-only").splitlines())
+    if adds_or_all:
+        files |= set(git(root, "diff", "--name-only").splitlines())
+        files |= set(git(root, "ls-files", "--others", "--exclude-standard").splitlines())
+    return sorted(f for f in files if f)
+
+
+def data_problems(root, files):
+    bad = []
+    for rel in files:
+        low = rel.lower()
+        p = os.path.join(root, rel)
+        if not os.path.isfile(p):
+            continue  # deleted: removing data is fine
+        if low.endswith(DATA_EXT):
+            bad.append(f"{rel} (volume/DICOM file)")
+            continue
+        if rel.startswith("docs/images/"):
+            continue
+        size = os.path.getsize(p)
+        if size > BINARY_LIMIT:
+            with open(p, "rb") as f:
+                if b"\0" in f.read(8192):
+                    bad.append(f"{rel} (binary, {size // 1024} KiB)")
+    return bad
+
+
+def guard_bash(data):
+    command = (data.get("tool_input") or {}).get("command", "")
+    if "git" not in command:
+        return
+    base_cwd = data.get("cwd") or os.getcwd()
+    switched = False
+    for toks in segments(command):
+        call = git_call(toks)
+        if not call:
+            continue
+        cwd_override, sub, args = call
+        cwd = os.path.join(base_cwd, cwd_override) if cwd_override else base_cwd
+        check_branch_names(created_branches(sub, args))
+        if sub in ("checkout", "switch"):
+            switched = True
+            continue
+        if sub not in ("commit", "push", "merge", "rebase", "add"):
+            continue
+        try:
+            root = repo_root(cwd)
+            branch = git(root, "rev-parse", "--abbrev-ref", "HEAD")
+        except (RuntimeError, subprocess.TimeoutExpired, OSError):
+            if sub in ("commit", "push"):
+                return deny(f"Could not determine the git branch for `git {sub}`; check the repository.")
+            continue
+        on_protected = branch in PROTECTED and not switched
+        if sub in ("commit", "merge", "rebase") and on_protected:
+            return deny(
+                f"`git {sub}` on {branch} is not allowed: work on a feat/ fix/ docs/ refactor/ chore/ "
+                "branch from origin/develop (L2, L3)."
+            )
+        if sub == "commit":
+            adds = "git add" in command or any(a in ("-a", "--all") or re.match(r"^-[a-zA-Z]*a", a) for a in args)
+            bad = data_problems(root, candidate_files(root, adds))
+            if bad:
+                return deny(
+                    "Volume, DICOM or large binary files would be committed: "
+                    + ", ".join(bad)
+                    + ". FERRUM never commits patient or volume data, not even synthetic "
+                    "(tests generate data at run time). Unstage or delete them."
+                )
+        if sub == "push":
+            check_push(cwd, root, args, None if switched else branch, command)
+
+
+# ------------------------------------------------------------------ C
+def guard_edit(data):
+    ti = data.get("tool_input") or {}
+    path = ti.get("file_path") or ti.get("notebook_path") or ""
+    if not path:
+        return
+    cwd = data.get("cwd") or os.getcwd()
+    try:
+        root = repo_root(cwd)
+    except (RuntimeError, subprocess.TimeoutExpired, OSError):
+        return
+    # Git paths always use forward slashes; on Windows `relpath` gives
+    # backslashes, and every pattern and `git cat-file` below expects `/`.
+    rel = os.path.relpath(os.path.abspath(os.path.join(cwd, path)), root).replace(os.sep, "/")
+    if not re.match(r"^docs/decisions/\d{4}-.*\.md$", rel):
+        return
+    try:
+        git(root, "cat-file", "-e", f"origin/develop:{rel}")
+    except (RuntimeError, subprocess.TimeoutExpired):
+        return  # a new ADR, not merged yet
+    full = os.path.join(root, rel)
+    current = ""
+    if os.path.exists(full):
+        with open(full, encoding="utf-8") as f:
+            current = f.read()
+    tool = data.get("tool_name", "")
+    if tool == "Write" and ti.get("content", "").startswith(current.rstrip()):
+        return
+    if tool == "Edit":
+        old, new = ti.get("old_string", ""), ti.get("new_string", "")
+        if old and new.startswith(old) and current.rstrip().endswith(old.rstrip()):
+            return  # appending after the end of the ADR
+    deny(
+        f"{rel} is a merged ADR and ADRs are append-only (CLAUDE.md): add an amendment at the end, "
+        "or write a new ADR that supersedes it."
+    )
+
+
+# ------------------------------------------------------------------ D
+def ask_release(data):
+    tool = data.get("tool_name", "")
+    ti = data.get("tool_input") or {}
+    if tool.endswith("merge_pull_request"):
+        return ask(
+            f"Merging PR #{ti.get('pullNumber', '?')} into its base: merges need the user's word "
+            "in every mode (ferrum-workflow G3)."
+        )
+    if tool.endswith("actions_run_trigger") and "release" in str(ti.get("workflow_id", "")).lower():
+        return ask(
+            f"Running the release workflow (tag {(ti.get('inputs') or {}).get('tag', '?')}) publishes a "
+            "GitHub release: confirm (ferrum-release)."
+        )
+
+
+# ------------------------------------------------------------------ F, G
+def post_edit(data):
+    ti = data.get("tool_input") or {}
+    path = ti.get("file_path") or ""
+    if not path:
+        return
+    cwd = data.get("cwd") or os.getcwd()
+    try:
+        root = repo_root(cwd)
+    except (RuntimeError, subprocess.TimeoutExpired, OSError):
+        return
+    full = os.path.abspath(os.path.join(cwd, path))
+    # Git paths use forward slashes, and the change matrix is keyed by them.
+    rel = os.path.relpath(full, root).replace(os.sep, "/")
+    if rel.endswith(".rs") and os.path.exists(full):
+        subprocess.run(["rustfmt", "--edition", "2021", full], cwd=root, capture_output=True, timeout=30)
+    parts = []
+    if rel.endswith((".py", ".pyi")) and os.path.exists(full):
+        parts += ruff_after_edit(root, full, rel)
+    fresh = fresh_matrix_notes(root, rel, data.get("session_id", "none"))
+    if fresh:
+        parts.append("FERRUM matrix (ferrum-change §2): " + " ".join(fresh))
+    if parts:
+        emit("PostToolUse", additionalContext="\n".join(parts))
+
+
+def ruff_after_edit(root, full, rel):
+    """F: ruff format and safe fixes on an edited Python file; reports what is left to fix."""
+    ruff = shutil.which("ruff")
+    if ruff is None:
+        return []
+    for args in (["format", "--quiet"], ["check", "--fix", "--quiet"]):
+        subprocess.run([ruff, *args, full], cwd=root, capture_output=True, timeout=60)
+    out = subprocess.run(
+        [ruff, "check", "--output-format", "concise", full], cwd=root, capture_output=True, text=True, timeout=60
+    )
+    if out.returncode == 0:
+        return []
+    return [f"ruff (ruff.toml) still reports problems in {rel}; fix them before pushing:\n{out.stdout.strip()}"]
+
+
+def fresh_matrix_notes(root, rel, session_id):
+    """G: matrix reminders for this file that were not shown in this session yet."""
+    notes = [msg for pat, msg in MATRIX if re.search(pat, rel)]
+    if not notes:
+        return []
+    seen_file = os.path.join(state_dir(root), f"reminders-{session_id}.json")
+    try:
+        with open(seen_file, encoding="utf-8") as f:
+            seen = set(json.load(f))
+    except (OSError, ValueError):
+        seen = set()
+    fresh = [n for n in notes if note_id(n) not in seen]
+    if fresh:
+        seen |= {note_id(n) for n in fresh}
+        with open(seen_file, "w", encoding="utf-8") as f:
+            json.dump(sorted(seen), f)
+    return fresh
+
+
+def note_id(note):
+    return hashlib.sha1(note.encode(), usedforsecurity=False).hexdigest()
+
+
+# ------------------------------------------------------------------ H
+def session_start(data):
+    cwd = data.get("cwd") or os.getcwd()
+    try:
+        root = repo_root(cwd)
+    except (RuntimeError, subprocess.TimeoutExpired, OSError):
+        return
+    lines = ["FERRUM session start. Begin every task with the skill ferrum-workflow; read .claude/lessons.md."]
+    try:
+        git(root, "fetch", "-q", "origin", "develop", timeout=30)
+        fetched = True
+    except (RuntimeError, subprocess.TimeoutExpired):
+        fetched = False
+    try:
+        branch = git(root, "rev-parse", "--abbrev-ref", "HEAD")
+        behind, ahead = git(root, "rev-list", "--left-right", "--count", "origin/develop...HEAD").split()
+        lines.append(
+            f"Branch {branch}: {ahead} ahead, {behind} behind origin/develop"
+            + ("" if fetched else " (fetch failed; may be stale)")
+            + "."
+        )
+        if branch in PROTECTED:
+            lines.append(f"You are on {branch}: create a feature branch from origin/develop before any change (L2).")
+        elif int(behind) > 0:
+            lines.append("Merge or rebase origin/develop before designing or pushing (L3).")
+    except (RuntimeError, subprocess.TimeoutExpired, ValueError):
+        pass
+    lessons = os.path.join(root, ".claude", "lessons.md")
+    if os.path.exists(lessons):
+        with open(lessons, encoding="utf-8") as f:
+            titles = [line[4:].strip() for line in f if line.startswith("### ")]
+        lines.append("Lessons: " + "; ".join(t.split(" (")[0] for t in titles))
+    target = os.path.join(root, "target")
+    if os.path.isdir(target):
+        # `du` is Unix-only; on Windows its absence raised FileNotFoundError
+        # out of the hook and swallowed the whole session-start message.
+        try:
+            if shutil.which("du") is not None:
+                out = subprocess.run(["du", "-sk", target], capture_output=True, text=True, timeout=5)
+                kb = int(out.stdout.split()[0])
+            else:
+                kb = sum(f.stat().st_size for f in pathlib.Path(target).rglob("*") if f.is_file()) // 1024
+            gb = kb / 1024 / 1024
+            if gb > 20:
+                lines.append(
+                    f"target/ is {gb:.0f} GB: remove target/llvm-cov-target and target/release if not needed (L15)."
+                )
+        except (subprocess.TimeoutExpired, ValueError, IndexError, OSError):
+            pass
+    if shutil.which("ruff") is None:
+        lines.append("ruff is not installed: edited Python files are not linted (pip install ruff; ruff.toml).")
+    icd = "/usr/share/vulkan/icd.d"
+    if not (os.path.isdir(icd) and any(n.startswith("lvp_icd") for n in os.listdir(icd))):
+        lines.append("No lavapipe Vulkan driver: GPU tests skip locally (install mesa-vulkan-drivers).")
+    emit("SessionStart", additionalContext="\n".join(lines))
+
+
+# ------------------------------------------------------------------ I
+def pre_compact(data):
+    cwd = data.get("cwd") or os.getcwd()
+    try:
+        root = repo_root(cwd)
+        branch = git(root, "rev-parse", "--abbrev-ref", "HEAD")
+        head = git(root, "rev-parse", "--short", "HEAD")
+    except (RuntimeError, subprocess.TimeoutExpired, OSError):
+        return
+    line = "\t".join(
+        [
+            time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            branch,
+            head,
+            str(data.get("trigger", "?")),
+            str(data.get("session_id", "?")),
+        ]
+    )
+    with open(os.path.join(state_dir(root), "compactions.log"), "a", encoding="utf-8") as f:
+        f.write(line + "\n")
+
+
+HANDLERS = {
+    "guard-bash": guard_bash,
+    "guard-edit": guard_edit,
+    "ask-release": ask_release,
+    "post-edit": post_edit,
+    "session-start": session_start,
+    "pre-compact": pre_compact,
+}
+FAIL_CLOSED = {"guard-bash"}
+
+
+def main() -> int:
+    if len(sys.argv) != 2 or sys.argv[1] not in HANDLERS:
+        print(f"usage: ferrum_hooks.py {{{'|'.join(HANDLERS)}}}", file=sys.stderr)
+        return 0
+    name = sys.argv[1]
+    data = read_input()
+    try:
+        HANDLERS[name](data)
+    except Decision as d:
+        emit("PreToolUse", permissionDecision=d.decision, permissionDecisionReason=d.reason)
+    except Exception as e:
+        cmd = str((data.get("tool_input") or {}).get("command", ""))
+        if name in FAIL_CLOSED and re.search(r"\bgit\b.*\b(commit|push)\b", cmd):
+            emit(
+                "PreToolUse",
+                permissionDecision="deny",
+                permissionDecisionReason=f"FERRUM guard could not check this git command ({e}); "
+                "fix .claude/hooks/ferrum_hooks.py or ask the user.",
+            )
+        print(f"ferrum_hooks {name}: {e}", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

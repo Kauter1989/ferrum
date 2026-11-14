@@ -715,6 +715,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "console_error_panic_hook"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a06aeb73f470f66dcdbf7223caeebb85984942f22f1adb2a088cf9668146bbbc"
+dependencies = [
+ "cfg-if",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -850,6 +860,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce6e4c961d6cd6c9a86db418387425e8bdeaf05b3c8bc1411e6dca4c252f1453"
 dependencies = [
  "hybrid-array",
+]
+
+[[package]]
+name = "ctrlc"
+version = "3.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e0b1fab2ae45819af2d0731d60f2afe17227ebb1a1538a236da84c93e9a60162"
+dependencies = [
+ "dispatch2",
+ "nix",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1431,7 +1452,7 @@ checksum = "b97b65636e5b9ef369943878ac74335ba1c55c1cb6adbf1e2c293c624248d693"
 
 [[package]]
 name = "ferrum"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "eframe",
  "egui",
@@ -1443,8 +1464,9 @@ dependencies = [
  "ferrum-domain",
  "ferrum-engines",
  "ferrum-io",
- "ferrum-processing",
+ "ferrum-radiomics",
  "ferrum-render",
+ "ferrum-ui",
  "glam",
  "image",
  "log",
@@ -1455,20 +1477,23 @@ dependencies = [
 
 [[package]]
 name = "ferrum-agent"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.22.1",
+ "ctrlc",
  "dicom-core",
  "dicom-dictionary-std",
  "dicom-object",
  "ferrum-domain",
  "ferrum-engines",
  "ferrum-io",
+ "ferrum-radiomics",
  "ferrum-render",
  "flate2",
  "glam",
  "image",
  "log",
+ "rustix 1.1.5",
  "serde_json",
  "sha2",
  "tempfile",
@@ -1477,12 +1502,13 @@ dependencies = [
 
 [[package]]
 name = "ferrum-app"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "ferrum-domain",
  "ferrum-engines",
  "ferrum-io",
  "ferrum-processing",
+ "ferrum-radiomics",
  "ferrum-render",
  "glam",
  "log",
@@ -1493,12 +1519,14 @@ dependencies = [
 
 [[package]]
 name = "ferrum-cli"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "clap",
  "ferrum-agent",
  "ferrum-domain",
+ "ferrum-engines",
  "ferrum-io",
+ "ferrum-view",
  "glam",
  "serde_json",
  "tempfile",
@@ -1506,7 +1534,7 @@ dependencies = [
 
 [[package]]
 name = "ferrum-domain"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "approx",
  "glam",
@@ -1516,21 +1544,31 @@ dependencies = [
 
 [[package]]
 name = "ferrum-engines"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.22.1",
  "ferrum-domain",
+ "ferrum-gpu-lock",
  "flate2",
  "glam",
  "log",
  "serde_json",
+ "tempfile",
  "tiny_http",
+ "toml 0.9.12+spec-1.1.0",
  "ureq",
 ]
 
 [[package]]
+name = "ferrum-gpu-lock"
+version = "0.4.0"
+dependencies = [
+ "rustix 1.1.5",
+]
+
+[[package]]
 name = "ferrum-io"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "criterion",
  "dicom-core",
@@ -1551,7 +1589,7 @@ dependencies = [
 
 [[package]]
 name = "ferrum-processing"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "criterion",
  "ferrum-domain",
@@ -1561,8 +1599,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ferrum-radiomics"
+version = "0.4.0"
+dependencies = [
+ "approx",
+ "criterion",
+ "ferrum-domain",
+ "glam",
+ "proptest",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "ferrum-render"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "bytemuck",
  "criterion",
@@ -1578,6 +1628,66 @@ dependencies = [
  "proptest",
  "rayon",
  "thiserror 2.0.21",
+ "wgpu",
+]
+
+[[package]]
+name = "ferrum-ui"
+version = "0.4.0"
+dependencies = [
+ "egui",
+ "egui-phosphor",
+ "egui-wgpu",
+ "egui_kittest",
+ "ferrum-app",
+ "ferrum-domain",
+ "ferrum-engines",
+ "ferrum-io",
+ "ferrum-processing",
+ "ferrum-radiomics",
+ "ferrum-render",
+ "glam",
+ "log",
+ "tempfile",
+ "wgpu",
+]
+
+[[package]]
+name = "ferrum-view"
+version = "0.4.0"
+dependencies = [
+ "ferrum-app",
+ "ferrum-domain",
+ "ferrum-io",
+ "ferrum-render",
+ "getrandom 0.3.4",
+ "glam",
+ "image",
+ "log",
+ "pollster 0.4.0",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tiny_http",
+ "ureq",
+ "wgpu",
+]
+
+[[package]]
+name = "ferrum-wasm"
+version = "0.4.0"
+dependencies = [
+ "bytemuck",
+ "console_error_panic_hook",
+ "ferrum-domain",
+ "ferrum-processing",
+ "ferrum-render",
+ "glam",
+ "js-sys",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
  "wgpu",
 ]
 
@@ -2662,6 +2772,18 @@ name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
+
+[[package]]
+name = "nix"
+version = "0.31.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
+dependencies = [
+ "bitflags 2.13.2",
+ "cfg-if",
+ "cfg_aliases",
+ "libc",
+]
 
 [[package]]
 name = "no_std_io2"

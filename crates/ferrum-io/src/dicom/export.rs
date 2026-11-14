@@ -63,6 +63,9 @@ pub struct SourceInstance {
     pub sop_instance_uid: String,
     /// Image Position (Patient), if present.
     pub position: Option<DVec3>,
+    /// Normal of the image plane (row × column of Image Orientation
+    /// (Patient)), if present.
+    pub normal: Option<DVec3>,
 }
 
 /// What the export takes from the source DICOM series.
@@ -126,7 +129,11 @@ pub fn read_source(files: &[PathBuf]) -> Option<DicomSource> {
         }
         let position =
             f64s_of(&obj, tags::IMAGE_POSITION_PATIENT).filter(|v| v.len() >= 3).map(|v| DVec3::new(v[0], v[1], v[2]));
-        src.instances.push(SourceInstance { sop_class_uid: class, sop_instance_uid: instance, position });
+        let normal = f64s_of(&obj, tags::IMAGE_ORIENTATION_PATIENT)
+            .filter(|v| v.len() >= 6)
+            .map(|v| DVec3::new(v[0], v[1], v[2]).cross(DVec3::new(v[3], v[4], v[5])).normalize_or_zero())
+            .filter(|n| n.length() > 0.5);
+        src.instances.push(SourceInstance { sop_class_uid: class, sop_instance_uid: instance, position, normal });
     }
     src
 }
@@ -431,12 +438,16 @@ impl DicomExporter {
         let spacing = volume.spacing();
         let normal = volume.geometry().direction.z_axis.as_dvec3();
         let position = |k: usize| volume.voxel_to_patient(Vec3::new(0.0, 0.0, k as f32)).as_dvec3();
-        // Source image of each slice (same position along the normal).
+        // Source image of each slice: same plane (parallel normal) at the
+        // same position along the normal. A grid brought into LPS from a
+        // sagittal or coronal series has no such image.
+        let parallel = |inst: &SourceInstance| inst.normal.is_none_or(|n| n.dot(normal).abs() > 0.999);
         let source_of = |k: usize| -> Option<&SourceInstance> {
             let src = ctx.source.as_ref().filter(|_| ctx.references())?;
             let p = position(k);
             src.instances
                 .iter()
+                .filter(|inst| parallel(inst))
                 .filter_map(|inst| inst.position.map(|q| ((q - p).dot(normal).abs(), inst)))
                 .filter(|(d, _)| *d < f64::from(spacing.z) * 0.5)
                 .min_by(|a, b| a.0.total_cmp(&b.0))
@@ -504,6 +515,10 @@ impl DicomExporter {
         e.extend(multiframe_layout(volume, &organisation));
         if !referenced.is_empty() {
             e.push(referenced_series(ctx, referenced.values()));
+        } else if let Some(src) = ctx.source.as_ref().filter(|_| ctx.references()) {
+            // Frames lie across the source images: the whole series is the
+            // source, without a per-frame derivation.
+            e.push(referenced_series(ctx, src.instances.iter()));
         }
         write_file(path, e)?;
         Ok(Some(SegExport {

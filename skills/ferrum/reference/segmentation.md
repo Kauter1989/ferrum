@@ -50,7 +50,8 @@ retry; do not switch engines silently.
 5. Stop when `checks.stability` ≥ 0.95, or after 8 prompts: then report
    "not converged".
 6. Measure: `segment shape` (volume, long and short axis with end points
-   and slice number) and `stats` with `segment: L`.
+   and slice number), `segment metrics` (the same size plus mean, std and
+   percentiles of the HU values in one call) or `stats` with `segment: L`.
 
 ## 3. Find all, then refine
 1. `segment auto` with the detection sub-task (e.g. `lung_nodules`).

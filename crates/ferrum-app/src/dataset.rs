@@ -6,7 +6,7 @@ use ferrum_domain::{SeriesMetadata, Volume};
 use ferrum_processing::{BrickGrid, Histogram};
 
 /// Number of histogram bins shown by the transfer function editor.
-pub const HISTOGRAM_BINS: usize = 256;
+pub const HISTOGRAM_BINS: usize = ferrum_domain::AUTO_WINDOW_BINS;
 /// Brick edge used for empty-space skipping.
 pub const BRICK_SIZE: u32 = BrickGrid::DEFAULT_BRICK_SIZE;
 

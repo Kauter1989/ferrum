@@ -14,6 +14,7 @@ pub mod export;
 pub mod inspect;
 pub mod interactive;
 pub mod masks;
+pub mod metrics;
 pub mod review;
 pub mod segment;
 pub mod study;
@@ -86,9 +87,12 @@ pub const COMMANDS: &[(&str, Command)] = &[
     ("segment threshold", segment::threshold),
     ("engine info", engine::info),
     ("engine list", engine::list),
+    ("engine unload", engine::unload),
     ("segment interactive", interactive::interactive),
     ("segment auto", engine::auto),
     ("segment shape", masks::shape),
+    ("segment distance", masks::distance),
+    ("segment metrics", metrics::metrics),
     ("segment components", masks::components),
     ("segment compare", masks::compare),
     ("segment edit", masks::edit),

@@ -35,6 +35,7 @@ impl VolumeRepository for Repo {
                 modality: "CT".into(),
                 dims: Dims3::new(16, 16, 8),
                 sources: vec![],
+                volume: None,
             })
             .collect())
     }

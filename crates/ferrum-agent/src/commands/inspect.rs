@@ -2,6 +2,7 @@
 //! should report instead of reading them off an image.
 
 use ferrum_domain::{Annotation, SliceAxis, Volume};
+use ferrum_radiomics::intensity::first_order;
 use glam::{DVec3, Vec2};
 use serde_json::{json, Value};
 
@@ -61,20 +62,17 @@ pub fn stats(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     Ok(Output::new(data))
 }
 
-/// Count, mean, standard deviation, extremes and percentiles.
-pub fn summarise(mut values: Vec<f32>) -> Value {
-    let n = values.len();
-    let mean = values.iter().map(|v| f64::from(*v)).sum::<f64>() / n as f64;
-    let var = values.iter().map(|v| (f64::from(*v) - mean).powi(2)).sum::<f64>() / n as f64;
-    values.sort_by(f32::total_cmp);
-    let pct = |q: f64| f64::from(values[((n - 1) as f64 * q).round() as usize]);
+/// Count, mean, standard deviation, extremes and percentiles (the numbers
+/// of `ferrum-radiomics`, rounded for the envelope).
+pub fn summarise(values: Vec<f32>) -> Value {
+    let Some(f) = first_order(values) else { return json!({ "voxels": 0 }) };
     json!({
-        "voxels": n,
-        "mean": round(mean, 2),
-        "std": round(var.sqrt(), 2),
-        "min": f64::from(values[0]),
-        "max": f64::from(values[n - 1]),
-        "percentiles": { "p5": pct(0.05), "p25": pct(0.25), "p50": pct(0.5), "p75": pct(0.75), "p95": pct(0.95) },
+        "voxels": f.count,
+        "mean": round(f.mean, 2),
+        "std": round(f.std, 2),
+        "min": f.min,
+        "max": f.max,
+        "percentiles": { "p5": f.p5, "p25": f.p25, "p50": f.p50, "p75": f.p75, "p95": f.p95 },
     })
 }
 

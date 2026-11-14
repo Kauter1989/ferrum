@@ -24,8 +24,11 @@ segmentation engines, and an agent skill (planned). Read
 ## Layering — never violate
 
 ```
-ferrum (presentation) → ferrum-app (application) → ferrum-domain ← ferrum-io (data)
+ferrum (desktop shell) → ferrum-ui (views, panels) → ferrum-app (application) → ferrum-domain ← ferrum-io (data)
                                        ↘ ferrum-processing, ferrum-render (infrastructure)
+                                       ↘ ferrum-radiomics → ferrum-domain (segment metrics)
+ferrum-cli → ferrum-view (local view host) → ferrum-app, ferrum-render (gpu), ferrum-io
+ferrum-wasm (browser) → ferrum-render (gpu), ferrum-app, ferrum-processing — builds for wasm32 only
 ```
 
 - `ferrum-domain` has no I/O, no GPU, no UI dependencies; it defines ports
@@ -36,17 +39,44 @@ ferrum (presentation) → ferrum-app (application) → ferrum-domain ← ferrum-
 - `ferrum-engines` implements `SegmentationEngine` (`ferrum-engine/1`
   client, mock, reference server); nothing else talks to engines. Protocol
   changes update `docs/engine-protocol.md` and the conformance suite.
+- `ferrum-gpu-lock` implements the GPU lease protocol `ferrum-gpu-lock/1`
+  and depends on no other FERRUM crate, so hosts can use it as is. Engine
+  calls of a GPU group take a lease through `ferrum-engines::gpu`
+  ([ADR 0015](docs/decisions/0015-gpu-lease-protocol.md)).
+- `ferrum-radiomics` holds the quantitative description of a segment (the
+  feature registry, versioned profiles, size, shape and intensity
+  features) and depends only on `ferrum-domain`: no I/O, GPU or UI. It
+  calls the mask analysis of `ferrum-domain` instead of copying it, so each
+  measure has one implementation ([ADR 0011](docs/decisions/0011-radiomics-crate.md)).
+  Every feature has a stable id, a unit and a definition text; a result
+  names its profile, version and parameters.
 - `ferrum-agent` holds the agent commands (JSON in, `ferrum-agent/1`
   envelope out) and depends only on `ferrum-domain`, `ferrum-io`,
-  `ferrum-engines` (engine commands) and `ferrum-render` (CPU renderer, no
-  `gpu` feature, so no wgpu);
+  `ferrum-engines` (engine commands), `ferrum-radiomics` (segment metrics)
+  and `ferrum-render` (CPU renderer, no `gpu` feature, so no wgpu);
   `ferrum-cli` only parses arguments. New commands get a JSON Schema in
   `schema.rs` and update `docs/agent-cli.md` and the contract tests in
   `crates/ferrum-agent/tests`; the CLI and MCP must give identical JSON.
   Regenerate `skills/ferrum/schemas/commands.json` with `ferrum-cli schema`
   and keep `skills/ferrum/reference/commands.md` complete (tests check
   both); outputs must pass the identifier scan (`tests/privacy.rs`).
-- No business logic in `ferrum` widgets — add a use case to `Viewer`.
+- No business logic in `ferrum` or `ferrum-ui` widgets — add a use case to
+  `Viewer`. `ferrum-ui` opens no windows or file dialogs (no `eframe`, no
+  `rfd`); hosts embed it ([ADR 0016](docs/decisions/0016-ferrum-ui-crate.md)).
+- `ferrum-view` implements the local view host `ferrum-view/1`
+  ([design](docs/view-host.md), [ADR 0017](docs/decisions/0017-view-host-crate.md)):
+  one workspace kept open, slice frames on the GPU or the CPU reference,
+  loopback HTTP with a token. Only `ferrum-cli` depends on it (`view serve`,
+  a CLI-only command). It adds no image-formation code and no business
+  logic; protocol changes update `docs/view-host.md` and its tests.
+- `ferrum-wasm` is the same renderer in a browser
+  ([design](docs/webgpu-panel.md)): it binds `ferrum-render` to a `<canvas>`
+  through WebGPU and adds only the MPR layout and the CT presets. It builds
+  for `wasm32-unknown-unknown`; the whole module body is behind
+  `#![cfg(target_arch = "wasm32")]`, so a native `cargo check --workspace`
+  compiles an empty crate. It adds no image-formation code, parses no files
+  and holds no business logic. A harness panel is the consumer; the steps
+  are in `integrations/dsh/README.md`.
 - DICOM tags only through `dicom_dictionary_std::tags` constants — never raw
   tag literals.
 
@@ -69,6 +99,166 @@ cargo bench --workspace
 make coverage                                # coverage report; CI floor in Makefile
 cargo run --release -- <path>                 # the app is the default member
 ```
+
+## Every push is preceded by a local run — a gate, not advice
+
+This is the project's pre-commit hook, and its purpose is narrow and
+mechanical: **make a red pipeline unlikely before it is paid for.** CI
+minutes are the project's and are few; a round that fails on `fmt`, `clippy`
+or a test a local command answers in a minute is a round bought for nothing
+(L34). So the run is not a checklist item an agent may weigh and skip — the
+pre-push hook refuses a push that fails it.
+
+**What the hook runs, and refuses on** (`ferrum_hooks.py`, every push):
+
+| Check | On failure |
+|---|---|
+| `cargo fmt --all -- --check` | refused |
+| `cargo clippy --workspace --all-targets -- -D warnings` | refused |
+| `cargo test --workspace --no-fail-fast` | refused, naming the failing test binaries |
+| schema freshness (`ferrum-cli schema`) | refused |
+| ruff on the changed Python files | refused |
+| the visual-check marker after a rendering change | refused (L1) |
+| branch size past L | refused (L36) |
+
+The refusal names the failing command and the shortest useful excerpt, so the
+fix is obvious: it is what CI would have said, said before the push.
+
+Before **every** push:
+
+1. **`preflight.sh`** — the same order as CI, and wider than the hook (it also
+   runs the GPU parity suite and `analyze.py`). Its last line must read
+   `all checks passed`:
+
+   ```bash
+   .claude/skills/ferrum-change/preflight.sh            # or --quick, --coverage
+   ```
+
+2. **On Windows, in WSL** — the same Linux CI uses, which is where the
+   Linux-only cases and the hooks actually run:
+
+   ```powershell
+   wsl -e bash -lc "cd /mnt/e/projects/ferrum/sources/ferrum && .claude/skills/ferrum-change/preflight.sh"
+   ```
+
+   The WSL distribution must hold LF in shell scripts and data
+   (`.gitattributes`, `core.autocrlf=false`) — a CRLF checkout makes bash
+   refuse the script, which is how the local run was skipped for a whole
+   evening.
+
+3. **What `preflight.sh` does not cover**, run when the change touches it:
+   - `python .claude/hooks/test_hooks.py` after a hook or `test_hooks.py`
+     change (CI job `python-lint`);
+   - `python -m ruff check` and `python -m ruff format --check` on the
+     changed Python files, with `ruff==0.16.9` as CI pins it (the hook warns
+     when ruff is missing — act on that warning);
+   - `python -m pytest <changed test directories>` for Python tests outside
+     cargo (the panel and `ferrum-wasm` source checks);
+   - `node integrations/dsh/plugin/smoke-load.cjs` when the panel bundle
+     changes;
+   - `cargo deny check licenses` when a dependency changes;
+   - skill `ferrum-visual-check` when the change draws pixels or a UI
+     control.
+
+4. **Then push once.** If a push is made without the full local run, the
+   commit message and the PR say which parts were not run — never leave it
+   unsaid.
+
+5. **A red suite is a defect** (L33): fix it in the same branch, or name in
+   the PR the test, the reason and the platform. "It failed before my
+   change" is not an answer.
+
+Step-by-step detail and the platform split (what WSL answers, what the host
+answers): `ferrum-change` §4.
+
+## Workflow, skills and lessons
+
+Start every task with the skill `ferrum-workflow`, adapted from Spec
+Kit.
+- **Phases:** specify → clarify → plan → size → tasks → analyze →
+  implement → verify → deliver → retro → report.
+- **Tracks:** stage, feature or small.
+- **Modes:**
+  - *gated*: G1 spec, G2 design, G3 merge;
+  - *autonomous*, for features: only G3.
+
+Specs live in `dev_plan.md` with criterion IDs `[N.k-x]`, and tests cite
+them (`// covers N.k-x`). Designs live in `docs/<topic>.md`, and
+decisions in ADRs.
+
+Read `.claude/lessons.md` before a change. It records past bugs and
+wasted rounds, each with the guard that now catches it. The skills in
+`.claude/skills/`:
+
+| Skill | Purpose |
+|---|---|
+| `ferrum-workflow` | entry point: track, mode, phases, gates |
+| `ferrum-specify` | spec and clarification |
+| `ferrum-plan` | design, constitution check, validation plan, tasks |
+| `ferrum-size` | size against the model; PR split; `calibration.md` |
+| `ferrum-analyze` | criterion coverage (`analyze.py`), consistency |
+| `ferrum-change` | implement and deliver; `preflight.sh` runs CI locally |
+| `ferrum-verify` | verification table: test, visual, field |
+| `ferrum-visual-check` | anything that draws pixels (`phantom_render.py`) |
+| `ferrum-field-test` | scripts for the user's GPU machine and their results |
+| `ferrum-release` | version bump, `develop` → `main`, `release.yml` |
+| `ferrum-report` | the HTML report: before a merge (G3, with a code map) and after it (phase 11) |
+| `ferrum-lessons` | failures and successes, each with a guard; retro |
+
+`develop` and `main` change only through merged PRs. Pushing a feature
+branch is fine. Merging needs the user's word, in every mode.
+
+**The merge decision (G3) is presented with a report.** Before a PR is
+offered for merging, it carries an HTML report on the same template as the
+final one (`ferrum-report` §0), with a **code map**: every architectural
+claim linked to the `file:lines` that implement it, pinned to the PR head
+SHA and stating that SHA. The person merges after reading the code, not on
+trust; a PR without its report is not ready for G3, however green its CI.
+The report is posted to the PR, not committed — after the merge, phase 11
+writes the final one from the merged tree into `docs/<feature>/`.
+
+### Hooks
+
+Hooks in `.claude/settings.json` (`.claude/hooks/ferrum_hooks.py`, tests
+in `test_hooks.py`) enforce the mechanical rules. Skills cover what needs
+judgement.
+
+| Hook | When | Effect |
+|---|---|---|
+| A | commit, merge or rebase on `develop`/`main`; a push to them (`--all`, `HEAD:main`, …) | blocked |
+| B | a commit with volume or DICOM files, or binaries > 1 MiB outside `docs/images/` | blocked |
+| C | a rewrite of a merged ADR | blocked; appending an amendment is fine |
+| D | merging a PR, the release workflow, pushing tags | asks the user |
+| E | a push that fails the local gate: `cargo fmt`, `clippy -D warnings`, `cargo test --workspace`, a stale `commands.json`, ruff on changed Python, or the visual-check marker | blocked; the reason is named |
+| E | a push of a branch past size L (3500 lines, 40 files — `ferrum-size` classes) | blocked; split it (L36) |
+| F | an edited `.rs` file | `rustfmt` |
+| F | an edited `.py` file | `ruff format` and safe fixes; the remaining findings come back as context |
+| G | an edited file in the change matrix | a reminder of what else must change |
+| H | session start | fresh `origin/develop`, branch status, lesson titles, environment |
+| I | context compaction | logged to `.claude/state/compactions.log` for `ferrum-size` |
+| J | creating, renaming or pushing a branch whose name breaks skill `new-branch` (e.g. `claude/…`) | blocked |
+
+`FERRUM_SKIP_PREPUSH=<why> git push …` skips the gate E, and only with a
+stated reason: a bare `FERRUM_SKIP_PREPUSH=1` is refused, because a silent
+skip is what let a red suite reach CI (L34). Run
+`python3 .claude/hooks/test_hooks.py` after changing a hook (CI runs it in
+the job `python-lint`).
+
+### Review agents
+
+Two read-only subagents in `.claude/agents/` review a branch before it
+is pushed for a PR (`ferrum-change` §6):
+- `code-reviewer`: correctness, layering, the rendering rule, matrix
+  follow-ups, tests that can fail, the quality budget. Run it on every
+  PR.
+- `security-reviewer`: crafted files, paths outside configured roots,
+  identifier leaks, engines and bridges, MCP inputs, dependencies. Run
+  it when a change touches readers, `ferrum-agent`/`ferrum-cli`, the MCP
+  server, engines, bridges, workspaces, exports, configuration or
+  dependencies.
+
+Fix their blocking findings before the push, or answer them in the PR
+body.
 
 ## Conventions
 

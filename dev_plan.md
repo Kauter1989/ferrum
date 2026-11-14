@@ -3,7 +3,10 @@
 This is the working plan for FERRUM, a reusable visualisation core for
 medical imaging ([vision](docs/vision.md)). Stages 1–13 built the viewer.
 Stage 14 opens it to AI segmentation engines, and Stage 15 makes it an
-agent skill.
+agent skill. Stages 16–20 add annotation datasets, agent segmentation
+scenarios, quantitative profiles of segments and multi-volume MR and PET
+series. What comes next, in order, is in the [Roadmap](#roadmap) at the
+end.
 
 Each stage groups features as user stories with acceptance criteria.
 Status legend: ✅ done · 🚧 in progress · 📋 planned.
@@ -45,6 +48,17 @@ Personas:
 | 2.4 | As a **researcher**, I want to open `.nii` / `.nii.gz` so that I can inspect public datasets. | NIfTI-1 reader with gzip. `sform`/`qform` are honoured and the volume is reoriented to LPS. A 4D file shows its first volume. |
 | 2.5 | As a **radiologist**, I want loading to be fast and cancellable, with progress, so that large studies never freeze the app. | Parallel decode (rayon), a progress overlay and a cancel button. A 512×512×252 CT loads in about 0.34 s on 4 CPU cores. |
 | 2.6 | As a **user**, I want to drop files onto the window or pass them on the command line so that opening a study takes one gesture. | Drag-and-drop overlay, CLI arguments, **Open folder** / **Open files**, and Ctrl+O. |
+| 2.7 | As a **clinician** reading MR or PET, I want the loader to tell me when a series could not be shown as stored (several images per slice position, a 4D file, irregular or unknown slice spacing) so that I never measure a mixed or distorted volume without knowing. | [2.7-a] A DICOM series with more than one image at a slice position (echoes, b-values, phases, frames) loads one volume, never a mix: at every position the image that sorts first by Temporal Position Identifier, Echo Number, Diffusion b-value, Acquisition Number, Trigger Time, Instance Number, file order; this holds for files in any order and for 2 echoes interleaved by Instance Number. ✅ (PR 1) [2.7-b] Such a load warns with the number of images per position (`k`, or `min–max` when positions differ) and the number of positions, and says that one volume of several is shown. ✅ (PR 1) [2.7-c] When a gap between neighbouring positions differs from the median gap by more than max(0.01 mm, 2 % of the median), the load warns with the smallest and largest gap and the median used for the slice spacing; a regular series (also 1 mm or 5 mm, any orientation) gives no warning. ✅ (PR 1) [2.7-d] A series ordered without image positions (Instance Number, Slice Location, file order), or a multi-frame file whose per-frame positions are not read, warns that the slice spacing comes from the header (with the value); a series of several multi-frame files warns that only the first frame of each is read; a series without Pixel Spacing warns that 1 mm is assumed. ✅ (PR 1) [2.7-e] A NIfTI file with more than one volume (`dim[4..7]`) warns that volume 1 of N is shown; a 3D file gives no warning. ✅ (PR 1) [2.7-f] The agent's `study open` and `study info` carry every load warning in the envelope `warnings`, identical over CLI and MCP; the warnings hold no identifiers (privacy scan). ✅ (PR 1) [2.7-g] The desktop app shows the load warnings once after loading (a window the person dismisses) and keeps them in the series information. ✅ (PR 1) [2.7-h] Without a window stored in the data and without `window`, agent renders use the same percentile window (0.5–99.5 %) as the desktop app, from one implementation in `ferrum-domain`; a stored DICOM window or an explicit `window` is used as before. ✅ (PR 2) |
+| 2.8 | As a **clinician** reading a sagittal or coronal MR (or any DICOM series not acquired head-to-feet axially), I want its planes shown as what they are, with true left and right, so that I never read a mirrored or mislabelled image. | [2.8-a] A DICOM series (classic or Enhanced) is stored in the canonical LPS grid, as NIfTI already is: its voxel axes are permuted and flipped onto the closest of `+x` left, `+y` posterior, `+z` superior; an oblique remainder stays in the direction; every voxel keeps its value at its patient position (exact for sagittal, coronal, axial with reversed rows, normal towards the feet, and 20° oblique). ✅ [2.8-b] The axial view of a sagittal series shows axial anatomy, and the screen's left is the patient's right in every view, as for an axial CT. ✅ [2.8-c] Probe, measurements and patient coordinates give the same millimetres as before for the same anatomical point. ✅ [2.8-d] A DICOM SEG of such a series lies on the LPS grid; a frame references a source image only when it lies in that image's plane, otherwise the whole source series is referenced without per-frame derivation. ✅ |
+
+**2.7 — Out of scope:** splitting a series into selectable volumes (echo, b-value, phase), per-frame geometry of Enhanced multi-frame DICOM, resampling irregular series, NIfTI-2, PET units and SUV (planned as separate stages).
+
+**2.7 — Clarifications:**
+- assumed: a series with several images per position shows volume 1 with a warning instead of being refused. It matches the NIfTI 4D behaviour of 2.4 and keeps DWI and multi-echo series readable; refusing would block reading altogether.
+- assumed: the irregular-gap tolerance is max(0.01 mm, 2 % of the median gap): above the rounding noise of Image Position (Patient), below a missing slice (100 %).
+- assumed: the desktop shows the warnings in a dismissible window after loading and in the **Info** tab; no new dialog flow.
+- assumed: the agent's default window changes only for data without a stored window; the schema and the parameters stay the same.
+- assumed (2.8): workspaces made before 2.8 on such series are not migrated. Label maps are stored with their geometry and land on the new grid; annotations are stored per plane and slice, so when the grid's size changed they are refused with the existing size message, and on a grid that only flipped they stay on the old side (said in the changelog). A migration would need a workspace format change.
 
 ## Stage 3 — 2D slices and MPR ✅
 
@@ -187,10 +201,12 @@ app. Agents propose and clinicians confirm
 
 ---
 
+---
+
 ## Next stages 📋
 
-Future stages are added here as they are planned (e.g. "Stage 15 — …"),
-with user stories and acceptance criteria in the same format.
+Stages planned but not started, and stages in progress. Their order and
+the backlog of smaller tasks are in the [Roadmap](#roadmap) at the end.
 
 ## Stage 16 — Annotated datasets 📋
 
@@ -206,6 +222,19 @@ label records which engine proposed it and who confirmed it.
 | 16.3 | As an **annotator**, I want a manual correction of an engine's segment to be recorded so that the dataset shows which labels a person edited. | Defined behaviour (and tests) for the provenance of a segment edited with the eraser or brush: the author or status reflects the human edit. |
 | 16.4 | As a **dataset curator**, I want an annotation mode in which engine results count as confirmed so that review can happen in a separate QA step outside FERRUM. | Operator setting, off by default; exported provenance still names the engine. |
 | 16.5 | As an **annotator**, I want one obvious way to create a segment, offered only where it works, so that I do not get lost between view modes and panels. | Every tool and setting is offered only in the view modes where it acts (tools on slices: 2D and MPR; eraser: 3D; panel tabs per mode), enforced in `ferrum-app`; no segmentation from the 3D view; a *Segment* toolbar group with a built-in region tool that needs no engine and the AI tools (disabled with the reason until an engine connects); a step-by-step guide in the panel and in the view; no empty "Add segment". ✅ |
+| 16.6 | As an **annotator**, I want the region tool to segment a whole organ (liver, lung) on noisy CT, not only a small lesion, so that one click gives a usable starting segment. | [16.6-a] The reference value is the median of the smoothed values around the seed, so a noisy seed voxel does not decide (a 200 HU outlier at the seed of a 60 HU organ still yields ≥ 3 500 of the 4 096 voxels); [16.6-b] with ±40 HU noise a 16³ organ phantom is segmented to 3 500–4 300 voxels and a vessel crossing it is filled, also when it leaves the organ through its surface; [16.6-c] a 1 mm bridge to a second structure is cut by an opening of 1.5 mm and leaks without it; [16.6-d] a lesion 3 mm wide survives an opening of 3 mm unchanged (27 voxels); [16.6-e] smoothing of 1 mm does not shrink a sharp-edged ball (895 voxels with and without smoothing, opening and hole filling; strong smoothing recovers only the outermost boundary layer and shrinks small structures — stated in the panel hint); [16.6-i] smoothing and opening are in millimetres: on 5 mm slices a bridge 4 mm wide and one slice thick is cut by an opening of 3 mm and leaks without it; [16.6-k] when the click is not in the core left by the opening (a thin spot), the core nearest to the click survives, never a larger organ elsewhere; [16.6-l] the default tolerance is a tenth of the window width, at most 40 (the automatic window of a whole CT is over 1 000 wide and would leak on the first click); [16.6-m] the click grows the region on a worker thread: the click returns at once (`Viewer::region_pending`), the segment appears when the job finishes; a second click meanwhile is refused with a message and starts no job; *Cancel* (or clearing the segmentation, or opening another study) stops it and no segment is created even if the job had just finished; voxels labelled since the click are never overwritten; the cancel flag is checked every 65 536 grown voxels and between the later steps; [16.6-n] the tolerance is chosen at every click until the user sets it: 300 for an aerated seed (below −500 in a CT-like volume), otherwise as in 16.6-l; the panel shows the value used and a checkbox *Automatic tolerance*; moving the slider switches it off (on MSD lung CT the default of 40 grew nothing and ±200…±400 gives Dice 0.92–0.97 against the lung of the click; field test, `docs/testing.md`); [16.6-j] on real CT the default settings give Dice ≥ 0.90 against the reference on MSD Task03 liver cases (field test; measured on four cases: 0.951, 0.961, 0.958 and 0.883 — the last because the reference includes a hypodense tumour at the surface; see `docs/testing.md`); [16.6-f] the failures are told apart: seed outside the grid, seed already in a segment, region larger than the limit (message names the limit, the tolerance and the opening); the default limit is 8 000 ml (a lung is about 6 000 ml); [16.6-h] a seed on an edge or a vessel is never rejected (the region always contains the seed; "too large" is reported only for the size limit); [16.6-g] the panel offers smoothing (0–6 mm), bridge cutting (0–15 mm), hole filling and a size limit up to 20 000 ml. |
+| 16.7 | As a **harness developer** ([#71](https://github.com/Kauter1989/ferrum/issues/71)), I want a person's review decision recorded through a library API, bound to what was shown, so that only the host's decision channel decides and every decision can be checked. | [16.7-a] `ferrum_agent::decisions::revision` gives an item's SHA-256 (64 hex digits) in the fixed encoding `ferrum-review-revision/1` over the source hash, the open volume and the item's content (annotation: kind, plane, slice, points, text, value, name; segment: name and voxels), stable while the item does not change; review state and display properties are not part of it; a pinned test fixes the encoding. ✅ [16.7-b] `record` appends an audit entry with `source: host`, `by`, `revision`, the host's `shown_sha256`, `source_sha256` and the volume, then writes confirm or reject for the named person into the workspace like the desktop review queue; a workspace lock serialises hosts. ✅ [16.7-c] A stale revision (the item's name or voxels changed since it was shown) is refused with `source_changed`, and an item someone has decided on already with `forbidden`; nothing is recorded. An empty, multi-line or bidi-formatted name, a hash that is not 64 hex digits, an unknown item or a workspace outside the root is refused. ✅ [16.7-d] It is not an agent command: no command or schema takes it, and `review confirm`/`reject` still need the operator switch. ✅ |
+| 16.8 | As a **harness developer** ([#72](https://github.com/Kauter1989/ferrum/issues/72)), I want to be told when the agent, the viewer or the review panel changes a workspace so that each of them shows the others' changes at once instead of reading everything again. | [16.8-a] `ferrum_io::workspace::changes` gives typed changes: a segment added, removed, revised (name, colour, visibility, opacity or its voxels) or reviewed (with its new status); an annotation added, removed, revised or reviewed; the open volume switched (with its key, e.g. `b1000`, or `other` when the manifest holds a key FERRUM does not generate). ✅ [16.8-b] In process, `subscribe(root)` returns a receiver; every save through `Workspace` (agent commands, the viewer, `ferrum_agent::decisions`) sends its changes before the save returns, so a subscriber sees a change made through the agent API in the same event-loop tick. ✅ [16.8-c] For changes made by another process, `WorkspaceWatcher::poll` compares the files with the last state it read and gives the same changes; it reads a file again only when its size, modification time or inode changed; a file that cannot be read (not a regular file, too large, malformed) is reported as such and does not stop the other files. ✅ [16.8-d] Changes hold labels, ids, statuses and the volume key only: no names, texts, UIDs or paths. A test scans their text for the study's identifiers. ✅ [16.8-e] The agent command set does not change. ✅ (PR [#87](https://github.com/Kauter1989/ferrum/pull/87)) |
+
+**16.8 — clarifications (feature, autonomous; `assumed:`):**
+- assumed: a polling watcher (`WorkspaceWatcher::poll`), not OS file notifications, so no new dependency and the same behaviour on Linux, Windows and WSL network drives; the host chooses the interval.
+- assumed: a segment's voxels count as revised when its voxels in the label map change; the label map is read again only when its file changed.
+- assumed: "reviewed" carries the new status (`proposed`, `confirmed`, `rejected`) but not the reviewer's name, which is a person's name.
+
+**16.6 — success metric:** one click on a liver or a lung of a real CT gives a segment a person only has to trim (Dice against a reference ≥ 0.90 — met on 3 of 4 MSD liver cases, 0.883 on the fourth; lung: one click grows one lung, Dice 0.95–0.97 on 3 of 4 MSD lung cases against a classical, not a human, reference, once the tolerance is ±200 or more — 16.6-n). **Out of scope:** the agent command `segment threshold` (unchanged), an adaptive reference value that follows gradients inside the organ, tolerance chosen automatically, and separating the lung from the trachea.
+**16.6 — clarifications:**
+- Q: Does the first user report ("region growing does nothing on a click in 2D") have a code cause? — A: not found; the tool worked on phantoms and failed on real noisy data by leaking or by a rejected seed (2026-10).
+- assumed: the user's data are CT in HU; the defaults (smoothing 1, opening 1, fill holes on, limit 8 000 ml) are safe for liver and lung and are editable in the panel.
 
 ## Stage 17 — Agent segmentation scenarios ✅
 
@@ -225,3 +254,755 @@ corrections, follow-up, dataset pre-labelling — on a single 12 GB GPU
 | 17.5 | As a **harness developer**, I want the skill to teach the segmentation scenarios so that agents use engines safely. | `skills/ferrum/reference/segmentation.md` and a `SKILL.md` section; evaluations with the mock engine (segment and measure, find all objects, remove a leak). ✅ three engine tasks; `ferrum-cli eval engine` serves the mock engine; the grader checks required commands. |
 | 17.6 | As an **operator**, I want measured VRAM and times on a 12 GB card so that I can plan the hardware. | Benchmark per engine and scenario; the table in the design filled in. ✅ `scripts/benchmark_engines.py`; measured on an RTX 3080 12 GB (WSL 2): nnInteractive ~1 s per prompt, ~5.4 GB; TotalSegmentator 45–52 s, ~2.2 GB for two organs. |
 | 17.7 | As an **agent developer**, I want to correct an existing segment with an engine so that imported or proposed labels can be fixed. | `from_segment` (lasso seeds from the mask) and scribble/lasso prompts in the agent; phantom test. ✅ lassos and scribbles as points on one slice; seeds do not count against the prompt limit. |
+| 17.8 | As a **clinician** preparing the measurements staging relies on ([#73](https://github.com/Kauter1989/ferrum/issues/73)), I want the distance from a lesion to a surface and the solid part of a part-solid lesion measured from voxels so that they are reproducible instead of picked by hand. | [17.8-a] `segment distance` gives the shortest distance in mm between the centre of a voxel of `segment` and the centre of a voxel on the outer surface of `to` (`to` with its enclosed holes filled, so a lesion inside a lung segment is measured to the lung's border; a surface voxel has a face neighbour outside it or lies on the volume border), exact, with the two voxels (voxel and LPS mm), `inside` (`segment` within `to` with its holes filled) and `uncertainty_mm` = the largest voxel spacing; two boxes 6 voxels apart along x at 0.8 mm give 4.8 mm; a core in a hole of a lesion, one 2 mm slice from its outer surface, gives 2.0 mm and `inside`; in the domain, a 2-slice gap at 2.5 mm gives 7.5 mm, a sphere inside a sphere gives the brute-force value, and a mask containing the other's surface gives 0. ✅ [17.8-b] An unknown segment is `not_found`; a missing `to` or the same segment twice is `bad_request`. ✅ [17.8-c] `segment shape` with `solid_min` adds `solid`: `min_value`, voxels, ml, share and the axial long and short axis of the segment's voxels at or above it, on their own largest axial slice; there is no default threshold and no category in the output; a threshold above every value gives 0 voxels and no axes; values not known to be HU warn. ✅ [17.8-d] Schema, `commands.json`, docs, skill reference, CLI parse test and contract tests; CLI = MCP; the privacy scan passes. ✅ |
+
+## Stage 18 — Segmentation post-processing: quantitative profiles ✅
+
+Quantitative description of a segment: geometry, shape and HU intensity.
+The user picks a **profile**, not individual metrics; a result always
+carries the profile name, its version and every preprocessing parameter,
+so numbers are comparable and reproducible. Values come from voxels;
+agents and engines propose, people confirm (a result for an unconfirmed
+segment says so, as the export bundle does).
+
+Design: [docs/radiomics.md](docs/radiomics.md)
+([ADR 0011](docs/decisions/0011-radiomics-crate.md)).
+
+**What exists today (0.3.0, Stage 17)** and stays, with unchanged JSON:
+`segment shape` (voxels, box, centroid, extent, largest slices, axial long
+and short axis, border contact, component count and largest share),
+`segment components`, `segment compare` (Dice, Jaccard, HD95, Hausdorff,
+centroid distance; `ferrum-domain/src/analysis.rs`), `stats` (mean, std,
+min, max, p5–p95 of a box, sphere, segment or area annotation; the maths
+sits in `ferrum-agent`, so the desktop app cannot use it), `volume_ml`,
+and DICOM SR (TID 1500) export. This stage builds on them: one
+implementation shared by UI, CLI and MCP, and what is missing on top.
+
+**Design decisions** (recorded in a new ADR, 0011, before Phase 1):
+- Profiles: `quick` and `clinical` (`radiomics-ibsi` comes with Stage 19). Raw values are always
+  returned; there are no composite indices.
+- Naming and definitions follow IBSI feature families (`shape`,
+  `intensity`, `histogram`, `ivh`, later `texture_*`). Every feature has a
+  stable id, a unit and a definition text.
+- A new use case `Viewer::segment_metrics` in `ferrum-app`; the Segments
+  panel, `ferrum-cli` / MCP command `segment metrics` and embedding apps
+  are thin adapters. CLI and MCP give identical JSON.
+- The computation lives in a new crate `ferrum-radiomics` that depends
+  only on `ferrum-domain` (no I/O, GPU or UI). `ferrum-agent` may depend on
+  it; CLAUDE.md and `docs/architecture.md` are updated with ADR 0011
+  (the user consented to this constitution change, 2026-10-07).
+- This stage is Phases 1–3 (`quick` and `clinical`). IBSI preprocessing,
+  texture features, comparison and change over time moved to Stage 19
+  (below); it is confirmed again (G1) after this stage is released.
+- First release scope: CT (HU). MR and PET normalisation are out.
+
+### Phase 1 — Profile framework and basic metrics (`quick`)
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 18.1 | As a **developer**, I want a profile and feature registry so that new metrics plug in without touching the adapters. | [18.1-a] A feature has a stable id, family, unit, definition text and the version it appeared in; ids are unique, and a test fails when a registered feature has no definition text. ✅ (PR 1) [18.1-b] A profile is a versioned list of feature ids; `quick` and `clinical` are registered; an unknown profile gives `bad_request` that lists the known ones. ✅ for `quick` (PR 1); `clinical` is registered in PR 3 [18.1-c] A result carries profile name and version, the preprocessing parameters (even if "none"), per feature a value and unit, and the provenance (author, status) of the segment. ✅ (PR 1) [18.1-d] ADR 0011 written; layering docs updated as decided in Q1. ✅ (PR 1) |
+| 18.2 | As a **radiologist**, I want size measures of a segment so that I can describe a finding. | [18.2-a] Volume in mm³ and mL equals voxel count × voxel volume; exact on a 4×5×6 box at spacing 0.7×0.7×2.5. ✅ (PR 1) [18.2-b] Box extent in mm and centroid in patient (LPS) mm, on a grid with a non-identity direction and origin. ✅ (PR 1) [18.2-c] Maximum 3D diameter (largest distance between voxel centres): exact on a box (its space diagonal) and equal to a brute-force search on a random blob. ✅ (PR 4) [18.2-d] Axial long and short axis, extents, largest slices equal `segment shape` (one implementation, tests for both). ✅ (PR 1) [18.2-e] Holds with anisotropic spacing and with a dimension of 1 on each axis (L4). ✅ (PR 1) [18.2-f] An empty or unknown segment gives `not_found` with a hint, never NaN or a crash. ✅ (PR 1) |
+| 18.3 | As a **radiologist**, I want first-order HU statistics so that I can characterise density. | [18.3-a] Mean, std (population), min, max, p5, p25, p50, p75, p95 equal the current `stats` output on the existing phantom (regression test). ✅ (PR 1) [18.3-b] Range and IQR added, exact on a hand-computed set. ✅ (PR 1) [18.3-c] Values are rescaled voxel values with their unit; a NIfTI study without a declared modality reports unit `unknown` and a warning (L10). ✅ (PR 1) [18.3-d] The definition text states population std and the percentile method. ✅ (PR 1) [18.3-e] HU-based features of a study whose modality is unknown (NIfTI) are refused with `bad_request` and a hint to declare it (`--modality CT`); no value is computed with a guessed unit. ✅ (PR 1) [18.3-f] The desktop app asks for the modality (and so the value unit) when it opens a NIfTI file that does not declare one, shows it afterwards, and keeps it in the workspace manifest like the CLI does. ✅ (PR 2) |
+| 18.4 | As a **user**, I want the `quick` profile in the desktop app, CLI and MCP so that I get the same numbers everywhere. | [18.4-a] `segment metrics --profile quick`: schema in `schema.rs`, `skills/ferrum/schemas/commands.json` regenerated, `skills/ferrum/reference/commands.md` and `docs/agent-cli.md` updated. ✅ (PR 1) [18.4-b] CLI parse test and one `--help` run (L8). ✅ (PR 1) [18.4-c] CLI and MCP JSON are identical (contract test). ✅ (PR 1) [18.4-d] The output passes the identifier scan (`tests/privacy.rs`). ✅ (PR 1) [18.4-e] Segments panel card shows value, unit and definition tooltip per feature, and a *proposed* label for an unconfirmed segment; `cargo test -p ferrum --test ui` passes (L9). ✅ (PR 2) [18.4-f] With no card open the panel says how to open one; when the image type is not known the card says so and leads to the question instead of showing numbers. ✅ (PR 2) [18.4-g] `--describe` (CLI) and `describe` (MCP) add the definition text of every feature to the result; without it the result has none. ✅ (PR 1) |
+
+### Phase 2 — Shape and morphology (`clinical`, part 1)
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 18.5 | As a **radiologist**, I want surface area and compactness measures so that I can judge shape. | [18.5-a] Mesh-based surface area (marching cubes, anisotropic spacing), closed and wound outwards for every cube pattern; a single voxel is an octahedron (area √3, volume 1/6 mm³ exactly). A mesh of a binary mask is rougher than a smooth surface: measured on a ball of radius 10 mm, the area is 7.4 % above 4πr² at 1 mm voxels and 6.6 % at 0.5 mm (not converging to 1), the volume within 1 %. ✅ (PR 3) [18.5-b] Surface-to-volume ratio, compactness 1 and 2, sphericity, spherical disproportion, with the formulas in the definition text. ✅ (PR 3) [18.5-c] The same ball voxelised at 1 mm and at 0.5 mm gives areas within 2 % of each other (measured 0.7 %); a change of spacing scales the mesh exactly. ✅ (PR 3) [18.5-d] A single voxel, a line and a plate give finite values (a sphericity in (0, 1]), never NaN. ✅ (PR 3) |
+| 18.6 | As a **radiologist**, I want PCA axes, elongation and flatness. | [18.6-a] Axis lengths 4√λ from the eigenvalues of the population covariance of the voxel centres in patient mm (IBSI definition; 4a/√5 for an ellipsoid with semi-axis a); an ellipsoid phantom with semi-axes 5, 12, 8 mm within 3 % at 1 mm and at 2 mm slices. ✅ (PR 3) [18.6-b] Elongation and flatness are ratios of those axes. ✅ (PR 3) [18.6-c] A line, a plate and a single voxel: axes with no extent are exactly zero (not noise) and the ratios are 0; a single voxel has no extent at all and its elongation and flatness are `null` with a reason (L4). ✅ (PR 3) [18.6-d] Orientation vectors in LPS (nine features), sign-normalised (the largest component positive, a tie by the first axis) so that the result is deterministic; a direction is `null` with a reason when two axes are equally long or the body has no extent along it. ✅ (PR 3) |
+| 18.7 | As a **radiologist**, I want convex-hull measures and solidity. | [18.7-a] Hull volume and area, solidity (mesh volume / hull volume) and convexity (hull area / mesh area; at most 1 for a connected body, larger for separate pieces). ✅ (PR 4) [18.7-b] A box gives solidity 1 and convexity 1; two voxels three steps apart give solidity 0.2, a hull volume of 10/3 and a convexity of √5 + ½ by hand; the hull of an L-shaped phantom is 11/3, derived by hand in the test (amended: the L has no closed form for solidity because its mesh volume is not hand-derivable, so the hull volume is the hand value). ✅ (PR 4) [18.7-c] Hull on mesh vertices, not on every voxel, so the cost follows the surface (the interior points of a cloud do not become vertices). ✅ (PR 4) |
+| 18.8 | As a **QA reviewer**, I want connectivity checks so that I notice a broken or holey segment. | [18.8-a] Component count and largest-component share equal `segment components`. ✅ (PR 4) [18.8-b] Holes: number and volume of cavities not connected to the border (6-connected); a box with a 2×2×2 cavity gives 1 hole of 8 voxels. ✅ (PR 4) [18.8-c] Euler number (26-connected foreground: 1 for a box, 2 with a cavity, 0 for a ring). ✅ (PR 4) [18.8-d] `warnings` (`fragmented`, `has_holes`, `touches_border`) with their thresholds in the definition text; warnings never change the mask — edits stay with `segment edit`. Thresholds: `fragmented` below 95 % of the voxels in the largest piece, `has_holes` from one cavity, `touches_border` from one image side. ✅ (PR 4) |
+
+### Phase 3 — HU distribution (`clinical`, part 2)
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 18.9 | As a **radiologist**, I want distribution measures. | [18.9-a] Skewness, excess kurtosis, energy, RMS, MAD, rMAD (population versions, on the voxel values), entropy and uniformity (on a fixed-bin-width histogram, bins anchored at 0 HU: `[k·w, (k+1)·w)`; IBSI anchors at the ROI minimum, so entropy can differ from a strict IBSI tool and the field test will show how much). ✅ (PR 5) [18.9-b] A hand-computed 10-voxel set gives the exact values. ✅ (PR 5) [18.9-c] Bin width is a parameter, defaults to 25 HU for CT, and is recorded in the result. ✅ (PR 5) [18.9-d] A constant region gives `null` for skewness and kurtosis, not NaN. ✅ (PR 5) |
+| 18.10 | As a **radiologist**, I want intensity-volume histogram metrics. | [18.10-a] V10, V90 (fraction of the volume at or above 10 % / 90 % of the way from the lowest to the highest value), I10, I90 (the highest value that at least 10 % / 90 % of the volume reaches: the ⌈x·N/100⌉-th largest) and the curve (101 samples), all on the voxel values, not binned. ✅ (PR 5) [18.10-b] A linear-ramp phantom gives exact values. ✅ (PR 5) [18.10-c] The curve never increases (property test). ✅ (PR 5) |
+| 18.11 | As a **radiologist**, I want the share of voxels in HU ranges. | [18.11-a] Configurable half-open ranges; the fractions plus the share outside all ranges sum to 1 within 1e-12. ✅ (PR 5) [18.11-b] Overlapping ranges give `bad_request`. ✅ (PR 5) [18.11-c] The ranges are a parameter. In the desktop app they are taken from the interface fields (the person edits them); an agent passes its own ranges or leaves them out and gets the documented defaults, which are marked as defaults and not as clinical advice (agent half ✅ PR 5; the interface fields ✅ PR 6: bin width and a list of ranges, applied with a button, validated with the reason shown). [18.11-d] The ranges used are recorded in the result. ✅ (PR 5) |
+| 18.12 | As a **user**, I want the `clinical` profile everywhere. | [18.12-a] The card groups features by family (Size, Shape, Connectivity, Intensity) with units and definition tooltips, shows the warnings, the share of voxels by HU range and the intensity-volume histogram. ✅ (PR 6) [18.12-b] CLI, MCP, schema, docs and contract tests as in 18.4. ✅ (PR 5) `clinical` stays `0.x` (now 0.3) until the field test against pyradiomics has been read; it becomes `1` with the release of Phase 3. [18.12-c] The benchmark of the profile on a 512×512×300 CT with a segment of 100 000 voxels is recorded. ✅ (PR 6) Re-done after the field test: the first benchmark (a smooth ball, 607 ms) hid that real, frayed masks took 16.7 s (blobby box fill) to 87 s (893 000 voxels, field test) with the first convex hull; with Quickhull `clinical` takes 53 ms (ball), 187 ms (blobby, 101 752 voxels) and 1.3 to 2.5 s for masks of about a million voxels; see `docs/radiomics.md` §3.2. |
+| 18.13 | As an **analyst**, I want the voxel values of a CT in HU read back exactly so that a measurement is the number the file holds (found by the field test: a voxel of 55 HU read as 55.01). [ADR 0012](docs/decisions/0012-lossless-grid-storage.md) | [18.13-a] Data whose values are all multiples of the storage step above the minimum (whole HU of a CT, halves of a slope-one-half series) are stored and read back exactly, from NIfTI, DICOM (rescale applied, MONOCHROME1 inverted) and `Volume::from_physical`. ✅ [18.13-b] Data that are not on the grid (float images, a span of more than 65 535 steps, a constant image, no finite value) keep the data range and the old precision. ✅ [18.13-c] The range is the data range or at most twice as wide, never narrower; windows and presets (physical units) are unchanged and the GPU parity tests pass unchanged. ✅ (the whole suite including the GPU parity tests on lavapipe passes unchanged) [18.13-d] `probe`, `stats` and `segment metrics` return the whole units of the file (a minimum of −25 is −25). ✅ [18.13-e] A threshold at a whole unit includes the voxels of exactly that unit. ✅ [18.13-f] Field: pyradiomics agrees with FERRUM on the "exact" intensity features to 1e-6 on the MSD spleen (after the next field run). |
+
+**Implementation** (Phases 1–3; sizing and tasks in
+[docs/radiomics.md](docs/radiomics.md) §7–8):
+
+| PR | Content | State |
+|---|---|---|
+| 1 | `ferrum-radiomics`, registry, `quick`, `segment metrics` (3D diameter moved to PR 4) | ✅ [#50](https://github.com/Kauter1989/ferrum/pull/50) |
+| 2 | desktop modality dialog and metrics card | ✅ [#51](https://github.com/Kauter1989/ferrum/pull/51) |
+| 3 | mesh shape: area, compactness, sphericity, PCA; profile `clinical` 0.1 | ✅ [#52](https://github.com/Kauter1989/ferrum/pull/52) |
+| 4 | convex hull, 3D diameter, holes, Euler, warnings; profile `clinical` 0.2 | ✅ [#53](https://github.com/Kauter1989/ferrum/pull/53) |
+| 5 | distribution, IVH, HU ranges; `clinical` 0.3 complete in CLI and MCP | ✅ [#54](https://github.com/Kauter1989/ferrum/pull/54) |
+| 6 | clinical card, HU-range fields, benchmark | ✅ [#55](https://github.com/Kauter1989/ferrum/pull/55) |
+| — | field-test fixes (Quickhull, HU ranges) | ✅ [#56](https://github.com/Kauter1989/ferrum/pull/56) |
+| — | lossless grid storage (18.13, [ADR 0012](docs/decisions/0012-lossless-grid-storage.md)) | ✅ [#57](https://github.com/Kauter1989/ferrum/pull/57) |
+
+Open: 18.13-f (pyradiomics against FERRUM on the "exact" intensity
+features, MSD spleen) waits for the next field run on the user's machine.
+
+**Success metrics:**
+- Every feature of Phases 1–3 matches an analytic or hand-computed value on a phantom, exactly or within the stated tolerance.
+- Field test (Phases 1–3): the values for a public segmented CT agree with a reference implementation (pyradiomics) on the same mask within the stated tolerances; differences are explained in the PR.
+- Performance: the `clinical` profile ≤ 2 s on the 100 000-voxel segment above. ✅ Measured: 53 to 228 ms for 100 000 voxels on a ball, a ragged ball and a blobby box fill; 1.3 to 2.5 s for a million voxels (PR 6 and the field-test fix).
+
+**Out of scope:** GUI localisation (a separate task, added to the plan later); IBSI preprocessing, texture features, extra comparison measures and change over time (Stage 19); MR and PET normalisation, SUV; automatic registration; classification, prediction and feature selection; composite indices (irregularity, homogeneity, density); GPU computation; bundling pyradiomics (it is only a field-test reference).
+
+**Clarifications:**
+- Q: profiles or single metrics? — A: profiles (variant D), IBSI names, tiered delivery (2026-10-03).
+- Q: how many phases? — A: six (2026-10-03).
+- Q: are explanations of the texture matrices needed? — A: mandatory, a tooltip at least (2026-10-03).
+- Q1: where does the computation live? — A: a new crate `ferrum-radiomics`; the constitution change (ferrum-agent dependency rule) is consented (2026-10-07).
+- Q2: which phases does this stage promise? — A: 1–3 now; the rest moved to Stage 19 and is confirmed again afterwards (2026-10-07).
+- Q3: NIfTI without a modality? — A: HU-based features are refused until the modality is declared, and the format must be clarified when the data is loaded, in the app too (2026-10-07).
+- Q4: HU ranges and localisation? — A: GUI localisation is a separate task, to be added to the plan later. Ranges for the skill are formed separately or left as documented defaults; in the GUI they come from the interface (2026-10-07).
+- Q5: field test data? — A: MSD Task09 spleen with pyradiomics as the reference (2026-10-07).
+
+## Stage 19 — Reproducible radiomics and comparison 📋
+
+The second half of the quantitative profiles started in Stage 18: the
+`radiomics-ibsi` profile (explicit preprocessing, IBSI conformance,
+stability), texture features with explanations in the interface, and
+comparison and change over time. It builds on `ferrum-radiomics`
+([ADR 0011](docs/decisions/0011-radiomics-crate.md),
+[docs/radiomics.md](docs/radiomics.md)) and starts only after Stage 18
+(its Phases 1–3) is released. The spec is confirmed again (G1) before its
+design.
+
+What exists today (0.3.0, Stage 17) and stays: `segment compare` (Dice,
+Jaccard, HD95, Hausdorff, centroid distance) and the DICOM SR (TID 1500)
+export. The rows below moved here from Stage 18 on 2026-10-07 (the user's
+decision), so that Stage 18 closes after its Phase 3.
+
+### Phase 1 — Reproducible radiomics (`radiomics-ibsi`, preprocessing)
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 19.1 | As a **researcher**, I want explicit preprocessing so that results compare across centres. | [19.1-a] Isotropic resampling (voxel size parameter), HU re-segmentation range and outlier exclusion. [19.1-b] Upsampling a linear ramp by 2 keeps its values at the original positions. [19.1-c] All parameters are stored in the result with a SHA-256 `params_hash`. [19.1-d] The same input and parameters give byte-identical JSON. [19.1-e] The loaded volume and the label map are never modified. |
+| 19.2 | As a **researcher**, I want IBSI conformance checks. | [19.2-a] The IBSI digital phantom is built in the test (no data file committed). [19.2-b] Per implemented feature a reference value and a tolerance from the IBSI reference manual. [19.2-c] `docs/radiomics-conformance.md` lists every feature as conformant or not. |
+| 19.3 | As a **researcher**, I want to know how stable a metric is against boundary changes. | [19.3-a] Optional 1-voxel erosion and dilation of the mask; per feature the spread is reported. [19.3-b] The perturbation is deterministic. |
+
+### Phase 2 — Texture features (`radiomics-ibsi`, part 2)
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 19.4 | As a **researcher**, I want GLCM and GLRLM features. | [19.4-a] 13-direction 3D matrices; the IBSI aggregation method is selectable and recorded. [19.4-b] Reference values on the IBSI phantom as in 19.2. |
+| 19.5 | As a **researcher**, I want GLSZM, GLDM and NGTDM features. | [19.5-a] Same conformance approach as 19.2. [19.5-b] Within the complexity budget in `clippy.toml`; a benchmark is recorded (budget measured, L13). |
+| 19.6 | As a **researcher**, I want optional filters (LoG, wavelet). | [19.6-a] Parameters recorded; off by default. [19.6-b] Conformance where IBSI gives references. |
+| 19.7 | As a **user**, I want every texture matrix family explained where I see it so that I know what a number means and why it is computed. | Mandatory for 19.4–19.5 (no texture feature ships without it). [19.7-a] Each family has a tooltip in the UI, at least on its group header and per feature where practical. [19.7-b] A tooltip gives the full name, what the matrix counts, what it says about tissue and a caveat. [19.7-c] The texts live once, in the feature registry, so UI, CLI/MCP (`description` field, in the schema) and docs show identical wording; a test fails when a family or feature has no text. [19.7-d] Content: **GLCM** (Gray Level Co-occurrence Matrix) — how often pairs of voxels with given grey levels sit at a given distance and direction; contrast, homogeneity, correlation. **GLRLM** (Gray Level Run Length Matrix) — lengths of runs of equal grey level along a direction; coarse versus fine texture. **GLSZM** (Gray Level Size Zone Matrix) — sizes of connected zones of equal grey level; zone heterogeneity, direction-independent. **GLDM** (Gray Level Dependence Matrix) — how many neighbours share a voxel's grey level within a tolerance; local uniformity. **NGTDM** (Neighbouring Gray Tone Difference Matrix) — difference between a voxel and the mean of its neighbourhood; coarseness, busyness, complexity. [19.7-e] Each text says that values depend on bin width and preprocessing (recorded in the result) and are for research, not diagnosis. [19.7-f] Texts are in English; GUI localisation is a separate task (out of scope here). Who reviews the texts is decided when Phase 5 is confirmed. |
+
+### Phase 3 — Comparison and change over time
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 19.8 | As a **clinician**, I want to compare two segmentations so that I can check an agent or engine against a person. | Dice, Jaccard, HD95, Hausdorff and centroid distance exist (`segment compare`). [19.8-a] Added: mean surface distance and volume difference in mL and %; checked against a brute-force search on shifted balls (as in Stage 17). [19.8-b] The desktop app shows the agreement next to Confirm / Reject for a segment that is not confirmed, against a reference segment the person picks. [19.8-c] Nothing is confirmed automatically. |
+| 19.9 | As a **clinician**, I want the change of a segment between two studies. | [19.9-a] Volume and HU change, with both studies' provenance. [19.9-b] The result says "not registered" and claims no alignment. [19.9-c] Segments are matched by a pair the person chooses. [19.9-d] A modality or unit mismatch gives `bad_request`. [19.9-e] No identifiers leave FERRUM (pseudonymised UIDs as configured). |
+| 19.10 | As an **integrator**, I want metrics in exports. | [19.10-a] The export bundle includes the metrics result with profile, version and parameters. [19.10-b] Unconfirmed items are marked, as in the bundle today. [19.10-c] The identifier scan passes. [19.10-d] The DICOM SR (TID 1500) export (exists) carries the volume and the metrics it can express; the rest stays in `report.json`. |
+
+**Success metrics:**
+- Every implemented feature is within the IBSI tolerance on the digital phantom, or is listed as not conformant.
+- Texture and preprocessing values for a public segmented CT agree with pyradiomics on the same mask within the stated tolerances; differences are explained.
+
+**Out of scope:** GUI localisation (a separate task); MR and PET normalisation, SUV; automatic registration; classification, prediction and feature selection; composite indices.
+
+**Clarifications:**
+- Q: are explanations of the texture matrices needed? — A: mandatory, a tooltip at least (2026-10-03).
+- Q: what happens to Phases 4–6 of Stage 18? — A: they moved to this stage; the spec is confirmed again before the design (2026-10-07).
+- open: who reviews the texture texts (19.7).
+
+## Stage 20 — Multi-volume MR and PET series ✅
+
+MR and PET series often hold several volumes: echoes, diffusion
+b-values, dynamic phases, PET frames. Since 2.7 the loader shows one
+volume and says so. It still reads Enhanced multi-frame files (the format
+of current MR and PET scanners) without their per-frame geometry: frames
+are stacked in file order with the spacing from the header. This stage
+reads that geometry (20.1, a loader fix without a contract change), then
+lets a person or an agent choose which volume to show (20.2–20.3, a
+change of the agent's command set: gate G1 before design).
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 20.1 | As a **clinician** reading an Enhanced MR or PET file, I want its frames placed where the scanner put them so that distances and volumes are right. | [20.1-a] An Enhanced multi-frame file is ordered by the per-frame Image Position (Patient) (Plane Position Sequence) along the normal of its Image Orientation (Plane Orientation Sequence, shared or per frame); the slice spacing is the median gap between positions, the origin is the first plane's position. Holds for frames stored in any order. ✅ [20.1-b] Pixel spacing and slice thickness come from the Pixel Measures Sequence (shared or per frame) when the top level has none. ✅ [20.1-c] Frames at one position (several temporal positions, echoes or b-values) give one volume, chosen like 2.7-a by Temporal Position Index, Echo Numbers or Effective Echo Time, Diffusion b-value, and frame order; the load warns as in 2.7-b. ✅ [20.1-d] Per-frame rescale (Pixel Value Transformation Sequence) is applied to every frame. ✅ [20.1-e] Such a file loads without the 2.7-d warning about file order; a multi-frame file without per-frame positions keeps it. Several Enhanced files of one series are ordered together by their frames' positions. ✅ [20.1-f] The series key (orientation) is read from the functional groups, so frames of one Enhanced file are one series. ✅ |
+| 20.2 | As a **clinician**, I want to choose which volume of a multi-volume series I see (echo, b-value, phase) and switch without reopening the study, so that I can read the one I need. | [20.2-a] Opening a multi-volume series (DICOM or 4D NIfTI) shows volume 1 and a Volume row listing every volume by name: `b = 1000`, `TE = 80 ms` (or `echo 2`), `phase 3/20`, `frame 3/33, t = 60 s`; `volume 2/5` when nothing names it. ✅ (PR 3) [20.2-b] Switching keeps the slice position, zoom, view mode, segments and annotations; the window follows the new volume's auto window unless the person set one; the load runs in the background, and a volume loaded before switches immediately (cache of 1 GiB of voxels, least recently used out). ✅ (PR 3) [20.2-c] After a switch, segment metrics of another volume are marked out of date; every metrics result names its volume. ✅ (PR 3) [20.2-d] The series picker lists series, not volumes: one multi-volume series opens without a picker. ✅ (PR 3) [20.2-e] A volume missing slices is listed but disabled, with the reason. ✅ (PR 3) |
+| 20.3 | As an **agent developer**, I want `study scan` and `study open` to list and open one volume of a multi-volume series so that an agent can work on a b = 1000 or a late phase. | [20.3-a] `study scan` lists one entry per volume with `volume` (index, count, label, and b-value, echo time, echo number, temporal position, frame time when known) and `group` (pseudonymised id of the series); single-volume entries are unchanged. ✅ (PR 2) [20.3-b] `study open` with a volume id opens that volume; with the group id, or without `series` when the source holds one multi-volume series and nothing else, it opens volume 1 and warns with the number of volumes; two distinct series still need `series`. ✅ (PR 2) [20.3-c] A workspace belongs to the series: opening another volume of the same series in it switches the volume (audit entry), keeps segments and annotations; another series is refused as today. ✅ (PR 2) [20.3-d] `study info` names the current volume and lists the series' volumes with their ids and completeness; the provenance of `probe`, `stats`, `profile`, `measure`, `segment metrics` and `view` names the volume. ✅ (PR 2) [20.3-e] CLI and MCP give identical JSON; schema, `commands.json`, docs and contract tests are updated; the privacy scan passes. ✅ (PR 2) [20.3-f] The workspace manifest records `source.volume` (version 2, written only for a multi-volume series); a version 1 manifest opens as volume 1. ✅ (PR 2) |
+| 20.4 | As a **clinician**, I want each volume of a series to hold exactly its own images so that a volume never mixes echoes, b-values or phases. | [20.4-a] DICOM images at each position are split into volumes by the fields that differ between images at one position (Complex Image Component, Temporal Position, Echo Numbers, Effective Echo Time, b-value, Trigger Time, Frame Reference Time, Acquisition Number, and whether a diffusion image is the derived isotropic trace: Diffusion Directionality `ISOTROPIC`, or a zero gradient direction at b > 0); each volume holds one image per position; when no field differs, the k-th image at each position (by Instance Number, then file order) forms volume k; a key that still holds several images at one position (diffusion directions at one b-value) is split the same way and numbered (`b = 1000, 2/32`). ✅ (PR 1) [20.4-b] A classic dynamic PET series is split by Frame Reference Time and named `frame k/N, t = … s`. ✅ (PR 1) [20.4-c] A 4D NIfTI gives one entry per volume, named from BIDS sidecars next to it when present (`.bval`; PET `.json` `FrameTimesStart`). ✅ (PR 1) [20.4-d] Loading one volume decodes only its images (frames of an Enhanced file), and its warnings no longer say that one volume of several is shown. ✅ (PR 1) |
+
+**Success metrics:** an Enhanced MR or PET series from the user's scanner (field test) loads with the spacing and origin that the scanner's own viewer shows, within 0.01 mm.
+
+**Out of scope:** 4D viewing (playing phases), registration between volumes, ADC or other derived maps, NIfTI-2, PET units and SUV (a separate stage).
+
+**Clarifications:**
+- assumed (20.1): a file with per-frame positions is ordered like a series of single-frame files (2.2) and goes through the same choice of one image per position (2.7-a); no new warning kind.
+- Q: one scan entry per volume, or volumes inside one entry? — A: one entry per volume (2026-10-14).
+- Q: which attributes name a volume? — A: b-value, echo time, phase (2026-10-14).
+- Q: should the desktop app switch volumes without reloading? — A: yes (2026-10-14).
+- Q: design (G2)? — A: approved (2026-10-14).
+- assumed (20.2–20.4): a workspace belongs to the series, not one volume (ADR 0013); vendor-private b-value tags are not read (raw tag literals are forbidden), such volumes are named `volume k/N`.
+
+**Design:** [docs/multi-volume.md](docs/multi-volume.md), [ADR 0013](docs/decisions/0013-multi-volume-series.md).
+
+### Implementation
+
+| Task | What | Criteria | PR | State |
+|---|---|---|---|---|
+| 20.1 Enhanced per-frame geometry | 20.1-a…f | [#60](https://github.com/Kauter1989/ferrum/pull/60) | ✅ |
+| 20.4.1–20.4.2 partition volumes (DICOM, NIfTI) | 20.4-a…d | [#62](https://github.com/Kauter1989/ferrum/pull/62) | ✅ |
+| 20.3.1–20.3.3 agent and workspace | 20.3-a…f | [#63](https://github.com/Kauter1989/ferrum/pull/63) | ✅ |
+| 20.2.1–20.2.2 desktop switching | 20.2-a…e | [#64](https://github.com/Kauter1989/ferrum/pull/64) | ✅ |
+| fix: DICOM brought into LPS (2.8), found by the 20.1 field check | 2.8 | [#61](https://github.com/Kauter1989/ferrum/pull/61) | ✅ |
+
+**Field check (2026-10-15 and 2026-10-17, public data):** volumes named
+and matched against dcm2niix (r = 1.0) on the `dcm_qa` sets: Siemens
+multi-echo, Philips and Canon DTI (classic and Enhanced, with the trace
+image), Philips magnitude and phase, Philips fMRI phases; a 33-frame
+OpenNeuro PET NIfTI named from its BIDS sidecar. Agent: scan, open, switch
+and provenance on the same data. Desktop: switching in 0.01 s (DICOM) and
+1.1–1.3 s per new PET frame (the `.nii.gz` is decompressed), 0 s from the
+cache. The desktop check found two bugs, fixed in #64 (lesson L24).
+
+**Open (field, user's machine):** the success metric (an Enhanced series
+from the user's scanner within 0.01 mm of the scanner's viewer), and the
+switch time and GPU memory on a real GPU.
+
+---
+
+## Stage 23 — GPU sharing with an external model server 🚧 (G1 ✅, G2 ✅; PR 3 of 3)
+
+Medical Harness runs its language model locally as a `llama-server`
+sidecar on the same 12 GB card as FERRUM's engines
+([#68](https://github.com/Kauter1989/ferrum/issues/68); P0 for the
+harness's Demo 2: live segmentation next to a resident model). What exists:
+- `network.gpu_groups` runs one engine call of a group at a time through
+  an advisory file lock (`GpuLock` in `ferrum-agent/src/sessions.rs`).
+  The file is in the shared temporary folder (`/tmp/ferrum-gpu-<group>.lock`),
+  so another local user can pre-create or hold it. The format is
+  undocumented, and the lock is a mutex that cannot tell a resident model
+  from a heavy engine.
+- The desktop app's AI tools (`ferrum-app/src/viewer/ai.rs`) do not take
+  the lock at all.
+- The nnInteractive bridge already frees the image and empties PyTorch's
+  cache when a session closes (`NnInteractiveBackend.release`), but nobody
+  has measured it. §2 of [agent-segmentation.md](docs/agent-segmentation.md)
+  still lists that as to do. The weights and the CUDA context stay loaded
+  (part of the ~2.3 GB baseline), and nothing can unload them.
+
+This stage lets a process outside FERRUM hold part of the card, makes
+FERRUM wait for room instead of running out of memory, and lets idle
+bridges give their memory back. It touches the engine protocol, the agent
+command set, the bridges and the desktop app, so it is gated and split
+into PRs.
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 23.1 | As a **harness developer**, I want a documented GPU-group lock that my own process can take so that my model server and FERRUM's engines never use the card at the same time beyond its size. | [23.1-a] `docs/gpu-sharing.md` specifies the protocol `ferrum-gpu-lock/1`: directory, file names per group and holder, the OS lock used (`flock` on Unix, `LockFileEx` on Windows), the holder record (holder name, process id, leased MiB, start time; no study data), how to acquire and release, the timeout, and stale holders. [23.1-b] A permissive crate `ferrum-gpu-lock` (MIT OR Apache-2.0, no FERRUM crate, only `rustix` on Unix for the user id) implements it, and `ferrum-agent` uses it instead of its own `GpuLock`. [23.1-c] The lock directory is per user: `$XDG_RUNTIME_DIR/ferrum/gpu` on Linux, `%LOCALAPPDATA%\ferrum\gpu` on Windows, or `network.gpu_lock_dir`; it is created with mode 0700 (without `XDG_RUNTIME_DIR`: `~/.cache/ferrum/gpu`). A directory or lock file owned by another user, or a directory that group or others can write, is refused with an error that names the path; FERRUM never falls back to `/tmp`. [23.1-d] Two-process test: an external holder holds the group; `segment auto` (mock engine) waits and succeeds within 1 s after the holder releases. When the holder is killed (`SIGKILL`) instead, the call goes ahead within 1 s. [23.1-e] A wait longer than `engine_job_timeout_s` ends with `engine_unavailable`, naming the holder and its lease; over MCP the wait reports progress ("waiting for GPU group card: llama-server holds 6 144 MiB"). [23.1-f] A group without a capacity (23.2-d) behaves as today: one holder at a time, external holders included. |
+| 23.2 | As an **operator**, I want a holder to declare how much of the card it holds so that FERRUM runs an engine next to a resident model when it fits, and waits when it does not. | [23.2-a] A holder takes a lease of N MiB. An engine call of the group goes ahead only when the leases of the live holders plus its expected peak fit in the group's capacity; otherwise it waits as in 23.1-d/e. FERRUM's own engine calls of a group still run one at a time (rule 1 of §2). [23.2-b] The expected peak of an engine comes from the operator (`network.gpu_peaks_mib`) and from the engine's `GET /v1/info` (`limits.expected_peak_mib`, optional, additive to `ferrum-engine/1`). The engine's value may raise the operator's but never lower it (the effective peak is the larger). An engine with neither takes the whole group. [23.2-c] Test: capacity 12 000 MiB with a 6 000 MiB lease. A call with a 7 000 MiB peak waits, then goes ahead once the lease is released; a call with a 4 000 MiB peak goes ahead at once. [23.2-d] The capacity of a group is set by the operator (`network.gpu_capacity_mib`). An expected peak larger than the capacity runs only when the group has no other holder, with a warning. [23.2-e] Lock records and outputs pass the identifier scan; no study path, UID or name is written to the lock directory. |
+| 23.3 | As a **clinician** using the desktop app's AI tools, I want them to take the same GPU group as the agent so that the viewer never starts an engine next to a model that leaves no room. | [23.3-a] The desktop app reads the operator's `[network]` GPU settings from the same configuration file as the agent and takes the lease for an engine of a group before every request that may use the GPU. [23.3-b] While it waits, the AI panel shows "Waiting for GPU: <holder> (pid N) holds M MiB (group G)" with Cancel. Cancel releases nothing it does not hold, and the request is not sent. [23.3-c] UI test: an external holder makes the panel show the waiting state, and releasing it lets the request run. |
+| 23.4 | As an **operator**, I want idle bridges to give their GPU memory back, completely when asked, and to see what each bridge holds, so that a 12 GB card has room for TotalSegmentator `total` (about 10 GB guided) next to a resident model. | [23.4-a] After the last session of the nnInteractive bridge closes (`DELETE` or TTL expiry), the bridge's GPU memory falls to its weights-only level ± 200 MiB, measured with `nvidia-smi --query-compute-apps` on the user's card (field). A bridge unit test checks that both paths drop the image and empty the cache. [23.4-b] A bridge that supports it reports `capabilities.unload: true` and serves `POST /v1/unload` (additive to `ferrum-engine/1`, in the conformance suite). The endpoint is refused with `busy` while a session or job is active. Afterwards the bridge holds no GPU memory at all (no CUDA context, measured), and its next session reloads the model; the reload time is measured and documented. [23.4-c] `engine unload [--engine URL \| --group G]` asks every idle bridge (of the group) to unload. The output lists, per engine, `unloaded`, `busy` or `unsupported`; it never stops a running job. CLI and MCP give identical JSON, and the schema, `commands.json`, docs and contract tests are updated. [23.4-d] `GET /v1/info` may report `resident_mib` (optional), and `engine list` shows it per engine marked as reported by the engine. The docs say that a holder checks free memory itself (NVML) instead of trusting it (point 7 of #68). |
+| 23.5 | As an **operator**, I want a measured recipe for a 12 GB card with an LLM sidecar so that I can size the model and the engines without trying. | [23.5-a] `scripts/benchmark_engines.py --external-holder "<command>" --lease-mib N` starts the holder, samples GPU memory during every step, and reports the combined peak and the time each call waited. [23.5-b] Field run on the user's card with the harness's `llama-server` and nnInteractive plus TotalSegmentator: 20 engine calls in Demo 2's order without CUDA out-of-memory errors. The table goes to §2 of agent-segmentation.md and the recipe to `docs/gpu-sharing.md`; numbers are measured or marked as estimates (L13). [23.5-c] Rule 2 of §2 is updated to what the bridge does, and a new ADR (0015) records the lock protocol, the crate and the lease. [23.5-d] An operator without the harness can wrap a sidecar: `ferrum-cli gpu hold --group G --lease-mib N -- <command>` holds the lease while the command runs and releases it when the command exits; it is never an MCP tool. |
+
+**Success metrics:** on the user's RTX 3080 Ti 12 GB, with `llama-server`
+holding the harness's model (its VRAM measured in the run), Demo 2's sequence (interactive lesion, refinement, `total` on two
+organs) runs 20 engine calls with no CUDA out-of-memory errors. Idle
+nnInteractive returns to its weights-only level within 2 s of the last
+`DELETE`.
+
+**Out of scope:** scheduling across machines or several GPUs per group,
+MIG/MPS, AMD/ROCm and Apple GPUs (the lease is still honoured, but
+nothing is measured there), NVML inside FERRUM, starting or stopping
+`llama-server` (its lifecycle stays with the harness), preempting a
+running engine job.
+
+**Clarifications:**
+- Q1: a crate or only a documented protocol? — A: a crate and the protocol document (2026-10-23).
+- Q2: leases for external holders, FERRUM's own calls still one at a time? — A: yes (2026-10-23).
+- Q3: full unload through a worker child process in the bridge, refused while busy, through `engine unload`? — A: yes (2026-10-23).
+- Q4: does the desktop app take part in this stage? — A: yes, in PR 3 (2026-10-23).
+- Q5: `ferrum-cli gpu hold` for operators without the harness? — A: yes (2026-10-23).
+- Q6: hardware? — A: RTX 3080 Ti 12 GB (2026-10-23). The harness's model, quantisation and context were not given. They are recorded with their measured VRAM in the field run rather than assumed (L13).
+- Q7: lock directory without `XDG_RUNTIME_DIR`? — A: `~/.cache/ferrum/gpu`, 0700, owner checked; never `/tmp` (2026-10-23).
+
+**Design:** [docs/gpu-sharing.md](docs/gpu-sharing.md), [ADR 0015](docs/decisions/0015-gpu-lease-protocol.md) (G2 ✅ 2026-10-23).
+
+### Implementation
+
+| Task | What | Criteria | PR | State |
+|---|---|---|---|
+| 23.T1 `ferrum-gpu-lock`: directory checks, holder records, admission, stale holders | 23.1-a/b/c/f, 23.2-a/c/d | 1 | ✅ |
+| 23.T2 `GpuSettings` in `ferrum-engines`; `AgentConfig` delegates; peaks | 23.2-b (the manifest field in PR 2) | 1, 2 | ✅ |
+| 23.T3 agent on the lease: wait with progress, timeout naming holders | 23.1-d/e, 23.2-e | 1 | ✅ |
+| 23.T4 protocol additions and conformance | 23.4-b/d | 2 | ✅ |
+| 23.T5 bridges: worker process, unload, `resident_mib`, release tests | 23.4-a/b (tests; the measurements on the card are the field test) | 2 | ✅ |
+| 23.T6 `engine unload`, `engine list` fields | 23.4-c/d | 2 | ✅ |
+| 23.T7 domain port, `GatedEngine`, `Viewer` waiting and cancel | 23.3-a/b | 3 | ✅ |
+| 23.T8 AI panel waiting state; `gpu hold` | 23.3-c, 23.5-d | 3 | ✅ |
+| 23.T9 benchmark holder options; field run; recipe | 23.5-a/b/c | 3 | options ✅ (dry run); field run and recipe pending |
+
+**Size:** XL, five contract surfaces. It is split into three PRs of size L
+([design §7–8](docs/gpu-sharing.md#7-size-and-pr-split)):
+1. the lock crate, configuration and agent;
+2. the protocol, the bridges and `engine unload`, then a field test;
+3. the desktop, `gpu hold` and the benchmark, then the field run of the
+   success metric.
+
+---
+
+## Stage 24 — Embeddable viewer widget (`ferrum-ui`) 🚧 (G1 ✅, G2 ✅; PR 1 of 2)
+
+Medical Harness shows a conversation and FERRUM's viewer in one egui/wgpu
+window ([#69](https://github.com/Kauter1989/ferrum/issues/69); P1 for the
+harness's Demo 4, a live viewer). Until then the harness shows FERRUM
+renders as images. What exists:
+- The views (`slice_view.rs`, `volume_view.rs`), the panels (segments,
+  segmentation and AI, review, metrics card, transfer function) and the
+  GPU bridge (`gpu_bridge.rs`) live in the `ferrum` binary crate, mixed
+  with the app shell in `app.rs`: header, toolbar, start screen, recent
+  files, file dialogs (`rfd`), drag and drop, screenshots and keyboard
+  shortcuts.
+- Every use case is already a `Viewer` method in `ferrum-app`, and the
+  views draw through `GpuSink` and egui-wgpu paint callbacks.
+- The view state that an agent could set (`ferrum-view/1`,
+  [#70](https://github.com/Kauter1989/ferrum/issues/70)) does not exist
+  yet. It is the next stage and builds on this one.
+
+This stage moves the viewer into a library crate that another egui/wgpu
+application places in a panel, and makes the desktop app its first user.
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 24.1 | As a **harness developer**, I want to place FERRUM's viewer in a panel of my own egui/wgpu window so that the person works with the study next to the conversation, rendered on the GPU without streaming. | [24.1-a] A new crate `ferrum-ui` exports `ViewerWidget`, which draws the 2D, MPR and 3D views of a `Viewer` with their overlays, measurements and segments into any `egui::Ui` it is given, with no window, menus or file dialogs of its own. Its dependencies include neither `eframe` nor `rfd`. [24.1-b] A host installs the GPU resources once with the `egui_wgpu::RenderState` it already has (`ferrum_ui::install`). Without a render state (a CPU-only test), the widget still lays out and handles input. [24.1-c] The widget has the desktop's toolbar of view tools (modes, tools, zoom) as an option the host can turn off, and the panels (segments, AI segmentation, review, metrics) as separate widgets the host may place or leave out. |
+| 24.2 | As a **harness developer**, I want the widget to tell me what the person did so that my agent learns the outcome without being in the render loop. | [24.2-a] Each frame, `ViewerWidget::show` returns the events of that frame: `PointPicked`, `RoiDrawn` (an annotation or a segment the person drew), `SliceChanged`, `WindowChanged` and `CameraChanged`. Events are coalesced: one `SliceChanged` per frame at most, and a drag gives one `WindowChanged` when it ends. [24.2-b] Points are given in FERRUM's point forms (`voxel` and `patient_mm`), the same values the agent's `probe` resolves. [24.2-c] No event is a decision: confirm and reject stay in the review widget, and the host's decision channel is the library API of 16.7. |
+| 24.3 | As a **FERRUM maintainer**, I want the desktop app to be a thin user of the same crate so that the rendering rule and the UI tests stay in one place. | [24.3-a] `ferrum` (the app) keeps only the shell: header, start screen, recent files, file and save dialogs, drag and drop, screenshots, shortcuts. It draws the views and panels through `ferrum-ui`. [24.3-b] The UI tests (`crates/ferrum/tests/ui.rs`) and `gpu_parity.rs` pass unchanged in what they check; tests of the views and panels may move to `ferrum-ui`. [24.3-c] The shaders stay in `ferrum-render`; `ferrum-ui` adds no image-formation code, so the rendering rule is unchanged. |
+| 24.4 | As a **harness developer**, I want an example host so that I can copy a working setup. | [24.4-a] `crates/ferrum-ui/examples/embed_host.rs` opens a window with its own side panel (an event log and a few buttons that call `Viewer` use cases, such as "next slice" and "lung window") next to the widget, and prints the events it receives. [24.4-b] A UI test drives the example's layout with `egui_kittest`: a click in the axial view gives one `PointPicked` whose voxel matches `probe` for that point. |
+| 24.5 | As a **clinician**, I want the licence and the research-use badge of an engine to stay visible when FERRUM is embedded so that I always know a result came from a research-only engine. | [24.5-a] The AI segmentation widget shows the engine's licence and the `research_only` badge as the desktop does; a segment proposed by an engine keeps its "Proposed by engine" label in the segments widget. [24.5-b] A UI test checks both inside the embedded layout of the example. |
+
+**Success metrics:** the example host shows a CT with the views, takes a
+point pick and prints it within one frame. The desktop app looks and
+behaves as before: all UI tests and `gpu_parity.rs` pass on lavapipe.
+
+**Out of scope:** the `ferrum-view/1` state and agent commands (#70, next
+stage), streaming and WASM backends (ADR 0014 decisions 4–7), several
+viewers in one window (one `Viewer` per window; the GPU resources are
+installed once), file loading inside the widget (the host opens studies
+through `Viewer` or its own code), theming beyond FERRUM's dark theme.
+
+**Clarifications (G1 ✅ 2026-10-25):**
+- Q1: crate name `ferrum-ui`, as in the issue? — A: yes (2026-10-25).
+- Q2: panels as separate widgets the host may place (24.1-c), rather than one fixed layout? — A: yes; the host decides its layout (2026-10-25).
+- Q3: events in this stage, before `ferrum-view/1`? — A: yes, as Rust types; #70 gives them their JSON schema (2026-10-25).
+- Q4: egui and wgpu versions: the host must use the same versions as FERRUM (they are re-exported as `ferrum_ui::egui` and `ferrum_ui::egui_wgpu`)? — A: yes, and the versions are named in the crate docs (2026-10-25).
+- Q5: mode — gated (G1 spec, G2 design), as for a stage? — A: yes (2026-10-25).
+
+**Design:** [docs/embeddable-viewer.md](docs/embeddable-viewer.md), [ADR 0016](docs/decisions/0016-ferrum-ui-crate.md) (G2 ✅ 2026-10-28: «работай автономно по плану далее»; CI on GitHub is unavailable until 1 November, so PRs are checked locally with `preflight.sh`). Size L, two PRs: the move, then events and the example host.
+
+### Implementation
+
+| Task | Criteria | PR | Status |
+|---|---|---|---|
+| 24.T1 crate `ferrum-ui`; views, panels, theme, widgets, GPU bridge moved | 24.1-a, 24.3-c | 1 | ✅ |
+| 24.T2 `ViewerWidget` (layout, tool bar, polling, GPU sync), `panels::side_panel`, `PanelRequest` | 24.1-b/c | 1 | ✅ |
+| 24.T3 desktop on `ferrum-ui`; UI tests and parity unchanged; renders before and after compared | 24.3-a/b | 1 | ✅ |
+| 24.T4 events | 24.2-a/b/c | 2 | |
+| 24.T5 example host and its UI test | 24.4-a/b | 2 | |
+| 24.T6 licence and badge test in the embedded layout | 24.5-a/b | 2 | |
+| 24.T7 docs, events privacy test | — | 2 | |
+
+## Stage 25 — Local GPU view for a harness (`ferrum-view/1`) ✅
+
+A harness shows FERRUM next to its conversation: the person works with the
+study in the harness window, the frames are made on the local GPU, and the
+agent learns what the person did without sitting in the render loop
+([#70](https://github.com/Kauter1989/ferrum/issues/70),
+[ADR 0014](docs/decisions/0014-generative-ui-view-host.md)). What exists:
+every use case in `ferrum-app`, `Viewer::slice_params` / `frame_params`,
+offscreen GPU rendering with readback (`render_slice_image`,
+`render_volume_image`) and the CPU oracles behind it, the `GpuSink` port,
+and the workspace store with its change notifications. What is missing: a
+process that keeps a `Viewer` alive, serves frames and input over loopback,
+and a page any harness can show.
+
+Design: [docs/view-host.md](docs/view-host.md),
+[ADR 0017](docs/decisions/0017-view-host-crate.md).
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 25.1 | As a **harness developer**, I want one command that serves the open workspace as a local view so that my harness can show it without linking Rust into the GUI. | [25.1-a] `ferrum-cli view serve --workspace <dir> [--port 0] [--cpu]` opens the workspace like the desktop does (sources verified, series loaded, annotations and segments attached), binds `127.0.0.1` only, and prints one JSON object `{"url","token","workspace","backend"}` on stdout before serving; `token` is 32 hex digits from the OS random source and `backend` is `gpu` or `cpu`. [25.1-b] Every request needs the token (`?token=`, `Authorization: Bearer`, or the `ferrum-view` cookie set by the page); a missing or wrong token is `401` and nothing else; an unknown path is `404`; a wrong method is `405`. [25.1-c] Ctrl-C ends the process (the socket closes with it), and dropping the server unblocks its loop and joins its thread; a workspace whose sources changed (`source_changed`) or that cannot be read fails before binding, with the reason, and no token is printed. [25.1-d] It is a CLI-only command, never an MCP tool, like `gpu hold`. |
+| 25.2 | As a **clinician**, I want to read the study in the harness: change the slice, change the window, see the segments and read the value under the cursor. | [25.2-a] `GET /api/frame.png` returns a PNG of the slice the state names, drawn from the workspace's study at the volume's native resolution (one pixel per voxel); `plane` is `axial`, `coronal` or `sagittal` and the index is 0-based and clamped to the volume. [25.2-b] Frames carry the segments of the workspace (fill and outline, opacity from `segments.json`) when the overlay is shown in the state (the default while the workspace has segments). [25.2-c] `POST /api/input` takes one of `{"slice": <i>}`, `{"step": ±n}`, `{"window": {"center": c, "width": w}}`, `{"preset": "<name>"}`, `{"plane": "<plane>"}`, `{"probe": {"x": px, "y": px}}`; a step of one wheel notch moves the index by exactly one and clamps; an out-of-range value is clamped, a wrong type is `400` and changes nothing. [25.2-d] After a `probe` the state carries `probe: {voxel: [i,j,k], patient_mm: [x,y,z], value, unit}` resolved through the frame's own pixel mapping, and the value equals `ferrum-cli probe` for the (rounded) voxel. [25.2-e] The state (`GET /api/state`) names the study by its series only: plane, index, slice count, window, segment labels and names, view id, never a path or UID. |
+| 25.3 | As a **clinician with no usable GPU**, I want the same picture so that the harness works on a server or a laptop without a discrete card. | [25.3-a] `--cpu` (or a machine without an adapter) renders on the CPU through the same `Viewer`: the frame equals the CPU oracle `SliceImage::extract` + `WindowLevel::apply` pixel for pixel. [25.3-b] A GPU frame and a CPU frame of the same state agree within the existing parity thresholds (mean absolute difference < 2.5/255, < 2 % of pixels outside 2.5/255) on a phantom with segments and a window. [25.3-c] `backend` in 25.1-a says which one ran, and the same state is served by both. |
+| 25.4 | As a **harness developer**, I want a self-contained page and a documented protocol so that any harness (not only mine) can mount the view. | [25.4-a] `GET /` returns one HTML document with inline CSS and JS and no request to any other origin; it draws the frame, turns wheel and drag into `POST /api/input`, shows the slice index, the window and the probe readout. [25.4-b] `docs/view-host.md` specifies `ferrum-view/1`: routes, state, input, events, token, limits, and the privacy rules. [25.4-c] `GET /api/events?since=<seq>` returns the events recorded so far with sequence numbers: `slice_changed`, `plane_changed`, `window_changed`, `point_picked`, each with its values and, for a pick, voxel and patient mm. [25.4-d] Requests are bounded: a body over 64 KiB is `413`, an unparseable or invalid input is `400` and changes nothing, an unknown path is `404`, and a frame is drawn again only when the state revision changed since the last one. |
+| 25.5 | As an **operator**, I want no patient data to leave the machine and no identifiers in what the harness stores. | [25.5-a] State, events and the page hold voxel indices, patient millimetres, window values, dims, spacing, segment labels and names only: no path, source, study or series field at all. The tests study lives in a folder named after a patient (`patient_Jane_Doe_1234`), and neither that name nor the path appears in the state, the events or the page. [25.5-b] The token is not written to the log, the workspace or the page source; the page receives it in a cookie with `SameSite=Strict` and `HttpOnly`. [25.5-c] The host sends no request to any origin other than its own. |
+| 25.6 | As a **harness developer**, I want a working example plugin for one harness so that the demo needs no wiring of my own. | [25.6-a] `integrations/dsh/` holds a DeepSeek Harness client plugin (plain CJS bundle, `dsh.client`, no build step) that shows the host's own page in a `main` page, a sidebar row and a conversation-header button, takes the `url` and `token` of `ferrum-cli view serve` (kept in `localStorage`, loopback addresses only, a 32-hex-digit token), and is enabled by one `cordis.patch.yml` row; its README gives the exact steps. The plugin does not start the host: a browser bundle cannot spawn a process, and the launcher is Stage 26 work. [25.6-b] `node integrations/dsh/smoke.js <url> <token>` drives the live host over HTTP (state, frame, input, events) and exits non-zero on any mismatch; `node integrations/dsh/plugin/smoke-load.cjs` loads the bundle against a stub module loader and checks its id and the three slot registrations. |
+
+**Success metrics:** in the harness, an axial 512×512 slice scrolls at
+10 frames/s or better over loopback on the user's GPU, a pick gives the
+same voxel and HU value as `ferrum-cli probe`, and the first frame arrives
+within 2 s of the host starting.
+
+**Out of scope:** MPR crosshair, 3D orbit and the volume view, and the
+other `ferrum-view/1` components (Stage 26 draws them on the same
+interfaces); decisions through the view (they stay with
+`ferrum_agent::decisions`); a WASM/WebGPU client — **closed by Stage 26**,
+which draws the study in a browser panel on these interfaces; remote exposure
+and TLS; several viewers per host; the agent command set (an agent reading
+the events of 25.4-c through a command such as `view events` remains an
+open follow-up).
+
+**Clarifications (autonomous; `assumed:`):**
+- assumed: the host renders on the CPU by default only when no adapter is
+  found; `--cpu` forces it, because a demo machine has a GPU and the GPU
+  path is the point of the stage.
+- assumed: frames are PNG, not JPEG: loopback makes the size irrelevant,
+  and a PNG keeps the pixel values exact for the parity tests and for a
+  person measuring on screen.
+- assumed: the page renders one view (2D slice), because a slice is what a
+  person scrolls while reading a study and what the demo needs; MPR and 3D
+  are separate components in Stage 26.
+- assumed: the frame is requested by the page (pull), not pushed by the
+  host; a pull keeps one code path for HTTP and makes "render only the
+  latest state" the natural behaviour.
+- assumed: the DeepSeek Harness plugin lives in this repository under
+  `integrations/` and is not part of the Cargo workspace, so the FERRUM
+  crates stay free of Node and the plugin can be copied into another
+  harness.
+
+### Implementation
+
+| Task | What | Criteria | PR | State |
+|---|---|---|---|
+| 25.T1 crate `ferrum-view`: session, state, input, events, workspace reload | 25.1-a, 25.2-c/e, 25.4-b/c | 1 | ✅ |
+| 25.T2 CPU frame source (the slice oracle and the `slice.wgsl` overlay rule) | 25.2-a/b, 25.3-a | 1 | ✅ |
+| 25.T3 GPU frame source (`render_slice_image`) and the CPU/GPU comparison | 25.3-b, 25.2-b | 1 | ✅ |
+| 25.T4 server: routes, token and cookie, the self-contained page, body limit | 25.1-b/c, 25.4-a/d, 25.5-a/b/c | 1 | ✅ |
+| 25.T5 `ferrum-cli view serve` and its parse test | 25.1-a/d | 1 | ✅ |
+| 25.T6 docs: `view-host.md`, ADR 0017, architecture, CLAUDE.md, CHANGELOG | 25.4-b | 1 | ✅ |
+| 25.T7 DeepSeek Harness plugin and its smoke script | 25.6-a/b | 2 | ✅ (merged with [#91](https://github.com/Kauter1989/ferrum/pull/91)) |
+
+**Status (PR 1):** the host runs and its tests pass: the page is
+self-contained and refuses a missing token, a CPU frame equals the oracle
+exactly, a GPU frame agrees with the CPU one (mean deviation and the four
+outline sides), input moves one slice per notch and clamps, a pick gives the
+voxel and the value `probe` gives, events are ordered and hold no path or
+name, and a segment the agent saves appears on the next state read.
+25.6 (the harness plugin) landed with #91; the MPR/3D components came
+with Stage 26.
+
+**Sandbox check (2026-11-14, release prep, RTX 3080):** the success metric
+measured over loopback as the harness drives it: 43.5 fps scroll+frame
+(≥ 10 required), the first frame in 0.02 s (< 2 s), the host's probe equal
+to `ferrum-cli probe`, the volume's SHA-256 and byte length exact, token
+401 / unknown 404 / wrong method 405, the CPU backend serving the same
+state; `smoke.js`, `smoke-load.cjs` and the panel tests pass. Found and
+fixed here: `view serve` ignored `data.workspace_root` (now resolved like
+the agent commands, with a test).
+
+## Stage 26 — The study in a browser panel (WASM + WebGPU) ✅
+
+**Size:** declared **L**, measured **XL** — 5 386 lines in 55 files, against a
+budget of 3 500 lines and 40 files for L ([design](docs/webgpu-panel.md) with
+the measurements). The stage should have been split while it was being built,
+along the boundaries its commits already followed (`ferrum-wasm`,
+`ferrum-view` + routes, the harness panel); it was not, and that is recorded
+as L36. The lesson is now enforced: a push of a branch past size L is blocked.
+
+**Why.** A panel that shows a streamed image is a picture, not a view: no
+rotation, no scrolling through slices, no real time. A person in a harness
+must rotate the volume and step through MPR while the agent works beside
+them. FERRUM already owns that renderer, so the panel runs the renderer
+itself instead of receiving frames.
+
+### User stories
+
+1. As a **clinician**, I want to open the study beside my conversation and
+   rotate the volume and scroll the slices myself, so that I follow what
+   the agent does without waiting for a rendered picture.
+2. As a **harness maintainer**, I want the panel to use the harness's own
+   tab in the right sidebar, so that the conversation stays where it was.
+3. As a **developer**, I want the panel to draw with FERRUM's own shaders
+   and frame model rather than a second renderer, so that the browser and
+   the desktop show the same image.
+
+### Criteria
+
+- [26.1-a] `cargo build -p ferrum-wasm --target wasm32-unknown-unknown`
+  produces a module that a browser loads and draws with, and the workspace
+  builds for the host unchanged.
+- [26.1-b] The browser and the desktop use one image-formation model: the
+  panel calls `VolumeRenderer` with `volume.wgsl` and takes its camera and
+  render modes from `ferrum-domain`, adding no shader and no ray marcher.
+- [26.2-a] The MPR layout shows axial, coronal and sagittal slices and the
+  3D volume in one canvas, each slice in its own rect with its aspect
+  kept, and no view erases another.
+- [26.2-b] The render modes of the desktop (`tissue`, `isosurface`, `mip`,
+  `transfer_function`) and its CT presets are available, and a CT opens on
+  the soft tissue and bone preset.
+- [26.3-a] A client that renders the study itself takes the voxels once
+  over loopback: `/api/volume` carries dims, spacing, value range, unit and
+  a SHA-256 in the header, and `/api/volume.json` the header alone. The
+  voxels need the token like every data route.
+- [26.3-b] The built module is served at `/panel/…` without the token: it is
+  code, not data, and a browser imports a module without being able to add
+  the token to that request.
+- [26.4-a] In the DeepSeek Harness the panel opens as a tab of the right
+  sidebar, offered by the strip's own menu, and the conversation keeps the
+  centre column.
+- [26.4-b] A host that starts a new token on every run says so when a panel
+  sends an old one: the answer is 401, and the panel names the cause and
+  where the current token is printed.
+
+### Verification
+
+| Criterion | Level | Evidence | Outcome |
+|---|---|---|---|
+| 26.1-a | build + manual | `cargo build -p ferrum-wasm --target wasm32-unknown-unknown`; the module loaded in a browser window and drew the study | ✅ |
+| 26.1-b | reading + manual | the binding calls `VolumeRenderer` with `volume.wgsl`; the panel's image matched the desktop preset on the same CT | ✅ |
+| 26.2-a | visual | the MPR layout on a 512×512×252 CT: all four quarters, no view erased | ✅ |
+| 26.2-b | visual | all four modes and the soft tissue + bone preset | ✅ |
+| 26.3-a | test | `view_host.rs::the_volume_crosses_the_wire_once_for_a_client_that_renders_it` | ✅ |
+| 26.3-b | test | `view_host.rs::the_panel_module_is_public_code_while_the_data_is_not` | ✅ |
+| 26.4-a | manual | the person opened the tab in the right sidebar of the harness | ✅ |
+| 26.4-b | manual + host | 200 for the current token, 401 for an old one; the panel names the cause | ✅ |
+
+Not verified by automation: 26.1, 26.2 and the panel itself — the WebGPU path
+needs a headed browser, and this machine's headless Chromium has no WebGPU
+adapter ([design](docs/webgpu-panel.md)). Field numbers: 144 fps at
+1317×856, 512×512×252 CT, RTX 3080.
+
+### Out of scope
+
+Segments and their overlay in the browser, the transfer-function editor,
+measurements in the panel, a compressed or 16-bit volume transfer (a
+512×512×252 study crosses the wire as 252 MB today), and an automated test
+of the WebGPU path (it needs a headed browser, [design](docs/webgpu-panel.md)).
+
+### Implementation
+
+| Task | What | Criteria | PR | State |
+|---|---|---|---|
+| 26.1 | `ferrum-wasm`: canvas and WebGPU adapter, slice and volume views, the MPR layout, the render modes and the CT presets | 26.1-a, 26.1-b, 26.2-a, 26.2-b | 1 | ✅ |
+| 26.2 | view host: `/api/volume`, `/api/volume.json`, `/panel/…`, CORS | 26.3-a, 26.3-b | 1 | ✅ |
+| 26.3 | DeepSeek Harness panel: canvas, controls, the right-sidebar tab | 26.4-a, 26.4-b | 1 | ✅ |
+| 26.4 | docs: `webgpu-panel.md`, architecture, CLAUDE.md, CHANGELOG, this spec | — | 1 | ✅ |
+
+**Status:** built and observed on the user's machine: the panel opens in the
+right sidebar and draws MPR and 3D at 144 fps on a 512×512×252 CT. The
+criteria marked ✅ were verified by test, by looking at the image, or on the
+user's machine as noted in the PR table; automation for 26.1–26.2 is open.
+
+All four tasks landed in **one PR (#91, XL)**, which the `PR` column should
+have shown as a split before the first push — see *Size* above and L36.
+PR #89 carried the first 25 files of the same branch and was closed as
+contained in #91. Follow-ups not taken in this PR: a short-lived, rotating
+token for `ferrum-view/1` (an ADR first), and the consolidation of the CPU
+segment overlay, which is a third copy of the `slice.wgsl` rule.
+
+## Stage F1 — An unknown view mode is applied silently (bug, known cause) ✅
+
+**Track:** feature (a bug with a known cause, `ferrum-workflow` §1).
+**Mode:** autonomous; **Size:** S. **Found by:** a live check after #91 was
+merged, not by a test.
+
+**The defect.** `crates/ferrum-wasm`'s `FerrumView::set_mode` takes a
+`FerrumMode`, and the panel converts its own string to it with a chain of
+ternaries in `integrations/dsh/plugin/lib/client.js` (lines 221 and 286):
+
+```js
+view.set_mode(mode === "volume" ? wasm.FerrumMode.Volume3d
+            : mode === "mpr"   ? wasm.FerrumMode.Mpr
+                               : wasm.FerrumMode.Slice2d);
+```
+
+Any string that is not `"volume"` or `"mpr"` — a typo, a value from a saved
+state, a word a future version adds — silently renders **one 2D slice**, and
+nothing reports it. `set_mode` itself cannot refuse anything: a `u32` that is
+not a known variant is not a validation error in wasm-bindgen, and the setter
+returns `()`. The sibling `set_render_mode` does it right: it takes a string
+and returns `Err` with the value in the message.
+
+**Why it matters.** The mode decides what a person sees. A silent fallback
+turns "the panel shows the wrong thing" into "the panel shows something", and
+a clinician reading a single slice while believing it is MPR is exactly the
+failure this project cannot afford.
+
+**Criteria**
+
+- [F1.1-a] `FerrumView::set_mode` takes the mode by name (`"slice"`,
+  `"volume"`, `"mpr"`) and returns `Err` naming the value for anything else,
+  leaving the current mode unchanged. The same three names the panel already
+  uses; `FerrumMode` stays as the typed field behind it.
+- [F1.1-b] The panel stops converting strings itself: it passes its mode
+  string through and reports the error instead of rendering a fallback.
+- [F1.1-c] A test covers both: an unknown name is refused and the mode is
+  unchanged, and every name the panel can produce is accepted.
+
+**Verification**
+
+| Criterion | Level | Evidence | Outcome |
+|---|---|---|---|
+| F1.1-a | test | `crates/ferrum-wasm/tests/mode_names.rs` — an unknown name is refused and the error names it; the fit's neighbours (`layout.rs`) follow the same host-test pattern | ✅ |
+| F1.1-b | test | `integrations/dsh/tests/test_panel.py::test_the_mode_reaches_the_view_by_name_so_an_unknown_one_is_reported` — covers the bundle **and** `panel/stand.html`, which kept the ternary until the review found it | ✅ |
+| F1.1-c | test | the same two files; both mutation-checked (a `Ok(Mode::Slice)` fallback fails 3 tests, the old ternary fails the panel test) | ✅ |
+| F1.1-a | live | the rebuilt module in a browser: `mpr`, `volume`, `slice` accepted; `"mprr"`, `"3d"`, `""` refused with `unknown mode "…": expected one of slice, volume, mpr` | ✅ |
+
+**Out of scope:** the other follow-ups of #91 (rotating tokens, the CPU
+overlay consolidation, the tests that cannot fail that the review listed).
+
+**Implementation**
+
+| Task | What | Criteria | PR | State |
+|---|---|---|---|---|
+| F1.1 | the mode reaches the view by name and an unknown one is refused | F1.1-a, F1.1-b, F1.1-c | 1 | ✅ |
+
+## Stage F2 — The read-root check is lexical; the source walk follows symlinks (bug, known cause) ✅
+
+**Track:** feature (a bug with a known cause, `ferrum-workflow` §1).
+**Mode:** autonomous; **Size:** M. **Found by:** Medical Harness while
+embedding `ferrum-agent` v0.3.0 ([#82](https://github.com/Kauter1989/ferrum/issues/82),
+request 13 of `docs/ferrum-integration.md` there). Closes the S2 backlog
+item of the 0.4.0-prep security review (the same lexical root check).
+
+**The defect.** `AgentConfig::check_source` compares a source path with
+`read_roots` lexically (`absolute` + `normalise`), so a symlink inside a
+read root that points outside it passes the check and FERRUM reads the
+target. `ferrum_io::files::collect_files` walks a source tree through
+`is_dir()`/`is_file()`, which follow symlinks, with no depth or entry
+bound: a folder inside a root can pull in files from anywhere the process
+can read, and a link loop never terminates. `resolve_workspace` shares
+the lexical pattern.
+
+**Why it matters.** The read roots are the operator's boundary for what
+an agent may read — patient data included. The harness guards its own
+calls today (canonical path, no symlink below a source folder, depth ≤ 8,
+≤ 100 000 entries), but FERRUM embedded without that guard is open.
+
+**Criteria**
+
+- [F2.1-a] `check_source` canonicalises the returned path and every read
+  root before comparing: a symlink inside a root that points outside it
+  is refused with `forbidden` — as a file, as a folder, through the link.
+  A root named through a symlink grants exactly its target. The check
+  judges exactly the spelling that is returned and that the reader opens
+  (`.` and `..` resolved lexically): a `..` behind a depth-changing link
+  must not split the checked path from the opened one (security review).
+- [F2.1-b] `resolve_workspace` holds the same boundary against
+  `workspace_root`; a workspace that does not exist yet still resolves.
+- [F2.1-c] `Study::load` scans the checked source path and re-checks
+  every recorded file path of the manifest before hashing or scanning
+  it; a manifest path with a `..` component is refused outright (the
+  check normalises it lexically, but `verify_sources`, the cache stamps
+  and the DICOM export open the raw spelling in filesystem order —
+  behind a symlink the two diverge; legitimate manifests never hold one).
+  A crafted `workspace.json` cannot point the load outside the roots.
+- [F2.2-a] `collect_files` does not follow the symlinks it discovers
+  while descending (folder and file links are skipped; on Windows
+  junctions too — std marks them symlinks, pinned by a test); explicitly
+  passed paths are honoured as before; a link loop terminates.
+- [F2.2-b] The walk is bounded: depth ≤ 8 and ≤ 100 000 entries (the
+  harness guard's numbers). Exceeding either is refused with `limit`
+  (`RepositoryError::Limit`, additive), never silently cut (L37).
+- [F2.3] Tests that can fail: unit cases in `config.rs` and `files.rs`,
+  and command-level contract tests (`study scan` / `study open`) with a
+  symlink to a file outside the root, a folder holding such a link, a
+  symlinked folder, and a tree past the depth bound. Windows skips the
+  symlink cases when the runner holds no privilege; CI runs them on
+  Linux.
+
+**Verification**
+
+| Criterion | Level | Evidence | Outcome |
+|---|---|---|---|
+| F2.1-a | test | `config.rs::symlink_out_of_a_read_root_is_refused`, `a_symlinked_read_root_grants_exactly_its_target`, `a_depth_changing_link_cannot_split_the_check_from_the_read`; `tests/read_roots.rs::scan_refuses_a_symlink_to_a_file_outside_the_root`, `open_refuses_a_symlink_to_a_file_outside_the_root`, `open_refuses_a_symlinked_folder_outside_the_root`, `a_depth_changing_link_cannot_split_the_check_from_the_scan` | ✅ Linux + Windows (symlink cases skip without the privilege; CI runs them) |
+| F2.1-b | test | `config.rs::workspace_symlink_escape_is_refused`, the workspace case of `a_depth_changing_link_cannot_split_the_check_from_the_read` | ✅ |
+| F2.1-c | test | `tests/read_roots.rs::a_crafted_manifest_cannot_point_the_load_outside_the_root`, `a_crafted_manifest_with_parent_components_is_refused` | ✅ Linux + Windows (the `..` case needs a symlink: skips without the privilege) |
+| F2.2-a | test | `files.rs::walk_does_not_follow_symlinks`, `walk_survives_a_symlink_loop`, `walk_skips_junctions` (Windows, no privilege needed); `tests/read_roots.rs::a_folder_holding_an_escape_link_scans_only_its_real_files` | ✅ |
+| F2.2-b | test | `files.rs::walk_bounds_depth_and_entries`; `tests/read_roots.rs::a_source_tree_deeper_than_the_limit_is_reported` | ✅ |
+| F2.3 | mutation | nine tests red on the unfixed code (Linux) before the fix; the depth-changing-link regression red on the first draft, and the crafted-manifest `..` regression red without the guard (both mutation-checked) | ✅ |
+
+**Local run:** WSL (Ubuntu 22.04): `cargo fmt --check`, `clippy --workspace
+--all-targets -D warnings`, schema freshness, `cargo test --workspace`
+without `FERRUM_REQUIRE_GPU` — all green. Host (Windows): `gpu_parity`
+14/14 with `FERRUM_REQUIRE_GPU=1`, `ferrum-domain`/`ferrum-io`/
+`ferrum-agent` suites green. The WSL GPU half is the documented old-Mesa
+case (lavapipe segfault, `ferrum-change` §4); the host answers it.
+
+**Out of scope:** the TOCTOU window between the check and the read, and
+hard links (both need write access to a data root; the issue documents
+them as residual); the desktop's own file dialogs (a person's explicit
+choice, no agent boundary).
+
+**Implementation**
+
+| Task | What | Criteria | PR | State |
+|---|---|---|---|---|
+| F2.1 | canonical comparison of the returned spelling in `check_source` / `resolve_workspace`; the load re-checks the manifest's file paths | F2.1-a, F2.1-b, F2.1-c | 1 | ✅ |
+| F2.2 | no-follow bounded walk in `collect_files`; `RepositoryError::Limit` | F2.2-a, F2.2-b | 1 | ✅ |
+| F2.3 | the tests, red first; docs and CHANGELOG | F2.3 | 1 | ✅ |
+
+## Roadmap
+
+Updated 2026-11-14, before the 0.4.0 release. Order is a proposal; each
+stage starts with its spec at gate G1. Sizes follow `ferrum-size`.
+
+### Next
+
+| # | What | Kind | Why now |
+|---|---|---|---|
+| 1 | Release 0.4.0: Stages 18 and 20, loader warnings (2.7), DICOM in LPS (2.8), lossless HU (18.13) since 0.3.0 | release (`ferrum-release`) | `develop` holds a large unreleased change set; the user decides |
+| 2 | Field test on the user's machine: Stage 20 on a scanner's Enhanced MR or PET (success metric, 0.01 mm), switch time and VRAM on the GPU; 18.13-f against pyradiomics | field test (`ferrum-field-test`) | the open criteria of Stages 18 and 20 can only be closed there |
+| 3 | Stage 21 — PET quantification (below) | stage, L | from the MR/PET assessment (2026-10-14): without units and SUV a PET study has no usable numbers |
+| 4 | Stage 22 — PET/CT fusion (below) | stage, L, new ADR | the main way PET is read; needs a second volume in `Dataset` and `GpuSink` |
+| 5 | Stage 16 — the rest: 16.1 confirm all, 16.2 export only confirmed, 16.3 provenance of a corrected segment, 16.4 annotation mode | stage, M per story | open since Stage 16; 16.5–16.6 are done |
+| 6 | Stage 19 — reproducible radiomics and comparison (IBSI, textures, change over time) | stage, XL, G1 again | waits for the release of Stage 18 (its own rule); MR normalisation joins it |
+| 7 | Interactive view host for generative UI — delivered as Stages 25 and 26: `view serve`, the DeepSeek Harness plugin, the WebGPU panel ([ADR 0014](docs/decisions/0014-generative-ui-view-host.md), [ADR 0017](docs/decisions/0017-view-host-crate.md)) | ✅ done | follow-ups open: rotating tokens (an ADR first), the CPU overlay consolidation, WebGPU test automation |
+| 8 | Stage 23 — GPU sharing with an external model server ([#68](https://github.com/Kauter1989/ferrum/issues/68)) — code complete, PRs 1–3 merged | ✅ code; field run open | 23.T9: the 20-call recipe on the user's 12 GB card |
+| 9 | Stage 24 PR 2 — widget events and the example host (24.T4–T7, [design](docs/embeddable-viewer.md)) | feature, M | G1 ✅ G2 ✅; completes the embeddable viewer for the harness's Demo 4; the next feature proposed after the release |
+
+### Backlog (feature or small, any time)
+
+- **`view serve` without a configuration (security review N1):** the hello
+  line carries no "no operator configuration" warning, unlike the agent
+  envelopes; add a note when `config.is_default`.
+- **Duplicate `Cache-Control` on `/panel/` (security review N4):**
+  `max-age=60` then `no-store` is appended; the doc says every answer is
+  `no-store`. Harmless, but make the code match the doc.
+- **Faster PET frame switch:** a 4D `.nii.gz` is decompressed from the
+  start for every frame (1.1 s for 586 MB); decompress once into a
+  temporary cache, or read uncompressed `.nii` directly.
+- **GPU texture reuse:** a volume switch creates a new 3D texture; reuse
+  it when dims and format match (measure on a real GPU first, L13).
+- **Volume count in the series picker:** the scan descriptor does not carry
+  it; reading volumes per series during the scan costs time on large
+  folders.
+- **Siemens mosaic:** classic Siemens EPI/DWI stores a slice grid in one
+  image; it is read as one large slice (field note of 20.4).
+- **Vendor b-values:** classic DWI that stores b in private tags is named
+  `volume k/N`; a vendor dictionary would name it (raw tag literals stay
+  forbidden, so it needs a named-constant table).
+- **Window presets per modality:** the HU presets are offered for MR and
+  PET too (from the MR/PET assessment); hide them or offer percentile and
+  SUV windows (part of Stage 21 if not done before).
+- **GUI localisation:** recorded as a separate task in Stage 18.
+
+### Stage 21 — PET quantification 📋 (draft; criteria at G1)
+
+| # | User story (draft) |
+|---|---|
+| 21.1 | As a **nuclear medicine physician**, I want PET values in Bq/ml and SUV (body weight; later lean body mass) from the DICOM PET module (units, decay correction, radiopharmaceutical dose and time, half-life, patient weight), refused with the reason when data are missing, so that numbers mean what they say. |
+| 21.2 | As a **physician**, I want SUVmax, SUVpeak (1 cm³ sphere), SUVmean, MTV and TLG of a segment, and thresholds at 41 % of SUVmax and at SUV ≥ 2.5, so that a PET report needs no other tool. |
+| 21.3 | As a **reader**, I want PET colour maps (inverted grey, hot/inferno) and SUV windows (0–5, 0–10, 0–15) in slices and MIP, with HU presets hidden for PET and MR; a shader change with CPU parity and a visual check (L1). |
+| 21.4 | As an **agent developer**, I want `value_unit` = `SUVbw` or `Bq/ml` in the agent with the PET metrics in `segment metrics`, identical over CLI and MCP, and identifiers (weight, dose times) kept out of outputs unless allowed. |
+
+Out of scope (draft): kinetic modelling, Patlak, partial-volume correction,
+SUV for non-DICOM PET without a sidecar that names the units.
+
+### Stage 22 — PET/CT fusion 📋 (draft; criteria and ADR at G1/G2)
+
+| # | User story (draft) |
+|---|---|
+| 22.1 | As a **reader**, I want a PET volume shown in colour over a CT of the same study on the common LPS geometry, with opacity and its own window, marked "not registered" (no alignment is claimed, as in 19.9-b). |
+| 22.2 | As a **reader**, I want the probe and the segment metrics to read the volume I choose (CT in HU, PET in SUV) under the same cursor. |
+| 22.3 | As an **agent developer**, I want `view slice` and `view mpr` to render the overlay so that an agent sees what the person sees. |
+
+Architecture (to decide in an ADR): a second volume in `Dataset` and
+`GpuSink`, resampling to the base grid, and the rendering rule (shader and
+CPU raycaster both).
+

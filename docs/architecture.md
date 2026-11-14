@@ -18,19 +18,24 @@ techniques and their references.
 
 ```mermaid
 flowchart LR
-    V["ferrum<br/>Presentation · egui/eframe"]
+    V["ferrum<br/>Desktop app · eframe shell"]
+    UI["ferrum-ui<br/>Views · panels · GPU bridge (egui/wgpu)"]
     A["ferrum-app<br/>Application · state · use cases · jobs · tools"]
     D["ferrum-domain<br/>Entities · rules · ports"]
     P["ferrum-processing<br/>Parallel algorithms"]
     R["ferrum-render<br/>WGSL/wgpu + CPU reference"]
     IO["ferrum-io<br/>DICOM · NIfTI repositories"]
-    EN["ferrum-engines<br/>ferrum-engine/1 client · mock · server"]
+    EN["ferrum-engines<br/>ferrum-engine/1 client · mock · server · GPU groups"]
+    GL["ferrum-gpu-lock<br/>ferrum-gpu-lock/1 leases"]
+    RX["ferrum-radiomics<br/>feature registry · profiles · segment metrics"]
     AG["ferrum-agent<br/>agent commands · envelope · workspaces"]
     CLI["ferrum-cli<br/>command line"]
+    VW["ferrum-view<br/>local view host · ferrum-view/1"]
 
-    V --> A
-    V --> R
+    V --> UI
     V --> IO
+    UI --> A
+    UI --> R
     A --> D
     A --> P
     A -->|"frame model, picker"| R
@@ -39,24 +44,39 @@ flowchart LR
     P --> D
     IO -->|"implements VolumeRepository"| D
     EN -->|"implements SegmentationEngine"| D
+    EN -->|"GPU leases"| GL
     CLI --> AG
+    CLI --> VW
+    VW --> A
+    VW --> R
+    VW -->|"workspaces"| IO
     AG --> D
     AG --> IO
     AG -->|"CPU ray caster"| R
     AG -->|"engine commands"| EN
+    AG -->|"segment metrics"| RX
+    RX --> D
+    WS["ferrum-wasm<br/>WebGPU canvas renderer"]
+    WS -->|"same shaders, frame model"| R
+    WS --> A
 ```
 
 | Crate | Responsibility | Must not |
 |---|---|---|
 | `ferrum-domain` | `Volume` with its patient `Geometry`, `WindowLevel`, `TransferFunction`, `RenderSettings`, `ClipSettings`, `OrbitCamera`, slice geometry, annotations, `VoxelMask`, `LabelMap` / `SegmentationSet`, `Provenance` (author, review status, requester) on annotations and segments, mask analysis (components, shape, agreement); the `VolumeRepository` port | do I/O, know GPUs or UI |
 | `ferrum-processing` | histogram, min/max bricks, ambient occlusion, filters, resampling (rayon) | own application state |
-| `ferrum-io` | DICOM scan → series grouping → slice ordering → parallel decode; NIfTI read/write with reorientation to LPS; NIfTI label maps mapped onto the volume grid; `ferrum-annotations` v2 and `ferrum-segments` JSON (read and write); `ferrum-workspace` v1 directories with hashed sources and an audit log ([format](workspace-format.md)); DICOM SEG and Comprehensive 3D SR (TID 1500) export ([format](workspace-format.md#5-dicom-export)) | know about rendering or UI |
+| `ferrum-io` | DICOM scan → series grouping → slice ordering, reorientation into the LPS grid, volumes of a multi-volume series (`VolumeRepository::volumes`, `dicom/volumes.rs`; each frame of an Enhanced multi-frame file placed by its functional groups; one image per position; what could not be shown as stored goes to `SeriesMetadata::warnings`) → parallel decode; NIfTI read/write with reorientation to LPS; NIfTI label maps mapped onto the volume grid; `ferrum-annotations` v2 and `ferrum-segments` JSON (read and write); `ferrum-workspace` v1 directories with hashed sources and an audit log ([format](workspace-format.md)); DICOM SEG and Comprehensive 3D SR (TID 1500) export ([format](workspace-format.md#5-dicom-export)) | know about rendering or UI |
 | `ferrum-render` | `FrameParams` (pure), WGSL shaders, `VolumeRenderer` (feature `gpu`), `CpuRaycaster` | own application state |
-| `ferrum-engines` | `HttpEngine` (`ferrum-engine/1` client over HTTP), `MockEngine` (region growing, no model), reference protocol server and conformance suite | know about rendering or UI |
-| `ferrum-app` | `Viewer` facade, background `JobQueue`, `ToolController`, `GpuSink` port; which tools each view mode offers (`tool_availability`, `set_view_mode`) and the segmentation workflow (`segmentation_step`, the region tool) | depend on wgpu or egui |
-| `ferrum` | panels, widgets, paint callbacks, dialogs; composition root | contain business logic |
-| `ferrum-agent` | agent skill (depends on `ferrum-domain`, `ferrum-io`, `ferrum-engines` and `ferrum-render` without its GPU feature) ([design](agent-skill.md), [CLI and MCP](agent-cli.md), [segmentation](agent-segmentation.md)): commands on JSON parameters with JSON Schemas, `ferrum-agent/1` envelope and error codes, operator configuration, workspace sessions with a series cache, CPU slice renders with pixel mapping, audit log, MCP server (stdio); engine objects refined from stored prompts, GPU groups, engine sessions cached for MCP, quality checks | depend on wgpu, egui or `ferrum-app` state |
-| `ferrum-cli` | `ferrum-cli` binary: argument parsing to agent calls, exit codes | contain command logic |
+| `ferrum-engines` | `HttpEngine` (`ferrum-engine/1` client over HTTP), `MockEngine` (region growing, no model), reference protocol server and conformance suite; `gpu`: the `[network]` GPU settings (`GpuSettings`) and the lease an engine call of a GPU group takes ([design](gpu-sharing.md)) | know about rendering or UI |
+| `ferrum-gpu-lock` | protocol `ferrum-gpu-lock/1`: per-user, checked lock directory; holder records and OS locks; admission of leases against a group's capacity; stale holders of dead processes removed ([design](gpu-sharing.md), [ADR 0015](decisions/0015-gpu-lease-protocol.md)) | depend on any other FERRUM crate (hosts such as Medical Harness use it as is) |
+| `ferrum-app` | `Viewer` facade, background `JobQueue`, `ToolController`, `GpuSink` port; which tools each view mode offers (`tool_availability`, `set_view_mode`) and segment metrics (`request_segment_metrics` runs `ferrum-radiomics` as a `JobQueue` job; a result says whether it is out of date) and the modality of an image that carries none (`declare_modality`, `needs_modality`); the volumes of a multi-volume series (`volumes`, `switch_volume`, `step_volume`: a switch replaces only the voxels, with an LRU cache of loaded volumes, `viewer/volumes.rs`, [design](multi-volume.md)); the segmentation workflow (`segmentation_step`, the region tool: `ferrum_domain::grow_region_robust` with seed median, smoothing, opening and hole filling, run as a `JobQueue` job with a cancel flag) | depend on wgpu or egui |
+| `ferrum-ui` | the viewer as an egui/wgpu widget ([design](embeddable-viewer.md), [ADR 0016](decisions/0016-ferrum-ui-crate.md)): `ViewerWidget` (2D, MPR and 3D views, polling and GPU upload per frame), the tool bar, the side panel and its sections (display, segments, segmentation and AI, review, metrics), file actions returned as `PanelRequest`s, paint callbacks (`gpu_bridge`), theme and widgets | contain business logic; open windows or file dialogs (no `eframe`, no `rfd`) |
+| `ferrum` | the desktop app: header, start screen and recent studies, studies sidebar, status bar, dialogs (series, load warnings, image type), file dialogs, drag and drop, screenshots, shortcuts; composition root | contain business logic or views (they are `ferrum-ui`'s) |
+| `ferrum-radiomics` | feature registry (stable id, family, unit, definition text), versioned profiles (`quick`), size, shape (surface mesh by marching cubes, principal axes) and first-order intensity features of a segment, the result type that names profile, version and parameters; calls `ferrum_domain::analysis` for the measures the domain already has ([design](radiomics.md), [ADR 0011](decisions/0011-radiomics-crate.md)) | do I/O, know GPUs or UI, copy a measure that `ferrum-domain` has |
+| `ferrum-agent` | agent skill (depends on `ferrum-domain`, `ferrum-io`, `ferrum-engines`, `ferrum-radiomics` and `ferrum-render` without its GPU feature) ([design](agent-skill.md), [CLI and MCP](agent-cli.md), [segmentation](agent-segmentation.md)): commands on JSON parameters with JSON Schemas, `ferrum-agent/1` envelope and error codes, operator configuration, review decisions of a host bound to what was shown (`decisions`, a library API, never an agent command), workspace sessions with a series cache, CPU slice renders with pixel mapping, audit log, MCP server (stdio); engine objects refined from stored prompts, GPU leases (through `ferrum-engines::gpu`), engine sessions cached for MCP, quality checks | depend on wgpu, egui or `ferrum-app` state |
+| `ferrum-cli` | `ferrum-cli` binary: argument parsing to agent calls, exit codes; operator-only commands that run a process instead of a call (`gpu hold`, `view serve`) | contain command logic |
+| `ferrum-view` | local view host (`ferrum-view/1`, [design](view-host.md), [ADR 0017](decisions/0017-view-host-crate.md)): one workspace kept open with its `Viewer`, slice frames drawn on the GPU (`VolumeRenderer::render_slice_image`) or with the CPU reference (the `SliceImage` oracle and the `slice.wgsl` overlay rule), a `tiny_http` server on loopback with a token, the self-contained page, the state document, input and the event log; `/api/volume` hands the voxels to a client that renders the study itself | contain business logic, add image-formation code, or know about egui |
+| `ferrum-wasm` | the renderer in a browser ([design](webgpu-panel.md)): `ferrum-render` bound to a `<canvas>` through WebGPU, the same `volume.wgsl` and `frame` model as the desktop, the MPR layout (three slices and the 3D view in one canvas) and the CT presets; builds for `wasm32-unknown-unknown` only, so the native workspace build skips it | add image-formation code, parse files, or contain business logic |
 
 
 ## Extension points
@@ -67,8 +87,8 @@ FERRUM is a visualisation core meant to be extended
 | Extension | Port (in `ferrum-domain`) | Status |
 |---|---|---|
 | Data sources | `VolumeRepository` | implemented: DICOM, NIfTI |
-| Segmentation engines | `SegmentationEngine`, `InteractiveSession` | implemented: `ferrum-engines` with `HttpEngine`, `MockEngine` and a reference server; driven by the *Segmentation* section and the AI tools of the toolbar |
-| Result stores | `ResultStore` | implemented: `ferrum-io::WorkspaceStore` (`ferrum-workspace` v1); the viewer opens a workspace, shows its review queue and writes decisions back |
+| Segmentation engines | `SegmentationEngine`, `InteractiveSession` | implemented: `ferrum-engines` with `HttpEngine`, `MockEngine` and a reference server; driven by the *Segmentation* section and the AI tools of the toolbar. `EngineObserver` (`SegmentationEngine::observe`, default no-op) reports a wait for a shared GPU to the viewer; `ferrum-engines::gpu::GatedEngine` takes a GPU group's lease for each session |
+| Result stores | `ResultStore` | implemented: `ferrum-io::WorkspaceStore` (`ferrum-workspace` v1); the viewer opens a workspace, shows its review queue, writes decisions back and keeps the modality declared for an image that carries none (`modality`, `set_modality`) and the volume shown of a multi-volume series (`volume`, `set_volume`) |
 | Exporters | `Exporter` | planned as a port; today annotation JSON, NIfTI label maps and DICOM SEG/SR (`ferrum-io::dicom::export`) are called directly |
 
 Out-of-process engines (nnInteractive, MONAI Label, TotalSegmentator or
@@ -166,11 +186,12 @@ is kept in sync by the GPU/CPU parity tests.
 
 | Space | Definition |
 |---|---|
-| Patient frame | LPS for every loaded volume: `+i` patient left, `+j` posterior, `+k` superior (DICOM native; NIfTI reoriented from `sform`/`qform`) |
+| Patient frame | LPS for every loaded volume: `+i` patient left, `+j` posterior, `+k` superior (DICOM and NIfTI reoriented into it: axes permuted and flipped onto the closest LPS axis, the oblique remainder kept in `direction`) |
 | Voxel `(i, j, k)` | column, row, slice; linear index `i + j·nx + k·nx·ny` |
 | Texture `t ∈ [0,1]³` | voxel centres at `(i + 0.5)/n` |
 | Model `p` | box centred at 0, longest physical side = 1: `p = (t − ½)·extent` |
 | Slice view `uv` | `u` right, `v` down; head at the top for coronal/sagittal |
 | Annotations | in-plane millimetres from the image's top-left corner |
-| Patient position | `Volume::voxel_to_patient(v) = origin + direction · (v ⊙ spacing)` (LPS, mm): DICOM Image Position/Orientation of the first ordered plane; NIfTI `sform`/`qform` carried through the reorientation |
+| Patient position | `Volume::voxel_to_patient(v) = origin + direction · (v ⊙ spacing)` (LPS, mm): DICOM Image Position/Orientation of the first ordered plane and NIfTI `sform`/`qform`, both carried through the reorientation |
+| Voxel values | one `u16` per voxel over an `IntensityRange` (`0 ↦ min`, `65535 ↦ max`). Data whose values are all multiples of a power-of-two step above the minimum (CT in whole HU) are stored exactly, with a range up to twice as wide as the data; other data use the data range ([ADR 0012](decisions/0012-lossless-grid-storage.md)) |
 | Label maps | one `u8` per voxel on the volume grid (`0` background, `1–255` segments); NIfTI label maps are permuted/flipped onto that grid using both geometries |

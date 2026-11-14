@@ -5,7 +5,7 @@
 [![CI](https://github.com/Kauter1989/ferrum/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Kauter1989/ferrum/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Kauter1989/ferrum)](https://github.com/Kauter1989/ferrum/releases/latest)
 [![DOI](https://zenodo.org/badge/1398693452.svg)](https://zenodo.org/badge/latestdoi/1398693452)
-![Coverage](https://img.shields.io/badge/line%20coverage-92.4%25-brightgreen)
+![Coverage](https://img.shields.io/badge/line%20coverage-93.1%25-brightgreen)
 ![Rust](https://img.shields.io/badge/rust-stable-orange)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
 
@@ -45,15 +45,15 @@ skipping, isosurface refinement, local ambient occlusion; see
 | Medical I/O | [dicom-rs](https://github.com/Enet4/dicom-rs) 0.10 (JPEG, JPEG 2000, RLE), own NIfTI-1 reader/writer |
 | Parallelism, maths | rayon, glam |
 | Testing | cargo test, proptest, naga (shader validation), egui_kittest (UI), criterion (benchmarks) |
-| Architecture | clean architecture: 9 crates, domain ← data, presentation → application; ports for data sources and segmentation engines |
-| Interfaces | desktop UI; Rust crates; `ferrum-engine/1` HTTP protocol for AI engines; agent skill: `ferrum-cli` with JSON output and an MCP server |
+| Architecture | clean architecture: 14 crates, domain ← data, presentation → application; ports for data sources and segmentation engines |
+| Interfaces | desktop UI; embeddable viewer widget (`ferrum-ui`); Rust crates; `ferrum-engine/1` HTTP protocol for AI engines; agent skill: `ferrum-cli` with JSON output and an MCP server; local view host (`ferrum-view/1`) and a WebGPU browser panel for harnesses |
 | Platforms | Linux x86_64, macOS Apple Silicon, Windows x86_64 ([prebuilt releases](https://github.com/Kauter1989/ferrum/releases)) |
 
 | Metrics | |
 |---|---|
 | Code size | ≈ 25 300 lines of Rust in `src/` (including in-module unit tests), ≈ 5 100 lines of integration tests, benchmarks and examples, ≈ 600 lines of WGSL; engine bridges: ≈ 1 400 lines of Python plus ≈ 600 lines of tests |
-| Tests | 335 Rust tests: unit, property-based, data layer, shader validation, GPU-vs-CPU parity, engine-protocol conformance, agent commands on phantoms, CLI ↔ MCP equivalence, skill evaluations, identifier scan, DICOM SEG/SR export, application (incl. AI with a mock engine) and UI; 17 bridge tests (pytest); in CI also the conformance suite against the running bridge and highdicom validation of the exported DICOM |
-| Test coverage | 92.4 % of lines, 89.6 % of functions (`cargo-llvm-cov`); CI fails below 87 % |
+| Tests | 644 Rust tests run on Windows with a real GPU (670 collected on Linux): unit, property-based, data layer, shader validation, GPU-vs-CPU parity, engine-protocol conformance, agent commands on phantoms, CLI ↔ MCP equivalence, skill evaluations, identifier scan, DICOM SEG/SR export, application (incl. AI with a mock engine), UI and the view host; 35 bridge tests (pytest) and 5 panel tests; in CI also the conformance suite against the running bridge and highdicom validation of the exported DICOM |
+| Test coverage | 93.1 % of lines, 90.5 % of functions (`cargo-llvm-cov`, CI run on this branch); CI fails below 87 % |
 | Complexity budget | per function: cognitive complexity ≤ 25, ≤ 120 lines, nesting ≤ 6 (enforced by clippy) |
 | Lints | rustfmt and clippy with warnings as errors; no `unsafe`, no `unwrap` outside tests |
 | Load speed | 512×512×252 CT DICOM series decoded in 0.34 s on 4 CPU cores |
@@ -308,6 +308,25 @@ Agent results are proposals: the desktop app shows them with
 **Confirm / Reject**, and an operator configuration controls what the
 agent may read and output.
 
+**In a harness** — FERRUM can show the study beside the conversation,
+with the person scrolling slices and rotating the volume in real time:
+
+```bash
+ferrum-cli view serve --workspace ws/ct1    # loopback view host: url + token
+```
+
+- The host ([`ferrum-view/1`](docs/view-host.md)) keeps the workspace open
+  and serves slices rendered on the local GPU (or the CPU reference
+  renderer), input and an event log — with a token, on `127.0.0.1` only,
+  and no identifiers in what it serves.
+- The [browser panel](docs/webgpu-panel.md) runs FERRUM's own renderer in
+  the page (WebAssembly + WebGPU): MPR and 3D at full frame rate, the
+  desktop's render modes and CT presets, the voxels taken once over
+  loopback. Release archives carry the built module next to the binaries.
+- [`integrations/dsh/`](integrations/dsh/README.md) is a working plugin
+  for the DeepSeek Harness: the panel opens as a tab of the right
+  sidebar, beside the chat.
+
 ## Quick start
 
 **Prebuilt binary (no Rust needed).** Download the archive for your system
@@ -520,8 +539,9 @@ layer compiles without any GPU or UI library.
 
 ```mermaid
 flowchart LR
-    V["ferrum<br/>egui UI"] --> A["ferrum-app<br/>state · use cases · tools · jobs"]
-    V --> R["ferrum-render<br/>WGSL / wgpu · CPU reference"]
+    V["ferrum<br/>desktop shell"] --> UI["ferrum-ui<br/>views · panels · ViewerWidget"]
+    UI --> A["ferrum-app<br/>state · use cases · tools · jobs"]
+    UI --> R["ferrum-render<br/>WGSL / wgpu · CPU reference"]
     V --> IO["ferrum-io<br/>DICOM · NIfTI"]
     A --> D["ferrum-domain<br/>entities · rules · ports"]
     A --> P["ferrum-processing<br/>parallel algorithms"]
@@ -536,11 +556,16 @@ flowchart LR
 |---|---|
 | `ferrum-domain` | Volume, window/level, transfer function, render settings, clipping, camera, slice geometry, annotations, eraser mask, patient geometry, label maps and segments. Also the `VolumeRepository` port. No I/O. |
 | `ferrum-processing` | Histogram, brick grid, ambient occlusion, filters and resampling, parallelised with rayon |
-| `ferrum-io` | DICOM and NIfTI repositories (dicom-rs): scanning, series grouping, slice ordering, parallel decoding; NIfTI label maps; annotation JSON |
+| `ferrum-io` | DICOM and NIfTI repositories (dicom-rs): scanning, series grouping, slice ordering, parallel decoding; NIfTI label maps; annotation JSON; workspaces and their change notifications |
 | `ferrum-render` | Frame model shared by GPU and CPU, WGSL shaders, the wgpu renderer (feature `gpu`) and the CPU ray caster |
 | `ferrum-engines` | Segmentation engines: the `ferrum-engine/1` HTTP client, a mock engine without a model, a reference server and a conformance suite |
+| `ferrum-radiomics` | Quantitative profiles of a segment (`quick`, `clinical`): feature registry, size, shape and intensity features; depends only on the domain |
+| `ferrum-gpu-lock` | The GPU lease protocol `ferrum-gpu-lock/1`: per-user lock directory, holder records, capacity admission; no other FERRUM crate |
 | `ferrum-app` | The `Viewer` facade: loading jobs, slice and 3D state, 2D tool state machines, eraser with undo, segments, and GPU synchronisation through the `GpuSink` port |
-| `ferrum` | eframe/egui application: panels, widgets, paint callbacks, dialogs |
+| `ferrum-ui` | The views and panels as a library: `ViewerWidget` and the side panel for any egui/wgpu host; no windows or file dialogs |
+| `ferrum-view` | The local view host `ferrum-view/1`: one workspace kept open, slice frames on the GPU or the CPU reference, loopback HTTP with a token |
+| `ferrum-wasm` | The same renderer in a browser: binds `ferrum-render` to a `<canvas>` through WebGPU (wasm32 only) |
+| `ferrum` | eframe/egui desktop shell: header, start screen, dialogs, shortcuts — the views come from `ferrum-ui` |
 
 Extension points:
 
@@ -551,9 +576,10 @@ Extension points:
 | `Exporter` | planned; NIfTI, label maps and annotation JSON exist |
 
 The agent skill has two crates: `ferrum-agent` (commands, envelope,
-operator configuration, workspaces; on `ferrum-domain` and `ferrum-io`)
-and `ferrum-cli` (the command line and the MCP server). See
-[docs/agent-cli.md](docs/agent-cli.md).
+operator configuration, workspaces; on `ferrum-domain`, `ferrum-io`,
+`ferrum-engines`, `ferrum-radiomics` and the CPU renderer) and `ferrum-cli`
+(the command line and the MCP server; `view serve` is its only command
+that uses `ferrum-view`). See [docs/agent-cli.md](docs/agent-cli.md).
 
 Read more: [vision](docs/vision.md) ·
 [engine protocol](docs/engine-protocol.md) ·
@@ -616,14 +642,20 @@ also enforces a complexity budget for every function. More in
 ├── crates/
 │   ├── ferrum-domain/       # domain model and ports
 │   ├── ferrum-processing/   # parallel volume algorithms
-│   ├── ferrum-io/           # DICOM / NIfTI repositories
+│   ├── ferrum-io/           # DICOM / NIfTI repositories, workspaces
 │   ├── ferrum-render/       # shaders, GPU renderer, CPU reference
 │   ├── ferrum-engines/      # segmentation engines: protocol client, mock, reference server
+│   ├── ferrum-radiomics/    # quantitative segment profiles (quick, clinical)
+│   ├── ferrum-gpu-lock/     # GPU lease protocol ferrum-gpu-lock/1
 │   ├── ferrum-agent/        # agent skill: commands, envelope, workspaces, operator config
 │   ├── ferrum-cli/          # agent skill command line and MCP server (binary: ferrum-cli)
 │   ├── ferrum-app/          # application layer
+│   ├── ferrum-ui/           # views and panels as a library (ViewerWidget)
+│   ├── ferrum-view/         # local view host ferrum-view/1 (view serve)
+│   ├── ferrum-wasm/         # the renderer in a browser (WebAssembly + WebGPU)
 │   └── ferrum/              # desktop application (binary: ferrum)
 ├── bridges/                # engines over ferrum-engine/1: nnInteractive, TotalSegmentator (Python, Docker)
+├── integrations/dsh/       # DeepSeek Harness plugin: the study in a panel beside the chat
 ├── skills/                  # agent skill package (SKILL.md, references, schemas, evals) and plugin manifests
 ├── docs/                    # vision, architecture, engine protocol, agent skill, segmentation scenarios, AI demo, testing, ADRs
 ├── .github/workflows/       # CI (fmt, clippy, tests on lavapipe) and release archives

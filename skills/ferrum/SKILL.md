@@ -16,7 +16,8 @@ Parameters are checked against JSON Schemas (`ferrum-cli schema`).
 ## Workflow
 1. **Find the series:** `study scan` with the user's paths. Pick the
    series that fits the task (modality, size, description). Ask if
-   several fit.
+   several fit. A multi-volume series lists each volume (`volume.label`,
+   e.g. `b = 1000`, `phase 3/20`); pick the volume the task needs.
 2. **Open it:** `study open` with a workspace name and the path (plus
    `series` if needed; for NIfTI known to be CT, `modality: CT`). Read
    `study info`: modality, `value_unit`,

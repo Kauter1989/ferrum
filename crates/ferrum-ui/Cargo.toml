@@ -1,0 +1,30 @@
+[package]
+name = "ferrum-ui"
+description = "FERRUM's viewer as an egui/wgpu widget: 2D, MPR and 3D views, overlays, measurements, segments and their panels, for the desktop app and for host applications."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+ferrum-domain.workspace = true
+ferrum-processing.workspace = true
+ferrum-render = { workspace = true, features = ["gpu"] }
+ferrum-app.workspace = true
+ferrum-radiomics.workspace = true
+ferrum-engines.workspace = true
+glam.workspace = true
+log.workspace = true
+egui.workspace = true
+egui-wgpu.workspace = true
+egui-phosphor.workspace = true
+wgpu.workspace = true
+
+[dev-dependencies]
+egui_kittest.workspace = true
+tempfile.workspace = true
+ferrum-io.workspace = true
+
+[lints]
+workspace = true

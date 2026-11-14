@@ -351,3 +351,147 @@ fn automatic_jobs_report_progress_and_can_be_cancelled() {
     assert!(matches!(v.ai().status(), AiStatus::Failed(m) if m.contains("out of memory")));
     v.ai_cancel_job(); // no job: nothing happens
 }
+
+// covers 23.3-a, 23.3-b
+#[test]
+fn a_full_gpu_group_makes_the_viewer_wait_and_cancel_sends_nothing() {
+    use ferrum_engines::gpu::{GatedEngine, GpuSettings, Kind, LockDir, Request};
+
+    let dir = tempfile::tempdir().unwrap();
+    let locks = dir.path().join("gpu");
+    let url = "http://mock.invalid".to_owned();
+    let settings = GpuSettings {
+        groups: vec![("card".into(), vec![url.clone()])],
+        capacity_mib: vec![("card".into(), 12_000)],
+        peaks_mib: vec![(url.clone(), 7000)],
+        lock_dir: Some(locks.clone()),
+    };
+    let held = LockDir::at(&locks)
+        .unwrap()
+        .acquire(
+            &Request {
+                group: "card",
+                holder: "llama-server",
+                kind: Kind::Resident,
+                lease_mib: Some(6000),
+                capacity_mib: Some(12_000),
+            },
+            std::time::Duration::ZERO,
+            &mut |_| true,
+        )
+        .unwrap();
+    let counting = Arc::new(Counting { sessions: AtomicUsize::new(0), interactive: true });
+    let gated = GatedEngine::new(counting.clone(), settings, &url, std::time::Duration::from_secs(30));
+    let mut v = viewer();
+    v.connect_engine(Arc::new(gated), &url);
+    v.wait_ai_idle();
+    assert!(v.ai_prompt(Prompt::Point { positive: true, voxel: CENTRE }));
+    let wait_for = |v: &mut Viewer, f: &dyn Fn(&Viewer) -> bool| {
+        let start = std::time::Instant::now();
+        while !f(v) {
+            assert!(start.elapsed().as_secs() < 10, "timed out");
+            v.poll();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    };
+    wait_for(&mut v, &|v| v.ai().waiting().is_some());
+    let note = v.ai().waiting().unwrap().to_owned();
+    assert!(note.starts_with("llama-server (pid "), "{note}");
+    assert!(note.ends_with("holds 6000 MiB (group card)"), "{note}");
+    v.ai_cancel_wait();
+    v.wait_ai_idle();
+    assert!(v.ai().waiting().is_none());
+    assert_eq!(counting.sessions.load(Ordering::SeqCst), 0, "cancelled: no session was opened");
+    assert_eq!(*v.ai().status(), AiStatus::Connected, "still connected after Cancel");
+    assert!(v.status.message.contains("stopped waiting for the GPU"), "{}", v.status.message);
+    assert_eq!((v.ai().target(), v.segment_summaries().len()), (None, 0), "no empty AI segment is left");
+
+    // once the holder leaves, the next prompt runs and the session holds the lease
+    drop(held);
+    assert!(v.ai_prompt(Prompt::Point { positive: true, voxel: CENTRE }));
+    v.wait_ai_idle();
+    assert_eq!(counting.sessions.load(Ordering::SeqCst), 1);
+    let dir_now = LockDir::at(&locks).unwrap();
+    assert_eq!(dir_now.holders("card").unwrap().len(), 1, "the open session holds the lease");
+    assert!(dir_now.holders("card").unwrap()[0].holder.starts_with("ferrum desktop: "));
+    v.disconnect_engine();
+    let start = std::time::Instant::now();
+    while !dir_now.holders("card").unwrap().is_empty() {
+        assert!(start.elapsed().as_secs() < 10, "the lease outlived the session");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+// covers 23.3-b
+#[test]
+fn cancel_before_a_job_disconnect_while_waiting_and_a_new_study_release_the_gpu() {
+    use ferrum_engines::gpu::{GatedEngine, GpuSettings, Kind, LockDir, Request};
+
+    let dir = tempfile::tempdir().unwrap();
+    let locks = dir.path().join("gpu");
+    let url = "http://mock.invalid".to_owned();
+    let settings = GpuSettings {
+        groups: vec![("card".into(), vec![url.clone()])],
+        capacity_mib: vec![("card".into(), 12_000)],
+        peaks_mib: vec![(url.clone(), 7000)],
+        lock_dir: Some(locks.clone()),
+    };
+    let request = Request {
+        group: "card",
+        holder: "llama-server",
+        kind: Kind::Resident,
+        lease_mib: Some(6000),
+        capacity_mib: Some(12_000),
+    };
+    let dir_now = LockDir::at(&locks).unwrap();
+    let held = dir_now.acquire(&request, std::time::Duration::ZERO, &mut |_| true).unwrap();
+    let gated = || {
+        let engine = Arc::new(Counting { sessions: AtomicUsize::new(0), interactive: true });
+        Arc::new(GatedEngine::new(engine, settings.clone(), &url, std::time::Duration::from_secs(3600)))
+    };
+    let wait_for = |v: &mut Viewer, f: &dyn Fn(&Viewer) -> bool| {
+        let start = std::time::Instant::now();
+        while !f(v) {
+            assert!(start.elapsed().as_secs() < 10, "timed out");
+            v.poll();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    };
+
+    // Cancel while an automatic run waits: still connected, nothing failed
+    let mut v = viewer();
+    v.connect_engine(gated(), &url);
+    v.wait_ai_idle();
+    assert!(v.ai_run_automatic(None));
+    wait_for(&mut v, &|v| v.ai().waiting().is_some());
+    v.ai_cancel_wait();
+    v.wait_ai_idle();
+    assert_eq!(*v.ai().status(), AiStatus::Connected, "{:?}", v.ai().status());
+    assert!(v.status.message.contains("cancelled"), "{}", v.status.message);
+
+    // Disconnect while waiting returns at once (the wait would last an hour)
+    assert!(v.ai_prompt(Prompt::Point { positive: true, voxel: CENTRE }));
+    wait_for(&mut v, &|v| v.ai().waiting().is_some());
+    let start = std::time::Instant::now();
+    v.disconnect_engine();
+    assert!(start.elapsed().as_secs() < 2, "the UI waited {:?}", start.elapsed());
+
+    // a new study closes the old session, and with it the desktop's lease
+    drop(held);
+    let mut v = viewer();
+    v.connect_engine(gated(), &url);
+    v.wait_ai_idle();
+    assert!(v.ai_prompt(Prompt::Point { positive: true, voxel: CENTRE }));
+    v.wait_ai_idle();
+    assert_eq!(dir_now.holders("card").unwrap().len(), 1, "the session holds the lease");
+    v.install(LoadedSeries {
+        volume: ball(),
+        metadata: SeriesMetadata { modality: "CT".into(), ..SeriesMetadata::default() },
+    });
+    let start = std::time::Instant::now();
+    while !dir_now.holders("card").unwrap().is_empty() {
+        assert!(start.elapsed().as_secs() < 10, "the lease outlived its study");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(v.ai().status().is_connected(), "still connected for the new study");
+}

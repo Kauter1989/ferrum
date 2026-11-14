@@ -8,10 +8,13 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use ferrum_domain::{
-    CancelFlag, LoadedSeries, ProgressSink, RepositoryError, SeriesDescriptor, Volume, VolumeRepository,
+    grow_region_robust, CancelFlag, LabelMap, LoadedSeries, MaskRegion, ProgressSink, RegionError, RegionParams,
+    RepositoryError, SeriesDescriptor, Volume, VolumeRepository, VoxelBox,
 };
 use ferrum_processing::ambient_occlusion::AoParams;
 use ferrum_processing::{filters, AmbientOcclusion};
+use ferrum_radiomics::{compute, Input, MetricsError, MetricsResult, Params, Profile, ValueUnit};
+use glam::UVec3;
 
 /// Volume filters offered to the user.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -32,6 +35,67 @@ impl FilterKind {
     }
 }
 
+/// What a region job was asked to do, handed back with its result.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RegionRequest {
+    /// Dataset revision the job ran on; a result for another revision is
+    /// dropped.
+    pub revision: u64,
+    /// Clicked voxel.
+    pub seed: UVec3,
+    /// Physical value at the seed.
+    pub seed_value: f32,
+    /// Tolerance used, in the volume's units.
+    pub tolerance: f32,
+    /// Size limit used, in millilitres.
+    pub max_ml: f32,
+}
+
+/// What a metrics job was asked to do, handed back with its result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MetricsRequest {
+    /// Dataset revision the job ran on.
+    pub dataset_revision: u64,
+    /// Revision of the segmentation the segment was taken from.
+    pub segments_revision: u64,
+    /// The segment.
+    pub label: u8,
+    /// Name of the profile.
+    pub profile: &'static str,
+    /// Number of the request: two requests for the same segment (say with
+    /// other parameters) are never mistaken for each other.
+    pub serial: u64,
+}
+
+/// A loaded series and its volumes.
+#[derive(Debug)]
+pub struct LoadedStudy {
+    /// The series as scanned.
+    pub series: SeriesDescriptor,
+    /// Its volumes, when it holds several (empty otherwise).
+    pub volumes: Vec<SeriesDescriptor>,
+    /// Which of `volumes` was loaded.
+    pub index: usize,
+    /// The voxels and metadata.
+    pub loaded: LoadedSeries,
+}
+
+/// Lists the volumes of `series` and loads the wanted one, else the first.
+fn load_study(
+    repo: &dyn VolumeRepository,
+    series: &SeriesDescriptor,
+    wanted: Option<&str>,
+    p: &dyn ProgressSink,
+) -> Result<Box<LoadedStudy>, RepositoryError> {
+    let mut volumes = repo.volumes(series, p)?;
+    if volumes.len() <= 1 {
+        volumes.clear();
+    }
+    let index = wanted.and_then(|id| volumes.iter().position(|v| v.id == id)).unwrap_or(0);
+    let loaded = repo.load(volumes.get(index).unwrap_or(series), p)?;
+    Ok(Box::new(LoadedStudy { series: series.clone(), volumes, index, loaded }))
+}
+
 /// Events emitted by jobs.
 #[derive(Debug)]
 pub enum JobEvent {
@@ -44,8 +108,15 @@ pub enum JobEvent {
     },
     /// Result of scanning paths.
     Scanned(Result<Vec<SeriesDescriptor>, RepositoryError>),
-    /// Result of loading a series.
-    Loaded(Result<Box<LoadedSeries>, RepositoryError>),
+    /// Result of loading a series (its first or chosen volume).
+    Loaded(Result<Box<LoadedStudy>, RepositoryError>),
+    /// Result of loading another volume of the open series.
+    VolumeLoaded {
+        /// Id of the volume's descriptor.
+        id: String,
+        /// The volume, or why it could not be read.
+        result: Result<Box<LoadedSeries>, RepositoryError>,
+    },
     /// Ambient occlusion computed for `threshold` on dataset `revision`.
     AmbientOcclusion {
         /// Dataset revision the AO belongs to.
@@ -54,6 +125,20 @@ pub enum JobEvent {
         threshold: f32,
         /// Result.
         ao: Arc<AmbientOcclusion>,
+    },
+    /// A region grown from a click (see [`JobQueue::region`]).
+    Region {
+        /// What was asked.
+        request: RegionRequest,
+        /// Bounding box and mask of the region, or why there is none.
+        result: Result<(VoxelBox, Vec<u8>), RegionError>,
+    },
+    /// Quantitative profile of a segment (see [`JobQueue::metrics`]).
+    Metrics {
+        /// What was asked.
+        request: MetricsRequest,
+        /// The features, or why there are none.
+        result: Result<Box<MetricsResult>, MetricsError>,
     },
     /// Filter applied to dataset `revision`.
     Filtered {
@@ -134,9 +219,18 @@ impl JobQueue {
         self.spawn_io(move |p| JobEvent::Scanned(repo.scan(&paths, p)));
     }
 
-    /// Loads a series.
-    pub fn load(&mut self, repo: Arc<dyn VolumeRepository>, series: SeriesDescriptor) {
-        self.spawn_io(move |p| JobEvent::Loaded(repo.load(&series, p).map(Box::new)));
+    /// Loads a series: the volume `wanted` (an id) when the series holds
+    /// several and one is named, else its first volume.
+    pub fn load(&mut self, repo: Arc<dyn VolumeRepository>, series: SeriesDescriptor, wanted: Option<String>) {
+        self.spawn_io(move |p| JobEvent::Loaded(load_study(repo.as_ref(), &series, wanted.as_deref(), p)));
+    }
+
+    /// Loads one volume of the open series.
+    pub fn load_volume(&mut self, repo: Arc<dyn VolumeRepository>, volume: SeriesDescriptor) {
+        self.spawn_io(move |p| JobEvent::VolumeLoaded {
+            id: volume.id.clone(),
+            result: repo.load(&volume, p).map(Box::new),
+        });
     }
 
     /// Computes ambient occlusion.
@@ -155,6 +249,41 @@ impl JobQueue {
                 FilterKind::Sobel => filters::sobel_magnitude(&volume),
             };
             JobEvent::Filtered { revision, kind, result: result.map(Box::new).map_err(|e| e.to_string()) }
+        });
+    }
+
+    /// Grows a region on a worker thread (10–25 s on the finest studies).
+    /// `labels` is a snapshot taken at the click; `cancel` is checked while
+    /// growing.
+    pub fn region(
+        &mut self,
+        volume: Arc<Volume>,
+        labels: LabelMap,
+        request: RegionRequest,
+        params: RegionParams,
+        cancel: Arc<CancelFlag>,
+    ) {
+        self.spawn_compute(move || {
+            let result = grow_region_robust(&volume, &labels, request.seed, &params, &cancel);
+            JobEvent::Region { request, result }
+        });
+    }
+
+    /// Measures a segment on a worker thread. `region` is a snapshot of the
+    /// segment's voxels.
+    pub fn metrics(
+        &mut self,
+        volume: Arc<Volume>,
+        region: MaskRegion,
+        unit: ValueUnit,
+        profile: &'static Profile,
+        params: Params,
+        request: MetricsRequest,
+    ) {
+        self.spawn_compute(move || {
+            let input = Input { region: &region, volume: &volume, unit };
+            let result = compute(&input, profile, &params).map(Box::new);
+            JobEvent::Metrics { request, result }
         });
     }
 
@@ -177,10 +306,13 @@ impl JobQueue {
 
     fn account(&mut self, e: &JobEvent) {
         match e {
-            JobEvent::Scanned(_) | JobEvent::Loaded(_) => self.running_io = self.running_io.saturating_sub(1),
-            JobEvent::AmbientOcclusion { .. } | JobEvent::Filtered { .. } => {
-                self.running_compute = self.running_compute.saturating_sub(1)
+            JobEvent::Scanned(_) | JobEvent::Loaded(_) | JobEvent::VolumeLoaded { .. } => {
+                self.running_io = self.running_io.saturating_sub(1)
             }
+            JobEvent::AmbientOcclusion { .. }
+            | JobEvent::Filtered { .. }
+            | JobEvent::Region { .. }
+            | JobEvent::Metrics { .. } => self.running_compute = self.running_compute.saturating_sub(1),
             JobEvent::Progress { .. } => {}
         }
         self.handles.retain(|h| !h.is_finished());
