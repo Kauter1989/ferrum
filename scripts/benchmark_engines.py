@@ -21,11 +21,14 @@ With a model server on the same card (Stage 23, docs/gpu-sharing.md)::
 
     scripts/benchmark_engines.py ... --capacity-mib 12288 \
         --external-holder "llama-server -m model.gguf --port 8080" --lease-mib 6144 \
-        --wait-ready http://127.0.0.1:8080/health
+        --wait-ready http://127.0.0.1:8080/health --peaks-mib 6000
 
 The holder runs under ``ferrum-cli gpu hold`` in the benchmark's GPU group,
 so engine calls wait for room next to it; each step records the holder's
-own GPU memory and the time the call waited for the GPU.
+own GPU memory and the time the call waited for the GPU. ``--peaks-mib``
+writes the operator's expected peak for every engine of the group: an
+engine that reports no peak of its own takes the whole group and would
+wait for the holder to leave, so a resident holder needs this value.
 
 Only standard-library Python; nothing here talks to the network except the
 local engine URLs (through ferrum-cli).
@@ -255,9 +258,15 @@ def markdown(rows: list, gpu_name: str) -> str:
     return "\n".join(lines)
 
 
-def write_config(path: str, engines: list[str], workspace_root: str, capacity_mib: int | None = None) -> None:
+def write_config(
+    path: str, engines: list[str], workspace_root: str, capacity_mib: int | None = None, peaks_mib: int | None = None
+) -> None:
     quoted = ", ".join(f'"{e}"' for e in engines)
     capacity = f"gpu_capacity_mib = {{ bench = {capacity_mib} }}\n" if capacity_mib else ""
+    peaks = ""
+    if peaks_mib:
+        entries = ", ".join(f'"{e}" = {peaks_mib}' for e in engines)
+        peaks = f"gpu_peaks_mib = {{ {entries} }}\n"
     with open(path, "w", encoding="utf-8") as f:
         f.write(
             "[data]\n"
@@ -266,6 +275,7 @@ def write_config(path: str, engines: list[str], workspace_root: str, capacity_mi
             f"engines = [{quoted}]\n"
             f"gpu_groups = {{ bench = [{quoted}] }}\n"
             f"{capacity}"
+            f"{peaks}"
         )
 
 
@@ -286,15 +296,27 @@ def main(argv=None) -> int:
     p.add_argument("--external-holder", help="command of a model server held next to the engines (gpu hold)")
     p.add_argument("--lease-mib", type=int, help="the holder's lease in MiB")
     p.add_argument("--wait-ready", help="health URL of the holder, polled before the steps start")
+    p.add_argument(
+        "--peaks-mib",
+        type=int,
+        help="expected peak per engine (MiB), written to gpu_peaks_mib; without it an engine that reports no peak "
+        "takes the whole group and waits for the holder",
+    )
     args = p.parse_args(argv)
     if args.external_holder and not args.capacity_mib:
         p.error("--external-holder needs --capacity-mib: without a capacity the group admits one holder at a time")
+    if args.external_holder and not args.peaks_mib:
+        print(
+            "note: no --peaks-mib; an engine that reports no expected peak takes the whole group "
+            "and waits for the holder to leave",
+            file=sys.stderr,
+        )
 
     root = args.workspace or tempfile.mkdtemp(prefix="ferrum-bench-")
     os.makedirs(root, exist_ok=True)
     engines = [e for e in (args.interactive, args.automatic) if e]
     config = os.path.join(root, "ferrum-agent.toml")
-    write_config(config, engines, root, args.capacity_mib)
+    write_config(config, engines, root, args.capacity_mib, args.peaks_mib)
     holder = Holder(args.ferrum_cli, config, args.external_holder, args.lease_mib) if args.external_holder else None
     try:
         if holder is not None:
@@ -322,6 +344,7 @@ def run_steps(args, root: str, config: str, holder: Holder | None) -> int:
         "holder": os.path.basename(shlex.split(args.external_holder)[0]) if args.external_holder else None,
         "lease_mib": args.lease_mib,
         "capacity_mib": args.capacity_mib,
+        "peaks_mib": args.peaks_mib,
     }
 
     def run(name: str, *a: str) -> dict:

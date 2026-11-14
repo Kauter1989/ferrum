@@ -258,6 +258,10 @@ then names the dead `gpu hold` pid. A Ctrl-C during the wait exits with
 As built:
 - `--capacity-mib` is required with a holder; without a capacity the
   group admits one holder at a time and every engine call would wait.
+- `--peaks-mib N` writes the operator's expected peak for every engine of
+  the benchmark's group. Without it an engine that reports no peak of its
+  own (both bridges) takes the whole group and waits for the holder to
+  leave; a holder run without peaks is flagged on stderr.
 - The time a call waited comes from its envelope. An engine call that
   waited a second or more warns "waited N s for GPU group G".
 - The holder's memory is `nvidia-smi --query-compute-apps` for the

@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `scripts/benchmark_engines.py` with `--external-holder` wrote no expected peaks into its configuration, so an engine that reports none of its own (both bridges) took the whole GPU group and every call waited for the resident holder to leave. The new `--peaks-mib N` writes the operator's `gpu_peaks_mib` for every engine of the benchmark's group, and a holder run without peaks is flagged on stderr (Stage 23, found preparing the [#68](https://github.com/Kauter1989/ferrum/issues/68) field run).
+
 ## [0.4.0] — 2026-11-14
 
 ### Fixed
