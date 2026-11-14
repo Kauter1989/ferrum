@@ -851,7 +851,7 @@ overlay consolidation, the tests that cannot fail that the review listed).
 |---|---|---|---|---|
 | F1.1 | the mode reaches the view by name and an unknown one is refused | F1.1-a, F1.1-b, F1.1-c | 1 | ✅ |
 
-## Stage F2 — The read-root check is lexical; the source walk follows symlinks (bug, known cause) 🚧
+## Stage F2 — The read-root check is lexical; the source walk follows symlinks (bug, known cause) ✅
 
 **Track:** feature (a bug with a known cause, `ferrum-workflow` §1).
 **Mode:** autonomous; **Size:** M. **Found by:** Medical Harness while
