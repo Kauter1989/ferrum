@@ -643,8 +643,9 @@ other `ferrum-view/1` components (Stage 26 draws them on the same
 interfaces); decisions through the view (they stay with
 `ferrum_agent::decisions`); a WASM/WebGPU client — **closed by Stage 26**,
 which draws the study in a browser panel on these interfaces; remote exposure
-and TLS; several viewers per host; the agent command set (an agent reads the
-events of 25.4-c in Stage 26 through `view events`).
+and TLS; several viewers per host; the agent command set (an agent reading
+the events of 25.4-c through a command such as `view events` remains an
+open follow-up).
 
 **Clarifications (autonomous; `assumed:`):**
 - assumed: the host renders on the CPU by default only when no adapter is
