@@ -174,3 +174,33 @@ fn a_crafted_manifest_cannot_point_the_load_outside_the_root() {
     std::fs::write(&manifest_path, serde_json::to_string_pretty(&m).unwrap()).unwrap();
     assert_eq!(f.err("study info", json!({ "workspace": ws })), "forbidden");
 }
+
+#[test]
+fn a_crafted_manifest_with_parent_components_is_refused() {
+    // covers F2.1-c (code-review regression): the re-check normalises
+    // `..` lexically, but verify_sources opens the raw spelling, where
+    // the OS resolves it behind the link — outside the root. A manifest
+    // path with a `..` is refused outright, in the source and the files.
+    let f = fixture();
+    let ws = f._dir.path().join("ws");
+    let env = f.run("study open", json!({ "path": f.root.join("phantom.nii.gz"), "workspace": ws }));
+    assert_eq!(env["ok"], true, "{env:#}");
+    if !symlink(&f.outside, &f.root.join("link")) {
+        return;
+    }
+    let manifest_path = ws.join("workspace.json");
+    let mut m: Value = serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    // Relative file path under a folder source: lexically
+    // root/secret.nii.gz (inside), in OS order outside/secret.nii.gz
+    // (outside) — the readers open the raw spelling.
+    m["source"]["path"] = json!(f.root);
+    m["source"]["files"][0]["path"] = json!("link/../secret.nii.gz");
+    std::fs::write(&manifest_path, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+    assert_eq!(f.err("study info", json!({ "workspace": ws })), "forbidden");
+    // The same trick in the source path itself.
+    let mut m: Value = serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    m["source"]["files"][0]["path"] = json!("phantom.nii.gz");
+    m["source"]["path"] = json!(f.root.join("link/.."));
+    std::fs::write(&manifest_path, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+    assert_eq!(f.err("study info", json!({ "workspace": ws })), "forbidden");
+}

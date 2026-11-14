@@ -54,6 +54,21 @@ pub fn scan(paths: &[PathBuf]) -> Result<Vec<SeriesDescriptor>, AgentError> {
     })
 }
 
+/// Refuses a workspace path with a `..` component: the root check
+/// normalises it lexically, but the readers of the manifest open the raw
+/// spelling, where the OS resolves `..` in filesystem order — behind a
+/// symlink the two diverge. Legitimate manifests never contain one.
+fn refuse_parent_components(path: &Path) -> Result<(), AgentError> {
+    if path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+        return Err(AgentError::new(
+            ErrorCode::Forbidden,
+            format!("{}: a workspace path with '..' is refused", path.display()),
+        )
+        .hint("the workspace manifest records clean paths; reopen the study from its source"));
+    }
+    Ok(())
+}
+
 /// Loaded series kept in memory between calls of a long-running server
 /// (MCP), keyed by workspace. An entry is reused while every source file
 /// keeps its size and modification time; otherwise the sources are hashed
@@ -196,11 +211,19 @@ impl Study {
         }
         let workspace = Workspace::open(root)?;
         let src = workspace.manifest().source.clone();
+        // A crafted manifest must not split the checked spelling from
+        // the opened one: `..` resolves lexically in the check, but
+        // verify_sources, the cache stamps and the DICOM export open the
+        // raw spelling, where the OS resolves it in filesystem order —
+        // behind a symlink the two diverge. Legitimate manifests never
+        // hold a `..` (create() stores clean relatives and absolutes),
+        // so refuse it outright (code review of #82).
+        refuse_parent_components(&src.path)?;
         let source = config.check_source(&src.path)?;
-        // A crafted manifest must not turn the load into a read outside
-        // the roots: every recorded file path is checked before it is
-        // hashed or scanned (security review of #82).
+        // Every recorded file path is checked before it is hashed or
+        // scanned (security review of #82).
         for path in src.file_paths() {
+            refuse_parent_components(&path)?;
             config.check_source(&path)?;
         }
         if let Some(hit) = cache.as_deref().and_then(|c| c.get(root, &workspace)) {

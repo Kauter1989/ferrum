@@ -885,7 +885,11 @@ calls today (canonical path, no symlink below a source folder, depth ≤ 8,
   `workspace_root`; a workspace that does not exist yet still resolves.
 - [F2.1-c] `Study::load` scans the checked source path and re-checks
   every recorded file path of the manifest before hashing or scanning
-  it: a crafted `workspace.json` cannot point the load outside the roots.
+  it; a manifest path with a `..` component is refused outright (the
+  check normalises it lexically, but `verify_sources`, the cache stamps
+  and the DICOM export open the raw spelling in filesystem order —
+  behind a symlink the two diverge; legitimate manifests never hold one).
+  A crafted `workspace.json` cannot point the load outside the roots.
 - [F2.2-a] `collect_files` does not follow the symlinks it discovers
   while descending (folder and file links are skipped; on Windows
   junctions too — std marks them symlinks, pinned by a test); explicitly
@@ -906,10 +910,10 @@ calls today (canonical path, no symlink below a source folder, depth ≤ 8,
 |---|---|---|---|
 | F2.1-a | test | `config.rs::symlink_out_of_a_read_root_is_refused`, `a_symlinked_read_root_grants_exactly_its_target`, `a_depth_changing_link_cannot_split_the_check_from_the_read`; `tests/read_roots.rs::scan_refuses_a_symlink_to_a_file_outside_the_root`, `open_refuses_a_symlink_to_a_file_outside_the_root`, `open_refuses_a_symlinked_folder_outside_the_root`, `a_depth_changing_link_cannot_split_the_check_from_the_scan` | ✅ Linux + Windows (symlink cases skip without the privilege; CI runs them) |
 | F2.1-b | test | `config.rs::workspace_symlink_escape_is_refused`, the workspace case of `a_depth_changing_link_cannot_split_the_check_from_the_read` | ✅ |
-| F2.1-c | test | `tests/read_roots.rs::a_crafted_manifest_cannot_point_the_load_outside_the_root` | ✅ Linux + Windows |
+| F2.1-c | test | `tests/read_roots.rs::a_crafted_manifest_cannot_point_the_load_outside_the_root`, `a_crafted_manifest_with_parent_components_is_refused` | ✅ Linux + Windows (the `..` case needs a symlink: skips without the privilege) |
 | F2.2-a | test | `files.rs::walk_does_not_follow_symlinks`, `walk_survives_a_symlink_loop`, `walk_skips_junctions` (Windows, no privilege needed); `tests/read_roots.rs::a_folder_holding_an_escape_link_scans_only_its_real_files` | ✅ |
 | F2.2-b | test | `files.rs::walk_bounds_depth_and_entries`; `tests/read_roots.rs::a_source_tree_deeper_than_the_limit_is_reported` | ✅ |
-| F2.3 | mutation | nine tests red on the unfixed code (Linux) before the fix; the depth-changing-link regression red on the first draft (mutation-checked) | ✅ |
+| F2.3 | mutation | nine tests red on the unfixed code (Linux) before the fix; the depth-changing-link regression red on the first draft, and the crafted-manifest `..` regression red without the guard (both mutation-checked) | ✅ |
 
 **Local run:** WSL (Ubuntu 22.04): `cargo fmt --check`, `clippy --workspace
 --all-targets -D warnings`, schema freshness, `cargo test --workspace`
