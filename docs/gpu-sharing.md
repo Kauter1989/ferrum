@@ -252,8 +252,7 @@ then names the dead `gpu hold` pid. A Ctrl-C during the wait exits with
     `/health`) before the steps start.
 - Each step records the card's peak, the holder's memory (by pid), and
   the time the call waited.
-- The recipe for 12 GB goes to `docs/gpu-sharing.md` §5 after the field
-  run.
+- The recipe for 12 GB is §5, written from the field run of 2026-11-14.
 
 As built:
 - `--capacity-mib` is required with a holder; without a capacity the
@@ -267,9 +266,11 @@ As built:
 - The holder's memory is `nvidia-smi --query-compute-apps` for the
   command's pid (the child of `gpu hold`, read from `/proc`).
 - `pytest bridges/tests/test_benchmark.py` runs the options as a dry run
-  with a fake `ferrum-cli`. The measurements and the recipe (§5 of the
-  field results) are still pending: they need the field run on the
-  user's card.
+  with a fake `ferrum-cli`. The field run of 2026-11-14 (RTX 3080 12 GB,
+  WSL 2 Ubuntu 24.04) measured both phases; the recipe is §5.
+- `--peaks-mib` writes the operator's `gpu_peaks_mib` into the benchmark
+  config: the bridges report no `expected_peak_mib`, so without it every
+  call would take the whole group and wait behind the holder forever.
 
 ## 4. Contracts
 
@@ -372,13 +373,84 @@ path. A record that is anything else counts as holding the whole group.
 - a container and its host sharing a group, unless both see the same
   directory as the same user.
 
-## 5. Risks and assumptions
+## 5. The 12 GB recipe with an LLM sidecar (measured 2026-11-14)
 
-- **The peaks are estimates until measured (L13).** The values in §3.3
-  come from agent-segmentation §2: nnInteractive about 5.4 GB above a
-  baseline that included the desktop, TotalSegmentator `total` about
-  2.2 GB for two organs. PR 2's field test measures per-process
-  footprints, and the recipe uses those.
+Field run on the user's card: **RTX 3080 12288 MiB**, driver 610.74,
+Windows 10 + WSL 2 **Ubuntu 24.04**, CT of MSD Task09 `spleen_10`
+(512 × 512 × 55). The resident model is a representative stand-in for the
+harness's own (assumed, recorded in the run): **Qwen2.5-3B-Instruct
+Q4_K_M** under `llama-server` (llama.cpp b12387, CUDA 12.8, `-ngl 99
+-c 4096`). Re-run with `LLAMA_CMD` for the real model.
+
+### 5.1 The numbers
+
+| Quantity | Measured |
+|---|---|
+| Desktop baseline (no engines) | 1938 MiB |
+| Capacity (`total − baseline − 256`) | 10094 MiB |
+| nnInteractive weights, resident after bridge start | ≈ 880 MiB |
+| nnInteractive call footprint next to the holder (ROI prompts) | 3586–4068 MiB |
+| TotalSegmentator `total`, 2 organs, next to the holder | 1793–2332 MiB |
+| Holder VRAM (3B Q4, 4096 ctx) | 2325 MiB → lease **2816** |
+| Combined card peak, 20 calls with the holder | **8750 MiB** of 12288 |
+| Release after `DELETE` (M1) | card back to weights-only, ±14 MiB |
+| Release on TTL expiry (M2, 60 s TTL) | image freed by the sweeper |
+| `engine unload` (M3) | card 2888 → 2007 MiB: **0 MiB** engine memory; reload **24.3 s** |
+| Unload while a job runs (M4) | `busy`, job finishes |
+
+**Success metric (23.5-b): 20/20 engine calls with the resident holder,
+no CUDA OOM, no waits** — every call fit (holder 2816 + nnInteractive
+4352 = 7168 ≤ 10094). The benchmark with its own holder (23.5-a) agrees:
+`segment auto` peak 6943 MiB, interactive ROI peak 8273 MiB, waited 0 s.
+
+One transient failure in phase A (no holder): a liver refinement exceeded
+the agent's HTTP timeout once (`engine_unavailable`, 62.8 s); the run
+continued and the same call succeeded in phase B. A session left open by
+such a timeout inflates the next call's card-delta footprint — measure
+peaks from a clean phase (the table above uses phase B).
+
+### 5.2 The configuration
+
+```toml
+# ferrum-agent config
+gpu_capacity_mib = 10094        # total − desktop baseline − 256 headroom
+[gpu_peaks_mib]                 # REQUIRED: the bridges report no expected_peak_mib
+nninteractive = 4352            # measured max 4068 + 256, rounded to 256
+totalsegmentator = 2816         # measured max 2332 + 256, rounded to 256
+```
+
+```bash
+# the holder: lease = measured VRAM + 256, rounded to 256
+ferrum-cli gpu hold --group gpu0 --lease-mib 2816 --name llama-server -- \
+  llama-server -m model.gguf --host 127.0.0.1 --port 8080 -ngl 99 -c 4096
+```
+
+Without `gpu_peaks_mib` a call takes the whole group and waits behind the
+holder forever — set it from a measured phase A (the field script's
+`--peaks-mib` does this for the benchmark).
+
+### 5.3 Sizing rules
+
+- **3B Q4 sidecar (≈ 2.3 GB): both engines fit next to it.** This is the
+  measured configuration above.
+- **7B Q4 sidecar (≈ 5.5 GB with KV, lease ≈ 5888): nnInteractive no
+  longer fits** (5888 + 4352 = 10240 > 10094) and its calls wait. Options:
+  a smaller context, `engine unload` of the idle bridge before the model
+  loads (reload costs ≈ 24 s), or a smaller model. TotalSegmentator
+  (2816) still fits next to a 7B holder.
+- The reload time (≈ 24 s) must stay under the session TTL (default
+  3600 s; the field run used 60 s and still passed).
+- **WSL:** `nvidia-smi --query-compute-apps` reports per-process memory as
+  `[N/A]`; measure footprints as the card's total delta (the field script
+  does). The CUDA runtime (`libcudart`/`libcublas`) is a **separate
+  llama.cpp release asset** — without it `libggml-cuda.so` fails to load
+  silently and the "holder" runs on CPU (0 MiB on the card).
+
+## 6. Risks and assumptions
+
+- **The peaks are measured (§5).** The field run of 2026-11-14 replaced
+  the estimates: nnInteractive 3586–4068 MiB per call next to a holder,
+  TotalSegmentator 1793–2332 MiB for two organs. The recipe uses those.
 - **The lease is cooperative.** A process that does not take a lease
   (another user's job, a game) is invisible. The capacity leaves
   headroom, and the docs tell holders to check NVML before loading.
@@ -393,14 +465,15 @@ path. A record that is anything else counts as holding the whole group.
   regions per prompt. Estimated below 50 ms for an 8 M-voxel ROI; PR 2's
   field test measures it against the current 0.9–1.2 s per prompt. If it
   is too slow: shared memory (`multiprocessing.shared_memory`).
-- **The CUDA context of the child:** ending the child frees it. This was
-  verified in principle (the TotalSegmentator bridge already relies on
-  it), but not yet for nnInteractive.
+- **The CUDA context of the child:** ending the child frees it. Verified
+  in the field run (M3): after `engine unload` the card dropped by the
+  weights (≈ 880 MiB) to the desktop level, and the next call reloaded in
+  24.3 s.
 - **Windows:** the lock and directory code compile there (release
   builds); CI runs Linux only. The Windows path is checked in the field
   only if the user runs the desktop natively.
 
-## 6. Validation plan
+## 7. Validation plan
 
 | Criterion | Verified by | Level |
 |---|---|---|
@@ -427,7 +500,7 @@ path. A record that is anything else counts as holding the whole group.
 | [23.5-c] | review of §2 rule 2 and ADR 0015 | manual |
 | [23.5-d] | `gpu_hold_runs_command_and_releases` (CLI test with `sh -c 'exit 3'` → exit 3, lease gone); `gpu_hold_not_an_mcp_tool` | test |
 
-## 7. Size and PR split
+## 8. Size and PR split
 
 Contract surfaces: the new lock protocol, `ferrum-engine/1`, the agent
 command set, the bridges' Python API and the desktop UI. Five surfaces, so
@@ -441,7 +514,7 @@ where possible. The estimates are compared with #63 (L, 739 lines) and
 | 2 | 23.T4–T6 | ~700 (Rust 300, Python 400) + 300 + 200 ≈ 1 200 lines, ~14 files | `ferrum-engine/1`, bridges API, agent command | L | yes: release, unload, reload time, worker overhead, per-process peaks |
 | 3 | 23.T7–T9 | ~650 + 250 + 300 ≈ 1 200 lines, ~14 files | desktop UI (+ CLI only) | L (low) | yes: the success metric with `llama-server` |
 
-## 8. Tasks
+## 9. Tasks
 
 | Task | Criteria | Tests first | Touches (matrix rows) | Depends on | PR |
 |---|---|---|---|---|---|

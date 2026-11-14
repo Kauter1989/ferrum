@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- The 12 GB GPU-sharing recipe, measured on the user's RTX 3080 ([#68](https://github.com/Kauter1989/ferrum/issues/68), Stage 23 field run 2026-11-14): with a resident 3B Q4 model server (2325 MiB, lease 2816) **20/20 engine calls succeeded, no CUDA OOM, no waits** (combined peak 8750 of 12288 MiB); nnInteractive takes 3.6–4.1 GB and TotalSegmentator 1.8–2.3 GB per call next to it. Release after `DELETE` returns the card to weights-only, TTL expiry frees the image, `engine unload` drops the engine to 0 MiB (reload 24.3 s), and unload during a job answers `busy`. The recipe (`docs/gpu-sharing.md` §5) gives the configuration, the 7B sizing rule and the WSL measurement caveats; `docs/agent-segmentation.md` §2.1 and `docs/testing.md` record the run.
+
 ### Fixed
 
 - `scripts/benchmark_engines.py` with `--external-holder` wrote no expected peaks into its configuration, so an engine that reports none of its own (both bridges) took the whole GPU group and every call waited for the resident holder to leave. The new `--peaks-mib N` writes the operator's `gpu_peaks_mib` for every engine of the benchmark's group, and a holder run without peaks is flagged on stderr (Stage 23, found preparing the [#68](https://github.com/Kauter1989/ferrum/issues/68) field run).

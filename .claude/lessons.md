@@ -856,6 +856,67 @@ that says so instead of editing the old one.
 - **Rule:** Read the annotation of a cancelled job before calling it
   transient; a label that worked last release may be retired today.
 
+### L45 — The preflight distro's lavapipe crashed at thread exit (2026-11, Stage 23 field)
+
+- **Symptom:** `every_view_mode_renders_the_volume` passed all six scenes,
+  then SIGSEGV in `__nptl_deallocate_tsd` as the test thread exited; the
+  suite was red on a machine where CI is green.
+- **Root cause:** WSL Ubuntu 22.04 ships mesa 23.2.1, whose lavapipe crashes
+  in TLS teardown; the kisak PPA dropped jammy and noble's mesa needs
+  GLIBC_2.38. The crash was environmental, not FERRUM's.
+- **Fix:** imported an Ubuntu 24.04 WSL distro (root, no sudo password;
+  static `/etc/resolv.conf` because WSL DNS was flaky) — mesa 25.2.8 matches
+  CI's ubuntu-latest; preflight green there. It is now the preflight/field
+  platform.
+- **Guard:** run preflight in a distro that matches CI, not the oldest WSL
+  on the machine; a crash in libc/mesa teardown after all assertions passed
+  is the environment until proven otherwise.
+- **Rule:** `wsl.exe` mangles inner quotes and pipes — write bash to a
+  script file (LF) and run `wsl -d <distro> -u root -e bash <file>`.
+
+### L46 — WSL reports per-process VRAM as [N/A] (2026-11, Stage 23 field)
+
+- **Symptom:** every per-process GPU reading in the field run was 0 MiB
+  while the card clearly held the engines; the release/unload measurements
+  were meaningless.
+- **Root cause:** WSL's `nvidia-smi --query-compute-apps` lists the PIDs
+  but `used_memory` is `[N/A]`; the bridge's `resident_mib` (same source)
+  reports null too.
+- **Fix:** measure the card's total (`memory.used`) and take deltas: one
+  engine active at a time in phase A, holder level as the base in phase B.
+  The numbers came out clean (nnInteractive 3.6–4.1 GB, TS 1.8–2.3 GB next
+  to the holder).
+- **Guard:** a footprint of 0 for a running engine is a measurement bug,
+  not a result; assert the holder's card delta > 0 before trusting phase B.
+
+### L47 — llama.cpp's CUDA runtime is a separate release asset (2026-11, Stage 23 field)
+
+- **Symptom:** the "resident holder" measured 0 MiB on the card; phase B
+  ran, but nothing was shared — `llama-server` had fallen back to CPU.
+- **Root cause:** the ubuntu-cuda tarball ships `libggml-cuda.so` but not
+  `libcudart`/`libcublas`; those live in the `cudart-llama-…` asset of the
+  same build. Without them the backend fails to load **silently**. Also:
+  the "latest" release is a placeholder (`nightly-tag.txt` only) — walk the
+  recent builds, and the naming changed from zip to tar.gz.
+- **Fix:** download both assets, flatten the libraries next to the binary,
+  and `ldd libggml-cuda.so | grep "not found"` before starting; the card
+  delta then showed 2325 MiB.
+- **Guard:** a GPU server that allocates no VRAM is on the CPU — check the
+  card delta and the backend's dependencies, not the health endpoint.
+
+### L48 — A failure counter whose glob matched nothing (2026-11, Stage 23 field)
+
+- **Symptom:** the field script printed "20/20 ok, 0 failures" for a phase
+  that had a failed call (`engine_unavailable` timeout).
+- **Root cause:** result files are `NN-<step>.json`, but the failure glob
+  was `a-c[0-9][0-9]-*.json` — no file ever matched, so the counter was
+  vacuous (the L22 family: a check that cannot fail).
+- **Fix:** glob `*-"${PFX}"c[0-9][0-9]-*.json`; the phase's failures are
+  also read by eye from the step log before the summary is trusted.
+- **Guard:** every aggregate check in a throw-away script gets one
+  deliberate failure in rehearsal, or its glob is matched against a real
+  filename first.
+
 ## What worked
 
 ### W1 — Field test on the user's GPU with a throw-away script (2026-10, Stage 17)
