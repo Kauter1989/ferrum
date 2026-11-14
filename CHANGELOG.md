@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-11-14
+
 ### Fixed
 
 - Agent: the read-root check compared paths lexically, so a symlink inside a read root that pointed outside it passed, and the source walk followed symlinks with no depth or count bound ([#82](https://github.com/Kauter1989/ferrum/issues/82)). Sources and roots are now canonicalised before the comparison (the workspace root too), the walk skips the symlinks and junctions it discovers, and a tree deeper than 8 levels or with more than 100 000 entries is refused with `limit` instead of being read or silently cut. The check judges exactly the spelling the reader opens, and a workspace load re-checks every recorded source file path and refuses a manifest path with `..` (the check normalises it lexically, the readers would open it in filesystem order), so a crafted `workspace.json` cannot point the load outside the roots. Explicitly passed paths are honoured as before; the returned path keeps the caller's spelling, so workspaces are unchanged. Residual: a link swapped between the check and the read (TOCTOU), and hard links, remain possible for someone with write access to a data root.
@@ -222,6 +224,7 @@ frame, 2D slices and MPR, GPU volume rendering (tissue, isosurface, MIP,
 transfer functions) with a CPU reference renderer and parity tests,
 measurements, clipping, eraser and headless snapshots.
 
+[0.4.0]: https://github.com/Kauter1989/ferrum/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Kauter1989/ferrum/compare/v0.2.3...v0.3.0
 [0.2.3]: https://github.com/Kauter1989/ferrum/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/Kauter1989/ferrum/compare/v0.2.1...v0.2.2
