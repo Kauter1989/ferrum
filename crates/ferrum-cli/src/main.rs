@@ -36,7 +36,16 @@ fn main() -> ExitCode {
         return gpu_hold(&config, &h);
     }
     if let cli::Command::View(cli::View::Serve { ws, port, cpu }) = cli.command {
-        return view_serve(std::path::Path::new(&ws.workspace), port, cpu);
+        // Resolve like the agent commands do: relative workspaces live below
+        // the operator's workspace_root, and a workspace outside it is refused.
+        let workspace = match config.resolve_workspace(std::path::Path::new(&ws.workspace)) {
+            Ok(path) => path,
+            Err(e) => {
+                println!("{}", ferrum_agent::envelope::error_envelope(&e));
+                return ExitCode::from(1);
+            }
+        };
+        return view_serve(&workspace, port, cpu);
     }
     let (command, params) = match cli.command.to_call() {
         Ok(call) => call,
