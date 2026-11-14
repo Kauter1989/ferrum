@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-11-14
+
 ### Fixed
 
 - `ferrum-cli view serve` resolved its workspace relative to the current directory, ignoring the operator's `data.workspace_root` that every agent command uses and the CLI help promises: a relative workspace name failed unless the working directory happened to contain it, and a workspace outside the configured root was not refused. It now resolves through the same configuration rule, and a workspace outside the root is refused with `forbidden`.
@@ -221,6 +223,7 @@ frame, 2D slices and MPR, GPU volume rendering (tissue, isosurface, MIP,
 transfer functions) with a CPU reference renderer and parity tests,
 measurements, clipping, eraser and headless snapshots.
 
+[0.4.0]: https://github.com/Kauter1989/ferrum/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Kauter1989/ferrum/compare/v0.2.3...v0.3.0
 [0.2.3]: https://github.com/Kauter1989/ferrum/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/Kauter1989/ferrum/compare/v0.2.1...v0.2.2

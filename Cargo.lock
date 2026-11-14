@@ -1452,7 +1452,7 @@ checksum = "b97b65636e5b9ef369943878ac74335ba1c55c1cb6adbf1e2c293c624248d693"
 
 [[package]]
 name = "ferrum"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "eframe",
  "egui",
@@ -1477,7 +1477,7 @@ dependencies = [
 
 [[package]]
 name = "ferrum-agent"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.22.1",
  "ctrlc",
@@ -1502,7 +1502,7 @@ dependencies = [
 
 [[package]]
 name = "ferrum-app"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "ferrum-domain",
  "ferrum-engines",
@@ -1519,7 +1519,7 @@ dependencies = [
 
 [[package]]
 name = "ferrum-cli"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "clap",
  "ferrum-agent",
@@ -1534,7 +1534,7 @@ dependencies = [
 
 [[package]]
 name = "ferrum-domain"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "approx",
  "glam",
@@ -1544,7 +1544,7 @@ dependencies = [
 
 [[package]]
 name = "ferrum-engines"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.22.1",
  "ferrum-domain",
@@ -1561,14 +1561,14 @@ dependencies = [
 
 [[package]]
 name = "ferrum-gpu-lock"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "rustix 1.1.5",
 ]
 
 [[package]]
 name = "ferrum-io"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "criterion",
  "dicom-core",
@@ -1589,7 +1589,7 @@ dependencies = [
 
 [[package]]
 name = "ferrum-processing"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "criterion",
  "ferrum-domain",
@@ -1600,7 +1600,7 @@ dependencies = [
 
 [[package]]
 name = "ferrum-radiomics"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "approx",
  "criterion",
@@ -1612,7 +1612,7 @@ dependencies = [
 
 [[package]]
 name = "ferrum-render"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "bytemuck",
  "criterion",
@@ -1633,7 +1633,7 @@ dependencies = [
 
 [[package]]
 name = "ferrum-ui"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "egui",
  "egui-phosphor",
@@ -1654,7 +1654,7 @@ dependencies = [
 
 [[package]]
 name = "ferrum-view"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "ferrum-app",
  "ferrum-domain",
@@ -1676,7 +1676,7 @@ dependencies = [
 
 [[package]]
 name = "ferrum-wasm"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "bytemuck",
  "console_error_panic_hook",
