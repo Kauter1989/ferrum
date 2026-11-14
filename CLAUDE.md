@@ -63,6 +63,9 @@ ferrum-wasm (browser) → ferrum-render (gpu), ferrum-app, ferrum-processing —
 - No business logic in `ferrum` or `ferrum-ui` widgets — add a use case to
   `Viewer`. `ferrum-ui` opens no windows or file dialogs (no `eframe`, no
   `rfd`); hosts embed it ([ADR 0016](docs/decisions/0016-ferrum-ui-crate.md)).
+  `ViewerWidget::show` returns the frame's events (a pick, a drawn ROI,
+  slice/window/camera changes), derived from `Viewer` state; no event is a
+  decision, and engine proposals are not events.
 - `ferrum-view` implements the local view host `ferrum-view/1`
   ([design](docs/view-host.md), [ADR 0017](docs/decisions/0017-view-host-crate.md)):
   one workspace kept open, slice frames on the GPU or the CPU reference,
