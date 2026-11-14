@@ -22,7 +22,7 @@ fn write_series(dir: &Path, name: &str) {
     for k in 0..4u32 {
         let pixels: Vec<u16> = vec![24; 64];
         let text = |t, vr, v: &str| DataElement::new(t, vr, PrimitiveValue::from(v));
-        let mut elements = vec![
+        let elements = vec![
             text(tags::SOP_CLASS_UID, VR::UI, uids::CT_IMAGE_STORAGE),
             text(tags::SOP_INSTANCE_UID, VR::UI, &format!("1.2.826.0.1.3680043.8.498.777.{}", k + 1)),
             text(tags::SPECIFIC_CHARACTER_SET, VR::CS, "ISO_IR 192"),
@@ -190,8 +190,9 @@ fn the_scan_is_not_an_agent_command() {
         let name = tool["name"].as_str().unwrap();
         assert!(!name.contains("identifier") && !name.starts_with("scan"), "{name}");
     }
-    let schemas = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../skills/ferrum/schemas/commands.json"))
-        .unwrap();
+    let schemas =
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../skills/ferrum/schemas/commands.json"))
+            .unwrap();
     let schemas: serde_json::Value = serde_json::from_str(&schemas).unwrap();
     for key in schemas.as_object().unwrap().keys() {
         assert!(!key.contains("identifier") && !key.starts_with("scan"), "{key}");

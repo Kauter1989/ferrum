@@ -263,13 +263,7 @@ fn assigns(texts: &[String], comps: &[String]) -> bool {
 
 /// One or two single-letter words after the family word, matching the
 /// initials of the given and middle names.
-fn initials_after(
-    folded: &[Folded],
-    ws: &[Word],
-    i: usize,
-    given: &str,
-    middle: &str,
-) -> Option<(usize, usize)> {
+fn initials_after(folded: &[Folded], ws: &[Word], i: usize, given: &str, middle: &str) -> Option<(usize, usize)> {
     let inits = [given.chars().next(), middle.chars().next()];
     let mut j = i + 1;
     let mut k = 0;
@@ -390,14 +384,36 @@ fn date_spans(folded: &[Folded], birth: &str, out: &mut Vec<Span>) {
 /// The month's names, English and Russian (nominative and genitive),
 /// already folded.
 fn month_names(m: usize) -> Vec<String> {
-    const EN: [&str; 12] =
-        ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+    const EN: [&str; 12] = [
+        "january",
+        "february",
+        "march",
+        "april",
+        "may",
+        "june",
+        "july",
+        "august",
+        "september",
+        "october",
+        "november",
+        "december",
+    ];
     const RU: [&str; 12] = [
         "yanvar", "fevral", "mart", "aprel", "mai", "iyun", "iyul", "avgust", "sentyabr", "oktyabr", "noyabr", "dekabr",
     ];
     const RU_GEN: [&str; 12] = [
-        "yanvarya", "fevralya", "marta", "aprelya", "maya", "iyunya", "iyulya", "avgusta", "sentyabrya", "oktyabrya",
-        "noyabrya", "dekabrya",
+        "yanvarya",
+        "fevralya",
+        "marta",
+        "aprelya",
+        "maya",
+        "iyunya",
+        "iyulya",
+        "avgusta",
+        "sentyabrya",
+        "oktyabrya",
+        "noyabrya",
+        "dekabrya",
     ];
     let i = m - 1;
     let mut out = vec![EN[i].to_owned(), RU[i].to_owned(), RU_GEN[i].to_owned()];
