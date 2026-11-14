@@ -755,6 +755,47 @@ that says so instead of editing the old one.
   documents intent; a gate enforces it. When the two disagree, the gate wins
   and the prose is the thing that needs fixing.
 
+### L39 — The checked path was not the opened path (2026-11, Stage F2 / #82)
+
+- **Symptom:** The read-root fix passed its own tests, yet review found
+  two escapes of one class. (1) `check_source` canonicalised the OS-order
+  resolution of the raw argument but returned the lexical spelling: a
+  link pointing *deeper* than its spelling plus a `..` behind it passed
+  the check while the reader opened a path outside the root. (2) The
+  manifest re-check called `check_source` but discarded its return value:
+  `verify_sources`, the cache stamps and the DICOM export opened the raw
+  manifest spelling, where the OS resolves `..` in filesystem order — a
+  crafted `workspace.json` with `link/../secret.nii` read outside the
+  root (size oracle, and identifiers into an exported SEG/SR when the
+  hashes matched).
+- **Root cause:** A boundary check that transforms the path creates two
+  spellings — the checked one and the one downstream opens. Every
+  consumer that opens a different spelling reopens the boundary. Lexical
+  `..` resolution and OS-order resolution diverge exactly at symlinks,
+  which is the thing the check exists for.
+- **Why it mattered:** The read roots are the operator's boundary for
+  patient data. Both escapes were introduced *by the security fix
+  itself* — a fix that silently reopens its own hole is worse than no
+  fix, because it is trusted. Neither was caught by the fix's own tests;
+  both were caught by the review agents before the push.
+- **Fix:** `check_source` / `resolve_workspace` canonicalise exactly the
+  spelling they return; `Study::load` scans the checked path, re-checks
+  every manifest file path, and refuses any `..` component (legitimate
+  manifests never hold one — `create()` stores clean relatives and
+  absolutes — and without `..` the raw and lexical spellings resolve
+  identically).
+- **Guard:** regression tests for both escapes
+  (`a_depth_changing_link_cannot_split_the_check_from_the_read`,
+  `a_crafted_manifest_with_parent_components_is_refused`), each
+  mutation-checked red on the draft that introduced it. The review
+  agents (`security-reviewer`, `code-reviewer`) run before every push of
+  a reader/agent change (`ferrum-change` §6) — they are what caught both.
+- **Rule:** A path check must judge exactly the spelling that will be
+  opened. If a consumer opens a stored or raw path, either hand it the
+  checked path or refuse spellings whose resolution can diverge (`..`
+  behind a link). "Checked" is a property of a spelling, not of an
+  intention.
+
 ## What worked
 
 ### W1 — Field test on the user's GPU with a throw-away script (2026-10, Stage 17)
