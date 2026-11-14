@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- The embedded viewer tells its host what the person did (Stage 24 PR 2, [#69](https://github.com/Kauter1989/ferrum/issues/69), [design](docs/embeddable-viewer.md)). `ViewerWidget::show` returns the frame's `ViewerEvent`s: `PointPicked` (voxel and patient mm, the forms `probe` resolves), `RoiDrawn` (the person's new annotation or segment, or a mask edit of their own segment), `SliceChanged`, `WindowChanged` and `CameraChanged` — coalesced (one slice event per frame, one window/camera event at the end of a drag), derived from `Viewer` state, so a use case the host calls itself is seen too. No event is a decision, and engine or agent proposals are not events; events hold no identifiers. `crates/ferrum-ui/examples/embed_host.rs` is a working host: its own panel with an event log and buttons next to the widget.
+
 ## [0.4.0] — 2026-11-14
 
 ### Fixed

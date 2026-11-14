@@ -11,7 +11,11 @@
 //! 1. calls [`install`] once with its `egui_wgpu::RenderState`;
 //! 2. keeps a [`Viewer`](ferrum_app::Viewer) and a [`ViewerWidget`];
 //! 3. calls [`ViewerWidget::show`] in the panel where the views go, each
-//!    frame, and the panels' `show` functions where it wants them.
+//!    frame, and reads the [`ViewerEvent`]s it returns — what the person
+//!    did — and the panels' `show` functions where it wants them.
+//!
+//! `examples/embed_host.rs` is a working host: its own panel with an event
+//! log and a few buttons next to the widget.
 //!
 //! GPU work goes through egui-wgpu paint callbacks that drive
 //! `ferrum_render::gpu::VolumeRenderer`; the image-formation model stays in
@@ -26,6 +30,7 @@ pub use egui_wgpu;
 pub use wgpu;
 
 pub mod ai_panel;
+pub mod events;
 pub mod gpu_bridge;
 pub mod metrics_card;
 pub mod panels;
@@ -40,5 +45,6 @@ pub mod volume_view;
 pub mod widget;
 pub mod widgets;
 
+pub use events::{Point, RoiItem, ViewerEvent};
 pub use gpu_bridge::install;
 pub use widget::ViewerWidget;
