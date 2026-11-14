@@ -58,6 +58,10 @@ app with *Open workspace*:
 {"url":"http://127.0.0.1:41234","token":"8f3c…","workspace":"C:\\work\\ws\\ct1","backend":"gpu"}
 ```
 
+From a release archive the binaries sit at the archive root, so the same
+commands are `.\ferrum-cli.exe study open …` and `.\ferrum-cli.exe view serve …`
+(no `target\release\`); the panel module is already beside them.
+
 The panel takes the study from `/api/volume` (the voxels, once) and does not
 need the host to render anything; `backend` then only describes the host's
 own rendering, which the panel does not use.

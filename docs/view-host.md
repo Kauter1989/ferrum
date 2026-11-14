@@ -216,8 +216,11 @@ gives.
 Two ways, both documented by the same routes:
 
 1. **Embed the page.** An `<iframe src="http://127.0.0.1:PORT/?token=…">`
-   gets a working viewer in one line. The DeepSeek Harness has no CSP that
-   would refuse it, and the page makes no cross-origin request.
+   gets a working viewer in one line in a normal browser page. In the
+   DeepSeek Harness desktop window the iframe stays black: the window is
+   a secure context and Chromium refuses `http://` content there (L30) —
+   the harness panel renders the study itself through WebGPU instead
+   (`integrations/dsh/`, Stage 26).
 2. **Draw it yourself.** `GET /api/frame.png` is an `<img>` source; input
    goes back with `POST /api/input`. The mapping block in the state resolves
    a pixel to a voxel without guessing.
