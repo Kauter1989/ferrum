@@ -200,6 +200,31 @@ name, and must never expose `record` as a model tool.
   not load the study for each. The encoding of the revision is in
   [workspace-format.md](workspace-format.md).
 
+## Identifier spans for a host privacy layer
+
+A host that de-identifies free text before it reaches a model, a log or a
+report (Medical Harness ADR 0010) uses the library API
+`ferrum_agent::identifiers`. Like `decisions`, it is **not** an agent
+command: a model must not be able to test guessed names against the
+patient's identifiers, so no agent reaches it through FERRUM (a test
+checks the command list, the MCP tools and `commands.json`).
+
+- `scan_identifiers(config, workspace, text)` returns
+  `Vec<Span{start, end, kind}>` — byte offsets into `text` and the kind
+  (`PatientName`, `PatientId`, `BirthDate`, `AccessionNumber`), **never the
+  values**. The host masks the spans itself. The workspace's source is
+  checked against the operator's read roots like every agent read; a
+  missing workspace is `no_study`, a source outside the roots `forbidden`.
+- Matching is tolerant, biased toward recall (over-masking is safe for a
+  privacy layer): case-insensitive; Cyrillic and Latin transliterated into
+  one canonical form; name components in either order; initials
+  («Иванов И.И.»); inflected forms (a stem plus up to three letters); the
+  common formats of a DICOM `YYYYMMDD` birth date, with English and Russian
+  month names. Overlapping spans resolve to the longest. A NIfTI study
+  carries no identifiers, so the result is empty.
+- The identifiers are read from the source's DICOM headers by `ferrum-io`
+  (`read_patient_identifiers`); they never leave FERRUM in any output.
+
 ## Workspace and audit
 
 **Workspace:**

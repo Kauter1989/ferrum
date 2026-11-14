@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Identifier spans for a host's privacy layer ([#74](https://github.com/Kauter1989/ferrum/issues/74), Stage 27): the library API `ferrum_agent::identifiers::scan_identifiers(config, workspace, text)` returns the positions and kinds of the study's identifiers in a text — patient name, patient ID, birth date, accession number — **never the values**. Matching is tolerant (case, Cyrillic↔Latin transliteration, initials, inflected forms, the common date formats in English and Russian), biased toward recall. It is **not an agent command**: a model cannot test guessed names against the patient's identifiers; a test checks the command list, the MCP tools and `commands.json`. The reader (`ferrum_io::read_patient_identifiers`, `PatientIdentifiers` in the domain) stays in the I/O layer; a NIfTI study carries no identifiers.
+
 ## [0.4.0] — 2026-11-14
 
 ### Fixed
