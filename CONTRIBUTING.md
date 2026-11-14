@@ -25,6 +25,57 @@ open an issue first to discuss new features or architectural changes.
 The full list is in [CLAUDE.md](CLAUDE.md), which applies to people and
 AI assistants alike.
 
+## Issues
+
+One topic per issue. Search open and closed issues for duplicates before
+filing. Use the issue forms in `.github/ISSUE_TEMPLATE/`; blank issues
+are disabled.
+
+### Bug reports
+
+State what happens, what you expected, the steps to reproduce and the
+environment (OS, GPU and driver, FERRUM version, engine if involved).
+Reproduce on synthetic data generated in tests. **Never put patient data
+or identifiers in an issue** — not in the text, logs or screenshots.
+
+### Feature requests
+
+Follow Context / Proposal / Acceptance criteria / Priority (see #75 for
+an example). Acceptance criteria must be verifiable: say how each one is
+checked — `test`, `visual` or `field`.
+
+### Sensitive vulnerabilities
+
+Do not publish exploitation details in a public issue. Contact the
+maintainer privately first — a GitHub security advisory or the owner's
+profile (<https://github.com/Kauter1989>). A public issue may state that
+a problem exists, without exploitation details.
+
+### Triage
+
+The maintainer assigns type and priority labels; the priority may change
+during triage. An issue stays open until the fix is verified: #68, for
+example, stays open after the code merged, until the field run confirms
+it.
+
+### Priorities
+
+| Priority | Meaning |
+|---|---|
+| P0 | Blocker: the demo/release cannot proceed; data loss or patient safety. |
+| P1 | High: needed for the next demo/milestone; security hardening (defence in depth). |
+| P2 | Medium: planned capability, not blocking now. |
+| P3 | Low: exploratory, nice to have. |
+
+### Labels
+
+| Label | Meaning |
+|---|---|
+| `bug` | A defect. |
+| `security` | A security boundary or privacy concern. |
+| `feature` | A new capability. |
+| `P0` … `P3` | Priority, as in the table above. |
+
 ## Workflow
 
 1. Branch from `develop` with a `feat/`, `fix/`, `docs/` or `refactor/`

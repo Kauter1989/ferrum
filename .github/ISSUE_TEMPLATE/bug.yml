@@ -1,0 +1,70 @@
+name: Bug report
+description: Report a defect in FERRUM. Reproduce only on synthetic data generated in tests — never on patient data.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. One topic per issue; search for
+        duplicates first.
+
+        **Reproduce only on synthetic data generated in tests**
+        (`crates/ferrum-io/tests/common`). Never put patient data or
+        identifiers in an issue — not in the text, logs or screenshots.
+  - type: textarea
+    id: what-happens
+    attributes:
+      label: What happens
+      description: Describe the defect. Paste error output only without patient identifiers.
+      placeholder: What did FERRUM do?
+    validations:
+      required: true
+  - type: textarea
+    id: expected-behaviour
+    attributes:
+      label: Expected behaviour
+      description: What should FERRUM have done instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Use synthetic data generated in tests, never a patient series.
+      placeholder: |
+        1. Generate a synthetic volume with …
+        2. Run …
+        3. Observe …
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, GPU and driver version, FERRUM version (release or commit), engine and version if involved.
+      placeholder: |
+        - OS: Windows 11 / Ubuntu 24.04 / …
+        - GPU and driver: …
+        - FERRUM version: …
+        - Engine (if involved): …
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: Your estimate; the maintainer may change it during triage. See CONTRIBUTING.md for the full definitions.
+      options:
+        - "P0 — blocker: demo/release cannot proceed; data loss or patient safety"
+        - "P1 — high: needed for the next demo/milestone; security hardening"
+        - "P2 — medium: planned capability, not blocking now"
+        - "P3 — low: exploratory, nice to have"
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy-confirmation
+    attributes:
+      label: Privacy confirmation
+      options:
+        - label: This issue contains no patient data or identifiers — in the text, logs and screenshots.
+          required: true
