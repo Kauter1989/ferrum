@@ -467,7 +467,7 @@ switch time and GPU memory on a real GPU.
 
 ---
 
-## Stage 23 — GPU sharing with an external model server 🚧 (G1 ✅, G2 ✅; PR 3 of 3)
+## Stage 23 — GPU sharing with an external model server ✅ (G1 ✅, G2 ✅; field run 2026-11-14)
 
 Medical Harness runs its language model locally as a `llama-server`
 sidecar on the same 12 GB card as FERRUM's engines
@@ -536,10 +536,10 @@ running engine job.
 | 23.T6 `engine unload`, `engine list` fields | 23.4-c/d | 2 | ✅ |
 | 23.T7 domain port, `GatedEngine`, `Viewer` waiting and cancel | 23.3-a/b | 3 | ✅ |
 | 23.T8 AI panel waiting state; `gpu hold` | 23.3-c, 23.5-d | 3 | ✅ |
-| 23.T9 benchmark holder options; field run; recipe | 23.5-a/b/c | 3 | options ✅ (dry run); field run and recipe pending |
+| 23.T9 benchmark holder options; field run; recipe | 23.5-a/b/c | 3 | ✅ field run 2026-11-14: 20/20 with holder, no OOM; recipe gpu-sharing §5 |
 
 **Size:** XL, five contract surfaces. It is split into three PRs of size L
-([design §7–8](docs/gpu-sharing.md#7-size-and-pr-split)):
+([design §8–9](docs/gpu-sharing.md#8-size-and-pr-split)):
 1. the lock crate, configuration and agent;
 2. the protocol, the bridges and `engine unload`, then a field test;
 3. the desktop, `gpu hold` and the benchmark, then the field run of the
@@ -953,7 +953,7 @@ stage starts with its spec at gate G1. Sizes follow `ferrum-size`.
 | 5 | Stage 16 — the rest: 16.1 confirm all, 16.2 export only confirmed, 16.3 provenance of a corrected segment, 16.4 annotation mode | stage, M per story | open since Stage 16; 16.5–16.6 are done |
 | 6 | Stage 19 — reproducible radiomics and comparison (IBSI, textures, change over time) | stage, XL, G1 again | waits for the release of Stage 18 (its own rule); MR normalisation joins it |
 | 7 | Interactive view host for generative UI — delivered as Stages 25 and 26: `view serve`, the DeepSeek Harness plugin, the WebGPU panel ([ADR 0014](docs/decisions/0014-generative-ui-view-host.md), [ADR 0017](docs/decisions/0017-view-host-crate.md)) | ✅ done | follow-ups open: rotating tokens (an ADR first), the CPU overlay consolidation, WebGPU test automation |
-| 8 | Stage 23 — GPU sharing with an external model server ([#68](https://github.com/Kauter1989/ferrum/issues/68)) — code complete, PRs 1–3 merged | ✅ code; field run open | 23.T9: the 20-call recipe on the user's 12 GB card |
+| 8 | Stage 23 — GPU sharing with an external model server ([#68](https://github.com/Kauter1989/ferrum/issues/68)) — code complete, PRs 1–3 merged | ✅ field run 2026-11-14: 20/20 with holder, recipe §5 | — |
 | 9 | Stage 24 PR 2 — widget events and the example host (24.T4–T7, [design](docs/embeddable-viewer.md)) | feature, M | G1 ✅ G2 ✅; completes the embeddable viewer for the harness's Demo 4; the next feature proposed after the release |
 
 ### Backlog (feature or small, any time)

@@ -73,8 +73,9 @@ def test_the_holder_runs_under_gpu_hold_and_each_step_records_its_wait(tmp_path,
                     "--", "sleep", "30"]  # fmt: skip
     config = (tmp_path / "ws" / "ferrum-agent.toml").read_text()
     assert "gpu_capacity_mib = { bench = 12288 }" in config
+    assert "gpu_peaks_mib" not in config, "no peaks without --peaks-mib"
     report = json.loads(out.read_text())
-    assert report["external"] == {"holder": "sleep", "lease_mib": 6144, "capacity_mib": 12288}
+    assert report["external"] == {"holder": "sleep", "lease_mib": 6144, "capacity_mib": 12288, "peaks_mib": None}
     steps = {r["step"]: r for r in report["steps"]}
     assert steps["S2 segment interactive (ROI)"]["waited_s"] == 2.5
     assert steps["study open"]["waited_s"] == 0.0
@@ -104,6 +105,40 @@ def test_a_holder_needs_a_capacity(tmp_path, fake_cli):
     with pytest.raises(SystemExit) as e:
         bench.main(["--series", "x", "--ferrum-cli", str(cli), "--external-holder", "sleep 1"])
     assert e.value.code == 2
+
+
+# covers 23.5-a
+@pytest.mark.skipif(not os.path.exists("/proc/self/task"), reason="the holder's pid is read from /proc (Linux)")
+def test_peaks_mib_reaches_the_config_so_calls_fit_next_to_the_holder(tmp_path, fake_cli, capsys):
+    """Without an expected peak an engine takes the whole group and waits for
+    the holder; --peaks-mib writes the operator's value for every engine."""
+    bench = load()
+    cli, _ = fake_cli
+    out = tmp_path / "bench.json"
+    code = bench.main([
+        "--series", str(tmp_path / "ct.nii.gz"), "--modality", "CT",
+        "--interactive", "http://127.0.0.1:8765", "--automatic", "http://127.0.0.1:8766",
+        "--point", "v:1,2,3",
+        "--workspace", str(tmp_path / "ws"), "--ferrum-cli", str(cli),
+        "--capacity-mib", "11264", "--external-holder", "sleep 30", "--lease-mib", "4096",
+        "--peaks-mib", "6000", "--out", str(out),
+    ])  # fmt: skip
+    assert code == 0, capsys.readouterr().err
+    config = (tmp_path / "ws" / "ferrum-agent.toml").read_text()
+    assert 'gpu_peaks_mib = { "http://127.0.0.1:8765" = 6000, "http://127.0.0.1:8766" = 6000 }' in config
+    report = json.loads(out.read_text())
+    assert report["external"]["peaks_mib"] == 6000
+
+
+def test_a_holder_without_peaks_is_flagged(tmp_path, fake_cli, capsys):
+    bench = load()
+    cli, _ = fake_cli
+    code = bench.main([
+        "--series", str(tmp_path / "ct.nii.gz"), "--workspace", str(tmp_path / "ws"), "--ferrum-cli", str(cli),
+        "--capacity-mib", "12288", "--external-holder", "sleep 30", "--lease-mib", "6144",
+    ])  # fmt: skip
+    assert code == 0
+    assert "no --peaks-mib" in capsys.readouterr().err
 
 
 def test_waited_is_read_from_the_warning():
