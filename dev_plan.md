@@ -940,7 +940,7 @@ choice, no agent boundary).
 | F2.2 | no-follow bounded walk in `collect_files`; `RepositoryError::Limit` | F2.2-a, F2.2-b | [#99](https://github.com/Kauter1989/ferrum/pull/99) | ✅ |
 | F2.3 | the tests, red first; docs and CHANGELOG | F2.3 | [#99](https://github.com/Kauter1989/ferrum/pull/99) | ✅ |
 
-## Stage 27 — Identifier spans for host privacy layers (#74) 🚧 (feature, autonomous)
+## Stage 27 — Identifier spans for host privacy layers (#74) ✅ (feature, autonomous; PR #110 merged)
 
 Medical Harness de-identifies free text before it reaches a model, a log or
 a report ([#74](https://github.com/Kauter1989/ferrum/issues/74); P1 for the
@@ -966,11 +966,120 @@ library-API pattern of `ferrum_agent::decisions` (16.7); the reader lives in
 | 27.T2 the matcher: fold, names, initials, inflections, dates; `scan_identifiers` | 27.1-a/b | 1 | ✅ (#110) |
 | 27.T3 tests: exact spans (EN/RU), no values, not a command, errors; docs | 27.1-a/b/c | 1 | ✅ (#110) |
 
+## Stage 28 — Drive the view: `ferrum-view/1` state and agent commands (#70) 🚧 (stage, gated)
+
+**Track:** stage — a contract surface (the `ferrum-view/1` schema, new agent
+commands, a new workspace artifact). **Mode:** gated (G1 spec, G2 design,
+G3 merge). **Found by:** Medical Harness, Demo 4
+([#70](https://github.com/Kauter1989/ferrum/issues/70); P1).
+
+An agent drives what the person sees — open the lung window, go to slice 142,
+show segment 3, draw the long axis — without sitting in the render loop, and
+the person takes over at any time. What exists: the HTTP view host serves a
+2D state, input and events (Stage 25, `ferrum-view/1`), and the embeddable
+widget returns the frame's events as Rust types (Stage 24 PR 2, #109). What
+is missing: the versioned **ViewState** JSON contract, agent commands that
+set it, the `roi_drawn`/`camera_changed` events in JSON, and the binding to
+the workspace's source hash. No command creates a decision (those stay with
+`ferrum_agent::decisions`, 16.7).
+
+**Design constraint (layering).** `ferrum-agent` depends on neither
+`ferrum-app` nor `ferrum-view`. So the view state is a **workspace artifact**
+owned by `ferrum-io` (like `annotations.json`): the agent commands read and
+write it, and the live clients — the widget (`ferrum-ui`) and the host
+(`ferrum-view`) — apply it to their `Viewer` through a `ferrum-app` use case.
+The `ViewState` type lives in `ferrum-domain`. **In process first** (the
+issue): the widget applies the full state; the HTTP host adopts the artifact
+for its existing 2D controls now, and streaming the full state (camera, 3D)
+to other hosts is Stage 29.
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 28.1 | As a **harness developer**, I want a versioned view-state contract so that any client and the agent agree on what "the view" is. | [28.1-a] `ferrum-view/1` **ViewState**: `component` (`slice`/`mpr`/`volume`), `plane`, `slice` or `point`, `window`, `overlays`, `camera`, `selected_segment`, `tool`, `source_hash`, `revision`; a spec page and conformance fixtures (valid and invalid). [28.1-b] **Events** in JSON: `point_picked`, `roi_drawn`, `slice_changed`, `window_changed`, `camera_changed` (the host's `plane_changed`/`segments_changed` are kept), with `seq` and `dropped`; fixtures. The widget's Rust events (#109) get this JSON form (Stage 24 Q3). |
+| 28.2 | As a **clinician**, I want the agent to drive the view while I can take over at any moment. | [28.2-a] In process: applying a ViewState through the widget sets plane/slice/window/overlay/selected/tool/camera via a `Viewer` use case; the person's next input wins (no lock, no mode). [28.2-b] The HTTP host applies the artifact for its 2D controls (slice/plane/window/overlay); a field it cannot yet honour (camera/3D) is reported in the answer, not silently dropped. |
+| 28.3 | As a **harness developer**, I want agent commands to set and read the view, identical over CLI and MCP. | [28.3-a] `view set`, `view state`, `view events` with JSON Schemas; CLI and MCP give identical JSON; `commands.json` and `commands.md` regenerated; contract tests. [28.3-b] A contract test sets a state and reads back the events it produced. [28.3-c] No command creates a decision: review state is untouched (a test). |
+| 28.4 | As an **operator**, I want a stale view refused so the agent cannot drive a study that changed under it. | [28.4-a] ViewState carries the workspace `source_hash`; `view set` with a stale hash is `source_changed` and applies nothing (the decisions-API binding, 16.8). |
+| 28.5 | As an **operator**, I want no identifiers in the view state or events. | [28.5-a] The privacy scan covers the ViewState artifact, the events and the command envelopes; a study in a patient-named folder leaks neither the name nor the path (25.5-a extended). |
+
+**Success metric:** in the example host, an agent `view set` (lung window,
+slice 142, show segment 3) is reflected within one frame, the events read
+back match, and the person scrolls and takes over.
+
+**Size:** L, two PRs — (1) the contract, the artifact, the in-process apply
+and the JSON events; (2) the agent commands and their contract tests. A new
+ADR 0018 (the view-state contract). **Design:** `docs/view-state.md` (new)
+and a `docs/view-host.md` update; G2 fixes the artifact format and the apply
+use case.
+
+**Out of scope:** streaming the full ViewState (camera/3D/overlays/selected/
+tool) to the HTTP host and the browser — Stage 29; decisions through the
+view (they stay with `ferrum_agent::decisions`); remote exposure and TLS;
+several viewers per host.
+
+**Clarifications (`assumed:`, G2 to confirm):**
+- assumed: the view state is a workspace artifact (`view.json`) plus an event
+  log (`view-events.json`), owned by `ferrum-io`; the agent never links
+  `ferrum-app`/`ferrum-view`.
+- assumed: the `ViewState` type lives in `ferrum-domain`; the host keeps its
+  in-memory event ring and also persists it so `view events` reads the same
+  sequence.
+- assumed: the HTTP host honours the 2D subset in this stage and reports
+  unhonoured fields; full streaming is Stage 29.
+
+### Implementation
+
+| Task | What | Criteria | PR | State |
+|---|---|---|---|---|
+| 28.T1 `ViewState`/event types (domain), the JSON schema, spec page, conformance fixtures | 28.1-a/b | 1 | |
+| 28.T2 the artifact (io) + apply use case (app) + widget apply + JSON events + privacy | 28.2-a, 28.5-a | 1 | |
+| 28.T3 the host applies the 2D subset; `source_hash` → `source_changed` | 28.2-b, 28.4-a | 1 | |
+| 28.T4 `view set/state/events`, schemas, contract tests, CLI = MCP, docs | 28.3-a/b/c | 2 | |
+
+## Stage 29 — The view everywhere: full streaming, the browser panel, hardening 🚧 (stage, gated)
+
+**Track:** stage. **Mode:** gated (G1 spec, G2 design, G3 merge). Closes the
+out-of-scope of Stages 25–26 and the follow-ups of #91.
+
+Stage 28 gives the ViewState contract and the in-process apply; Stage 29
+streams the full state to other hosts, makes the browser panel a full client,
+and hardens the protocol and the rendering rule.
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 29.1 | As a **harness developer**, I want the full ViewState over HTTP, not only in process. | [29.1-a] The host serves `component`/`mpr`/`volume`, `camera`, `overlays`, `selected_segment`, `tool`; `POST /api/input` sets them; `camera_changed` and `roi_drawn` reach `/api/events` (closes Stage 25's MPR/3D deferral). [29.1-b] GPU/CPU parity for the new views (`gpu_parity.rs`). |
+| 29.2 | As a **clinician**, I want the browser panel to show the study fully. | [29.2-a] Segments and their overlay in the WebGPU panel. [29.2-b] The transfer-function editor. [29.2-c] Measurements in the panel. |
+| 29.3 | As a **harness developer**, I want a practical wire. | [29.3-a] Compressed or 16-bit volume transfer (a 512×512×252 study crosses the wire as 252 MB today). |
+| 29.4 | As an **operator**, I want a hardened protocol. | [29.4-a] A short-lived, rotating token for `ferrum-view/1` (an ADR first). |
+| 29.5 | As a **maintainer**, I want one overlay rule and a tested WebGPU path. | [29.5-a] Consolidate the CPU segment overlay — the third copy of the `slice.wgsl` rule — behind one rule with a parity case. [29.5-b] An automated test of the WebGPU path (a headed browser). |
+
+**Out of scope:** remote exposure and TLS; several viewers per host. The
+"tests that cannot fail" left by #91's review fold into 29.5 or a small
+track.
+
+**Size:** XL, several PRs; G2 plans the split. A new ADR for the rotating
+token.
+
+**Where the Stage 26 out-of-scope lands:** segments/overlay → 29.2-a; the
+transfer-function editor → 29.2-b; measurements → 29.2-c; compressed/16-bit
+transfer → 29.3-a; WebGPU test automation → 29.5-b; the rotating token →
+29.4-a; the CPU overlay consolidation → 29.5-a. Stage 25's MPR crosshair / 3D
+orbit / volume view over HTTP → 29.1.
+
+### Implementation
+
+| Task | What | Criteria | PR | State |
+|---|---|---|---|---|
+| 29.T1 the host streams the full ViewState + camera/roi events; parity | 29.1-a/b | TBD | |
+| 29.T2 the browser panel: segments/overlay, transfer editor, measurements | 29.2-a/b/c | TBD | |
+| 29.T3 compressed/16-bit volume transfer | 29.3-a | TBD | |
+| 29.T4 rotating token (ADR first) | 29.4-a | TBD | |
+| 29.T5 CPU overlay consolidation; WebGPU test automation | 29.5-a/b | TBD | |
+
 ---
 
 ## Roadmap
 
-Updated 2026-11-14, before the 0.4.0 release. Order is a proposal; each
+Updated 2026-11-15, before the 0.4.0 release. Order is a proposal; each
 stage starts with its spec at gate G1. Sizes follow `ferrum-size`.
 
 ### Next
@@ -983,9 +1092,11 @@ stage starts with its spec at gate G1. Sizes follow `ferrum-size`.
 | 4 | Stage 22 — PET/CT fusion (below) | stage, L, new ADR | the main way PET is read; needs a second volume in `Dataset` and `GpuSink` |
 | 5 | Stage 16 — the rest: 16.1 confirm all, 16.2 export only confirmed, 16.3 provenance of a corrected segment, 16.4 annotation mode | stage, M per story | open since Stage 16; 16.5–16.6 are done |
 | 6 | Stage 19 — reproducible radiomics and comparison (IBSI, textures, change over time) | stage, XL, G1 again | waits for the release of Stage 18 (its own rule); MR normalisation joins it |
-| 7 | Interactive view host for generative UI — delivered as Stages 25 and 26: `view serve`, the DeepSeek Harness plugin, the WebGPU panel ([ADR 0014](docs/decisions/0014-generative-ui-view-host.md), [ADR 0017](docs/decisions/0017-view-host-crate.md)) | ✅ done | follow-ups open: rotating tokens (an ADR first), the CPU overlay consolidation, WebGPU test automation |
+| 7 | Interactive view host for generative UI — delivered as Stages 25 and 26: `view serve`, the DeepSeek Harness plugin, the WebGPU panel ([ADR 0014](docs/decisions/0014-generative-ui-view-host.md), [ADR 0017](docs/decisions/0017-view-host-crate.md)) | ✅ done | follow-ups → Stage 29: rotating tokens (an ADR first), the CPU overlay consolidation, WebGPU test automation, the browser panel's segments/measurements |
 | 8 | Stage 23 — GPU sharing with an external model server ([#68](https://github.com/Kauter1989/ferrum/issues/68)) — code complete, PRs 1–3 merged | ✅ field run 2026-11-14: 20/20 with holder, recipe §5 | — |
-| 9 | Stage 24 PR 2 — widget events and the example host (24.T4–T7, [design](docs/embeddable-viewer.md)) | feature, M | G1 ✅ G2 ✅; completes the embeddable viewer for the harness's Demo 4; the next feature proposed after the release |
+| 9 | Stage 24 PR 2 — widget events and the example host (24.T4–T7, [design](docs/embeddable-viewer.md)) | ✅ done (#109) | — |
+| 10 | Stage 28 — drive the view: `ferrum-view/1` ViewState and agent commands ([#70](https://github.com/Kauter1989/ferrum/issues/70)) | stage, L, new ADR 0018, G1 | the harness's Demo 4; in-process first, the contract and the agent commands |
+| 11 | Stage 29 — the view everywhere: full streaming, the browser panel, hardening | stage, XL, G1 again | closes the out-of-scope of Stages 25–26 and the #91 follow-ups |
 
 ### Backlog (feature or small, any time)
 
