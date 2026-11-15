@@ -206,6 +206,7 @@ wasted rounds, each with the guard that now catches it. The skills in
 | `ferrum-field-test` | scripts for the user's GPU machine and their results |
 | `ferrum-release` | version bump, `develop` → `main`, `release.yml` |
 | `ferrum-report` | the HTML report: before a merge (G3, with a code map) and after it (phase 11) |
+| `ferrum-dashboard` | the development dashboard: generate, verify, publish to gh-pages (no CI minutes) |
 | `ferrum-lessons` | failures and successes, each with a guard; retro |
 
 `develop` and `main` change only through merged PRs. Pushing a feature

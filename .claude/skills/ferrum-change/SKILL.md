@@ -53,6 +53,7 @@ Find every row of the matrix your change touches, and plan its whole
 | The desktop UI | use cases in `ferrum-app` (`Viewer`), not in widgets; `cargo test -p ferrum --test ui` (L9) | UI tests |
 | The architecture or a decision | `docs/architecture.md`; a new ADR (existing ADRs are append-only) | review |
 | User-visible behaviour | `CHANGELOG.md` `[Unreleased]`; README if a feature row or a link changes | review |
+| The plan, architecture or a crate manifest (`dev_plan.md`, `docs/architecture.md`, `crates/*/Cargo.toml`) | regenerate the dashboard (`python scripts/dashboard/generate.py --ref HEAD`); publish after the merge (skill `ferrum-dashboard`) | hook G reminder |
 
 Layering: `ferrum` → `ferrum-app` → `ferrum-domain` ← `ferrum-io`;
 `ferrum-app` without wgpu/egui; `ferrum-agent` without the `gpu` feature;
