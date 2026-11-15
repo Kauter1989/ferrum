@@ -54,6 +54,10 @@ pub mod files {
     pub const SEGMENTS_NIFTI: &str = "segments.nii.gz";
     /// Segment metadata (`ferrum-segments` v1).
     pub const SEGMENTS_JSON: &str = "segments.json";
+    /// View state (`ferrum-view/1`, Stage 28).
+    pub const VIEW_STATE: &str = "view.json";
+    /// View event log (`ferrum-view/1`, Stage 28).
+    pub const VIEW_EVENTS: &str = "view-events.json";
     /// Prompts behind interactive engine segments (`ferrum-engine-inputs` v1).
     pub const ENGINE_INPUTS: &str = "engine_inputs.json";
     /// Directory of rendered images.
@@ -409,6 +413,91 @@ impl Workspace {
             return Ok(Vec::new());
         }
         read_engine_inputs(&path)
+    }
+
+    /// Saves the view state (`ferrum-view/1`, Stage 28) with its revision and
+    /// the study's source hash, atomically, and notifies the change. The
+    /// state holds numbers and labels only (28.5-a).
+    pub fn save_view_state(
+        &self,
+        state: &ferrum_domain::ViewState,
+        revision: u64,
+        source_hash: &str,
+    ) -> Result<(), IoError> {
+        let path = self.path(files::VIEW_STATE);
+        let doc = serde_json::json!({
+            "format": crate::view_state::VIEW_STATE_FORMAT,
+            "revision": revision,
+            "source_hash": source_hash,
+            "state": crate::view_state::state_to_json(state),
+        });
+        let tmp = partial_path(&path);
+        let bytes = serde_json::to_vec_pretty(&doc).map_err(|e| IoError::invalid(&path, e.to_string()))?;
+        std::fs::write(&tmp, bytes).map_err(|e| IoError::os(&path, e))?;
+        std::fs::rename(&tmp, &path).map_err(|e| IoError::os(&path, e))?;
+        changes::publish(&self.root, changes::Touched::ViewState);
+        Ok(())
+    }
+
+    /// Loads the view state, its revision and source hash, or `None` when no
+    /// state was saved (the client then uses the volume's own default).
+    pub fn load_view_state(&self) -> Result<Option<(ferrum_domain::ViewState, u64, String)>, IoError> {
+        let path = self.path(files::VIEW_STATE);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let bytes = std::fs::read(&path).map_err(|e| IoError::os(&path, e))?;
+        let doc: Value = serde_json::from_slice(&bytes).map_err(|e| IoError::parse(&path, e))?;
+        let revision = doc["revision"].as_u64().unwrap_or(0);
+        let source_hash = doc["source_hash"].as_str().unwrap_or_default().to_string();
+        let state = crate::view_state::state_from_json(&doc["state"]).map_err(|e| IoError::invalid(&path, e))?;
+        Ok(Some((state, revision, source_hash)))
+    }
+
+    /// Saves the view event log (`ferrum-view/1`, Stage 28), atomically, and
+    /// notifies the change. The log keeps the last 512 events; `next` is the
+    /// last sequence number and `dropped` counts the evicted ones.
+    pub fn save_view_events(
+        &self,
+        events: &[(u64, ferrum_domain::ViewEvent)],
+        next: u64,
+        dropped: u64,
+    ) -> Result<(), IoError> {
+        let path = self.path(files::VIEW_EVENTS);
+        let list: Vec<Value> = events.iter().map(|(seq, e)| crate::view_state::event_to_json(*seq, e)).collect();
+        let doc = serde_json::json!({
+            "format": crate::view_state::VIEW_STATE_FORMAT,
+            "next": next,
+            "dropped": dropped,
+            "events": list,
+        });
+        let tmp = partial_path(&path);
+        let bytes = serde_json::to_vec_pretty(&doc).map_err(|e| IoError::invalid(&path, e.to_string()))?;
+        std::fs::write(&tmp, bytes).map_err(|e| IoError::os(&path, e))?;
+        std::fs::rename(&tmp, &path).map_err(|e| IoError::os(&path, e))?;
+        changes::publish(&self.root, changes::Touched::ViewEvents);
+        Ok(())
+    }
+
+    /// Loads the view event log (empty when none was saved): the events with
+    /// their sequence numbers, the last sequence number and the dropped count.
+    pub fn load_view_events(&self) -> Result<(Vec<(u64, ferrum_domain::ViewEvent)>, u64, u64), IoError> {
+        let path = self.path(files::VIEW_EVENTS);
+        if !path.exists() {
+            return Ok((Vec::new(), 0, 0));
+        }
+        let bytes = std::fs::read(&path).map_err(|e| IoError::os(&path, e))?;
+        let doc: Value = serde_json::from_slice(&bytes).map_err(|e| IoError::parse(&path, e))?;
+        let next = doc["next"].as_u64().unwrap_or(0);
+        let dropped = doc["dropped"].as_u64().unwrap_or(0);
+        let mut events = Vec::new();
+        if let Some(list) = doc["events"].as_array() {
+            for item in list {
+                let parsed = crate::view_state::event_from_json(item).map_err(|e| IoError::invalid(&path, e))?;
+                events.push(parsed);
+            }
+        }
+        Ok((events, next, dropped))
     }
 
     /// Appends one entry to the audit log; a `time` field is added if

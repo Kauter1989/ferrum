@@ -30,6 +30,21 @@ impl SliceAxis {
         }
     }
 
+    /// Wire name: `sagittal`, `coronal` or `axial` (the `ferrum-view/1` form).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SliceAxis::Sagittal => "sagittal",
+            SliceAxis::Coronal => "coronal",
+            SliceAxis::Axial => "axial",
+        }
+    }
+
+    /// Inverse of [`SliceAxis::as_str`] (case-insensitive, also the plural).
+    pub fn parse(s: &str) -> Option<Self> {
+        let lower = s.to_ascii_lowercase();
+        Self::ALL.into_iter().find(|a| a.as_str() == lower || format!("{}s", a.as_str()) == lower)
+    }
+
     /// Index of the volume axis normal to the plane (0 = x, 1 = y, 2 = z).
     pub fn normal_axis(&self) -> usize {
         match self {

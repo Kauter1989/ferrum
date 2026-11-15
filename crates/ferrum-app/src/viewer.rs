@@ -22,6 +22,7 @@ mod ai;
 mod metrics;
 mod review;
 mod segments;
+mod view_state;
 mod volumes;
 mod workflow;
 

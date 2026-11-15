@@ -92,6 +92,12 @@ pub enum WorkspaceChange {
         /// single-volume series.
         key: Option<String>,
     },
+    /// The view state was written (`view.json`, Stage 28): a client applies
+    /// the new revision. A revision number only — no identifiers.
+    ViewStateChanged {
+        /// The new state revision.
+        revision: u64,
+    },
     /// A workspace file could not be read (not a regular file, too large,
     /// malformed or half written); its items keep their last known state
     /// until it can be read again.
@@ -107,6 +113,8 @@ pub(crate) enum Touched {
     Annotations,
     Segments,
     Manifest,
+    ViewState,
+    ViewEvents,
 }
 
 /// Largest JSON file read (annotations, segment metadata, manifest).
@@ -141,6 +149,8 @@ pub struct WorkspaceState {
     /// Per label, a hash of the voxels it holds in the label map.
     masks: Part<BTreeMap<u8, [u8; 32]>>,
     volume: Part<Option<String>>,
+    /// The revision of the view state (`view.json`, Stage 28).
+    view_revision: Part<Option<u64>>,
     /// The last poll held back a label map that changed without its
     /// metadata (a save may have been between its two renames).
     deferred: bool,
@@ -334,6 +344,12 @@ impl WorkspaceState {
         refresh(&mut self.volume, &root.join(files::MANIFEST), all || touched == Some(Touched::Manifest), |p| {
             Ok(read_json(p)?.as_ref().and_then(volume_key))
         });
+        refresh(
+            &mut self.view_revision,
+            &root.join(files::VIEW_STATE),
+            all || touched == Some(Touched::ViewState),
+            |p| Ok(read_json(p)?.and_then(|d| d["revision"].as_u64())),
+        );
         map && !meta
     }
 
@@ -378,12 +394,16 @@ impl WorkspaceState {
         if self.volume.value != next.volume.value {
             out.push(C::VolumeSwitched { key: next.volume.value.clone() });
         }
+        if self.view_revision.value != next.view_revision.value {
+            out.push(C::ViewStateChanged { revision: next.view_revision.value.unwrap_or(0) });
+        }
         let unreadable = |s: &Self| {
             [
                 (s.annotations.unreadable, files::ANNOTATIONS),
                 (s.segments.unreadable, files::SEGMENTS_JSON),
                 (s.masks.unreadable, files::SEGMENTS_NIFTI),
                 (s.volume.unreadable, files::MANIFEST),
+                (s.view_revision.unreadable, files::VIEW_STATE),
             ]
         };
         for ((was, file), (now, _)) in unreadable(self).into_iter().zip(unreadable(next)) {

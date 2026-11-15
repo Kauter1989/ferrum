@@ -22,6 +22,8 @@ pub struct SegmentationState {
     pub style: SegmentStyle,
     /// Fill opacity on slices, multiplied with each segment's opacity.
     pub fill_opacity: f32,
+    /// The selected segment's label, if any (Stage 28, `ferrum-view/1`).
+    pub selected: Option<u8>,
     /// Settings of the region tool.
     pub region: RegionSettings,
     /// Regions created so far (for their default names).
@@ -115,6 +117,7 @@ impl Default for SegmentationState {
             show: false,
             style: SegmentStyle::default(),
             fill_opacity: 1.0,
+            selected: None,
             region: RegionSettings::default(),
             region_job: None,
             last_region: None,
@@ -155,6 +158,16 @@ impl Viewer {
     /// Shows or hides the segment overlay.
     pub fn set_segments_shown(&mut self, show: bool) {
         self.segments.show = show;
+    }
+
+    /// Selects a segment by label (`None` clears the selection, Stage 28).
+    pub fn select_segment(&mut self, label: Option<u8>) {
+        self.segments.selected = label;
+    }
+
+    /// The selected segment's label, if any (Stage 28).
+    pub fn selected_segment(&self) -> Option<u8> {
+        self.segments.selected
     }
 
     /// Replaces the segmentation with `set` (`None` clears it), as a host
