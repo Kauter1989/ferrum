@@ -16,6 +16,13 @@ use serde_json::{json, Value};
 /// The format string every view-state document carries.
 pub const VIEW_STATE_FORMAT: &str = "ferrum-view/1";
 
+/// A saved view state: the state, its revision, and the study's source hash.
+pub type SavedViewState = (ferrum_domain::ViewState, u64, String);
+
+/// A saved event log: the events with their sequence numbers, the last
+/// sequence number, and the count of evicted events.
+pub type SavedViewEvents = (Vec<(u64, ferrum_domain::ViewEvent)>, u64, u64);
+
 /// The state object of `ferrum-view/1` (§3.1 of the design), without the
 /// `format`/`revision`/`source_hash` wrapper the workspace adds.
 pub fn state_to_json(state: &ViewState) -> Value {
@@ -277,7 +284,12 @@ mod tests {
             selected_segment: Some(3),
             tool: ViewTool::Probe,
             camera: Some(OrbitCamera::default()),
-            probe: Some(ViewProbe { voxel: [251, 198, 142], patient_mm: [12.4, -40.1, 88.1], value: 55.0, unit: "HU".into() }),
+            probe: Some(ViewProbe {
+                voxel: [251, 198, 142],
+                patient_mm: [12.4, -40.1, 88.1],
+                value: 55.0,
+                unit: "HU".into(),
+            }),
         }
     }
 

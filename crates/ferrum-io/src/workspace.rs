@@ -441,7 +441,7 @@ impl Workspace {
 
     /// Loads the view state, its revision and source hash, or `None` when no
     /// state was saved (the client then uses the volume's own default).
-    pub fn load_view_state(&self) -> Result<Option<(ferrum_domain::ViewState, u64, String)>, IoError> {
+    pub fn load_view_state(&self) -> Result<Option<crate::view_state::SavedViewState>, IoError> {
         let path = self.path(files::VIEW_STATE);
         if !path.exists() {
             return Ok(None);
@@ -481,7 +481,7 @@ impl Workspace {
 
     /// Loads the view event log (empty when none was saved): the events with
     /// their sequence numbers, the last sequence number and the dropped count.
-    pub fn load_view_events(&self) -> Result<(Vec<(u64, ferrum_domain::ViewEvent)>, u64, u64), IoError> {
+    pub fn load_view_events(&self) -> Result<crate::view_state::SavedViewEvents, IoError> {
         let path = self.path(files::VIEW_EVENTS);
         if !path.exists() {
             return Ok((Vec::new(), 0, 0));

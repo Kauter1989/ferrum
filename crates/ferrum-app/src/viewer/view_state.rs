@@ -6,9 +6,7 @@
 //! a state locks nothing and enters no mode. `apply_view_state` returns the
 //! events the change produced, so the caller records exactly what happened.
 
-use ferrum_domain::{
-    Overlays, ViewComponent, ViewEvent, ViewProbe, ViewState, ViewTool,
-};
+use ferrum_domain::{Overlays, ViewComponent, ViewEvent, ViewProbe, ViewState, ViewTool};
 use glam::DVec3;
 
 use super::{ViewMode, Viewer};

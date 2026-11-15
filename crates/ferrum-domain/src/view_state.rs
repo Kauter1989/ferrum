@@ -142,7 +142,11 @@ pub struct Overlays {
 
 impl Default for Overlays {
     fn default() -> Self {
-        Self { segments_shown: false, fill_opacity: crate::segmentation::DEFAULT_OPACITY, style: SegmentStyle::default() }
+        Self {
+            segments_shown: false,
+            fill_opacity: crate::segmentation::DEFAULT_OPACITY,
+            style: SegmentStyle::default(),
+        }
     }
 }
 

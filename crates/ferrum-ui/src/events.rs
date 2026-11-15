@@ -329,6 +329,9 @@ mod tests {
             to_view_event(&ViewerEvent::SliceChanged { indices: [1, 2, 3] }, &viewer),
             E::SliceChanged { plane: ferrum_domain::SliceAxis::Axial, slice_index: 3 }
         );
-        assert_eq!(to_view_event(&ViewerEvent::CameraChanged, &viewer), E::CameraChanged { camera: viewer.volume.camera });
+        assert_eq!(
+            to_view_event(&ViewerEvent::CameraChanged, &viewer),
+            E::CameraChanged { camera: viewer.volume.camera }
+        );
     }
 }

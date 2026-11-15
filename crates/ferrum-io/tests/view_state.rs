@@ -72,10 +72,7 @@ fn a_view_state_save_notifies_the_watcher() {
 
     ws.save_view_state(&ViewState::default(), 1, "hash").unwrap();
     let changes = watcher.poll();
-    assert!(
-        changes.iter().any(|c| matches!(c, WorkspaceChange::ViewStateChanged { revision: 1 })),
-        "{changes:?}"
-    );
+    assert!(changes.iter().any(|c| matches!(c, WorkspaceChange::ViewStateChanged { revision: 1 })), "{changes:?}");
 
     // a second save with a new revision is reported again
     ws.save_view_state(&ViewState::default(), 2, "hash").unwrap();

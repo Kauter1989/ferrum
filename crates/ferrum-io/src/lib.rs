@@ -33,7 +33,7 @@ pub use identifiers::{read_patient_identifiers, read_patient_identifiers_of_file
 pub use nifti::{read_label_nifti, read_nifti, write_label_nifti, write_nifti, NiftiRepository};
 pub use segments::{read_segments, segments_from_json, segments_json, write_segments};
 pub use view_state::{
-    event_from_json, event_to_json, state_from_json, state_to_json, VIEW_STATE_FORMAT,
+    event_from_json, event_to_json, state_from_json, state_to_json, SavedViewEvents, SavedViewState, VIEW_STATE_FORMAT,
 };
 pub use workspace::{sha256_file, SourceFile, Workspace, WorkspaceManifest, WorkspaceSource, WorkspaceStore};
 
