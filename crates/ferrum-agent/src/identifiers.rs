@@ -50,9 +50,12 @@ pub struct Span {
 }
 
 /// Scans `text` for the identifiers of the study in `workspace`: positions
-/// and kinds only, never values. The workspace's source is checked against
-/// the operator's read roots like every agent read. A NIfTI study carries no
-/// identifiers, so the result is empty.
+/// and kinds only, never values. The workspace's source and every recorded
+/// file are checked against the operator's read roots, and the sources are
+/// hash-verified, exactly as `Study::load` does — the identifiers are read
+/// from the recorded files, never from a fresh walk of the source folder
+/// (a planted symlink or file must not drive the masking). A NIfTI study
+/// carries no identifiers, so the result is empty.
 pub fn scan_identifiers(config: &AgentConfig, workspace: &Path, text: &str) -> Result<Vec<Span>, AgentError> {
     let root = config.resolve_workspace(workspace)?;
     if !root.join(ferrum_io::workspace::files::MANIFEST).exists() {
@@ -60,13 +63,23 @@ pub fn scan_identifiers(config: &AgentConfig, workspace: &Path, text: &str) -> R
             .hint("open a study first: study open --workspace <ws> <path>"));
     }
     let ws = ferrum_io::Workspace::open(&root)?;
-    let source = config.check_source(&ws.manifest().source.path)?;
-    let ids = ferrum_io::read_patient_identifiers(&source)?;
+    let src = ws.manifest().source.clone();
+    crate::study::refuse_parent_components(&src.path)?;
+    config.check_source(&src.path)?;
+    // every recorded file path is checked before it is read (as in #82)
+    let files = src.file_paths();
+    for path in &files {
+        crate::study::refuse_parent_components(path)?;
+        config.check_source(path)?;
+    }
+    ws.verify_sources()?;
+    let ids = ferrum_io::read_patient_identifiers_of_files(&files)?;
     Ok(spans_of(text, &ids))
 }
 
 /// One character of the folded text, with the byte range of the original
 /// character it came from (a Cyrillic character may fold to several).
+#[derive(Clone, Copy)]
 struct Folded {
     ch: char,
     start: usize,
@@ -85,12 +98,30 @@ fn fold(text: &str) -> Vec<Folded> {
             }
         }
     }
-    out
+    // Russian routinely writes е for ё: canonicalise the yo digraph to e
+    // so "Пётр", "Петр", "Petr" and "Pyotr" meet in one form (recall-biased).
+    let mut merged: Vec<Folded> = Vec::with_capacity(out.len());
+    let mut k = 0;
+    while k < out.len() {
+        if out[k].ch == 'y' && k + 1 < out.len() && out[k + 1].ch == 'o' {
+            merged.push(Folded { ch: 'e', start: out[k].start, end: out[k + 1].end });
+            k += 2;
+        } else {
+            merged.push(out[k]);
+            k += 1;
+        }
+    }
+    merged
 }
 
 /// The canonical form of one lowercase character: Cyrillic transliterated
-/// (digraphs included), everything else kept.
+/// (digraphs included), Latin diacritics stripped to the base letter,
+/// combining marks dropped, everything else kept.
 fn fold_char(c: char) -> Vec<char> {
+    // a combining mark (e.g. the dot of 'İ'.to_lowercase()) carries no letter
+    if ('\u{0300}'..='\u{036f}').contains(&c) {
+        return Vec::new();
+    }
     let s: &str = match c {
         'а' => "a",
         'б' => "b",
@@ -122,6 +153,17 @@ fn fold_char(c: char) -> Vec<char> {
         'ы' => "y",
         'ю' => "yu",
         'я' => "ya",
+        'à' | 'á' | 'â' | 'ä' | 'å' | 'ã' => "a",
+        'è' | 'é' | 'ê' | 'ë' => "e",
+        'ì' | 'í' | 'î' | 'ï' => "i",
+        'ò' | 'ó' | 'ô' | 'ö' | 'õ' | 'ø' => "o",
+        'ù' | 'ú' | 'û' | 'ü' => "u",
+        'ñ' => "n",
+        'ç' => "c",
+        'ß' => "ss",
+        'ý' | 'ÿ' => "y",
+        'æ' => "ae",
+        'œ' => "oe",
         _ => return vec![c],
     };
     s.chars().collect()
@@ -183,8 +225,8 @@ fn word_matches(word: &str, comp: &str) -> bool {
     wlen >= stem_len && wlen <= n + 3 && word.starts_with(&stem)
 }
 
-/// All spans of the identifiers in `text`, overlapping ones resolved to the
-/// longest.
+/// All spans of the identifiers in `text`, overlapping ones merged into
+/// one so no part of an identifier stays unmasked between two detections.
 fn spans_of(text: &str, ids: &PatientIdentifiers) -> Vec<Span> {
     let folded = fold(text);
     let ws = words(&folded);
@@ -249,16 +291,25 @@ fn group_span(folded: &[Folded], ws: &[Word], i: usize, comps: &[String]) -> Opt
 }
 
 /// Whether each word matches a distinct component (injective assignment).
+/// Backtracking, not first-fit: "Ivanovich Ivan Ivanov" must assign
+/// middle–family–given, which a greedy pass misses.
 fn assigns(texts: &[String], comps: &[String]) -> bool {
-    let mut used = vec![false; comps.len()];
-    for t in texts {
-        let hit = comps.iter().enumerate().find(|(j, c)| !used[*j] && word_matches(t, c));
-        match hit {
-            Some((j, _)) => used[j] = true,
-            None => return false,
+    fn fit(ti: usize, texts: &[String], comps: &[String], used: &mut [bool]) -> bool {
+        if ti == texts.len() {
+            return true;
         }
+        for (j, c) in comps.iter().enumerate() {
+            if !used[j] && word_matches(&texts[ti], c) {
+                used[j] = true;
+                if fit(ti + 1, texts, comps, used) {
+                    return true;
+                }
+                used[j] = false;
+            }
+        }
+        false
     }
-    true
+    fit(0, texts, comps, &mut vec![false; comps.len()])
 }
 
 /// One or two single-letter words after the family word, matching the
@@ -357,23 +408,27 @@ fn date_spans(folded: &[Folded], birth: &str, out: &mut Vec<Span>) {
     }
     let (y, m, d) = (&b[0..4], &b[4..6], &b[6..8]);
     let (mi, di) = (m.parse::<usize>().unwrap_or(0), d.parse::<usize>().unwrap_or(0));
-    let mut forms = vec![
-        format!("{y}{m}{d}"),
-        format!("{y}-{m}-{d}"),
-        format!("{y}.{m}.{d}"),
-        format!("{d}.{m}.{y}"),
-        format!("{d}/{m}/{y}"),
-        format!("{d}-{m}-{y}"),
-        format!("{m}/{d}/{y}"),
-        format!("{m}-{d}-{y}"),
-    ];
+    // both zero-padded and plain day/month: "1.1.1970" is the most common
+    // Russian numeric spelling
+    let (mn, dn) = (mi.to_string(), di.to_string());
+    let mut forms = vec![format!("{y}{m}{d}")];
+    for (mm, dd) in [(m, d), (mn.as_str(), dn.as_str())] {
+        forms.push(format!("{y}-{mm}-{dd}"));
+        forms.push(format!("{y}.{mm}.{dd}"));
+        forms.push(format!("{dd}.{mm}.{y}"));
+        forms.push(format!("{dd}/{mm}/{y}"));
+        forms.push(format!("{dd}-{mm}-{y}"));
+        forms.push(format!("{mm}/{dd}/{y}"));
+        forms.push(format!("{mm}-{dd}/{y}"));
+    }
     if (1..=12).contains(&mi) && (1..=31).contains(&di) {
-        let dn = di.to_string();
-        for name in month_names(mi) {
-            forms.push(format!("{dn} {name} {y}"));
-            forms.push(format!("{name} {dn} {y}"));
-            forms.push(format!("{dn} {name}, {y}"));
-            forms.push(format!("{name} {dn}, {y}"));
+        for day in [dn.as_str(), d] {
+            for name in month_names(mi) {
+                forms.push(format!("{day} {name} {y}"));
+                forms.push(format!("{name} {day} {y}"));
+                forms.push(format!("{day} {name}, {y}"));
+                forms.push(format!("{name} {day}, {y}"));
+            }
         }
     }
     for form in forms {
@@ -421,15 +476,17 @@ fn month_names(m: usize) -> Vec<String> {
     out
 }
 
-/// Sorts by start, keeps the longest at each position, drops overlaps.
+/// Sorts by start and merges overlapping spans into one (the first kind):
+/// dropping an overlap would leave part of an identifier unmasked between
+/// two detections ("Ivanov I. Ivan" — the given name after the initial).
 fn resolve_overlaps(mut spans: Vec<Span>) -> Vec<Span> {
     spans.sort_by(|a, b| a.start.cmp(&b.start).then((b.end - b.start).cmp(&(a.end - a.start))));
     let mut out: Vec<Span> = Vec::new();
     for s in spans {
-        if out.last().is_some_and(|last| s.start < last.end) {
-            continue;
+        match out.last_mut() {
+            Some(last) if s.start < last.end => last.end = last.end.max(s.end),
+            _ => out.push(s),
         }
-        out.push(s);
     }
     out
 }
@@ -481,5 +538,62 @@ mod tests {
         let text = "Liu and Li";
         let spans = spans_of(text, &ids("LI^WEI"));
         assert_eq!(spans.len(), 2, "{spans:?}");
+    }
+
+    #[test]
+    fn overlapping_detections_merge_into_one_span() {
+        // the given name after the initial must not stay unmasked
+        let text = "Ivanov I. Ivan";
+        let spans = spans_of(text, &ids("IVANOV^IVAN^IVANOVICH"));
+        assert_eq!(spans, vec![Span { start: 0, end: 14, kind: IdentifierKind::PatientName }]);
+        let text = "Ivanov Ivan I.";
+        let spans = spans_of(text, &ids("IVANOV^IVAN^IVANOVICH"));
+        assert_eq!(spans, vec![Span { start: 0, end: 14, kind: IdentifierKind::PatientName }]);
+    }
+
+    #[test]
+    fn a_reordered_triple_is_one_span() {
+        let text = "Ivanovich Ivan Ivanov";
+        let spans = spans_of(text, &ids("IVANOV^IVAN^IVANOVICH"));
+        assert_eq!(spans, vec![Span { start: 0, end: 21, kind: IdentifierKind::PatientName }]);
+    }
+
+    #[test]
+    fn yo_and_e_are_one_letter() {
+        let text = "Иванов Петр";
+        let spans = spans_of(text, &ids("IVANOV^ПЁТР"));
+        let start = text.find("Иванов").unwrap();
+        assert_eq!(spans, vec![Span { start, end: text.len(), kind: IdentifierKind::PatientName }]);
+        let text = "Ivanov Pyotr";
+        let spans = spans_of(text, &ids("IVANOV^ПЁТР"));
+        assert_eq!(spans, vec![Span { start: 0, end: 12, kind: IdentifierKind::PatientName }]);
+        let text = "Иванов Пётр";
+        let spans = spans_of(text, &ids("IVANOV^ПЕТР"));
+        let start = text.find("Иванов").unwrap();
+        assert_eq!(spans, vec![Span { start, end: text.len(), kind: IdentifierKind::PatientName }]);
+    }
+
+    #[test]
+    fn latin_diacritics_fold_to_the_base_letter() {
+        let text = "Müller Hans";
+        let spans = spans_of(text, &ids("MÜLLER^HANS"));
+        assert_eq!(spans, vec![Span { start: 0, end: text.len(), kind: IdentifierKind::PatientName }]);
+        let text = "MULLER";
+        let spans = spans_of(text, &ids("MÜLLER^HANS"));
+        assert_eq!(spans, vec![Span { start: 0, end: 6, kind: IdentifierKind::PatientName }]);
+    }
+
+    #[test]
+    fn unpadded_numeric_dates_are_found() {
+        for form in ["1.1.1970", "1/1/1970", "1970-1-1", "01 января 1970"] {
+            let text = format!("дата: {form}.");
+            let spans = spans_of(&text, &ids("IVANOV^IVAN"));
+            let start = text.find(form).unwrap();
+            assert_eq!(
+                spans,
+                vec![Span { start, end: start + form.len(), kind: IdentifierKind::BirthDate }],
+                "format {form}"
+            );
+        }
     }
 }

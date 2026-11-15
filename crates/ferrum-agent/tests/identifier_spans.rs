@@ -115,6 +115,27 @@ fn russian_initials_and_inflections_are_found() {
     let text = "выписка: И. Иванов";
     let spans = scan_identifiers(&config, Path::new("ct1"), text).unwrap();
     assert_eq!(spans, vec![at(text, "И. Иванов", IdentifierKind::PatientName)]);
+
+    // the full middle name after an initial must not stay unmasked
+    let text = "Иванов И. Иванович";
+    let spans = scan_identifiers(&config, Path::new("ct1"), text).unwrap();
+    assert_eq!(spans, vec![at(text, "Иванов И. Иванович", IdentifierKind::PatientName)]);
+}
+
+// covers 27.1-a
+#[test]
+fn diacritics_and_yo_match_the_header() {
+    let dir = tempfile::tempdir().unwrap();
+    let (config, _) = study(dir.path(), "MÜLLER^HANS");
+    let text = "Müller Hans kam am Montag";
+    let spans = scan_identifiers(&config, Path::new("ct1"), text).unwrap();
+    assert_eq!(spans, vec![at(text, "Müller Hans", IdentifierKind::PatientName)]);
+
+    let dir2 = tempfile::tempdir().unwrap();
+    let (config2, _) = study(dir2.path(), "ИВАНОВ^ПЁТР");
+    let text = "Иванов Петр на приёме";
+    let spans = scan_identifiers(&config2, Path::new("ct1"), text).unwrap();
+    assert_eq!(spans, vec![at(text, "Иванов Петр", IdentifierKind::PatientName)]);
 }
 
 // covers 27.1-a
@@ -151,6 +172,10 @@ fn the_birth_date_matches_the_common_formats() {
         "1 jan 1970",
         "1 января 1970",
         "1 январь 1970",
+        "1.1.1970",
+        "1/1/1970",
+        "1970-1-1",
+        "01 января 1970",
     ] {
         let text = format!("дата рождения: {form}.");
         let spans = scan_identifiers(&config, Path::new("ct1"), &text).unwrap();
@@ -237,4 +262,54 @@ fn a_missing_workspace_and_a_foreign_source_are_refused() {
     let closed = AgentConfig { read_roots: vec![dir.path().join("elsewhere")], ..config.clone() };
     let err = scan_identifiers(&closed, Path::new("ct1"), "Ivanov").unwrap_err();
     assert_eq!(err.code, ferrum_agent::ErrorCode::Forbidden);
+}
+
+// covers 27.1-a (security review of #110: the masking is driven by the
+// workspace's recorded, hash-verified files, not by a fresh folder walk)
+#[test]
+fn a_planted_file_does_not_drive_the_masking() {
+    let dir = tempfile::tempdir().unwrap();
+    let (config, _) = study(dir.path(), "IVANOV^IVAN^IVANOVICH");
+    let src = dir.path().join("incoming/series");
+    // junk that sorts first, and a valid DICOM of another patient
+    std::fs::write(src.join("000-junk.dcm"), b"not a dicom file").unwrap();
+    let other = dir.path().join("other");
+    write_series(&other, "OTHER^PERSON");
+    std::fs::copy(other.join("s0.dcm"), src.join("aaa-other.dcm")).unwrap();
+
+    let text = "Ivanov Ivan and Other Person";
+    let spans = scan_identifiers(&config, Path::new("ct1"), text).unwrap();
+    assert_eq!(spans, vec![at(text, "Ivanov Ivan", IdentifierKind::PatientName)]);
+}
+
+// covers 27.1-a
+#[test]
+fn a_swapped_source_file_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let (config, _) = study(dir.path(), "IVANOV^IVAN^IVANOVICH");
+    std::fs::write(dir.path().join("incoming/series/s0.dcm"), b"swapped").unwrap();
+    let err = scan_identifiers(&config, Path::new("ct1"), "Ivanov").unwrap_err();
+    assert_eq!(err.code, ferrum_agent::ErrorCode::SourceChanged);
+}
+
+// covers 27.1-a (security review of #110: a symlink must not lead the
+// reader outside the operator's read roots — the #82 vulnerability class)
+#[cfg(unix)]
+#[test]
+fn a_symlink_out_of_the_roots_is_not_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let (config, _) = study(dir.path(), "IVANOV^IVAN^IVANOVICH");
+    let outside = dir.path().join("outside");
+    write_series(&outside, "OUTSIDE^SECRET");
+    let src = dir.path().join("incoming/series");
+    std::os::unix::fs::symlink(outside.join("s0.dcm"), src.join("a.dcm")).unwrap();
+
+    // the io folder walk skips the symlink itself
+    let ids = ferrum_io::read_patient_identifiers(&src).unwrap();
+    assert_eq!(ids.name, "IVANOV^IVAN^IVANOVICH");
+
+    // and the scan masks the real patient, not the linked one
+    let text = "Ivanov Ivan and Outside Secret";
+    let spans = scan_identifiers(&config, Path::new("ct1"), text).unwrap();
+    assert_eq!(spans, vec![at(text, "Ivanov Ivan", IdentifierKind::PatientName)]);
 }

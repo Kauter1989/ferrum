@@ -14,15 +14,18 @@ use ferrum_domain::PatientIdentifiers;
 use crate::error::IoError;
 
 /// The patient identifiers of `path`: a DICOM file, a folder (the first
-/// readable DICOM file in name order — the tags are the series'), or a
-/// NIfTI file, which carries none (every field empty).
+/// readable DICOM file in name order — the tags are the series'; symlinks
+/// are skipped, as the source walk does), or a NIfTI file, which carries
+/// none (every field empty).
 pub fn read_patient_identifiers(path: &Path) -> Result<PatientIdentifiers, IoError> {
     if path.is_dir() {
         let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(path)
             .map_err(|e| IoError::os(path, e))?
             .filter_map(|e| e.ok())
+            // file_type() does not follow the link: a planted symlink must
+            // not lead the reader outside the operator's roots (#82 class)
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
             .map(|e| e.path())
-            .filter(|p| p.is_file())
             .collect();
         files.sort();
         for file in files {
@@ -33,6 +36,25 @@ pub fn read_patient_identifiers(path: &Path) -> Result<PatientIdentifiers, IoErr
         return Ok(PatientIdentifiers::default());
     }
     read_file(path)
+}
+
+/// The patient identifiers of a workspace's recorded series files: the
+/// first file that reads. The caller checks every path against the
+/// operator's roots and hash-verifies the sources first (as `Study::load`
+/// does); unlike the folder walk, this never discovers new files. When no
+/// file reads, the error is returned — not empty identifiers (fail closed).
+pub fn read_patient_identifiers_of_files(files: &[std::path::PathBuf]) -> Result<PatientIdentifiers, IoError> {
+    let mut last = None;
+    for file in files {
+        match read_file(file) {
+            Ok(ids) => return Ok(ids),
+            Err(e) => last = Some(e),
+        }
+    }
+    match last {
+        Some(e) => Err(e),
+        None => Ok(PatientIdentifiers::default()),
+    }
 }
 
 /// One file: DICOM headers stop before the pixel data; a NIfTI file has no
