@@ -312,6 +312,20 @@ fn a_crafted_long_identifier_is_capped_and_scans() {
     assert_eq!(spans, vec![at(&text, &prefix, IdentifierKind::PatientId)]);
 }
 
+// covers 27.1-a (security re-review of #110: a crafted manifest with no
+// recorded files must fail closed, not mask nothing)
+#[test]
+fn a_manifest_without_recorded_files_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let (config, ws) = study(dir.path(), "IVANOV^IVAN^IVANOVICH");
+    let manifest = ws.join("workspace.json");
+    let mut v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&manifest).unwrap()).unwrap();
+    v["source"]["files"] = serde_json::json!([]);
+    std::fs::write(&manifest, v.to_string()).unwrap();
+    let err = scan_identifiers(&config, Path::new("ct1"), "Ivanov").unwrap_err();
+    assert_eq!(err.code, ferrum_agent::ErrorCode::SourceChanged);
+}
+
 // covers 27.1-a (security review of #110: a symlink must not lead the
 // reader outside the operator's read roots — the #82 vulnerability class)
 #[cfg(unix)]

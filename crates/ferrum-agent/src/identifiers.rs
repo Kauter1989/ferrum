@@ -64,6 +64,11 @@ pub fn scan_identifiers(config: &AgentConfig, workspace: &Path, text: &str) -> R
     }
     let ws = ferrum_io::Workspace::open(&root)?;
     let src = ws.manifest().source.clone();
+    // a crafted manifest with no recorded files must fail closed, not
+    // mask nothing (security re-review of #110)
+    if src.files.is_empty() {
+        return Err(AgentError::new(ErrorCode::SourceChanged, "the workspace's manifest records no source files"));
+    }
     crate::study::refuse_parent_components(&src.path)?;
     config.check_source(&src.path)?;
     // every recorded file path is checked before it is read (as in #82)
