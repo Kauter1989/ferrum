@@ -1007,9 +1007,11 @@ back match, and the person scrolls and takes over.
 
 **Size:** L, two PRs — (1) the contract, the artifact, the in-process apply
 and the JSON events; (2) the agent commands and their contract tests. A new
-ADR 0018 (the view-state contract). **Design:** `docs/view-state.md` (new)
-and a `docs/view-host.md` update; G2 fixes the artifact format and the apply
-use case.
+ADR 0018 (the view-state contract). **Design:** [docs/view-state.md](docs/view-state.md),
+[ADR 0018](docs/decisions/0018-view-state-contract.md) (G2 design written,
+pending approval): the view state is a workspace artifact (`ferrum-io`), the
+`ViewState` type in `ferrum-domain`, the apply use case in `ferrum-app`; the
+agent links neither the app nor the host.
 
 **Out of scope:** streaming the full ViewState (camera/3D/overlays/selected/
 tool) to the HTTP host and the browser — Stage 29; decisions through the
