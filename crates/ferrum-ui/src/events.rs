@@ -217,6 +217,50 @@ pub(crate) fn frame_events(
     events
 }
 
+/// The `ferrum-view/1` contract form of a widget event (Stage 28, #70), so a
+/// host records what the person did in the same JSON the agent reads. The
+/// viewer supplies the active plane, the camera, and the probe's value and
+/// unit. No event is a decision; the mapping carries no identifiers.
+pub fn to_view_event(event: &ViewerEvent, viewer: &Viewer) -> ferrum_domain::ViewEvent {
+    use ferrum_domain::{RoiItem as Item, ViewEvent as E, ViewProbe};
+    match event {
+        ViewerEvent::PointPicked { point } => {
+            let value = viewer.probe.as_ref().map(|p| f64::from(p.value)).unwrap_or(0.0);
+            E::PointPicked {
+                probe: ViewProbe {
+                    voxel: point.voxel,
+                    patient_mm: point.patient_mm,
+                    value,
+                    unit: probe_unit(viewer).to_string(),
+                },
+            }
+        }
+        ViewerEvent::RoiDrawn { item } => {
+            let item = match item {
+                RoiItem::Annotation(id) => Item::Annotation(*id),
+                RoiItem::Segment(label) => Item::Segment(*label),
+            };
+            E::RoiDrawn { item }
+        }
+        ViewerEvent::SliceChanged { indices } => {
+            let plane = viewer.slices.axis;
+            E::SliceChanged { plane, slice_index: indices[plane.normal_axis()] }
+        }
+        ViewerEvent::WindowChanged { center, width } => E::WindowChanged { center: *center, width: *width },
+        ViewerEvent::CameraChanged => E::CameraChanged { camera: viewer.volume.camera },
+    }
+}
+
+/// The unit of a probe value: HU for a CT, raw otherwise (as the host writes).
+fn probe_unit(viewer: &Viewer) -> &'static str {
+    let modality = viewer.dataset().map(|d| d.metadata.modality.trim().to_ascii_uppercase()).unwrap_or_default();
+    if modality == "CT" {
+        "HU"
+    } else {
+        "raw"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -266,5 +310,25 @@ mod tests {
         let events = base.events(dragged, OrbitCamera::default(), false);
         assert_eq!(events, vec![ViewerEvent::WindowChanged { center: 60.0, width: 400.0 }]);
         assert!(base.events(dragged, OrbitCamera::default(), false).is_empty(), "given once");
+    }
+
+    // covers 28.1-b
+    #[test]
+    fn widget_events_map_to_the_contract_form() {
+        use ferrum_domain::ViewEvent as E;
+        let viewer = Viewer::new(std::sync::Arc::new(ferrum_io::CompositeRepository::default()));
+        assert_eq!(
+            to_view_event(&ViewerEvent::WindowChanged { center: 60.0, width: 400.0 }, &viewer),
+            E::WindowChanged { center: 60.0, width: 400.0 }
+        );
+        assert_eq!(
+            to_view_event(&ViewerEvent::RoiDrawn { item: RoiItem::Segment(3) }, &viewer),
+            E::RoiDrawn { item: ferrum_domain::RoiItem::Segment(3) }
+        );
+        assert_eq!(
+            to_view_event(&ViewerEvent::SliceChanged { indices: [1, 2, 3] }, &viewer),
+            E::SliceChanged { plane: ferrum_domain::SliceAxis::Axial, slice_index: 3 }
+        );
+        assert_eq!(to_view_event(&ViewerEvent::CameraChanged, &viewer), E::CameraChanged { camera: viewer.volume.camera });
     }
 }

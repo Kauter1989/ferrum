@@ -45,6 +45,6 @@ pub mod volume_view;
 pub mod widget;
 pub mod widgets;
 
-pub use events::{Point, RoiItem, ViewerEvent};
+pub use events::{to_view_event, Point, RoiItem, ViewerEvent};
 pub use gpu_bridge::install;
 pub use widget::ViewerWidget;

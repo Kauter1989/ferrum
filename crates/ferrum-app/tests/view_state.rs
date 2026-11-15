@@ -69,7 +69,7 @@ fn applying_a_state_produces_the_events_and_reads_back() {
         overlays: Overlays { segments_shown: true, fill_opacity: 0.4, style: SegmentStyle::FillAndOutline },
         selected_segment: Some(3),
         tool: ViewTool::Probe,
-        camera: Some(OrbitCamera::default()),
+        camera: Some(OrbitCamera { distance: 2.5, ..Default::default() }),
         probe: None,
     };
     let events = v.apply_view_state(&state);

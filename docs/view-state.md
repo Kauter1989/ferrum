@@ -63,8 +63,13 @@ ferrum-ui widget ─┐                                   ferrum-view host ─�
   becomes use cases) and `Viewer::view_state` (read it back).
 - `ferrum-agent` commands read/write the artifact through `ferrum-io`; they
   never link the app or the host.
-- `ferrum-ui` (widget) and `ferrum-view` (host) watch the artifact and apply
-  it; they record the events it produces.
+- The **host** that embeds the widget (and the `ferrum-view` host) watches the
+  artifact through `ferrum-io` and applies it with `Viewer::apply_view_state`.
+  `ferrum-ui` and `ferrum-app` do not depend on `ferrum-io` (layering), so the
+  widget itself does not read the artifact: it renders the `Viewer` the host
+  drives, and maps its frame events to the contract form
+  (`ferrum_ui::to_view_event`) for the host to record. The `ferrum-view` host
+  already depends on `ferrum-io` and watches the workspace.
 
 **In process first** (the issue): the widget applies the full state. The HTTP
 host adopts the artifact for its existing 2D controls in this stage and

@@ -82,3 +82,29 @@ fn a_view_state_save_notifies_the_watcher() {
     let changes = watcher.poll();
     assert!(changes.iter().any(|c| matches!(c, WorkspaceChange::ViewStateChanged { revision: 2 })), "{changes:?}");
 }
+
+// covers 28.5-a
+#[test]
+fn the_artifact_carries_no_path_or_patient_name() {
+    let dir = tempfile::tempdir().unwrap();
+    // a study folder named after a patient, as the privacy tests use
+    let root = dir.path().join("patient_Jane_Doe_1234");
+    std::fs::create_dir_all(&root).unwrap();
+    let ws = workspace(&root);
+    let state = ViewState {
+        plane: SliceAxis::Axial,
+        slice_index: 2,
+        window: WindowLevel::new(40.0, 400.0),
+        ..Default::default()
+    };
+    ws.save_view_state(&state, 1, "deadbeef").unwrap();
+    ws.save_view_events(&[(1, ViewEvent::SliceChanged { plane: SliceAxis::Axial, slice_index: 2 })], 1, 0).unwrap();
+
+    for file in ["view.json", "view-events.json"] {
+        let bytes = std::fs::read(root.join("ws").join(file)).unwrap();
+        let text = String::from_utf8_lossy(&bytes);
+        assert!(!text.contains("Jane"), "{file} leaks a patient name: {text}");
+        assert!(!text.contains("patient_"), "{file} leaks a folder name: {text}");
+        assert!(!text.contains("phantom.nii"), "{file} leaks a source path: {text}");
+    }
+}
