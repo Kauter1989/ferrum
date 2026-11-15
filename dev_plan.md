@@ -859,6 +859,9 @@ overlay consolidation, the tests that cannot fail that the review listed).
 embedding `ferrum-agent` v0.3.0 ([#82](https://github.com/Kauter1989/ferrum/issues/82),
 request 13 of `docs/ferrum-integration.md` there). Closes the S2 backlog
 item of the 0.4.0-prep security review (the same lexical root check).
+**Merged:** [#99](https://github.com/Kauter1989/ferrum/pull/99), merge
+`52bb981` (2026-11-14); issue #82 closed; lesson L49; final report in
+[docs/read-root-boundary/pr-99-report.html](docs/read-root-boundary/pr-99-report.html).
 
 **The defect.** `AgentConfig::check_source` compares a source path with
 `read_roots` lexically (`absolute` + `normalise`), so a symlink inside a
@@ -933,9 +936,9 @@ choice, no agent boundary).
 
 | Task | What | Criteria | PR | State |
 |---|---|---|---|---|
-| F2.1 | canonical comparison of the returned spelling in `check_source` / `resolve_workspace`; the load re-checks the manifest's file paths | F2.1-a, F2.1-b, F2.1-c | 1 | ✅ |
-| F2.2 | no-follow bounded walk in `collect_files`; `RepositoryError::Limit` | F2.2-a, F2.2-b | 1 | ✅ |
-| F2.3 | the tests, red first; docs and CHANGELOG | F2.3 | 1 | ✅ |
+| F2.1 | canonical comparison of the returned spelling in `check_source` / `resolve_workspace`; the load re-checks the manifest's file paths | F2.1-a, F2.1-b, F2.1-c | [#99](https://github.com/Kauter1989/ferrum/pull/99) | ✅ |
+| F2.2 | no-follow bounded walk in `collect_files`; `RepositoryError::Limit` | F2.2-a, F2.2-b | [#99](https://github.com/Kauter1989/ferrum/pull/99) | ✅ |
+| F2.3 | the tests, red first; docs and CHANGELOG | F2.3 | [#99](https://github.com/Kauter1989/ferrum/pull/99) | ✅ |
 
 ## Roadmap
 
