@@ -158,27 +158,25 @@ fn camera_from_json(value: &Value) -> Result<OrbitCamera, String> {
     if !distance.is_finite() || t.iter().any(|v| !v.is_finite()) || !fov_y.is_finite() {
         return Err("camera: finite distance, target and fov_y".into());
     }
-    // cast first, then validate: a huge f64 becomes f32 infinity (GPU device-loss
-    // risk, L40); a zero quaternion normalizes to NaN, so it is refused.
-    let orientation = Quat::from_xyzw(q[0] as f32, q[1] as f32, q[2] as f32, q[3] as f32);
-    let target = Vec3::new(t[0] as f32, t[1] as f32, t[2] as f32);
-    let distance = distance as f32;
-    let fov_y = fov_y as f32;
-    if !orientation.is_finite() || orientation.length() < 1e-6 {
-        return Err("camera: orientation is a finite, non-zero quaternion".into());
+    // Validate magnitudes in f64 BEFORE the f32 cast (GPU device-loss risk,
+    // L40): a large finite f64 (1e30) overflows f32 length² to infinity, and
+    // normalize() would divide by it to a zero quaternion -> degenerate matrix
+    // -> NaN uniforms. A zero quaternion and fov_y = 0 are degenerate too.
+    let q_len = q.iter().map(|v| v * v).sum::<f64>().sqrt();
+    if !q_len.is_finite() || !(1e-6..=1e6).contains(&q_len) {
+        return Err("camera: orientation is a non-zero quaternion of sane magnitude".into());
     }
-    if !target.is_finite() || !distance.is_finite() || !fov_y.is_finite() {
-        return Err("camera: finite distance, target and fov_y".into());
+    if t.iter().any(|v| v.abs() > 1e6) || distance.abs() > 1e6 {
+        return Err("camera: distance and target of sane magnitude".into());
     }
-    if !(0.0..std::f32::consts::PI).contains(&fov_y) {
+    if fov_y <= 0.0 || fov_y >= std::f64::consts::PI {
         return Err("camera: fov_y in (0, pi)".into());
     }
-    Ok(OrbitCamera {
-        orientation: orientation.normalize(),
-        distance: distance.clamp(OrbitCamera::MIN_DISTANCE, OrbitCamera::MAX_DISTANCE),
-        target,
-        fov_y,
-    })
+    // every magnitude is now bounded, so the f32 cast cannot overflow
+    let orientation = Quat::from_xyzw(q[0] as f32, q[1] as f32, q[2] as f32, q[3] as f32).normalize();
+    let target = Vec3::new(t[0] as f32, t[1] as f32, t[2] as f32);
+    let distance = (distance as f32).clamp(OrbitCamera::MIN_DISTANCE, OrbitCamera::MAX_DISTANCE);
+    Ok(OrbitCamera { orientation, distance, target, fov_y: fov_y as f32 })
 }
 
 fn probe_to_json(probe: &ViewProbe) -> Value {
@@ -348,8 +346,18 @@ mod tests {
         assert!(state_from_json(&cam(json!([0, 0, 0, 0]), 2.0, 0.8)).is_err());
         // a distance beyond f32 range becomes infinity (1e30 is still finite in f32)
         assert!(state_from_json(&cam(json!([0, 0, 0, 1]), 1e40, 0.8)).is_err());
-        // fov outside (0, pi)
+        // fov outside (0, pi) — including the degenerate fov = 0 (tan(0) = 0)
         assert!(state_from_json(&cam(json!([0, 0, 0, 1]), 2.0, 4.0)).is_err());
+        assert!(state_from_json(&cam(json!([0, 0, 0, 1]), 2.0, 0.0)).is_err());
+        // a large FINITE quaternion: f32 length² overflows to infinity and
+        // normalize() would yield zero — refused in f64 before the cast
+        assert!(state_from_json(&cam(json!([1e30, 0, 0, 0]), 2.0, 0.8)).is_err());
+        assert!(state_from_json(&cam(json!([1e38, 1e38, 1e38, 1e38]), 2.0, 0.8)).is_err());
+        // a huge target is refused too
+        assert!(state_from_json(
+            &json!({ "camera": { "orientation": [0, 0, 0, 1], "distance": 2.0, "target": [1e30, 0, 0], "fov_y": 0.8 } })
+        )
+        .is_err());
         // a window of 1e300 becomes f32 infinity
         assert!(state_from_json(&json!({ "window": { "center": 1e300, "width": 1.0 } })).is_err());
         assert!(state_from_json(&json!({ "window": { "center": 0.0, "width": 1e300 } })).is_err());

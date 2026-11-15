@@ -493,3 +493,40 @@ fn the_gpu_backend_draws_the_same_slice_as_the_cpu() {
         assert_eq!(&cpu_px[i..i + 3], &[230, 85, 75], "the CPU draws the outline at ({x}, {y})");
     }
 }
+
+// covers 28.2-a/b — the host applies a written view artifact within a refresh;
+// the events are persisted for the agent; the person takes over and is not
+// reverted by a later refresh.
+#[test]
+fn the_host_applies_a_view_artifact_and_the_person_takes_over() {
+    let f = fixture(false);
+    let mut session = Session::open(&f.workspace, BackendPreference::Cpu).unwrap();
+    let ws = Workspace::open(&f.workspace).unwrap();
+    let state = ferrum_domain::ViewState {
+        plane: SliceAxis::Coronal,
+        slice_index: 5,
+        window: WindowLevel::new(-600.0, 1500.0),
+        camera: Some(Default::default()),
+        ..Default::default()
+    };
+    ws.save_view_state(&state, 1, "hash").unwrap();
+
+    assert!(session.refresh(), "the artifact change is applied");
+    let doc = session.state_json().unwrap();
+    assert_eq!(doc["plane"], "coronal");
+    assert_eq!(doc["slice_index"], 5);
+    assert_eq!(doc["window"]["center"], -600.0);
+    assert!(doc["unhonoured"].as_array().unwrap().contains(&Value::from("camera")), "{doc}");
+
+    // the events were persisted, so an agent reads the same sequence
+    let (events, next, _) = ws.load_view_events().unwrap();
+    assert!(next >= 1);
+    assert!(events.iter().any(|(_, e)| matches!(e, ferrum_domain::ViewEvent::PlaneChanged { .. })));
+
+    // the person takes over: a slice input wins, and a later refresh (no new
+    // artifact revision) does not revert it
+    session.input(br#"{"slice": 2}"#).unwrap();
+    assert_eq!(session.state_json().unwrap()["slice_index"], 2);
+    session.refresh();
+    assert_eq!(session.state_json().unwrap()["slice_index"], 2, "the person's input is not reverted");
+}
