@@ -346,8 +346,8 @@ mod tests {
         let cam = |orientation: Value, distance: f64, fov_y: f64| json!({ "camera": { "orientation": orientation, "distance": distance, "target": [0, 0, 0], "fov_y": fov_y } });
         // a zero quaternion normalizes to NaN
         assert!(state_from_json(&cam(json!([0, 0, 0, 0]), 2.0, 0.8)).is_err());
-        // a huge distance becomes f32 infinity
-        assert!(state_from_json(&cam(json!([0, 0, 0, 1]), 1e30, 0.8)).is_err());
+        // a distance beyond f32 range becomes infinity (1e30 is still finite in f32)
+        assert!(state_from_json(&cam(json!([0, 0, 0, 1]), 1e40, 0.8)).is_err());
         // fov outside (0, pi)
         assert!(state_from_json(&cam(json!([0, 0, 0, 1]), 2.0, 4.0)).is_err());
         // a window of 1e300 becomes f32 infinity
