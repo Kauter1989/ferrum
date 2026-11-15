@@ -134,3 +134,7 @@ jobs:
           ruff format --check "${files[@]}"
       - name: Claude Code hook tests
         run: python3 .claude/hooks/test_hooks.py
+      - name: Install pytest
+        run: pipx install pytest
+      - name: Dashboard generator tests (Stage 30)
+        run: pytest tests/dashboard -q

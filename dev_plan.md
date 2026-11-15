@@ -1079,6 +1079,73 @@ orbit / volume view over HTTP → 29.1.
 
 ---
 
+## Stage 30 — Development dashboard 🚧 (feature, autonomous)
+
+The maintainer and the G3 reviewer read the plan, the coverage report and
+the per-PR HTML reports separately; nothing shows the whole picture —
+which features are in the latest release, which are merged into `develop`
+but unreleased, which are in development, which are planned — nor the
+crate architecture next to it. This stage adds a self-contained dashboard
+generated from the repository itself: `dev_plan.md` at the release tag and
+at the target revision, `cargo metadata`, the `covers` convention of
+`ferrum-analyze`, and the report template's palette. The dashboard is a
+derived view: no status is entered by hand, and generation runs locally in
+the workflow (skill `ferrum-dashboard`, PR 3), not in CI — CI minutes stay
+for the tests (L34). Publication is a push to a `gh-pages` branch that
+GitHub Pages serves from the branch, without Actions minutes.
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 30.1 | As a **maintainer**, I want the plan parsed mechanically at two revisions so that the dashboard never drifts from `dev_plan.md`. | [30.1-a] The generator parses every `## Stage N` section of a fixture plan: number, title, heading marker (✅/🚧/📋), story rows `N.k`, criteria `[N.k-x]` with inline ✅ and PR references; struck-through criteria (`~~[N.k-x]~~`) are excluded; letter stages (F1/F2), the Roadmap's draft stages (`### Stage N`) and early stages whose criteria carry no IDs parse as story-level units with the heading's marker; Implementation tables are recognised by their header and their rows are not stories; the parsed structure equals an exact expected fixture. [30.1-b] Lifecycle is derived per criterion and per stage from two revisions: `released` when done at the latest `v*` tag reachable from `origin/main`; `develop` when done at the target revision but not at the tag (or absent at the tag); `progress` when not done and the heading is 🚧; `planned` when not done and the heading is 📋; done means an inline ✅ or a ✅ heading. A fixture repository (tag + target) yields exact buckets, including a lagging heading (stage 🚧, criterion ✅ with a merged PR → criterion `develop`); a stage's bucket is `unknown` > `progress` > `develop` > `released` > `planned` over its criteria, and its counts per bucket are exact. [30.1-c] A criterion's verification reuses the `ferrum-analyze` convention: code files citing `covers N.k-x` (the same extensions and skipped directories) and docs validation-table rows naming the ID with `visual`/`field`/`manual`; the output names the citing files and levels. [30.1-d] The crate graph comes from `cargo metadata --no-deps --format-version 1` (fallback: the workspace `Cargo.toml` when cargo is unavailable): nodes are the workspace crates with their `description`, edges the intra-workspace dependencies; the declared layering (CLAUDE.md) is checked — dependencies point inward through the tier table, with the documented same-tier pairs, `ferrum-app` without wgpu/egui and `ferrum-gpu-lock` standalone; every violating edge is named; a crate changed since the release tag is marked. [30.1-e] Output is deterministic and clean: two runs on the same inputs produce byte-identical `data.json` (sorted keys; the stamp — source SHAs, tag, target commit date — is derived from git, not the wall clock, and lives in one `meta` block); no absolute machine path (drive letter, `/home/`, `/Users/`, `/mnt/`) appears anywhere in the output. [30.1-f] The generator refuses to guess: an unknown heading marker or a story row without criteria under a ✅/🚧 heading produces a named warning in `meta.warnings` and the item is marked `unknown`, never silently defaulted (L37 family). [30.1-g] CI runs the dashboard tests: the `python-lint` job installs pytest and runs `tests/dashboard`; `analyze.py --stage 30` exits 0 before the PR. |
+
+**Success metrics:** generation ≤ 5 s on this repository (measured);
+byte-identical `data.json` on repeated runs (test). The page metrics
+(`index.html` ≤ 300 KB, zero external requests) join with row 30.2 in PR 2.
+
+**Out of scope:** a live backend or client-side GitHub API calls; any
+change to the crates; CI generation (the skill generates locally, PR 3);
+the page itself (30.2, PR 2); the interactive graph, filters and search
+(30.3, PR 3); the publish flow, the skill and the hooks (30.4, PR 3);
+patient data — the dashboard holds only plan and code metadata.
+
+**Clarifications:**
+- assumed: three M PRs (data engine; page; interactivity + workflow
+  integration), autonomous mode per `ferrum-size` budgets (≤ 1500 lines,
+  ≤ 25 files each). The measured whole-feature diff crossed M (1844
+  lines), so it was split at the module boundary (L36); the spec grows by
+  row 30.2 in PR 2 and rows 30.3–30.4 in PR 3.
+- assumed: "latest release" is the latest `v*` tag reachable from
+  `origin/main` (`git describe --tags --abbrev=0`), never the Cargo.toml
+  version or the Roadmap prose — both lag (the Roadmap says "before the
+  0.4.0 release" while v0.4.0 is tagged).
+- assumed: the generator lives in `scripts/dashboard/` and its tests in
+  `tests/dashboard/`, because `analyze.py` walks those directories and
+  skips `.claude/` — criterion citations must be visible to ferrum-analyze.
+- assumed: criterion lifecycle refinement: ✅-at-tag is primary; a cited
+  merged PR (`(#N)` in a merge commit) is checked with
+  `git merge-base --is-ancestor <merge> <tag>`; `covers` citations at the
+  tag cross-check. A heading that lags its criteria is surfaced as a
+  warning, not silently trusted.
+- assumed: the worktree `target/dashboard` holds this work because the
+  main tree carries concurrent Stage 28 work (`feat/70-view-state`,
+  uncommitted); the main tree is never touched.
+- assumed (PR 3, recorded for the design): publication branch `gh-pages`
+  served by Pages from the branch (no Actions minutes; the 10 builds/hour
+  soft limit is ample); hooks J/E get an explicit exception for it; the
+  user approved this design in chat on 2026-11-15.
+
+### Implementation
+
+| Task | What | Criteria | PR | State |
+|---|---|---|---|---|
+| 30.T1 generator: plan parser, lifecycle, coverage, crate graph, deterministic output | 30.1-a…f | 1 | |
+| 30.T2 page core: template, colours/badges, stage cards, criteria links, crate table, footer | 30.2-a…d (row added in PR 2) | 2 | |
+| 30.T3 CI: pytest step in `python-lint` | 30.1-g | 1 | |
+| 30.T4 interactivity: SVG graph, filters, search, popup colours (L35) | 30.3 (spec in PR 3) | 3 | |
+| 30.T5 skill `ferrum-dashboard`, hooks J/E/G/H, publish flow, integration | 30.4 (spec in PR 3) | 3 | |
+
+---
+
 ## Roadmap
 
 Updated 2026-11-15, before the 0.4.0 release. Order is a proposal; each
