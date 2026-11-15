@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FERRUM · PR #117 — дашборд разработки: движок данных (Stage 30, PR 1)</title>
+<style>
+  :root {
+    --bg: #fbfbfd; --fg: #1d1f26; --muted: #5b6070; --line: #e2e5ec;
+    --accent: #1f6feb; --ok: #1a7f37; --warn: #9a6700; --bad: #b42318;
+    --card: #ffffff; --code: #f3f4f7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12141a; --fg: #e6e7ea; --muted: #a2a8b6; --line: #2a2e38;
+      --accent: #6ba6ff; --ok: #4ac26b; --warn: #d4a72c; --bad: #ff7b72;
+      --card: #191c23; --code: #1f232c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.6 -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+  main { max-width: 1080px; margin: 0 auto; padding: 40px 24px 80px; }
+  h1 { font-size: 30px; line-height: 1.25; margin: 0 0 8px; letter-spacing: -0.02em; }
+  h2 { font-size: 21px; margin: 44px 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 16px; margin: 26px 0 8px; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 28px; }
+  .pill { font-size: 13px; padding: 3px 10px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--card); color: var(--muted); }
+  .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px 20px; margin: 14px 0; }
+  code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 13px;
+    background: var(--code); padding: 1px 5px; border-radius: 4px; }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 14px; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .tag { font-size: 12px; font-weight: 600; padding: 2px 7px; border-radius: 5px; white-space: nowrap; }
+  .t-block { background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--bad); }
+  .t-should { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+  .t-nit { background: color-mix(in srgb, var(--muted) 16%, transparent); color: var(--muted); }
+  .t-fixed { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+  .stat { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+  .stat b { display: block; font-size: 26px; line-height: 1.2; }
+  .stat span { color: var(--muted); font-size: 13px; }
+  .diagram { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin: 16px 0; overflow-x: auto; color: var(--fg); }
+  .diagram svg { display: block; width: 100%; min-width: 720px; height: auto; }
+  .diagram .node { fill: var(--code); stroke: var(--line); stroke-width: 1; }
+  .diagram .node.accent { fill: color-mix(in srgb, var(--accent) 12%, var(--code)); stroke: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+  .diagram .node.strong { fill: color-mix(in srgb, var(--ok) 12%, var(--code)); stroke: color-mix(in srgb, var(--ok) 45%, var(--line)); }
+  .diagram .n-title { fill: var(--fg); font-size: 15px; font-weight: 600; text-anchor: middle; }
+  .diagram .n-sub { fill: var(--muted); font-size: 12px; text-anchor: middle; }
+  .diagram .zone { fill: var(--muted); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; font-weight: 600; }
+  .diagram .edge { fill: none; stroke: currentColor; stroke-opacity: .45; stroke-width: 1.6; }
+  .diagram .edge.dashed { stroke-dasharray: 5 4; }
+  .diagram .e-label { fill: var(--muted); font-size: 11.5px; text-anchor: middle; }
+  .diagram-caption { color: var(--muted); font-size: 13px; margin: -4px 0 18px; }
+  ul { padding-left: 22px; }
+  li { margin: 4px 0; }
+  .note { border-left: 3px solid var(--accent); padding-left: 14px; color: var(--muted); margin: 14px 0; }
+  a { color: var(--accent); }
+  footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>PR #117 — дашборд разработки: движок данных</h1>
+<p class="sub">Финальный отчёт (фаза 11): архитектура, анализ кода, история ревью. FERRUM, ноябрь 2026. Описывает head SHA <code>bc0b261</code>, смерженный в <code>develop</code> коммитом <code>a375300</code> (PR #117, 2026-11-16).</p>
+
+<div class="meta">
+  <span class="pill">Ветка <code>feat/dashboard</code> → <code>develop</code></span>
+  <span class="pill ok">смержен 2026-11-16 · a375300</span>
+  <span class="pill">3 коммита: e09456f + cb9be83 + bc0b261</span>
+  <span class="pill">7 файлов, +1 407 / −0</span>
+  <span class="pill ok">Размер M — в бюджете (≤1500 / ≤25)</span>
+</div>
+
+<div class="grid">
+  <div class="stat"><b>452</b><span>строки: <code>scripts/dashboard/generate.py</code> (stdlib + git)</span></div>
+  <div class="stat"><b>19</b><span>pytest-тестов, real-git фикстуры</span></div>
+  <div class="stat"><b>6</b><span>критериев 30.1-a,b,c,e,f,g — все покрыты (analyze exit 0)</span></div>
+  <div class="stat"><b>2</b><span>находки ревью: исправлена + перенесена в PR 2 (size gate)</span></div>
+  <div class="stat"><b>0</b><span>предупреждений на реальном плане; 1.8–2.1 с генерация</span></div>
+</div>
+
+<h2>1. Архитектурные изменения</h2>
+
+<p>
+  Задача (Stage 30): один интерактивный дашборд — архитектура и статус каждой фичи,
+  синхронизированный с <code>dev_plan.md</code>, с цветом по жизненному циклу
+  (в релизе / в develop без релиза / в разработке / план), публикация на GitHub Pages
+  без CI-минут. Whole feature измерен в 1844 строки (L); автономный режим допускает M —
+  работа разбита на три PR по границе модулей (L36): <b>PR 1 — план-стейт движок</b>
+  (этот PR), PR 2 — граф крейтов (30.1-d, зарезервирован) + self-contained страница
+  (рендерер измерен: 224 КБ ≤ 300 КБ), PR 3 — интерактив, скилл
+  <code>ferrum-dashboard</code>, хуки J/E/G/H и публикация <code>gh-pages</code>.
+  Фиксы ревью кратко подняли PR 1 до 1576 — граф крейтов перенесён в PR 2,
+  чтобы поставленный срез остался в M (ferrum-size §4).
+</p>
+
+<h3>Добавленные модули</h3>
+<table>
+  <thead><tr><th>Модуль</th><th>Роль</th><th class="num">Строк</th><th>Ключевое</th></tr></thead>
+  <tbody>
+    <tr><td><code>scripts/dashboard/generate.py</code></td>
+      <td>Агрегат <code>dashboard/1</code> (<code>data.json</code>) из закоммиченного состояния: план на теге релиза и на целевой ревизии, жизненные циклы, покрытие критериев.</td>
+      <td class="num">452</td><td>Детерминизм; git-штампы; отказ вместо угадывания (L37).</td></tr>
+    <tr><td><code>tests/dashboard/</code></td>
+      <td>19 тестов: точные фикстуры парсинга; real-git репозиторий (тег v0.1.0, PR #5 до тега, #6 после, #7 release-only, (#99) в теле коммита).</td>
+      <td class="num">495</td><td>Каждый тест цитирует критерий (<code># covers 30.1-x</code>).</td></tr>
+    <tr><td><code>docs/dashboard.md</code></td>
+      <td>Дизайн: контракт, правила циклов, модель лееринга (PR 2), план валидации, разбивка.</td>
+      <td class="num">281</td><td>Проверка конституции: ни один крейт не меняется.</td></tr>
+    <tr><td><code>.github/workflows/ci.yml</code></td>
+      <td><code>python-lint</code>: установка pytest и прогон <code>tests/dashboard</code>.</td>
+      <td class="num">+4</td><td>Тесты дашборда исполняются в CI (30.1-g).</td></tr>
+  </tbody>
+</table>
+
+<h3>Связи</h3>
+<div class="diagram">
+<svg viewBox="0 0 900 260" aria-label="Поток данных: две ревизии плана и git grep/log входят в generate.py, который пишет data.json; граф крейтов и страница — PR 2">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text class="zone" x="20" y="24">источники (git, закоммиченное состояние)</text>
+  <rect class="node" x="20" y="40" width="210" height="52" rx="8"/>
+  <text class="n-title" x="125" y="62">dev_plan.md @ tag</text>
+  <text class="n-sub" x="125" y="80">git describe origin/main</text>
+  <rect class="node" x="20" y="110" width="210" height="52" rx="8"/>
+  <text class="n-title" x="125" y="132">dev_plan.md @ ref</text>
+  <text class="n-sub" x="125" y="150">HEAD / origin/develop</text>
+  <rect class="node" x="20" y="180" width="210" height="52" rx="8"/>
+  <text class="n-title" x="125" y="202">git grep / git log --all</text>
+  <text class="n-sub" x="125" y="220">покрытие · merge subjects</text>
+  <rect class="node accent" x="370" y="90" width="220" height="100" rx="10"/>
+  <text class="n-title" x="480" y="125">generate.py</text>
+  <text class="n-sub" x="480" y="145">парсер · циклы · ancestry</text>
+  <text class="n-sub" x="480" y="162">детерминизм · warnings</text>
+  <rect class="node strong" x="700" y="105" width="180" height="70" rx="10"/>
+  <text class="n-title" x="790" y="135">data.json</text>
+  <text class="n-sub" x="790" y="155">dashboard/1</text>
+  <path class="edge" d="M 230 66 C 310 66 310 115 370 115" marker-end="url(#arr)"/>
+  <path class="edge" d="M 230 136 L 370 140" marker-end="url(#arr)"/>
+  <path class="edge" d="M 230 206 C 310 206 310 165 370 165" marker-end="url(#arr)"/>
+  <path class="edge" d="M 590 140 L 700 140" marker-end="url(#arr)"/>
+  <text class="e-label" x="645" y="130">sorted keys</text>
+  <path class="edge dashed" d="M 790 175 C 790 235 560 245 480 245 C 420 245 400 215 390 190" marker-end="url(#arr)"/>
+  <text class="e-label" x="620" y="238">PR 2: граф крейтов + page.py → index.html</text>
+</svg>
+</div>
+<p class="diagram-caption">Сплошные стрелки — данные этого PR; пунктир — потребители PR 2. Генератор читает только закоммиченное состояние двух ревизий, поэтому повторный запуск байт-в-байт идентичен.</p>
+
+<h3>Лееринг</h3>
+<ul>
+  <li>Крейты не меняются: инструмент в <code>scripts/</code>, <code>tests/</code>, <code>docs/</code> — вне графа крейтов. Конституция: все пункты «да / не применимо» (docs/dashboard.md §2).</li>
+  <li>Модель лееринга (PR 2) — тиры «зависимости направлены внутрь» + явные запреты, не mermaid как замкнутый белый список: первый прогон на реальном плане дал 10 ложных «нарушений» (легитимные内向ние рёбра, включая <code>ferrum-app → ferrum-radiomics</code> из CLAUDE.md). Модель исправлена и усилена (закрытый список agent, ui без eframe/rfd, view без egui), протестирована и перенесена в PR 2 вместе с графом.</li>
+  <li>Правила рендеринга, порты, агентские контракты не затронуты.</li>
+</ul>
+
+<h2>2. Анализ кода и паттерны</h2>
+<h3>Производное представление</h3>
+<p>Ни один статус не вводится вручную: все числа выводятся командами git — дисциплина <code>ferrum-report</code> §3. План остаётся единственным источником правды; дашборд не может разойтись с ним по построению.</p>
+<h3>Чтение ревизий, а не рабочего дерева</h3>
+<p><code>git show &lt;rev&gt;:dev_plan.md</code>, <code>git grep … &lt;rev&gt;</code>, <code>git merge-base --is-ancestor</code>. Штампа «время генерации» нет: <code>meta.generated_at</code> — дата целевого коммита (<code>%cI</code>), детерминизм не нарушается настенными часами.</p>
+<h3>PR-ancestry по subject (фикс ревью)</h3>
+<p>Мержи ищутся по теме коммита (<code>^Merge pull request #N</code> / squash <code>(#N)$</code>) через <code>--all</code>; упоминание issue в теле — не мерж; release-only мерж виден тегу, даже если не виден цели. На реальном плане это убрало ложные done-маркеры с docs-коммитов, упоминающих #70.</p>
+<h3>Отказ вместо угадывания (L37)</h3>
+<p>Неизвестный маркер, пустая ячейка критериев, отсутствующий тег — именованный <code>meta.warnings</code> и <code>unknown</code>, никогда молчаливый fallback. На реальном плане 0 предупреждений; фикстуры проверяют каждый отказ.</p>
+
+<h3>Тесты, которые не могут не упасть</h3>
+<table>
+  <thead><tr><th>Мутация</th><th>Что падает</th></tr></thead>
+  <tbody>
+    <tr><td>done_tag по маркеру целевой ревизии</td><td><code>test_lifecycle_buckets…</code> (released 2 вместо 1)</td></tr>
+    <tr><td>✅ проверяется раньше 🚧 в заголовке</td><td><code>test_plan_parses…</code> («🚧 (G1 ✅)» → done)</td></tr>
+    <tr><td>Implementation-строки как stories</td><td><code>test_implementation_tables_are_not_stories</code> (реальная задача 26.4)</td></tr>
+    <tr><td>grep по телу коммита / только target</td><td><code>test_issue_body_mentions_are_not_merges</code>, <code>test_release_only_merge_counts_for_the_tag</code></td></tr>
+    <tr><td>ancestry отключён для новых стадий</td><td><code>test_release_only_merge…</code> (7.1-a не released)</td></tr>
+    <tr><td>Настенные часы в штампе</td><td><code>test_output_is_byte_identical_across_runs</code></td></tr>
+    <tr><td>Машинный путь в выводе</td><td><code>test_output_holds_no_machine_paths</code></td></tr>
+    <tr><td>Молчаливый fallback</td><td><code>test_unknown_marker…</code>, <code>test_empty_criteria_cell_warns</code></td></tr>
+  </tbody>
+</table>
+
+<h2>3. Этапы ревью</h2>
+<h3>code-reviewer (субагент) + квоты (L42)</h3>
+<p class="note">Три инстанса ревьюера умерли на квоте, не оставив закрывающего сообщения. Batch 1 первого инстанса дошёл (две should-fix находки, подтверждённые конкретными входами) и обработан до push. Оставшийся скоуп — verification фиксов, docs-контракт, пробелы тестов, качество — проверен lead напрямую и записан как lead self-review, не как прогон агента. Частичные результаты пережили смерть агента — как требует L42.</p>
+<table>
+  <thead><tr><th>Уровень</th><th>Находка</th><th>Решение</th></tr></thead>
+  <tbody>
+    <tr><td><span class="tag t-should">should-fix</span></td>
+      <td><code>pr_ancestry</code>: grep по полным сообщениям только в target — тело (#68) в мерже PR #84 становилось «мержем» issue; release-only мержи (PR #101 ∈ v0.4.0, ∉ develop) невидимы</td>
+      <td><b>Fixed.</b> Subject-only, <code>--all</code>, is-ancestor раздельно; 2 новых теста; на реальном плане убраны ложные done.</td></tr>
+    <tr><td><span class="tag t-should">should-fix</span></td>
+      <td><code>done_tag</code> отключался для стадий, отсутствующих на теге (найдено новым тестом)</td>
+      <td><b>Fixed.</b> Ancestry работает независимо от presence стадии.</td></tr>
+    <tr><td><span class="tag t-should">should-fix</span></td>
+      <td>Модель лееринга недокодировала конституцию (закрытый список agent, ui без eframe/rfd, view без egui)</td>
+      <td><b>Deferred, named → PR 2.</b> Усиленная модель реализована и протестирована (agent→egui и agent→ferrum-app флагятся; реальный граф чист), перенесена с графом крейтов при превышении M.</td></tr>
+    <tr><td><span class="tag t-nit">nit (lead)</span></td>
+      <td>Дизайн: story-level units описаны как <code>criteria: []</code></td>
+      <td><b>Fixed.</b> Один unit kind=story внутри criteria[].</td></tr>
+    <tr><td><span class="tag t-should">should-fix (lead)</span></td>
+      <td>Стадии 26/F1/F2 пишут критерии буллетами, а не таблицей → парсер давал 0 items / unknown при ✅-заголовке (найдено рендером страницы при подготовке PR 2)</td>
+      <td><b>Fixed (bc0b261).</b> <code>_parse_bullet_criteria</code> + <code>_mark_verified</code>; фикстура Stage 8; реальный план 330 пунктов, unknown 0.</td></tr>
+  </tbody>
+</table>
+<p>Lead self-review additionally: docs-контракт сверен с кодом (схема, правила циклов, имена тестов, разбивка); пробелы тестов оценены (зачёркнутый ✅ внутри span удаляется до сегментации; CRLF не страшен — git show читает blob; несколько мержей одного PR — any()); ruff чист, docstrings на месте, тихих except нет. Блокирующих находок нет.</p>
+
+<h3>Локальный прогон перед push (гейт L34/L38)</h3>
+<div class="card">
+  <p><b>WSL Ubuntu-24.04 (платформа CI, L45), <code>preflight.sh</code> на head bc0b261:</b> <code>all checks passed</code> — fmt, clippy <code>-D warnings</code>, свежесть схемы, <code>FERRUM_REQUIRE_GPU=1 cargo test --workspace</code> (все бинарники зелёные, включая gpu_parity и UI). Дополнительно: ruff 0.16.9 чист, 19/19 pytest, <code>test_hooks.py</code> 35 OK, <code>analyze.py --stage 30</code> exit 0. Хост Windows (Python 3.11): те же Python-проверки зелёные. Push один раз, после гейта.</p>
+  <p>Замечание среды (не дефект PR): cargo предупреждает о неиспользуемой зависимости <code>ferrum-domain</code> в <code>ferrum-wasm</code> — присутствует на develop, Rust в этом PR не меняется.</p>
+</div>
+
+<h2>4. Где это лежит (code map)</h2>
+<p>Ссылки закреплены на коммит <code>bc0b261</code> (head ветки). Номера строк прочитаны из дерева.</p>
+<table>
+  <thead><tr><th>Что</th><th>file:lines</th><th>Символ</th><th>Почему здесь</th></tr></thead>
+  <tbody>
+    <tr><td>Первый маркер заголовка побеждает</td><td><a href="https://github.com/Kauter1989/ferrum/blob/bc0b261/scripts/dashboard/generate.py#L92-L99">generate.py:92-99</a></td><td><code>_heading_status</code></td><td>Позиция, не порядок проверки — «🚧 (G1 ✅)» есть progress.</td></tr>
+    <tr><td>Критерии: сегменты, зачёркивания, PR</td><td><a href="https://github.com/Kauter1989/ferrum/blob/bc0b261/scripts/dashboard/generate.py#L116-L143">generate.py:116-143</a></td><td><code>_parse_criteria</code></td><td>Конвенция плана; пустая ячейка → warning + unknown.</td></tr>
+    <tr><td>Story-таблица по заголовку; Implementation — нет</td><td><a href="https://github.com/Kauter1989/ferrum/blob/bc0b261/scripts/dashboard/generate.py#L146-L177">generate.py:146-177</a></td><td><code>_parse_stories</code></td><td>Реальный дефект: задача 26.4 не story.</td></tr>
+    <tr><td>Буллет-критерии (стадии 26/F1/F2)</td><td><a href="https://github.com/Kauter1989/ferrum/blob/bc0b261/scripts/dashboard/generate.py#L180-L212">generate.py:180-212</a></td><td><code>_parse_bullet_criteria</code></td><td>Группировка по N.k, продолжения, зачёркивания.</td></tr>
+    <tr><td>✅ из Verification-таблицы</td><td><a href="https://github.com/Kauter1989/ferrum/blob/bc0b261/scripts/dashboard/generate.py#L215-L226">generate.py:215-226</a></td><td><code>_mark_verified</code></td><td>Исход ✅ в строке таблицы отмечает критерий done.</td></tr>
+    <tr><td>Стадии и Roadmap</td><td><a href="https://github.com/Kauter1989/ferrum/blob/bc0b261/scripts/dashboard/generate.py#L229-L286">generate.py:229-286</a></td><td><code>parse_plan</code>, <code>_parse_roadmap</code></td><td>Все формы: F1/F2, ID-less, буллеты, черновики.</td></tr>
+    <tr><td>Правило done</td><td><a href="https://github.com/Kauter1989/ferrum/blob/bc0b261/scripts/dashboard/generate.py#L296-L300">generate.py:296-300</a></td><td><code>done_at</code></td><td>✅ / заголовок / PR-ancestor; empty_cell никогда не done.</td></tr>
+    <tr><td>Бакеты и приоритет стадии</td><td><a href="https://github.com/Kauter1989/ferrum/blob/bc0b261/scripts/dashboard/generate.py#L303-L320">generate.py:303-320</a></td><td><code>item_bucket</code>, <code>stage_aggregate</code></td><td>unknown &gt; progress &gt; develop &gt; released &gt; planned; точные counts.</td></tr>
+    <tr><td>PR-ancestry: subject-only, --all</td><td><a href="https://github.com/Kauter1989/ferrum/blob/bc0b261/scripts/dashboard/generate.py#L323-L347">generate.py:323-347</a></td><td><code>pr_ancestry</code></td><td>Фикс ревью; release-only мержи; issue-упоминания не мержи.</td></tr>
+    <tr><td>Покрытие по конвенции analyze</td><td><a href="https://github.com/Kauter1989/ferrum/blob/bc0b261/scripts/dashboard/generate.py#L350-L380">generate.py:350-380</a></td><td><code>scan_coverage</code></td><td>Те же расширения и SKIP_DIRS; git grep по дереву ревизии.</td></tr>
+    <tr><td>Агрегат: две ревизии, git-штампы, warnings</td><td><a href="https://github.com/Kauter1989/ferrum/blob/bc0b261/scripts/dashboard/generate.py#L396-L473">generate.py:396-473</a></td><td><code>build_data</code></td><td>Детерминизм; lagging-heading warning; no-tag случай; ancestry для новых стадий.</td></tr>
+    <tr><td>CLI и детерминированная запись</td><td><a href="https://github.com/Kauter1989/ferrum/blob/bc0b261/scripts/dashboard/generate.py#L476-L505">generate.py:476-505</a></td><td><code>main</code></td><td>sorted keys, UTF-8, LF; без настенных часов.</td></tr>
+    <tr><td>CI исполняет тесты дашборда</td><td><a href="https://github.com/Kauter1989/ferrum/blob/bc0b261/.github/workflows/ci.yml#L137-L140">ci.yml:137-140</a></td><td>python-lint: pytest</td><td>30.1-g; pipx, как ruff в той же джобе.</td></tr>
+    <tr><td>Спека и критерии</td><td><a href="https://github.com/Kauter1989/ferrum/blob/bc0b261/dev_plan.md#L1082-L1155">dev_plan.md:1082-1155</a></td><td>Stage 30, row 30.1</td><td>Единый источник правды; 30.1-d зарезервирован для PR 2.</td></tr>
+    <tr><td>Тесты и фикстуры</td><td><a href="https://github.com/Kauter1989/ferrum/blob/bc0b261/tests/dashboard/test_generate.py">test_generate.py</a>, <a href="https://github.com/Kauter1989/ferrum/blob/bc0b261/tests/dashboard/conftest.py">conftest.py</a></td><td>19 тестов; plan_repo</td><td>Цитаты критериев видит analyze.py (tests/ не в SKIP_DIRS).</td></tr>
+  </tbody>
+</table>
+
+<h2>Verification</h2>
+<table>
+  <thead><tr><th>Критерий</th><th>Уровень</th><th>Evidence</th><th>Итог</th></tr></thead>
+  <tbody>
+    <tr><td>30.1-a</td><td>test</td><td>точные фикстуры парсинга (5 тестов)</td><td>✅</td></tr>
+    <tr><td>30.1-b</td><td>test</td><td>real-git циклы (7 тестов, включая release-only и issue-mention)</td><td>✅</td></tr>
+    <tr><td>30.1-c</td><td>test</td><td>конвенция analyze на ревизии</td><td>✅</td></tr>
+    <tr><td>30.1-e</td><td>test</td><td>детерминизм + скан путей</td><td>✅</td></tr>
+    <tr><td>30.1-f</td><td>test</td><td>отказы → warning + unknown</td><td>✅</td></tr>
+    <tr><td>30.1-g</td><td>test</td><td>CI-шаг + структурный тест</td><td>⏳ CI на PR #117</td></tr>
+    <tr><td>метрики</td><td>measured</td><td>1.8–2.1 с (≤5 с); 30 стадий / 330 пунктов; 0 warnings</td><td>✅</td></tr>
+  </tbody>
+</table>
+<p>Не проверено: браузерный рендер страницы — manual-строки PR 2 (агент не открывал браузер). CI на PR #117 — зелёный (все 5 джоб).</p>
+
+<footer>
+  Источники: <code>git diff --shortstat origin/develop...HEAD</code> (7 файлов, +1407);
+  <code>python scripts/dashboard/generate.py --ref HEAD</code> (30 стадий / 330 пунктов, 0 warnings, 1.8–2.1 с);
+  <code>analyze.py --stage 30</code> exit 0; preflight WSL Ubuntu-24.04 на bc0b261 — all checks passed;
+  ruff 0.16.9; pytest 20/20 (хост и WSL). Это финальный отчёт (фаза 11) по смерженному PR #117
+  (<code>bc0b261</code> → <code>a375300</code>); code map закреплён на <code>bc0b261</code>.
+</footer>
+
+</main>
+</body>
+</html>

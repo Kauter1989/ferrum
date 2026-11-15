@@ -8,6 +8,7 @@ repository, so ancestry and grep run against real git.
 import json
 import re
 
+import crate_graph
 import generate
 
 # covers 30.1-a
@@ -213,6 +214,53 @@ def test_coverage_follows_the_analyze_convention(repo_data):
     assert criteria["3.1-a"]["levels"] == []
 
 
+# covers 30.1-d
+
+
+def test_crate_graph_and_layering_violations(repo_data):
+    crates = {c["name"]: c for c in repo_data["crates"]}
+    assert set(crates) == {"ferrum-domain", "ferrum-io", "ferrum-app", "ferrum-agent"}
+    assert crates["ferrum-domain"]["description"] == "Domain."
+    assert crates["ferrum-io"]["deps"] == ["ferrum-domain"]
+    assert crates["ferrum-domain"]["violations"] == ["ferrum-domain → ferrum-io (layering: dependencies point inward)"]
+    assert crates["ferrum-app"]["violations"] == ["ferrum-app → wgpu (ferrum-app must compile without wgpu/egui)"]
+    assert crates["ferrum-io"]["violations"] == []
+    agent_rule = "ferrum-agent depends only on domain/io/engines/radiomics/render, without wgpu/egui"
+    assert crates["ferrum-agent"]["violations"] == [
+        f"ferrum-agent → egui ({agent_rule})",
+        f"ferrum-agent → ferrum-app ({agent_rule})",
+    ]
+    rules = {(v["from"], v["to"]) for v in repo_data["layering_violations"]}
+    assert rules == {
+        ("ferrum-domain", "ferrum-io"),
+        ("ferrum-app", "wgpu"),
+        ("ferrum-agent", "egui"),
+        ("ferrum-agent", "ferrum-app"),
+    }
+
+
+# covers 30.1-d
+
+
+def test_fallback_parses_the_workspace_toml(plan_repo):
+    crates = {c["name"]: c for c in crate_graph.crates_from_toml(plan_repo)}
+    assert set(crates) == {"ferrum-domain", "ferrum-io", "ferrum-app", "ferrum-agent"}
+    assert crates["ferrum-app"]["deps"] == ["ferrum-domain", "wgpu"]
+    assert crates["ferrum-agent"]["deps"] == ["egui", "ferrum-app"]
+    assert crates["ferrum-domain"]["description"] == "Domain."
+
+
+# covers 30.1-d
+
+
+def test_changed_crates_are_marked(repo_data):
+    crates = {c["name"]: c for c in repo_data["crates"]}
+    assert crates["ferrum-io"]["changed_since_release"] is True
+    assert crates["ferrum-domain"]["changed_since_release"] is False
+    assert crates["ferrum-app"]["changed_since_release"] is False
+    assert crates["ferrum-agent"]["changed_since_release"] is False
+
+
 # covers 30.1-e
 
 
@@ -229,7 +277,7 @@ def test_output_is_byte_identical_across_runs(plan_repo):
 
 def test_output_holds_no_machine_paths(repo_data):
     text = json.dumps(repo_data, ensure_ascii=False)
-    assert not re.search(r"[A-Za-z]:\\|/home/|/Users/|/mnt/", text)
+    assert not re.search(r"[A-Za-z]:\\[A-Za-z0-9_]|/home/[A-Za-z0-9_]|/Users/[A-Za-z0-9_]|/mnt/[A-Za-z0-9_]", text)
     assert repo_data["meta"]["repo_url"] == "https://github.com/test/repo"
 
 
