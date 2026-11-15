@@ -543,7 +543,7 @@
     }
   },
   "view set": {
-    "description": "Sets what the person sees (component, plane, slice, window, overlays, selected segment, tool, camera) by writing the workspace's view-state artifact; the live viewer applies it and the person takes over at any time. A stale source_hash is refused with source_changed. No decision is created.",
+    "description": "Sets what the person sees (component, plane, slice, window, overlays, selected segment, tool, camera) by writing the workspace's view-state artifact; the live viewer applies it and the person takes over at any time. source_hash (from view state) is required: a stale one is refused with source_changed. No decision is created.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -553,7 +553,7 @@
         },
         "source_hash": {
           "type": "string",
-          "description": "the source_hash read with view state; when given and stale, the set is refused"
+          "description": "the source_hash read with view state; a stale one refuses the set (fail-closed)"
         },
         "state": {
           "type": "object",
@@ -667,11 +667,11 @@
                   },
                   "minItems": 4,
                   "maxItems": 4,
-                  "description": "quaternion x, y, z, w"
+                  "description": "quaternion x, y, z, w (normalized; a zero quaternion is refused)"
                 },
                 "distance": {
                   "type": "number",
-                  "description": "orbit distance"
+                  "description": "orbit distance (clamped to the camera's 0.2..10 range)"
                 },
                 "target": {
                   "type": "array",
@@ -684,10 +684,15 @@
                 },
                 "fov_y": {
                   "type": "number",
-                  "description": "vertical field of view, radians"
+                  "description": "vertical field of view in radians, within (0, pi)"
                 }
               },
-              "required": [],
+              "required": [
+                "orientation",
+                "distance",
+                "target",
+                "fov_y"
+              ],
               "additionalProperties": false
             }
           }
@@ -695,7 +700,8 @@
       },
       "required": [
         "workspace",
-        "state"
+        "state",
+        "source_hash"
       ],
       "additionalProperties": false
     }
