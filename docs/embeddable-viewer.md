@@ -182,6 +182,35 @@ synthetic phantom. Its layout lives in `pub fn host_ui(...)`, which
   usual path.
 - 24.3-a, checked: `examples/showcase.rs` rendered its six scenes on a phantom (`ferrum-cli eval phantoms`), with `develop` and with this branch, on lavapipe. The images are identical pixel for pixel, except for the status bar's frame-time readout (28 × 10 px), which changes on every run.
 
+### 3.8 As built (PR 2)
+
+- `show` returns `Vec<ViewerEvent>`; the events module holds `ViewerEvent`,
+  `Point`, `RoiItem`, the private `Snapshot` and the drag baseline.
+- The diff is against the state at the end of the **previous frame**, not
+  a snapshot taken before drawing in the same frame: a use case the host
+  calls itself between frames (the example's buttons) is seen too. The
+  first frame and a study switch establish the baseline without events.
+  The study's identity is its source path, not the volume `Arc`: a
+  finished filter replaces the volume of the same study, and a volume
+  switch of the series keeps the source too (code review of PR 2).
+- Window and camera keep a separate last-emitted baseline (`DragBaseline`):
+  an event goes out only when no pointer button is down, so a drag gives
+  one event at its end, and a preset click gives one after the release.
+- `RoiDrawn` for a mask edit fires when a person's segment's voxel count
+  changed **and** the set's revision moved; an edit that replaces exactly
+  as many voxels as it removes is not seen (the count is the cheap proxy
+  for the mask; §5 already accepts a change made and undone in one frame).
+- The example host's layout is `pub fn host_ui(ui, host, render_state)`;
+  `tests/embed.rs` includes the example with `#[path]` and drives it with
+  `egui_kittest` (a pick, and the buttons' slice and window events).
+- The badge test wraps `MockEngine` in a `ResearchMock` whose manifest
+  declares `research_only: true`, serves it with `EngineServer`, and
+  checks the badge, the licence line and the segments widget's
+  "Proposed by engine" inside the embedded layout.
+- The privacy test writes a DICOM study with the agent privacy test's
+  identifiers, drives every event kind through real frames, constructs
+  every variant too, and scans all their `Debug` text for the identifiers.
+
 ## 4. Contracts
 
 | Contract | Change | Also update |

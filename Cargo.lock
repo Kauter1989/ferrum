@@ -1635,10 +1635,15 @@ dependencies = [
 name = "ferrum-ui"
 version = "0.4.0"
 dependencies = [
+ "dicom-core",
+ "dicom-dictionary-std",
+ "dicom-object",
+ "eframe",
  "egui",
  "egui-phosphor",
  "egui-wgpu",
  "egui_kittest",
+ "env_logger",
  "ferrum-app",
  "ferrum-domain",
  "ferrum-engines",
