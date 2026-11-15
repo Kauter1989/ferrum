@@ -856,6 +856,109 @@ that says so instead of editing the old one.
 - **Rule:** Read the annotation of a cancelled job before calling it
   transient; a label that worked last release may be retired today.
 
+### L45 — The preflight distro's lavapipe crashed at thread exit (2026-11, Stage 23 field)
+
+- **Symptom:** `every_view_mode_renders_the_volume` passed all six scenes,
+  then SIGSEGV in `__nptl_deallocate_tsd` as the test thread exited; the
+  suite was red on a machine where CI is green.
+- **Root cause:** WSL Ubuntu 22.04 ships mesa 23.2.1, whose lavapipe crashes
+  in TLS teardown; the kisak PPA dropped jammy and noble's mesa needs
+  GLIBC_2.38. The crash was environmental, not FERRUM's.
+- **Fix:** imported an Ubuntu 24.04 WSL distro (root, no sudo password;
+  static `/etc/resolv.conf` because WSL DNS was flaky) — mesa 25.2.8 matches
+  CI's ubuntu-latest; preflight green there. It is now the preflight/field
+  platform.
+- **Guard:** run preflight in a distro that matches CI, not the oldest WSL
+  on the machine; a crash in libc/mesa teardown after all assertions passed
+  is the environment until proven otherwise.
+- **Rule:** `wsl.exe` mangles inner quotes and pipes — write bash to a
+  script file (LF) and run `wsl -d <distro> -u root -e bash <file>`.
+
+### L46 — WSL reports per-process VRAM as [N/A] (2026-11, Stage 23 field)
+
+- **Symptom:** every per-process GPU reading in the field run was 0 MiB
+  while the card clearly held the engines; the release/unload measurements
+  were meaningless.
+- **Root cause:** WSL's `nvidia-smi --query-compute-apps` lists the PIDs
+  but `used_memory` is `[N/A]`; the bridge's `resident_mib` (same source)
+  reports null too.
+- **Fix:** measure the card's total (`memory.used`) and take deltas: one
+  engine active at a time in phase A, holder level as the base in phase B.
+  The numbers came out clean (nnInteractive 3.6–4.1 GB, TS 1.8–2.3 GB next
+  to the holder).
+- **Guard:** a footprint of 0 for a running engine is a measurement bug,
+  not a result; assert the holder's card delta > 0 before trusting phase B.
+
+### L47 — llama.cpp's CUDA runtime is a separate release asset (2026-11, Stage 23 field)
+
+- **Symptom:** the "resident holder" measured 0 MiB on the card; phase B
+  ran, but nothing was shared — `llama-server` had fallen back to CPU.
+- **Root cause:** the ubuntu-cuda tarball ships `libggml-cuda.so` but not
+  `libcudart`/`libcublas`; those live in the `cudart-llama-…` asset of the
+  same build. Without them the backend fails to load **silently**. Also:
+  the "latest" release is a placeholder (`nightly-tag.txt` only) — walk the
+  recent builds, and the naming changed from zip to tar.gz.
+- **Fix:** download both assets, flatten the libraries next to the binary,
+  and `ldd libggml-cuda.so | grep "not found"` before starting; the card
+  delta then showed 2325 MiB.
+- **Guard:** a GPU server that allocates no VRAM is on the CPU — check the
+  card delta and the backend's dependencies, not the health endpoint.
+
+### L48 — A failure counter whose glob matched nothing (2026-11, Stage 23 field)
+
+- **Symptom:** the field script printed "20/20 ok, 0 failures" for a phase
+  that had a failed call (`engine_unavailable` timeout).
+- **Root cause:** result files are `NN-<step>.json`, but the failure glob
+  was `a-c[0-9][0-9]-*.json` — no file ever matched, so the counter was
+  vacuous (the L22 family: a check that cannot fail).
+- **Fix:** glob `*-"${PFX}"c[0-9][0-9]-*.json`; the phase's failures are
+  also read by eye from the step log before the summary is trusted.
+- **Guard:** every aggregate check in a throw-away script gets one
+  deliberate failure in rehearsal, or its glob is matched against a real
+  filename first.
+
+### L49 — The checked path was not the opened path (2026-11, Stage F2 / #82)
+
+- **Symptom:** The read-root fix passed its own tests, yet review found
+  two escapes of one class. (1) `check_source` canonicalised the OS-order
+  resolution of the raw argument but returned the lexical spelling: a
+  link pointing *deeper* than its spelling plus a `..` behind it passed
+  the check while the reader opened a path outside the root. (2) The
+  manifest re-check called `check_source` but discarded its return value:
+  `verify_sources`, the cache stamps and the DICOM export opened the raw
+  manifest spelling, where the OS resolves `..` in filesystem order — a
+  crafted `workspace.json` with `link/../secret.nii` read outside the
+  root (size oracle, and identifiers into an exported SEG/SR when the
+  hashes matched).
+- **Root cause:** A boundary check that transforms the path creates two
+  spellings — the checked one and the one downstream opens. Every
+  consumer that opens a different spelling reopens the boundary. Lexical
+  `..` resolution and OS-order resolution diverge exactly at symlinks,
+  which is the thing the check exists for.
+- **Why it mattered:** The read roots are the operator's boundary for
+  patient data. Both escapes were introduced *by the security fix
+  itself* — a fix that silently reopens its own hole is worse than no
+  fix, because it is trusted. Neither was caught by the fix's own tests;
+  both were caught by the review agents before the push.
+- **Fix:** `check_source` / `resolve_workspace` canonicalise exactly the
+  spelling they return; `Study::load` scans the checked path, re-checks
+  every manifest file path, and refuses any `..` component (legitimate
+  manifests never hold one — `create()` stores clean relatives and
+  absolutes — and without `..` the raw and lexical spellings resolve
+  identically).
+- **Guard:** regression tests for both escapes
+  (`a_depth_changing_link_cannot_split_the_check_from_the_read`,
+  `a_crafted_manifest_with_parent_components_is_refused`), each
+  mutation-checked red on the draft that introduced it. The review
+  agents (`security-reviewer`, `code-reviewer`) run before every push of
+  a reader/agent change (`ferrum-change` §6) — they are what caught both.
+- **Rule:** A path check must judge exactly the spelling that will be
+  opened. If a consumer opens a stored or raw path, either hand it the
+  checked path or refuse spellings whose resolution can diverge (`..`
+  behind a link). "Checked" is a property of a spelling, not of an
+  intention. (Renumbered from the draft's L39 on merge: the 0.4.0 retro
+  had already taken L39–L44.)
+
 ## What worked
 
 ### W1 — Field test on the user's GPU with a throw-away script (2026-10, Stage 17)

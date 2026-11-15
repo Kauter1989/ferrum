@@ -63,6 +63,9 @@ ferrum-wasm (browser) → ferrum-render (gpu), ferrum-app, ferrum-processing —
 - No business logic in `ferrum` or `ferrum-ui` widgets — add a use case to
   `Viewer`. `ferrum-ui` opens no windows or file dialogs (no `eframe`, no
   `rfd`); hosts embed it ([ADR 0016](docs/decisions/0016-ferrum-ui-crate.md)).
+  `ViewerWidget::show` returns the frame's events (a pick, a drawn ROI,
+  slice/window/camera changes), derived from `Viewer` state; no event is a
+  decision, and engine proposals are not events.
 - `ferrum-view` implements the local view host `ferrum-view/1`
   ([design](docs/view-host.md), [ADR 0017](docs/decisions/0017-view-host-crate.md)):
   one workspace kept open, slice frames on the GPU or the CPU reference,
@@ -214,8 +217,11 @@ final one (`ferrum-report` §0), with a **code map**: every architectural
 claim linked to the `file:lines` that implement it, pinned to the PR head
 SHA and stating that SHA. The person merges after reading the code, not on
 trust; a PR without its report is not ready for G3, however green its CI.
-The report is posted to the PR, not committed — after the merge, phase 11
-writes the final one from the merged tree into `docs/<feature>/`.
+The G3 report is posted to the PR as a comment (the gate input). The
+**final** report is committed to the feature PR itself
+(`docs/<feature>/<pr>-report.html`): it is revised during the user's review
+and, if the PR is merged, lands in history in its last version. A report
+on an already-merged feature goes through a small `docs/` PR instead.
 
 ### Hooks
 

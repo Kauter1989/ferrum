@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FERRUM · PR #109 — финальный отчёт: события встраиваемого viewer'а</title>
+<style>
+  :root {
+    --bg: #fbfbfd; --fg: #1d1f26; --muted: #5b6070; --line: #e2e5ec;
+    --accent: #1f6feb; --ok: #1a7f37; --warn: #9a6700; --bad: #b42318;
+    --card: #ffffff; --code: #f3f4f7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12141a; --fg: #e6e7ea; --muted: #a2a8b6; --line: #2a2e38;
+      --accent: #6ba6ff; --ok: #4ac26b; --warn: #d4a72c; --bad: #ff7b72;
+      --card: #191c23; --code: #1f232c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.6 -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  main { max-width: 1080px; margin: 0 auto; padding: 40px 24px 80px; }
+  h1 { font-size: 30px; line-height: 1.25; margin: 0 0 8px; letter-spacing: -0.02em; }
+  h2 { font-size: 21px; margin: 44px 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 16px; margin: 26px 0 8px; }
+  p, li { color: var(--fg); }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 28px; }
+  .pill {
+    font-size: 13px; padding: 3px 10px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--card); color: var(--muted);
+  }
+  .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+  .pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px 20px; margin: 14px 0;
+  }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 13px; }
+  code { background: var(--code); padding: 1px 5px; border-radius: 4px; }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 14px; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .tag { font-size: 12px; font-weight: 600; padding: 2px 7px; border-radius: 5px; white-space: nowrap; }
+  .t-block { background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--bad); }
+  .t-should { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+  .t-nit { background: color-mix(in srgb, var(--muted) 16%, transparent); color: var(--muted); }
+  .t-fixed { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+  .stat { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+  .stat b { display: block; font-size: 26px; line-height: 1.2; }
+  .stat span { color: var(--muted); font-size: 13px; }
+  .diagram { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin: 16px 0; overflow-x: auto; color: var(--fg); }
+  .diagram svg { display: block; width: 100%; min-width: 720px; height: auto; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .diagram .node { fill: var(--code); stroke: var(--line); stroke-width: 1; }
+  .diagram .node.accent { fill: color-mix(in srgb, var(--accent) 12%, var(--code)); stroke: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+  .diagram .node.strong { fill: color-mix(in srgb, var(--ok) 12%, var(--code)); stroke: color-mix(in srgb, var(--ok) 45%, var(--line)); }
+  .diagram .n-title { fill: var(--fg); font-size: 15px; font-weight: 600; text-anchor: middle; }
+  .diagram .n-sub { fill: var(--muted); font-size: 12px; text-anchor: middle; }
+  .diagram .zone { fill: var(--muted); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; font-weight: 600; }
+  .diagram .edge { fill: none; stroke: currentColor; stroke-opacity: .45; stroke-width: 1.6; }
+  .diagram .edge.dashed { stroke-dasharray: 5 4; }
+  .diagram .e-label { fill: var(--muted); font-size: 11.5px; text-anchor: middle; }
+  .diagram-caption { color: var(--muted); font-size: 13px; margin: -4px 0 18px; }
+  ul { padding-left: 22px; }
+  li { margin: 4px 0; }
+  .note { border-left: 3px solid var(--accent); padding-left: 14px; color: var(--muted); margin: 14px 0; }
+  footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>PR #109 — события встраиваемого viewer'а</h1>
+<p class="sub">Финальный отчёт (phase 11): архитектура, анализ кода, история ревью. FERRUM, ноябрь 2026. Смержен 2026-11-15, merge-коммит <code>22a4a8334f8eb509c8bfb4abdd051e3329e4f0f6</code>; код-карта перечитана из смерженного дерева develop.</p>
+
+<div class="meta">
+  <span class="pill">Ветка <code>feat/69-viewer-events</code> → <code>develop</code></span>
+  <span class="pill ok">merged 2026-11-15 · 22a4a83</span>
+  <span class="pill ok">CI: 5/5 checks success</span>
+  <span class="pill ok">preflight: all checks passed</span>
+  <span class="pill">1 коммит</span>
+  <span class="pill">13 файлов, +915 / −15</span>
+  <span class="pill ok">Размер M — в бюджете</span>
+</div>
+
+<div class="grid">
+  <div class="stat"><b>5</b><span>видов событий</span></div>
+  <div class="stat"><b>11</b><span>новых тестов (6 UI + 5 unit)</span></div>
+  <div class="stat"><b>1</b><span>находка ревью — исправлена</span></div>
+  <div class="stat"><b>0</b><span>изменений формирования изображения</span></div>
+</div>
+
+<h2>1. Архитектурные изменения</h2>
+
+<p>
+  Задача — #69 (P1, Demo 4 харнесса): встраиваемый viewer должен сообщать
+  хосту, что сделал человек, — без участия в цикле рендера и без решений.
+  Stage 24 PR 1 уже вынес viewer в <code>ferrum-ui</code>; этот PR добавил
+  события (<code>ViewerEvent</code>) и рабочий пример хоста. Критерии
+  24.2-a/b/c, 24.4-a/b, 24.5-a/b закрыты тестами. После мерджа контракт
+  событий закреплён в слоистости CLAUDE.md: <code>ViewerWidget::show</code>
+  возвращает события кадра, производные состояния <code>Viewer</code>;
+  событие не является решением, предложения движка — не события.
+</p>
+
+<h3>Добавленные модули</h3>
+
+<table>
+  <thead><tr><th>Модуль</th><th>Роль</th><th class="num">Строк</th><th>Ключевое</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>crates/ferrum-ui/src/events.rs</code></td>
+      <td>События кадра: <code>ViewerEvent</code>, <code>Point</code>, <code>RoiItem</code>; приватные <code>Snapshot</code> и <code>DragBaseline</code>, вывод событий диффом состояний.</td>
+      <td class="num">270</td>
+      <td>Идентичность исследования — путь источника, не <code>Arc</code> тома; окно/камера — до конца drag'а.</td>
+    </tr>
+    <tr>
+      <td><code>crates/ferrum-ui/examples/embed_host.rs</code></td>
+      <td>Рабочий хост: своя панель (лог событий, кнопки use-case'ов, AI-виджет) рядом с widget'ом; раскладка в <code>pub fn host_ui</code> — её драйвит тест.</td>
+      <td class="num">141</td>
+      <td>eframe только как dev-зависимость; phantom без аргумента командной строки.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Изменённые модули</h3>
+
+<table>
+  <thead><tr><th>Модуль</th><th>Что изменилось</th></tr></thead>
+  <tbody>
+    <tr><td><code>ferrum-ui/src/widget.rs</code></td><td><code>show</code> возвращает <code>Vec&lt;ViewerEvent&gt;</code>: снимок после отрисовки, дифф с предыдущим кадром, coalescing окна/камеры (+32/−2).</td></tr>
+    <tr><td><code>ferrum-ui/tests/embed.rs</code></td><td>6 новых тестов: coalescing, pick=probe, no-decision, пример хоста, лицензия/бейдж, приватность событий (+399/−6).</td></tr>
+    <tr><td><code>ferrum</code> (десктоп)</td><td>Не изменён: возвращаемое значение игнорируется — поведение десктопа то же (тесты UI и parity зелёные).</td></tr>
+    <tr><td>docs / CHANGELOG / CLAUDE.md / dev_plan</td><td>§3.8 as-built, амандмент ADR 0016 (append-only), строка слоистости, Stage 24 таблица.</td></tr>
+  </tbody>
+</table>
+
+<h3>Связи</h3>
+
+<div class="diagram">
+<svg viewBox="0 0 1020 380" role="img" aria-label="Хост вызывает ViewerWidget::show и получает Vec ViewerEvent; widget читает состояние Viewer и рисует через ferrum-render">
+  <defs>
+    <marker id="arw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" fill-opacity=".55"/>
+    </marker>
+  </defs>
+  <text x="30" y="30" class="zone">Хост (пример: embed_host)</text>
+  <rect x="30" y="45" width="280" height="70" rx="10" class="node"/>
+  <text x="170" y="72" class="n-title">своя панель</text>
+  <text x="170" y="92" class="n-sub">лог событий · кнопки · AI-виджет</text>
+  <rect x="380" y="45" width="280" height="70" rx="10" class="node accent"/>
+  <text x="520" y="72" class="n-title">ViewerWidget::show</text>
+  <text x="520" y="92" class="n-sub">ferrum-ui · возвращает Vec&lt;ViewerEvent&gt;</text>
+  <rect x="730" y="45" width="260" height="70" rx="10" class="node"/>
+  <text x="860" y="72" class="n-title">Viewer</text>
+  <text x="860" y="92" class="n-sub">ferrum-app · use cases и состояние</text>
+  <rect x="380" y="200" width="280" height="70" rx="10" class="node"/>
+  <text x="520" y="227" class="n-title">Snapshot + DragBaseline</text>
+  <text x="520" y="247" class="n-sub">дифф кадров · coalescing drag'а</text>
+  <rect x="730" y="200" width="260" height="70" rx="10" class="node strong"/>
+  <text x="860" y="227" class="n-title">ferrum-render</text>
+  <text x="860" y="247" class="n-sub">модель изображения — не тронута</text>
+  <path d="M 310 80 L 380 80" class="edge" marker-end="url(#arw)"/>
+  <text x="345" y="70" class="e-label">show</text>
+  <path d="M 380 100 L 310 100" class="edge dashed" marker-end="url(#arw)"/>
+  <text x="345" y="118" class="e-label">события</text>
+  <path d="M 660 80 L 730 80" class="edge" marker-end="url(#arw)"/>
+  <text x="695" y="70" class="e-label">состояние</text>
+  <path d="M 520 115 L 520 200" class="edge" marker-end="url(#arw)"/>
+  <path d="M 660 235 L 730 235" class="edge" marker-end="url(#arw)"/>
+  <text x="695" y="225" class="e-label">paint callbacks</text>
+  <text x="30" y="330" class="zone">События — производные состояния Viewer: вся логика остаётся в ferrum-app</text>
+</svg>
+</div>
+<p class="diagram-caption">
+  Сплошная стрелка — вызов; пунктир — возвращаемые события. Widget не
+  содержит бизнес-логики: события выводятся из состояния <code>Viewer</code>,
+  правила (авторство, ревизии, probe) живут в <code>ferrum-app</code>/<code>ferrum-domain</code>.
+</p>
+
+<h3>Слоистость</h3>
+<ul>
+  <li><code>ferrum-ui</code> не получил normal-зависимостей от eframe/rfd/winit — тест <code>ferrum_ui_has_no_shell_dependencies</code> читает <code>cargo tree -e normal</code> (eframe — только dev, для примера).</li>
+  <li>Формирование изображения не тронуто: ни одного <code>.wgsl</code>/<code>cpu/raycast.rs</code> в диффе; <code>gpu_parity.rs</code> зелёный в preflight.</li>
+  <li>Проводные контракты не расширены: команды агента, протокол движков, формат workspace, <code>ferrum-view/1</code> не тронуты; <code>commands.json</code> свежий (schema-проверка preflight).</li>
+</ul>
+
+<h2>2. Анализ кода и паттерны</h2>
+
+<h3>Дифф состояний вместо событий из инструментов</h3>
+<p>
+  События не поднимаются внутри инструментов (это потребовало бы event-проводки
+  в каждом и перенесло бы презентацию в <code>ferrum-app</code>).
+  <code>show</code> берёт <code>Snapshot</code> после отрисовки и сравнивает с
+  состоянием конца <b>предыдущего кадра</b>. Уточнение против дизайн-дока §3.4
+  («снимок до отрисовки») записано в амандмент ADR 0016: только так виден
+  use case, который хост вызвал сам между кадрами (кнопки примера).
+</p>
+
+<h3>Идентичность исследования — источник, не Arc</h3>
+<p>
+  Находка ревью: закончившийся фильтр (<code>JobEvent::Filtered</code>) и
+  переключение тома серии заменяют <code>Arc&lt;Volume&gt;</code> того же
+  исследования. <code>Arc::ptr_eq</code> молча сбрасывал бы базовую линию и
+  терял события кадра. Исправлено: идентичность — <code>metadata.source</code>
+  (путь серии), регрессионный unit-тест
+  <code>a_replaced_volume_of_the_same_study_keeps_the_baseline</code>.
+</p>
+
+<h3>Coalescing drag'а отдельной базовой линией</h3>
+<p>
+  Окно и камера сравниваются не с предыдущим кадром, а с последним
+  <b>выданным</b> значением (<code>DragBaseline</code>): событие выходит,
+  только когда ни одна кнопка указателя не нажата. Drag даёт одно событие в
+  конце; preset-клик — одно после отпускания. Пер-кадровый дифф здесь терял
+  бы событие, если пользователь замер перед отпусканием.
+</p>
+
+<h3>RoiDrawn по авторству и ревизии</h3>
+<p>
+  В снимок попадают только annotations и сегменты с <code>Author::Human</code>.
+  Правка маски своего сегмента детектируется изменением числа вокселей
+  <b>вместе с ревизией</b> набора — дешёвый прокси вместо хеша маски.
+  Ограничение названо в §3.8 и PR: правка, заменяющая ровно столько же
+  вокселей, не видна (§5 дизайна уже принимает «сделано и отменено в одном
+  кадре»). Подтверждение/отклонение событий не даёт — решение остаётся в
+  review-виджете и <code>ferrum_agent::decisions</code>.
+</p>
+
+<h3>Тесты, которые могут упасть</h3>
+<table>
+  <thead><tr><th>Проверка</th><th>Чем падает</th></tr></thead>
+  <tbody>
+    <tr><td>Coalescing (24.2-a)</td><td>Колесо на 100 пунктов за кадр: ровно один <code>SliceChanged</code> с финальными индексами; пер-шаговые события уронили бы <code>len == 1</code>. Drag окна: ни одного события до отпускания, одно после, ноль при повторном кадре.</td></tr>
+    <tr><td>Pick = probe (24.2-b)</td><td>Точное равенство voxel и patient_mm с <code>voxel_to_patient_f64</code> центра вокселя — не «что-то вернулось».</td></tr>
+    <tr><td>Контроль no-decision (24.2-c)</td><td>Сегмент человека в том же тесте обязан дать <code>RoiDrawn</code> — тест не может пройти на пустом матчике.</td></tr>
+    <tr><td>Приватность</td><td>DICOM с синтетическими идентификаторами (писатель как в privacy-тесте агента); каждый вид события прогнан через реальные кадры + сконструирован; Debug-текст сканируется на значения.</td></tr>
+    <tr><td>Бейдж (24.5)</td><td><code>ResearchMock</code> с <code>research_only: true</code> за <code>EngineServer</code>; бейдж, лицензия и «Proposed by engine» ищутся в embedded-раскладке.</td></tr>
+  </tbody>
+</table>
+
+<h2>3. Этапы ревью</h2>
+
+<p>
+  Субагент <code>code-reviewer</code> запускался дважды и оба раза умер по
+  квоте (L42) до полного отчёта. Первый успел прислать одну находку
+  (идентичность по <code>Arc</code>) — она подтверждена чтением
+  <code>viewer.rs</code>/<code>volumes.rs</code>, исправлена и закрыта
+  регрессионным тестом. Остальное ревью выполнил lead по чек-листу агента
+  (корректность, слоистость, тесты, бюджет качества, матрица, приватность);
+  это записано честно, без подмены полноценного второго ревью.
+</p>
+
+<table>
+  <thead><tr><th>Уровень</th><th>Замечание</th><th>Решение</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><span class="tag t-should">should-fix</span></td>
+      <td>Идентичность исследования по <code>Arc::ptr_eq</code>: фильтр/переключение тома заменяют Arc — события кадра теряются</td>
+      <td><b>Исправлено.</b> Идентичность — <code>metadata.source</code>; unit-регрессия; амандмент ADR 0016 и §3.8.</td>
+    </tr>
+    <tr>
+      <td><span class="tag t-nit">nit</span></td>
+      <td>Два теста упали на первом прогоне: осевой индекс — <code>indices[2]</code>, не <code>[0]</code> (и egui сглаживает колесо); «Proposed by engine» встречается в двух секциях</td>
+      <td><b>Исправлено.</b> Индекс по <code>normal_axis()</code>, точное равенство индексов события и состояния; <code>get_all_by_label_contains</code>.</td>
+    </tr>
+    <tr>
+      <td><span class="tag t-nit">nit</span></td>
+      <td>fmt/clippy: пример использовал <code>expect</code> (запрещён вне тестов) и неиспользуемый импорт</td>
+      <td><b>Исправлено.</b> <code>phantom()</code> возвращает <code>Result</code>, ошибка через <code>eframe::Error::AppCreation</code>.</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="card">
+  <b>Что проверено как чистое</b>
+  <ul>
+    <li>События не содержат строк вообще — только числа, метки и id; приватность структурная, плюс скан на исследовании с синтетическими данными.</li>
+    <li>Десктоп не изменён: <code>show</code> вызывается с игнорированием результата; UI-тесты и parity зелёные.</li>
+    <li>Первый кадр и смена исследования устанавливают базовую линию без событий; повторное открытие того же источника может дать события появления загруженных сегментов человека — названо в PR.</li>
+    <li>Бюджет качества: функции в пределах clippy.toml (25/120/6), публичные items документированы, <code>unwrap</code>/<code>expect</code> только в тестах.</li>
+  </ul>
+</div>
+
+<h3>Оценка качества</h3>
+<table>
+  <thead><tr><th>Аспект</th><th class="num">Оценка</th><th>Обоснование</th></tr></thead>
+  <tbody>
+    <tr><td>Архитектура</td><td class="num">сильная</td><td>События — производные состояния; логика в app; рендер не тронут; слоистость проверена тестом дерева зависимостей.</td></tr>
+    <tr><td>Тесты</td><td class="num">сильная</td><td>11 новых, точные значения, контроли, критерии процитированы; limitation прокси-счёта назван.</td></tr>
+    <tr><td>Процесс</td><td class="num">средняя</td><td>Второе ревью не состоялось (квота субагентов, L42) — заменено self-review lead с записью в PR; одна находка первого ревью исправлена до пуша.</td></tr>
+    <tr><td>Документация</td><td class="num">сильная</td><td>§3.8 as-built, амандмент ADR, architecture, CLAUDE.md, CHANGELOG, таблица Stage 24.</td></tr>
+    <tr><td>Верификация</td><td class="num">полная (тесты + CI)</td><td>preflight «all checks passed» в CI-дистрибутиве (Ubuntu 24.04, mesa 25.2.8); CI PR #109 5/5 success; живой прогон примера на исследовании не делался — названо в PR как optional field.</td></tr>
+  </tbody>
+</table>
+
+<h2>4. Где это лежит (code map, SHA <code>22a4a83</code>)</h2>
+
+<table>
+  <thead><tr><th>Что</th><th>file:lines</th><th>Символ</th></tr></thead>
+  <tbody>
+    <tr><td>Виды событий</td><td><a href="https://github.com/Kauter1989/ferrum/blob/22a4a8334f8eb509c8bfb4abdd051e3329e4f0f6/crates/ferrum-ui/src/events.rs#L42-L70">events.rs:42-70</a></td><td><code>ViewerEvent</code></td></tr>
+    <tr><td>Обе формы точки</td><td><a href="https://github.com/Kauter1989/ferrum/blob/22a4a8334f8eb509c8bfb4abdd051e3329e4f0f6/crates/ferrum-ui/src/events.rs#L24-L30">events.rs:24-30</a></td><td><code>Point</code></td></tr>
+    <tr><td>Снимок состояния; идентичность по источнику</td><td><a href="https://github.com/Kauter1989/ferrum/blob/22a4a8334f8eb509c8bfb4abdd051e3329e4f0f6/crates/ferrum-ui/src/events.rs#L77-L125">events.rs:77-125</a></td><td><code>Snapshot</code>, <code>take</code>, <code>same_study</code></td></tr>
+    <tr><td>Дифф кадра: pick, ROI, slice</td><td><a href="https://github.com/Kauter1989/ferrum/blob/22a4a8334f8eb509c8bfb4abdd051e3329e4f0f6/crates/ferrum-ui/src/events.rs#L128-L163">events.rs:128-163</a></td><td><code>diff</code></td></tr>
+    <tr><td>Coalescing окна/камеры до конца drag'а</td><td><a href="https://github.com/Kauter1989/ferrum/blob/22a4a8334f8eb509c8bfb4abdd051e3329e4f0f6/crates/ferrum-ui/src/events.rs#L168-L196">events.rs:168-196</a></td><td><code>DragBaseline</code></td></tr>
+    <tr><td>Сборка событий кадра; сброс на смене исследования</td><td><a href="https://github.com/Kauter1989/ferrum/blob/22a4a8334f8eb509c8bfb4abdd051e3329e4f0f6/crates/ferrum-ui/src/events.rs#L193-L225">events.rs:193-225</a></td><td><code>frame_events</code></td></tr>
+    <tr><td>show возвращает события</td><td><a href="https://github.com/Kauter1989/ferrum/blob/22a4a8334f8eb509c8bfb4abdd051e3329e4f0f6/crates/ferrum-ui/src/widget.rs#L147-L175">widget.rs:147-175</a></td><td><code>ViewerWidget::show</code></td></tr>
+    <tr><td>Раскладка примера хоста</td><td><a href="https://github.com/Kauter1989/ferrum/blob/22a4a8334f8eb509c8bfb4abdd051e3329e4f0f6/crates/ferrum-ui/examples/embed_host.rs#L45-L75">embed_host.rs:45-75</a></td><td><code>host_ui</code></td></tr>
+    <tr><td>Coalescing-тест</td><td><a href="https://github.com/Kauter1989/ferrum/blob/22a4a8334f8eb509c8bfb4abdd051e3329e4f0f6/crates/ferrum-ui/tests/embed.rs#L249-L310">embed.rs:249-310</a></td><td><code>events_are_coalesced_per_frame</code></td></tr>
+    <tr><td>Pick = probe</td><td><a href="https://github.com/Kauter1989/ferrum/blob/22a4a8334f8eb509c8bfb4abdd051e3329e4f0f6/crates/ferrum-ui/tests/embed.rs#L312-L341">embed.rs:312-341</a></td><td><code>a_pick_gives_the_voxel_probe_gives</code></td></tr>
+    <tr><td>Решения — не события (с контролем)</td><td><a href="https://github.com/Kauter1989/ferrum/blob/22a4a8334f8eb509c8bfb4abdd051e3329e4f0f6/crates/ferrum-ui/tests/embed.rs#L343-L398">embed.rs:343-398</a></td><td><code>no_event_is_a_decision</code></td></tr>
+    <tr><td>Пример хоста получает события</td><td><a href="https://github.com/Kauter1989/ferrum/blob/22a4a8334f8eb509c8bfb4abdd051e3329e4f0f6/crates/ferrum-ui/tests/embed.rs#L400-L426">embed.rs:400-426</a></td><td><code>the_example_host_receives_a_pick</code></td></tr>
+    <tr><td>Лицензия и бейдж в embedded-раскладке</td><td><a href="https://github.com/Kauter1989/ferrum/blob/22a4a8334f8eb509c8bfb4abdd051e3329e4f0f6/crates/ferrum-ui/tests/embed.rs#L428-L482">embed.rs:428-482</a></td><td><code>the_embedded_ai_widget_shows_licence_and_badge</code></td></tr>
+    <tr><td>Приватность событий</td><td><a href="https://github.com/Kauter1989/ferrum/blob/22a4a8334f8eb509c8bfb4abdd051e3329e4f0f6/crates/ferrum-ui/tests/embed.rs#L484-L540">embed.rs:484-540</a></td><td><code>events_hold_no_identifiers</code></td></tr>
+    <tr><td>Амандмент ADR 0016</td><td><a href="https://github.com/Kauter1989/ferrum/blob/22a4a8334f8eb509c8bfb4abdd051e3329e4f0f6/docs/decisions/0016-ferrum-ui-crate.md#L54-L67">0016-ferrum-ui-crate.md:54-67</a></td><td>Amendment — events as built</td></tr>
+  </tbody>
+</table>
+
+<h3>Хронология</h3>
+<ol>
+  <li><b>2026-11-14</b> — реализация событий и примера хоста; первый прогон тестов в WSL выявил осевой индекс и сглаживание колеса egui — исправлено.</li>
+  <li><b>2026-11-14</b> — субагент <code>code-reviewer</code> умер по квоте (L42), успев прислать находку про <code>Arc::ptr_eq</code>; подтверждена чтением <code>viewer.rs</code>, исправлена (идентичность по <code>metadata.source</code>) с регрессионным тестом; второй запуск также умер по квоте — остальное ревью выполнил lead.</li>
+  <li><b>2026-11-14</b> — preflight «all checks passed» в CI-дистрибутиве (Ubuntu 24.04, mesa 25.2.8); пуш, PR #109, G3-отчёт комментарием с код-картой на head <code>2430932</code>.</li>
+  <li><b>2026-11-15</b> — CI 5/5 (check, licenses, coverage, bridge, python-lint); решение пользователя G3: «ок, мержи»; merge-коммит <code>22a4a83</code>; контракт событий закреплён в CLAUDE.md.</li>
+  <li><b>2026-11-15</b> — phase 11: этот отчёт перечитан из смерженного дерева (номера строк код-карты сверены с develop на <code>22a4a83</code>).</li>
+</ol>
+
+<footer>
+  Источник данных: git-история (<code>git diff --shortstat 22a4a83^1...22a4a83</code> → 13 файлов, +915/−15;
+  <code>git rev-list --count</code> → 1), тело PR #109 и G3-комментарий, CI PR #109 (5/5 success),
+  preflight в WSL Ubuntu 24.04 (mesa 25.2.8, lavapipe) на head 2430932 — «all checks passed».
+  Номера строк код-карты перечитаны из смерженного дерева на 22a4a83. Все числа получены командами git
+  и прогоном тестов, не по памяти. Живой прогон примера на исследовании не делался (названо в PR как optional field).
+</footer>
+
+</main>
+</body>
+</html>
