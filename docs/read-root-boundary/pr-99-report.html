@@ -97,7 +97,7 @@
   <div class="stat"><b>4</b><span>замечания двух ревью</span></div>
   <div class="stat"><b>3 + 1</b><span>исправлено + опровергнуто probe'ом</span></div>
   <div class="stat"><b>14/14</b><span>GPU-parity на хосте Windows</span></div>
-  <div class="stat"><b>1</b><span>урок записан (L39)</span></div>
+  <div class="stat"><b>1</b><span>урок записан (L49)</span></div>
 </div>
 
 <h2>1. Архитектурные изменения</h2>
@@ -310,7 +310,7 @@ if roots.iter().filter_map(|r| real_path(r).ok()).any(|r| real.starts_with(r)) {
   <li>Дисковый кризис C: → перенос WSL на E: (85.9 GB vhdx), чистка сборочных кэшей WSL (~37 GB), финальные прогоны на финальном коде.</li>
   <li>Пока шёл фикс, develop уехал: #96 (правила issues), #97 (ADR), #98/#100 (релиз 0.4.0), #102 (ruff). Ребейз + update-merge; запись CHANGELOG дважды съезжала в [0.4.0] — возвращена в [Unreleased] (фикс выходит после релиза).</li>
   <li>Финальный head 7516dd0: CI 5/5 зелёный (check 6m, coverage 3m11s, licenses, bridge, python-lint). G3: пользователь одобрил мерж.</li>
-  <li>Мерж 52bb981 (2026-11-14 16:05 MSK), issue #82 закрыт с резюме. Урок L39 записан; этот отчёт — phase 11 из смерженного дерева.</li>
+  <li>Мерж 52bb981 (2026-11-14 16:05 MSK), issue #82 закрыт с резюме. Урок L49 записан; этот отчёт — phase 11 из смерженного дерева.</li>
 </ul>
 
 <h2>4. Где это лежит (code map)</h2>
@@ -341,7 +341,7 @@ if roots.iter().filter_map(|r| real_path(r).ok()).any(|r| real.starts_with(r)) {
   schema, cargo test --workspace --no-fail-fast; GPU-тесты — документированный SIGSEGV Mesa 23.2,
   их ответил хост), хост Windows (gpu_parity 14/14, view_host 13/13 с FERRUM_REQUIRE_GPU=1,
   сюиты ferrum-domain/io/agent). CI на head 7516dd0: check, licenses, coverage, bridge, python-lint — все зелёные.
-  Урок: L39 («проверенный путь ≠ открытый путь») в .claude/lessons.md.
+  Урок: L49 («проверенный путь ≠ открытый путь») в .claude/lessons.md.
   Отчёт описывает merge 52bb981d4b36cfc618bc070b05d03f6ef21117f9 в develop.
 </footer>
 

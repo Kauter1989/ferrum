@@ -6,6 +6,7 @@ use ferrum_app::{GpuSyncState, ViewMode, Viewer};
 use ferrum_domain::SliceAxis;
 use ferrum_render::gpu::VolumeRenderer;
 
+use crate::events::{DragBaseline, Snapshot, ViewerEvent};
 use crate::gpu_bridge::RendererSink;
 use crate::slice_view::{self, SliceViewState};
 use crate::volume_view::{self, VolumeViewState};
@@ -27,6 +28,10 @@ pub struct ViewerWidget {
     /// The egui pass in which [`ViewerWidget::begin_frame`] last ran, and
     /// whether it uploaded to the GPU.
     prepared: Option<(u64, bool)>,
+    /// The state given to the host last frame; events are the diff to it.
+    last_snapshot: Option<Snapshot>,
+    /// The window and camera last given to the host (drag coalescing).
+    drag_baseline: Option<DragBaseline>,
 }
 
 impl Default for ViewerWidget {
@@ -56,6 +61,8 @@ impl ViewerWidget {
             icon_font: true,
             styled: false,
             prepared: None,
+            last_snapshot: None,
+            drag_baseline: None,
         }
     }
 
@@ -130,10 +137,22 @@ impl ViewerWidget {
     /// Draws the views of `viewer` into `ui`, filling it: one slice view, the
     /// MPR quad (axial, 3D, coronal, sagittal) or the 3D view. Nothing is
     /// drawn before a study is loaded.
-    pub fn show(&mut self, ui: &mut egui::Ui, viewer: &mut Viewer, render_state: Option<&egui_wgpu::RenderState>) {
+    ///
+    /// Returns this frame's events (24.2): what the person did — a pick, a
+    /// drawn annotation or segment, the slice, window or camera change —
+    /// coalesced (one `SliceChanged` per frame, one `WindowChanged` or
+    /// `CameraChanged` when a drag ends). A use case the host calls itself
+    /// between frames is seen too. No event is a decision, and an engine's
+    /// proposal is not a `RoiDrawn`.
+    pub fn show(
+        &mut self,
+        ui: &mut egui::Ui,
+        viewer: &mut Viewer,
+        render_state: Option<&egui_wgpu::RenderState>,
+    ) -> Vec<ViewerEvent> {
         self.begin_frame(&ui.ctx().clone(), viewer, render_state);
         if viewer.dataset().is_none() {
-            return;
+            return Vec::new();
         }
         if self.toolbar {
             let full = ui.available_rect_before_wrap();
@@ -144,6 +163,17 @@ impl ViewerWidget {
             ui.allocate_rect(bar, egui::Sense::hover());
         }
         self.views(ui, viewer);
+        let after = Snapshot::take(viewer);
+        let pointer_down = ui.input(|i| i.pointer.any_down());
+        let events = crate::events::frame_events(
+            self.last_snapshot.as_ref(),
+            &after,
+            viewer,
+            &mut self.drag_baseline,
+            pointer_down,
+        );
+        self.last_snapshot = Some(after);
+        events
     }
 
     fn views(&mut self, ui: &mut egui::Ui, viewer: &mut Viewer) {

@@ -467,7 +467,7 @@ switch time and GPU memory on a real GPU.
 
 ---
 
-## Stage 23 — GPU sharing with an external model server 🚧 (G1 ✅, G2 ✅; PR 3 of 3)
+## Stage 23 — GPU sharing with an external model server ✅ (G1 ✅, G2 ✅; field run 2026-11-14)
 
 Medical Harness runs its language model locally as a `llama-server`
 sidecar on the same 12 GB card as FERRUM's engines
@@ -536,10 +536,10 @@ running engine job.
 | 23.T6 `engine unload`, `engine list` fields | 23.4-c/d | 2 | ✅ |
 | 23.T7 domain port, `GatedEngine`, `Viewer` waiting and cancel | 23.3-a/b | 3 | ✅ |
 | 23.T8 AI panel waiting state; `gpu hold` | 23.3-c, 23.5-d | 3 | ✅ |
-| 23.T9 benchmark holder options; field run; recipe | 23.5-a/b/c | 3 | options ✅ (dry run); field run and recipe pending |
+| 23.T9 benchmark holder options; field run; recipe | 23.5-a/b/c | 3 | ✅ field run 2026-11-14: 20/20 with holder, no OOM; recipe gpu-sharing §5 |
 
 **Size:** XL, five contract surfaces. It is split into three PRs of size L
-([design §7–8](docs/gpu-sharing.md#7-size-and-pr-split)):
+([design §8–9](docs/gpu-sharing.md#8-size-and-pr-split)):
 1. the lock crate, configuration and agent;
 2. the protocol, the bridges and `engine unload`, then a field test;
 3. the desktop, `gpu hold` and the benchmark, then the field run of the
@@ -547,7 +547,7 @@ running engine job.
 
 ---
 
-## Stage 24 — Embeddable viewer widget (`ferrum-ui`) 🚧 (G1 ✅, G2 ✅; PR 1 of 2)
+## Stage 24 — Embeddable viewer widget (`ferrum-ui`) 🚧 (G1 ✅, G2 ✅; PR 2 of 2)
 
 Medical Harness shows a conversation and FERRUM's viewer in one egui/wgpu
 window ([#69](https://github.com/Kauter1989/ferrum/issues/69); P1 for the
@@ -602,10 +602,10 @@ through `Viewer` or its own code), theming beyond FERRUM's dark theme.
 | 24.T1 crate `ferrum-ui`; views, panels, theme, widgets, GPU bridge moved | 24.1-a, 24.3-c | 1 | ✅ |
 | 24.T2 `ViewerWidget` (layout, tool bar, polling, GPU sync), `panels::side_panel`, `PanelRequest` | 24.1-b/c | 1 | ✅ |
 | 24.T3 desktop on `ferrum-ui`; UI tests and parity unchanged; renders before and after compared | 24.3-a/b | 1 | ✅ |
-| 24.T4 events | 24.2-a/b/c | 2 | |
-| 24.T5 example host and its UI test | 24.4-a/b | 2 | |
-| 24.T6 licence and badge test in the embedded layout | 24.5-a/b | 2 | |
-| 24.T7 docs, events privacy test | — | 2 | |
+| 24.T4 events | 24.2-a/b/c | 2 | ✅ |
+| 24.T5 example host and its UI test | 24.4-a/b | 2 | ✅ |
+| 24.T6 licence and badge test in the embedded layout | 24.5-a/b | 2 | ✅ |
+| 24.T7 docs, events privacy test | — | 2 | ✅ |
 
 ## Stage 25 — Local GPU view for a harness (`ferrum-view/1`) ✅
 
@@ -643,8 +643,9 @@ other `ferrum-view/1` components (Stage 26 draws them on the same
 interfaces); decisions through the view (they stay with
 `ferrum_agent::decisions`); a WASM/WebGPU client — **closed by Stage 26**,
 which draws the study in a browser panel on these interfaces; remote exposure
-and TLS; several viewers per host; the agent command set (an agent reads the
-events of 25.4-c in Stage 26 through `view events`).
+and TLS; several viewers per host; the agent command set (an agent reading
+the events of 25.4-c through a command such as `view events` remains an
+open follow-up).
 
 **Clarifications (autonomous; `assumed:`):**
 - assumed: the host renders on the CPU by default only when no adapter is
@@ -859,7 +860,7 @@ embedding `ferrum-agent` v0.3.0 ([#82](https://github.com/Kauter1989/ferrum/issu
 request 13 of `docs/ferrum-integration.md` there). Closes the S2 backlog
 item of the 0.4.0-prep security review (the same lexical root check).
 **Merged:** [#99](https://github.com/Kauter1989/ferrum/pull/99), merge
-`52bb981` (2026-11-14); issue #82 closed; lesson L39; final report in
+`52bb981` (2026-11-14); issue #82 closed; lesson L49; final report in
 [docs/read-root-boundary/pr-99-report.html](docs/read-root-boundary/pr-99-report.html).
 
 **The defect.** `AgentConfig::check_source` compares a source path with
@@ -955,7 +956,7 @@ stage starts with its spec at gate G1. Sizes follow `ferrum-size`.
 | 5 | Stage 16 — the rest: 16.1 confirm all, 16.2 export only confirmed, 16.3 provenance of a corrected segment, 16.4 annotation mode | stage, M per story | open since Stage 16; 16.5–16.6 are done |
 | 6 | Stage 19 — reproducible radiomics and comparison (IBSI, textures, change over time) | stage, XL, G1 again | waits for the release of Stage 18 (its own rule); MR normalisation joins it |
 | 7 | Interactive view host for generative UI — delivered as Stages 25 and 26: `view serve`, the DeepSeek Harness plugin, the WebGPU panel ([ADR 0014](docs/decisions/0014-generative-ui-view-host.md), [ADR 0017](docs/decisions/0017-view-host-crate.md)) | ✅ done | follow-ups open: rotating tokens (an ADR first), the CPU overlay consolidation, WebGPU test automation |
-| 8 | Stage 23 — GPU sharing with an external model server ([#68](https://github.com/Kauter1989/ferrum/issues/68)) — code complete, PRs 1–3 merged | ✅ code; field run open | 23.T9: the 20-call recipe on the user's 12 GB card |
+| 8 | Stage 23 — GPU sharing with an external model server ([#68](https://github.com/Kauter1989/ferrum/issues/68)) — code complete, PRs 1–3 merged | ✅ field run 2026-11-14: 20/20 with holder, recipe §5 | — |
 | 9 | Stage 24 PR 2 — widget events and the example host (24.T4–T7, [design](docs/embeddable-viewer.md)) | feature, M | G1 ✅ G2 ✅; completes the embeddable viewer for the harness's Demo 4; the next feature proposed after the release |
 
 ### Backlog (feature or small, any time)

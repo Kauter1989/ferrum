@@ -22,8 +22,8 @@ a rewrite of the first — it is the same template with the gaps filled.
 
 | Moment | When | Where it lives | What it must answer |
 |---|---|---|---|
-| **Pre-merge** (G3) | before the person decides to merge | posted to the PR, **not committed** | "should I merge this, and where is it?" |
-| **Post-merge** | after the merge, as phase 11 | committed to `docs/<feature>/` | "what happened, and what did we learn?" |
+| **Pre-merge** (G3) | before the person decides to merge | posted to the PR as a comment, **not committed** | "should I merge this, and where is it?" |
+| **Final** | in the feature PR, revised during the user's review | committed to `docs/<feature>/<pr>-report.html` **in the feature PR itself** | "what happened, and what did we learn?" — merges with the feature in its last version |
 
 **The pre-merge report is a gate input, not an artifact.** G3 is the
 person's decision to merge; a decision made without reading the code is a
@@ -31,25 +31,32 @@ decision made on trust. The report is what makes the code reviewable in one
 sitting: the same sections as the final report, plus a **code map** — where
 each thing actually is — so the person can open any claim and see the lines.
 
-- It goes in a **PR comment**, as a `file://`-less, self-contained page
-  attached or pasted, or as a comment that links the rendered file. It is
-  never committed: the branch is not merged yet, and a report about
-  unmerged code must not become part of the history it describes.
+- The G3 comment goes in a **PR comment**, as a `file://`-less,
+  self-contained page attached or pasted, or as a comment that links the
+  rendered file. It is never committed: it is the gate input, and the
+  committed final report supersedes it.
 - Its **code map** is the difference from the final report (see §4.5): every
   architectural statement carries a link to the lines that implement it.
 - The **final report** keeps the same structure, drops nothing that was in
   the pre-merge one, and changes the tense: "will do / is intended" becomes
-  "did / does". If the merge changed the code after the pre-merge report —
-  a rebase, a fix from review — the final report is regenerated from the
-  merged tree, never copied forward.
+  "did / does". It is committed to the feature PR (user rule): the user
+  reviews and revises it there, and if the PR is merged the report lands in
+  history in its last version. Regenerate it from the PR's current head
+  whenever review fixes move the code — never copy forward stale lines. A
+  report on an **already-merged** feature (the feature PR went in before
+  this rule, or before its report) goes through a small `docs/` PR from a
+  fresh `origin/develop`, regenerated from the merged tree.
 
 ## 1. Track and place
 
-- **Track: `small`** (`ferrum-workflow` §1) — this is `docs` work.
-  Branch `docs/<feature>-report` from a fresh `origin/develop`
-  (`new-branch`), the report in one commit, the commit trail in review
-  (`ferrum-change` §7). The **pre-merge** report breaks this rule on
-  purpose: it is a PR comment with no commit, because §0.
+- **Track: `small`** (`ferrum-workflow` §1) — this is `docs` work. The
+  **final report is committed to the feature PR itself** (user rule): one
+  commit on the feature branch, revised there during the user's review,
+  merged with the feature in its last version. Only a report on an
+  **already-merged** feature gets its own branch `docs/<feature>-report`
+  from a fresh `origin/develop` (`new-branch`), one commit, the commit
+  trail in review (`ferrum-change` §7). The **pre-merge** G3 report breaks
+  the commit rule on purpose: it is a PR comment with no commit, because §0.
 - **The file goes beside the feature's design doc:**
 
   ```

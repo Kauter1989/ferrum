@@ -239,3 +239,14 @@ Constraints specific to this problem:
    negotiation, parity test, wasm CI job.
 4. Remaining components (`VolumeView`, `Compare`, `SegmentReview`) and
    remote exposure with TLS guidance.
+
+---
+
+> **Amendment (2026-11-14): Status → Accepted.** The view host shipped in
+> Stages 25–26 (PRs #83–#92): `ferrum-view/1` with the loopback token host
+> and the CPU/GPU slice frames (stage 1, with the state/event surface),
+> and the WASM + WebGPU client behind the same interfaces (stage 3,
+> `ferrum-wasm` and the harness panel). Stage 2's live reload landed as
+> the workspace change notifications (16.8). The remaining components and
+> remote exposure stay out of scope, as proposed. The roadmap's "delivered"
+> mark refers to this accepted core; the draft marker above is superseded.

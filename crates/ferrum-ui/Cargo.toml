@@ -25,6 +25,11 @@ wgpu.workspace = true
 egui_kittest.workspace = true
 tempfile.workspace = true
 ferrum-io.workspace = true
+eframe.workspace = true
+env_logger.workspace = true
+dicom-object.workspace = true
+dicom-core.workspace = true
+dicom-dictionary-std.workspace = true
 
 [lints]
 workspace = true

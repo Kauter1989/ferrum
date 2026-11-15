@@ -755,7 +755,169 @@ that says so instead of editing the old one.
   documents intent; a gate enforces it. When the two disagree, the gate wins
   and the prose is the thing that needs fixing.
 
-### L39 — The checked path was not the opened path (2026-11, Stage F2 / #82)
+### L39 — Antivirus quarantined a freshly linked test binary (2026-11, 0.4.0 prep)
+
+- **Symptom:** `cargo test` reported `gpu_parity` failed without running a
+  test: "file in use" (os error 32), then "access denied" (5), then "not
+  found" (2). The `.exe` vanished after linking; the `.pdb` stayed.
+- **Root cause:** Kaspersky on the dev machine quarantines freshly linked
+  executables; builds a few days old survive. Nothing in the code or the
+  lock was wrong.
+- **Why it was missed:** cargo reports a launch failure as a test-target
+  failure, which reads like a code or file-lock problem.
+- **Fix:** rebuilt; the surviving binary ran 14/14 on the GPU. Named as an
+  environmental exception in the PR (ferrum-change §4).
+- **Guard:** ferrum-change §4, the Windows note: a test exe that fails to
+  *launch* (os error 2/5/32) is an environment question first — check the
+  file exists and the antivirus, run a surviving build directly.
+- **Rule:** On Windows, distinguish "the test failed" from "the test never
+  started" before suspecting the code.
+
+### L40 — DX12 device removal on a loaded desktop (2026-11, 0.4.0 prep)
+
+- **Symptom:** two UI tests failed with `0x887A0005` (DEVICE_REMOVED) on
+  the dev machine; the same suite passed 19/19 on Vulkan and in CI.
+- **Root cause:** the DX12 driver reset the device under concurrent GPU
+  load (daily applications and the tests share one card).
+- **Why it was missed:** the failure looks like a wgpu validation bug; the
+  parity suite on the same device was green, which rules the code out.
+- **Fix:** none needed in code; the suite was re-run with
+  `WGPU_BACKEND=vulkan` and named in the PR.
+- **Guard:** ferrum-change §4: on a loaded desktop, verify a GPU-test
+  failure on a second backend before calling it a defect.
+- **Rule:** A GPU failure on a shared machine is environmental until a
+  second backend or CI says otherwise.
+
+### L41 — PowerShell 5.1 encoding faked a stale schema (2026-11, 0.4.0 prep)
+
+- **Symptom:** the schema-freshness comparison reported `commands.json`
+  stale; the content was identical (L29 family, new mechanism).
+- **Root cause:** the `>` redirect wrote the fresh schema as UTF-16;
+  `Get-Content` decoded the committed UTF-8 file as the system codepage
+  (CP1251); the two decodings differed.
+- **Why it was missed:** both sides "looked like text"; the mismatch was
+  in the decoding, not the content.
+- **Fix:** compare with explicit decoding (`[IO.File]::ReadAllText`, UTF-8
+  for the committed file); the preflight bash check was always correct.
+- **Guard:** ferrum-change §4: never compare file content through the
+  default codepage on Windows; decode explicitly.
+- **Rule:** On Windows, a content comparison is only as good as its
+  decoding — name the encoding on both sides.
+
+### L42 — A quota-killed subagent lost the whole review (2026-11, 0.4.0 prep)
+
+- **Symptom:** the code-reviewer subagent died on "quota limit exceeded"
+  several times; each death lost the entire review in progress.
+- **Root cause:** the harness kills the agent on a quota error with no
+  retry, and the review lived only in the agent's final answer.
+- **Why it was missed:** the orchestration assumed a subagent either
+  finishes or can be asked again from scratch.
+- **Fix:** the lead instructed the agent to send findings in batches via
+  `send_message`, and restarted it after a 30-second timer on each death
+  (bounded attempts). Both batches arrived; the review completed.
+- **Guard:** ferrum-change §6: review subagents send findings in batches;
+  on a quota death the lead retries after ~30 s, bounded, and partial
+  batches are kept.
+- **Rule:** Partial results must survive the agent's death — batch them
+  out, and retry the agent, not the whole task.
+
+### L43 — A fix branch predating the bump landed its entry in Unreleased (2026-11, 0.4.0)
+
+- **Symptom:** #99's CHANGELOG entry landed under `[Unreleased]` although
+  the user wanted the fix in 0.4.0; the merge was clean.
+- **Root cause:** the branch edited `[Unreleased]` before the bump moved
+  the content to `[0.4.0]`; git merged both edits without conflict, and
+  the entry stayed in the now-empty section.
+- **Why it was missed:** a clean git merge was taken for a semantically
+  correct one.
+- **Fix:** #104 moved the entry under `[0.4.0]`.
+- **Guard:** ferrum-release §3: before the release PR, test-merge each
+  open PR slated for the release and check where its CHANGELOG entry
+  lands.
+- **Rule:** Check section placement, not just conflict-freedom, when a
+  branch and a version bump touch the same file.
+
+### L44 — A retired runner label cancelled every macOS release job (2026-11, 0.4.0)
+
+- **Symptom:** the v0.4.0 release run cancelled each macOS job in 0 s;
+  Linux and Windows built, publish was skipped, no release appeared.
+- **Root cause:** `release.yml` used `macos-14`; GitHub retired the
+  `macos-14-arm64-us-default` configuration ("not supported") since the
+  0.3.0 release. The annotation named it; the earlier dry-run cancellations
+  had been mistaken for transient provisioning failures.
+- **Why it was missed:** a cancelled job with no steps reads like
+  infrastructure noise; the dry runs were not inspected for the annotation.
+- **Fix:** `macos-15` (the current arm64 image), verified by a dry run from
+  the fix branch before merging; the release re-dispatched cleanly (the
+  tag is created only by the publish job).
+- **Guard:** ferrum-release §4: a provisioning cancellation with
+  "configuration not supported" is a retired label — read the annotation,
+  fix the label, dry-run from the fix branch.
+- **Rule:** Read the annotation of a cancelled job before calling it
+  transient; a label that worked last release may be retired today.
+
+### L45 — The preflight distro's lavapipe crashed at thread exit (2026-11, Stage 23 field)
+
+- **Symptom:** `every_view_mode_renders_the_volume` passed all six scenes,
+  then SIGSEGV in `__nptl_deallocate_tsd` as the test thread exited; the
+  suite was red on a machine where CI is green.
+- **Root cause:** WSL Ubuntu 22.04 ships mesa 23.2.1, whose lavapipe crashes
+  in TLS teardown; the kisak PPA dropped jammy and noble's mesa needs
+  GLIBC_2.38. The crash was environmental, not FERRUM's.
+- **Fix:** imported an Ubuntu 24.04 WSL distro (root, no sudo password;
+  static `/etc/resolv.conf` because WSL DNS was flaky) — mesa 25.2.8 matches
+  CI's ubuntu-latest; preflight green there. It is now the preflight/field
+  platform.
+- **Guard:** run preflight in a distro that matches CI, not the oldest WSL
+  on the machine; a crash in libc/mesa teardown after all assertions passed
+  is the environment until proven otherwise.
+- **Rule:** `wsl.exe` mangles inner quotes and pipes — write bash to a
+  script file (LF) and run `wsl -d <distro> -u root -e bash <file>`.
+
+### L46 — WSL reports per-process VRAM as [N/A] (2026-11, Stage 23 field)
+
+- **Symptom:** every per-process GPU reading in the field run was 0 MiB
+  while the card clearly held the engines; the release/unload measurements
+  were meaningless.
+- **Root cause:** WSL's `nvidia-smi --query-compute-apps` lists the PIDs
+  but `used_memory` is `[N/A]`; the bridge's `resident_mib` (same source)
+  reports null too.
+- **Fix:** measure the card's total (`memory.used`) and take deltas: one
+  engine active at a time in phase A, holder level as the base in phase B.
+  The numbers came out clean (nnInteractive 3.6–4.1 GB, TS 1.8–2.3 GB next
+  to the holder).
+- **Guard:** a footprint of 0 for a running engine is a measurement bug,
+  not a result; assert the holder's card delta > 0 before trusting phase B.
+
+### L47 — llama.cpp's CUDA runtime is a separate release asset (2026-11, Stage 23 field)
+
+- **Symptom:** the "resident holder" measured 0 MiB on the card; phase B
+  ran, but nothing was shared — `llama-server` had fallen back to CPU.
+- **Root cause:** the ubuntu-cuda tarball ships `libggml-cuda.so` but not
+  `libcudart`/`libcublas`; those live in the `cudart-llama-…` asset of the
+  same build. Without them the backend fails to load **silently**. Also:
+  the "latest" release is a placeholder (`nightly-tag.txt` only) — walk the
+  recent builds, and the naming changed from zip to tar.gz.
+- **Fix:** download both assets, flatten the libraries next to the binary,
+  and `ldd libggml-cuda.so | grep "not found"` before starting; the card
+  delta then showed 2325 MiB.
+- **Guard:** a GPU server that allocates no VRAM is on the CPU — check the
+  card delta and the backend's dependencies, not the health endpoint.
+
+### L48 — A failure counter whose glob matched nothing (2026-11, Stage 23 field)
+
+- **Symptom:** the field script printed "20/20 ok, 0 failures" for a phase
+  that had a failed call (`engine_unavailable` timeout).
+- **Root cause:** result files are `NN-<step>.json`, but the failure glob
+  was `a-c[0-9][0-9]-*.json` — no file ever matched, so the counter was
+  vacuous (the L22 family: a check that cannot fail).
+- **Fix:** glob `*-"${PFX}"c[0-9][0-9]-*.json`; the phase's failures are
+  also read by eye from the step log before the summary is trusted.
+- **Guard:** every aggregate check in a throw-away script gets one
+  deliberate failure in rehearsal, or its glob is matched against a real
+  filename first.
+
+### L49 — The checked path was not the opened path (2026-11, Stage F2 / #82)
 
 - **Symptom:** The read-root fix passed its own tests, yet review found
   two escapes of one class. (1) `check_source` canonicalised the OS-order
@@ -794,7 +956,8 @@ that says so instead of editing the old one.
   opened. If a consumer opens a stored or raw path, either hand it the
   checked path or refuse spellings whose resolution can diverge (`..`
   behind a link). "Checked" is a property of a spelling, not of an
-  intention.
+  intention. (Renumbered from the draft's L39 on merge: the 0.4.0 retro
+  had already taken L39–L44.)
 
 ## What worked
 
@@ -940,3 +1103,18 @@ that says so instead of editing the old one.
   renderer rather than port it; treat "the dependency compiles for the other
   target unchanged" as the design constraint, and check it before writing
   the binding.
+
+### W11 — A sandbox e2e driver over the release binaries (2026-11, 0.4.0 prep)
+
+- **What:** a Python driver ran the release binaries end to end before the
+  release: agent commands on a generated phantom, the mock engine, the GPU
+  lease, the view host over HTTP (auth, state, frames, input, probe parity,
+  events, volume SHA-256, the public panel module), the CPU backend, and
+  the panel smoke checks — 42 assertions, evidence saved per step.
+- **Outcome:** it found a real defect the suites missed — `view serve`
+  bypassed `data.workspace_root` (fixed with four mutation-sensitive
+  tests) — and measured Stage 25's success metric (43.5 fps, first frame
+  0.02 s, host probe = CLI probe).
+- **Keep:** run the e2e driver over the release binaries before every
+  release; the suites test the parts, the driver tests the assembled
+  product.

@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FERRUM · PR #97–#104 — подготовка и выпуск релиза 0.4.0 · G3-отчёт</title>
+<style>
+  :root {
+    --bg: #fbfbfd; --fg: #1d1f26; --muted: #5b6070; --line: #e2e5ec;
+    --accent: #1f6feb; --ok: #1a7f37; --warn: #9a6700; --bad: #b42318;
+    --card: #ffffff; --code: #f3f4f7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12141a; --fg: #e6e7ea; --muted: #a2a8b6; --line: #2a2e38;
+      --accent: #6ba6ff; --ok: #4ac26b; --warn: #d4a72c; --bad: #ff7b72;
+      --card: #191c23; --code: #1f232c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.6 -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  main { max-width: 1080px; margin: 0 auto; padding: 40px 24px 80px; }
+  h1 { font-size: 30px; line-height: 1.25; margin: 0 0 8px; letter-spacing: -0.02em; }
+  h2 { font-size: 21px; margin: 44px 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 16px; margin: 26px 0 8px; }
+  p, li { color: var(--fg); }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 28px; }
+  .pill {
+    font-size: 13px; padding: 3px 10px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--card); color: var(--muted);
+  }
+  .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+  .pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px 20px; margin: 14px 0;
+  }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 13px; }
+  code { background: var(--code); padding: 1px 5px; border-radius: 4px; }
+  pre { background: var(--code); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; overflow-x: auto; font-size: 13px; line-height: 1.5; }
+  pre code { background: none; padding: 0; }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 14px; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .tag { font-size: 12px; font-weight: 600; padding: 2px 7px; border-radius: 5px; white-space: nowrap; }
+  .t-block { background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--bad); }
+  .t-should { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+  .t-nit { background: color-mix(in srgb, var(--muted) 16%, transparent); color: var(--muted); }
+  .t-fixed { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+  .stat { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+  .stat b { display: block; font-size: 26px; line-height: 1.2; }
+  .stat span { color: var(--muted); font-size: 13px; }
+  .diagram { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin: 16px 0; overflow-x: auto; color: var(--fg); }
+  .diagram svg { display: block; width: 100%; min-width: 720px; height: auto; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .diagram .node { fill: var(--code); stroke: var(--line); stroke-width: 1; }
+  .diagram .node.accent { fill: color-mix(in srgb, var(--accent) 12%, var(--code)); stroke: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+  .diagram .node.strong { fill: color-mix(in srgb, var(--ok) 12%, var(--code)); stroke: color-mix(in srgb, var(--ok) 45%, var(--line)); }
+  .diagram .n-title { fill: var(--fg); font-size: 15px; font-weight: 600; text-anchor: middle; }
+  .diagram .n-sub { fill: var(--muted); font-size: 12px; text-anchor: middle; }
+  .diagram .zone { fill: var(--muted); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; font-weight: 600; }
+  .diagram .edge { fill: none; stroke: currentColor; stroke-opacity: .45; stroke-width: 1.6; }
+  .diagram .edge.dashed { stroke-dasharray: 5 4; }
+  .diagram .e-label { fill: var(--muted); font-size: 11.5px; text-anchor: middle; }
+  .diagram-caption { color: var(--muted); font-size: 13px; margin: -4px 0 18px; }
+  ul { padding-left: 22px; }
+  li { margin: 4px 0; }
+  .note { border-left: 3px solid var(--accent); padding-left: 14px; color: var(--muted); margin: 14px 0; }
+  footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>PR #97–#104 — подготовка и выпуск релиза 0.4.0</h1>
+<p class="sub">Финальный отчёт (phase 11): архитектура, анализ кода, история ревью, карта кода — из дерева main. FERRUM, 14 ноября 2026.</p>
+
+<div class="meta">
+  <span class="pill">#97 <code>chore/resolve-adr-0011-collision</code> → <code>develop</code></span>
+  <span class="pill">#98 <code>chore/release-040-prep</code> → <code>develop</code></span>
+  <span class="pill ok">Смержен 2026-11-14 · Release 0.4.0 (#101)</span>
+  <span class="pill">#97 head <code>3662552</code> · #98 head <code>5827615</code> · релиз <code>7112474</code></span>
+  <span class="pill">#98: 9 файлов, +221 / −31</span>
+  <span class="pill">Размер S (оба)</span>
+</div>
+
+<div class="grid">
+  <div class="stat"><b>2</b><span>PR: коллизия ADR + подготовка релиза</span></div>
+  <div class="stat"><b>42/42</b><span>e2e-проверок в песочнице</span></div>
+  <div class="stat"><b>8</b><span>замечаний security-ревью</span></div>
+  <div class="stat"><b>3</b><span>исправлено до мерджа (S1, N2, N3)</span></div>
+  <div class="stat"><b>3</b><span>отложено в backlog (S2, N1, N4)</span></div>
+</div>
+
+<h2>1. Архитектурные изменения</h2>
+
+<p>
+  Релиз 0.4.0 готовился по состоянию репозитория: <code>develop</code> на 167 коммитов
+  впереди <code>main</code> (0.3.0). Подготовка закрывает три вещи: коллизию ADR 0011
+  между ветками, отсутствие главного анонса релиза (WebGPU-панели) в архивах, и
+  дефект <code>view serve</code>, найденный собственной проверкой в песочнице.
+</p>
+
+<h3>PR #97 — коллизия ADR 0011</h3>
+<p>
+  <code>main</code> несёт черновик <code>0011-generative-ui-view-host.md</code> (PR #48);
+  <code>develop</code> уже занял номер 0011 под радиомику и перенумеровал черновик в
+  <a href="https://github.com/Kauter1989/ferrum/blob/7112474e2330961fbfee859e00664f5fb0e7d1d0/docs/decisions/0014-generative-ui-view-host.md#L1-L10">0014</a>
+  с пометкой о переносе. Обычное слияние релиза оставило бы два ADR 0011 на
+  <code>main</code>. PR #97 мержит <code>origin/main</code> в линию develop и удаляет
+  дубликат: содержимое решения живёт в 0014 без изменений (diff — только шапка, +7/−1).
+  Чистый content-diff против develop пуст by design: изменение — топология слияния.
+  Процедура названа в <code>ferrum-release</code> §3.
+</p>
+
+<h3>PR #98 — изменённые модули</h3>
+<table>
+  <thead><tr><th>Модуль</th><th>Что изменилось</th></tr></thead>
+  <tbody>
+    <tr><td><code>.github/workflows/release.yml</code></td><td>Сборка <code>ferrum-wasm</code> (wasm32 + wasm-bindgen 0.2.129) и упаковка модуля панели рядом с бинарниками + <code>integrations/dsh/</code> во все три платформенных архива.</td></tr>
+    <tr><td><code>crates/ferrum-cli/src/main.rs</code></td><td><code>view serve</code> резолвит workspace через <code>AgentConfig::resolve_workspace</code> (раньше — сырая строка в обход <code>data.workspace_root</code>).</td></tr>
+    <tr><td><code>crates/ferrum-cli/tests/view_serve.rs</code></td><td>Новый файл: 4 интеграционных теста границы workspace_root.</td></tr>
+    <tr><td><code>integrations/dsh/</code> (snippet, README)</td><td>Плейсхолдер <code>&lt;checkout&gt;</code> вместо пути разработчика (S1); пример hello с абсолютным путём (N2).</td></tr>
+    <tr><td><code>CHANGELOG.md</code>, <code>README.md</code>, <code>dev_plan.md</code>, <code>docs/vision.md</code></td><td>Записи F1 и фикса view serve; панель в архивах; секция «In a harness», 14 крейтов, измеренные счётчики тестов; статусы стадий и roadmap; «Where we are» до 0.4.0.</td></tr>
+  </tbody>
+</table>
+
+<h3>Связи</h3>
+<div class="diagram">
+<svg viewBox="0 0 980 330" aria-label="Сборка релизного архива с панелью и путь резолвинга workspace в view serve" role="img">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" fill-opacity=".55"/>
+    </marker>
+  </defs>
+  <text x="20" y="24" class="zone">release.yml — сборка архива</text>
+  <rect x="20" y="40" width="180" height="54" rx="10" class="node"/>
+  <text x="110" y="63" class="n-title">cargo build</text>
+  <text x="110" y="81" class="n-sub">ferrum + ferrum-cli</text>
+  <rect x="240" y="40" width="180" height="54" rx="10" class="node accent"/>
+  <text x="330" y="63" class="n-title">ferrum-wasm</text>
+  <text x="330" y="81" class="n-sub">wasm32 + bindgen 0.2.129</text>
+  <rect x="460" y="40" width="220" height="54" rx="10" class="node strong"/>
+  <text x="570" y="63" class="n-title">архив</text>
+  <text x="570" y="81" class="n-sub">бинарники + ferrum_wasm* + integrations/dsh</text>
+  <path d="M 200 67 L 236 67" class="edge" marker-end="url(#arr)"/>
+  <path d="M 420 67 L 456 67" class="edge" marker-end="url(#arr)"/>
+  <text x="20" y="140" class="zone">view serve — путь workspace</text>
+  <rect x="20" y="156" width="150" height="54" rx="10" class="node"/>
+  <text x="95" y="179" class="n-title">-w ct1</text>
+  <text x="95" y="197" class="n-sub">аргумент CLI</text>
+  <rect x="210" y="156" width="230" height="54" rx="10" class="node accent"/>
+  <text x="325" y="179" class="n-title">resolve_workspace</text>
+  <text x="325" y="197" class="n-sub">config.rs:214–237 · root + lexical check</text>
+  <rect x="480" y="156" width="180" height="54" rx="10" class="node"/>
+  <text x="570" y="179" class="n-title">Session::open</text>
+  <text x="570" y="197" class="n-sub">ferrum-view</text>
+  <rect x="700" y="156" width="240" height="54" rx="10" class="node strong"/>
+  <text x="820" y="179" class="n-title">/panel/… + /api/…</text>
+  <text x="820" y="197" class="n-sub">модуль из папки рядом с exe · токен</text>
+  <path d="M 170 183 L 206 183" class="edge" marker-end="url(#arr)"/>
+  <path d="M 440 183 L 476 183" class="edge" marker-end="url(#arr)"/>
+  <path d="M 660 183 L 696 183" class="edge" marker-end="url(#arr)"/>
+  <path d="M 325 210 L 325 262 L 110 262 L 110 296" class="edge dashed" marker-end="url(#arr)"/>
+  <rect x="20" y="280" width="220" height="40" rx="10" class="node"/>
+  <text x="130" y="305" class="n-sub">вне root → forbidden envelope, exit 1</text>
+  <path d="M 570 94 L 570 120 L 820 120 L 820 152" class="edge dashed" marker-end="url(#arr)"/>
+  <text x="700" y="114" class="e-label">модуль панели кладётся рядом с бинарниками</text>
+</svg>
+</div>
+<p class="diagram-caption">Сплошные стрелки — поток сборки и запроса; пунктир — отказ границы и происхождение модуля панели. Резолвинг workspace — тот же метод, что у всех агентских команд.</p>
+
+<h3>Слоистость</h3>
+<ul>
+  <li><code>ferrum-cli</code> только парсит аргументы и вызывает существующий метод конфигурации — бизнес-правило осталось в <code>ferrum-agent</code> (CLAUDE.md: «ferrum-cli only parses arguments»).</li>
+  <li><code>ferrum-view</code> не изменён: раздача <code>/panel/…</code> и токен — как прежде; архив лишь кладёт файлы туда, откуда хост их читает.</li>
+  <li>Правило рендеринга не затронуто: шейдеры и CPU-эталон не менялись, панель использует тот же <code>volume.wgsl</code>.</li>
+  <li>Контрактные поверхности: набор агентских команд, протокол движка, формат workspace — без изменений (схема <code>commands.json</code> свежая, проверено).</li>
+</ul>
+
+<h2>2. Анализ кода и паттерны</h2>
+
+<h3>Единая точка правила (fix)</h3>
+<p>
+  Дефект: <code>view serve</code> передавал сырую строку workspace в <code>Session::open</code>,
+  минуя <code>data.workspace_root</code> — относительные имена не работали из произвольного
+  каталога, а workspace вне root не отказывался. Фикс вызывает тот же
+  <code>resolve_workspace</code>, что и все агентские команды:
+</p>
+<pre><code>let workspace = match config.resolve_workspace(std::path::Path::new(&amp;ws.workspace)) {
+    Ok(path) =&gt; path,
+    Err(e) =&gt; {
+        println!("{}", ferrum_agent::envelope::error_envelope(&amp;e));
+        return ExitCode::from(1);
+    }
+};
+return view_serve(&amp;workspace, port, cpu);</code></pre>
+<p>
+  Отказ — envelope с кодом <code>forbidden</code>, как у <code>check_source</code>;
+  лексическая нормализация закрывает <code>..</code> и префиксные трюки. Известное
+  ограничение (S2, не введено этим PR): граница лексическая, symlink/junction внутри
+  root может указывать наружу — общее для всех команд, вынесено в backlog.
+</p>
+
+<h3>Версия bindgen привязана к lockfile</h3>
+<p>
+  Шаг <code>taiki-e/install-action@v2</code> ставит <code>wasm-bindgen-cli@0.2.129</code> —
+  ровно версия <code>wasm-bindgen</code> в <code>Cargo.lock</code> и в <code>build.cmd</code>;
+  дрейф версий кодогенерации закрыт. Сборки идут с <code>--locked</code>.
+</p>
+
+<h3>Тесты, которые не могут не упасть</h3>
+<table>
+  <thead><tr><th>Мутация</th><th>Что падает</th></tr></thead>
+  <tbody>
+    <tr><td>Вернуть сырую строку в <code>view_serve</code> (откат фикса)</td><td><code>a_relative_workspace_is_resolved_below_the_root</code> (ошибка не содержит root-путь) и <code>a_workspace_outside_the_root_is_refused</code> (нет envelope)</td></tr>
+    <tr><td>Убрать лексическую нормализацию</td><td><code>a_lexical_escape_through_the_root_is_refused</code> (<code>ws/../../outside</code> перестал бы отказываться)</td></tr>
+    <tr><td>Принимать абсолютные пути без проверки root</td><td><code>an_absolute_workspace_outside_the_root_is_refused</code></td></tr>
+    <tr><td>Убрать модуль панели из упаковки</td><td>e2e «panel JS/wasm is public code» (404 вместо 200) — проверено симуляцией упаковки</td></tr>
+  </tbody>
+</table>
+
+<h2>3. Этапы ревью</h2>
+<p>
+  Ревью до пуша: security-reviewer (субагент, полный статический разбор) + адверсариальная
+  перечитка диффа ведущим агентом. code-reviewer-субагент трижды завершился без результата
+  (инфраструктурный сбой, находок не вернул) — это зафиксировано; его роль выполнена
+  ведущим агентом вручную. После ревью — коммит фиксов <code>cb43590</code>, бейдж покрытия <code>5827615</code>, повторные
+  fmt/clippy/тесты зелёные.
+</p>
+
+<h3>Находки security-ревью</h3>
+<table>
+  <thead><tr><th>Уровень</th><th>Находка</th><th>Решение</th></tr></thead>
+  <tbody>
+    <tr><td><span class="tag t-should">should-fix</span></td><td>S1: packaging уносит в архив хардкод пути разработчика (<code>cordis.patch.snippet.yml:16</code>, <code>README.md:73</code>)</td><td><span class="tag t-fixed">Fixed.</span> Плейсхолдер <code>&lt;checkout&gt;</code> в обоих файлах, коммит <code>cb43590</code>.</td></tr>
+    <tr><td><span class="tag t-should">should-fix</span></td><td>S2: лексическая граница root не канонизирует symlink/junction (предсуществует, общая для всех команд; view serve read-only)</td><td><span class="tag t-nit">Deferred.</span> Backlog плана: канонизация в одном месте для всех команд + symlink-тест. Не введено этим PR.</td></tr>
+    <tr><td><span class="tag t-nit">nit</span></td><td>N1: hello-строка view serve без предупреждения «нет конфигурации оператора»</td><td><span class="tag t-nit">Deferred.</span> Backlog; семантика dev-режима не менялась.</td></tr>
+    <tr><td><span class="tag t-nit">nit</span></td><td>N2: устаревший пример hello (относительный workspace) и <code>--source</code> в примере study open</td><td><span class="tag t-fixed">Fixed.</span> Абсолютный путь в примере, позиционный аргумент, <code>cb43590</code>.</td></tr>
+    <tr><td><span class="tag t-nit">nit</span></td><td>N3: пробелы в тестах границы (абсолютный путь вне root, лексический escape)</td><td><span class="tag t-fixed">Fixed.</span> +2 теста, 4/4 зелёные, <code>cb43590</code>.</td></tr>
+    <tr><td><span class="tag t-nit">nit</span></td><td>N4: двойной <code>Cache-Control</code> на <code>/panel/</code> (предсуществует)</td><td><span class="tag t-nit">Deferred.</span> Backlog; harmless, но код должен соответствовать документу.</td></tr>
+    <tr><td><span class="tag t-nit">nit</span></td><td>N5: мутабельные теги actions (repo-wide)</td><td><span class="tag t-nit">Open, named.</span> Не регрессия этого PR; SHA-пиннинг — отдельная гигиена.</td></tr>
+    <tr><td><span class="tag t-nit">nit</span></td><td>N6: activation-лог плагина пишется вне папки плагина</td><td><span class="tag t-nit">Open, named.</span> Локальный best-effort по дизайну (W9).</td></tr>
+  </tbody>
+</table>
+
+<div class="card">
+  <b>Проверено чисто (security):</b> фикс закрывает обход root для всех лексических случаев
+  с паритетом агентских команд; hello JSON и envelope не утекают ничего нового; архивы не
+  содержат секретов, токенов и пациентских данных (аудит всех tracked-файлов integrations/dsh);
+  <code>/panel/…</code> без токена — только два литеральных имени файлов, без traversal, CORS
+  только на 2xx; версии bindgen совпадают с lockfile; ни одно изменение docs не ослабляет
+  «агенты предлагают — люди подтверждают», локальность идентификаторов и research_only.
+</div>
+
+<h3>Оценка качества</h3>
+<table>
+  <thead><tr><th>Аспект</th><th>Оценка</th><th>Обоснование</th></tr></thead>
+  <tbody>
+    <tr><td>Архитектура</td><td><span class="tag t-fixed">strong</span></td><td>Фикс через существующий тестированный метод конфигурации; новых слоёв нет; правило рендеринга не затронуто.</td></tr>
+    <tr><td>Тесты</td><td><span class="tag t-fixed">strong</span></td><td>4 мутационно-чувствительных теста границы; e2e 42/42; паритет 14/14 на реальном GPU.</td></tr>
+    <tr><td>Релизный конвейер</td><td><span class="tag t-should">good, с оговоркой</span></td><td>Упаковка проверена локальной симуляцией (модуль рядом с exe, /panel/ отдаёт), но не на трёх runner-ОС GitHub. Рекомендуется dry-run release.yml (пустой tag) перед публикацией.</td></tr>
+    <tr><td>Процесс</td><td><span class="tag t-should">weak spot назван</span></td><td>code-reviewer-субагент упал 3 раза (инфраструктура) — ревью выполнено ведущим агентом + security-субагентом; гейт preflight соблюдён (WSL «all checks passed» + хост); средовые исключения названы по ferrum-change §4.</td></tr>
+    <tr><td>Документация</td><td><span class="tag t-fixed">strong</span></td><td>CHANGELOG/README/план/vision обновлены; одна опережающая запись («✅ 0.4.0» в vision) названа как assumption — станет истинной при релизе.</td></tr>
+  </tbody>
+</table>
+
+<h3>Верификация в песочнице (14.11.2026)</h3>
+<table>
+  <thead><tr><th>Проверка</th><th>Платформа</th><th>Результат</th></tr></thead>
+  <tbody>
+    <tr><td>fmt, clippy −D warnings, схема, bench-компиляция, release-сборка --locked, wasm + bindgen</td><td>хост + WSL</td><td>✅</td></tr>
+    <tr><td>Полный suite, FERRUM_REQUIRE_GPU=1 (все крейты, включая view_serve 4/4)</td><td>хост, RTX 3080</td><td>✅</td></tr>
+    <tr><td>GPU-паритет</td><td>хост, RTX 3080</td><td>✅ 14/14</td></tr>
+    <tr><td>UI suite</td><td>хост, Vulkan</td><td>✅ 19/19</td></tr>
+    <tr><td>preflight --quick + полный suite (GPU self-skip)</td><td>WSL Ubuntu 22.04</td><td>✅ «all checks passed», exit 0</td></tr>
+    <tr><td>e2e: агентские команды, mock-движок, GPU-лиз, view host HTTP, панель, smoke.js</td><td>хост</td><td>✅ 42/42</td></tr>
+    <tr><td>Метрика успеха стадии 25</td><td>хост</td><td>✅ 43.5 fps (≥10), первый кадр 0.02 с (&lt;2 с), probe хоста = CLI probe</td></tr>
+    <tr><td>Панель: pytest + smoke-load.cjs</td><td>хост, Node 24</td><td>✅ 5/5 + ok</td></tr>
+  </tbody>
+</table>
+<p class="note">
+  Средовые исключения (не дефекты кода, названы по ferrum-change §4): два UI-теста ловят
+  DX12 device-removal (0x887A0005) на нагруженной десктоп-машине — на Vulkan 19/19;
+  Kaspersky карантинит свежелинкованный gpu_parity.exe — уцелевший бинарник проходит 14/14;
+  cargo-deny и coverage локально не установлены — покрывает CI.
+</p>
+
+<h3>Хронология</h3>
+<ul>
+  <li>Анализ состояния: develop на 167 коммитов впереди main; статусы стадий сверены с кодом; выявлены блокеры релиза (панель вне архивов, коллизия ADR).</li>
+  <li>Ветка #97: merge main + удаление дубликата ADR.</li>
+  <li>Ветка #98: release.yml + docs; полные прогоны хост/WSL; e2e-драйвер нашёл дефект view serve → фикс + 2 теста.</li>
+  <li>Security-ревью: 8 находок; S1/N2/N3 исправлены коммитом cb43590, S2/N1/N4 в backlog; повторные проверки зелёные.</li>
+  <li>Оба PR открыты, CI зелёный; отчёт posted к обоим PR.</li>
+</ul>
+
+<h2>4. Где это лежит (карта кода)</h2>
+<p>Ссылки закреплены за head SHA: #98 — <code>7112474e2330961fbfee859e00664f5fb0e7d1d0</code>, #97 — <code>7112474e2330961fbfee859e00664f5fb0e7d1d0</code>. Номера строк прочитаны из дерева (<code>Select-String</code>), не из памяти.</p>
+<table>
+  <thead><tr><th>Что</th><th>Файл:строки</th><th>Символ</th><th>Почему здесь</th></tr></thead>
+  <tbody>
+    <tr><td>view serve резолвит workspace через конфигурацию</td><td><a href="https://github.com/Kauter1989/ferrum/blob/7112474e2330961fbfee859e00664f5fb0e7d1d0/crates/ferrum-cli/src/main.rs#L38-L49">crates/ferrum-cli/src/main.rs:38–49</a></td><td>ветка Command::View::Serve</td><td>CLI только парсит; правило оператора — в одном месте (CLAUDE.md)</td></tr>
+    <tr><td>Общее правило резолвинга и границы root</td><td><a href="https://github.com/Kauter1989/ferrum/blob/7112474e2330961fbfee859e00664f5fb0e7d1d0/crates/ferrum-agent/src/config.rs#L214-L237">crates/ferrum-agent/src/config.rs:214–237</a></td><td>AgentConfig::resolve_workspace</td><td>тот же метод, что у всех агентских команд — паритет</td></tr>
+    <tr><td>Лексическая нормализация (ограничение S2)</td><td><a href="https://github.com/Kauter1989/ferrum/blob/7112474e2330961fbfee859e00664f5fb0e7d1d0/crates/ferrum-agent/src/config.rs#L253-L270">crates/ferrum-agent/src/config.rs:253–270</a></td><td>absolute / normalise</td><td>предсуществует; hardening в backlog (dev_plan.md:961)</td></tr>
+    <tr><td>4 теста границы workspace_root</td><td><a href="https://github.com/Kauter1989/ferrum/blob/7112474e2330961fbfee859e00664f5fb0e7d1d0/crates/ferrum-cli/tests/view_serve.rs#L23-L85">crates/ferrum-cli/tests/view_serve.rs:23–85</a></td><td>4 #[test], covers 25.1-a</td><td>мутационно-чувствительные; через публичный бинарник</td></tr>
+    <tr><td>Сборка wasm и bindgen в релизе</td><td><a href="https://github.com/Kauter1989/ferrum/blob/7112474e2330961fbfee859e00664f5fb0e7d1d0/.github/workflows/release.yml#L62-L72">.github/workflows/release.yml:62–72</a></td><td>Build / Install / Bind steps</td><td>версия bindgen = lockfile (0.2.129), --locked</td></tr>
+    <tr><td>Упаковка панели в tar.gz</td><td><a href="https://github.com/Kauter1989/ferrum/blob/7112474e2330961fbfee859e00664f5fb0e7d1d0/.github/workflows/release.yml#L81-L86">.github/workflows/release.yml:81–86</a></td><td>cp модуля + integrations/dsh</td><td>модуль рядом с бинарниками — хост раздаёт /panel/ оттуда</td></tr>
+    <tr><td>Упаковка панели в zip (Windows)</td><td><a href="https://github.com/Kauter1989/ferrum/blob/7112474e2330961fbfee859e00664f5fb0e7d1d0/.github/workflows/release.yml#L103-L108">.github/workflows/release.yml:103–108</a></td><td>Copy-Item + Remove __pycache__</td><td>та же раскладка на Windows</td></tr>
+    <tr><td>Раздача /panel/… (контекст, не изменён)</td><td><a href="https://github.com/Kauter1989/ferrum/blob/7112474e2330961fbfee859e00664f5fb0e7d1d0/crates/ferrum-view/src/server.rs#L291-L299">crates/ferrum-view/src/server.rs:291–299</a></td><td>panel_file</td><td>два литеральных имени, без traversal; код, не данные (26.3-b)</td></tr>
+    <tr><td>Плейсхолдер вместо пути разработчика (S1)</td><td><a href="https://github.com/Kauter1989/ferrum/blob/7112474e2330961fbfee859e00664f5fb0e7d1d0/integrations/dsh/plugin/cordis.patch.snippet.yml#L14-L16">cordis.patch.snippet.yml:14–16</a>, <a href="https://github.com/Kauter1989/ferrum/blob/7112474e2330961fbfee859e00664f5fb0e7d1d0/integrations/dsh/README.md#L74-L78">README.md:74–78</a></td><td>&lt;checkout&gt;</td><td>архив не несёт локальных путей</td></tr>
+    <tr><td>Записи CHANGELOG</td><td><a href="https://github.com/Kauter1989/ferrum/blob/7112474e2330961fbfee859e00664f5fb0e7d1d0/CHANGELOG.md#L13-L14">CHANGELOG.md:13–14</a>, <a href="https://github.com/Kauter1989/ferrum/blob/7112474e2330961fbfee859e00664f5fb0e7d1d0/CHANGELOG.md#L26">23</a></td><td>Fixed / Added</td><td>пользовательски видимое поведение записано</td></tr>
+    <tr><td>Отложенные hardening-задачи (N1, N4; S2 закрыт #99)</td><td><a href="https://github.com/Kauter1989/ferrum/blob/7112474e2330961fbfee859e00664f5fb0e7d1d0/dev_plan.md#L961-L966">dev_plan.md:961–966</a></td><td>Backlog</td><td>отложенное названо и отслеживается</td></tr>
+    <tr><td>Перенумерация черновика ADR (#97)</td><td><a href="https://github.com/Kauter1989/ferrum/blob/7112474e2330961fbfee859e00664f5fb0e7d1d0/docs/decisions/0014-generative-ui-view-host.md#L1-L10">docs/decisions/0014-generative-ui-view-host.md:1–10</a></td><td>шапка Renumbered</td><td>содержимое решения сохранено; дубликат 0011 удалён</td></tr>
+  </tbody>
+</table>
+
+<h2>5. Релиз 0.4.0 (PR #101) — финальное состояние</h2>
+
+<p>
+  После подготовки (#97–#98) в develop вошли: bump версии <b>#100</b>
+  (Cargo.toml + lock, plugin.json, CITATION.cff, примеры форматов,
+  CHANGELOG [0.4.0] — 2026-11-14); <b>#99</b> — Stage F2, граница read-root
+  против symlink (#82, P1 security; решение пользователя «вливай до релиза»);
+  <b>#102</b> — ruff-фикс analyze.py (блокер python-lint релизного PR);
+  <b>#104</b> — запись F2 в секции [0.4.0], статус F2 ✅, поправка статуса
+  ADR 0014 (Accepted, append-only) и ниты ревью. Всего с v0.3.0: <b>44 PR</b>.
+</p>
+
+<h3>Ревью — все три завершены</h3>
+<table>
+  <thead><tr><th>Ревьюер</th><th>Вердикт</th><th>Находки</th></tr></thead>
+  <tbody>
+    <tr><td>security-reviewer</td><td><span class="tag t-fixed">без блокирующих</span></td><td>8: S1/N2/N3 исправлены до пуша; S2 закрыт #99; N1/N4 в backlog; N5/N6 названы.</td></tr>
+    <tr><td>code-reviewer</td><td><span class="tag t-fixed">approve with nits</span></td><td>S1 (ADR 0014 Draft) и S2 (архивные команды) исправлены и проверены; S3 (dry-run) выполнен; N1/N2/N3/N5 исправлены в #104, N4 оставлен по совету ревьюера. Процесс: quota-падения агента пережиты порционной отдачей находок и повтором через 30 с.</td></tr>
+    <tr><td>code-review-2</td><td><span class="tag t-fixed">approve with nits</span></td><td>Те же S1/S2 (закрыты), ниты закрыты в #104; тесты проверены на мутационную чувствительность на Windows и Linux.</td></tr>
+  </tbody>
+</table>
+
+<h3>Dry-run сборки архивов (release.yml, пустой tag)</h3>
+<table>
+  <thead><tr><th>Платформа</th><th>Результат</th><th>Проверка состава</th></tr></thead>
+  <tbody>
+    <tr><td>Linux x86_64</td><td><span class="tag t-fixed">success</span></td><td>Архив скачан и проверан: бинарники + ferrum_wasm.js/_bg.wasm рядом, integrations/dsh полностью, skills + ferrum-plugin, без __pycache__, сниппет с &lt;checkout&gt;.</td></tr>
+    <tr><td>Windows x86_64</td><td><span class="tag t-fixed">success</span></td><td>Те же bash/pwsh-шаги упаковки проверены построчно ревьюерами.</td></tr>
+    <tr><td>macOS aarch64</td><td><span class="tag t-should">cancelled ×3</span></td><td>Сбой provisioning runner'ов GitHub (job не начинает ни одного шага). Не код: те же bash-шаги, что на Linux. При публикации — перезапуск job до успеха.</td></tr>
+  </tbody>
+</table>
+
+<h3>Карта кода — дополнения релиза</h3>
+<table>
+  <thead><tr><th>Что</th><th>Файл:строки</th><th>Символ</th><th>Почему здесь</th></tr></thead>
+  <tbody>
+    <tr><td>Канонизация границы read-root (F2)</td><td><a href="https://github.com/Kauter1989/ferrum/blob/7112474e2330961fbfee859e00664f5fb0e7d1d0/crates/ferrum-agent/src/config.rs#L283-L340">crates/ferrum-agent/src/config.rs:283–340</a></td><td>real_path / absolute_raw / apply_tail</td><td>глубокий существующий предок канонизируется, хвост лексический; fail-closed; drive-relative отказ (#82)</td></tr>
+    <tr><td>Граница в check_source / resolve_workspace</td><td><a href="https://github.com/Kauter1989/ferrum/blob/7112474e2330961fbfee859e00664f5fb0e7d1d0/crates/ferrum-agent/src/config.rs#L196-L237">crates/ferrum-agent/src/config.rs:196–237</a></td><td>check_source / resolve_workspace</td><td>сравнивается ровно та форма, которую откроет читатель</td></tr>
+    <tr><td>Обход не следует symlink'ам, границы глубины/записей</td><td><a href="https://github.com/Kauter1989/ferrum/blob/7112474e2330961fbfee859e00664f5fb0e7d1d0/crates/ferrum-io/src/files.rs#L22-L44">crates/ferrum-io/src/files.rs:22–44</a></td><td>MAX_WALK_DEPTH / MAX_WALK_ENTRIES / collect_bounded</td><td>превышение — ошибка limit, не тихий срез (L37)</td></tr>
+    <tr><td>Манифест с .. отказывается, пути перепроверяются</td><td><a href="https://github.com/Kauter1989/ferrum/blob/7112474e2330961fbfee859e00664f5fb0e7d1d0/crates/ferrum-agent/src/study.rs#L61-L72">crates/ferrum-agent/src/study.rs:61–72</a></td><td>refuse_parent_components</td><td>crafted workspace.json не уводит загрузку за roots</td></tr>
+    <tr><td>Версия 0.4.0</td><td><a href="https://github.com/Kauter1989/ferrum/blob/7112474e2330961fbfee859e00664f5fb0e7d1d0/Cargo.toml#L22">Cargo.toml:22</a></td><td>workspace version</td><td>bump #100; lock обновлён cargo check</td></tr>
+    <tr><td>Запись F2 в release notes</td><td><a href="https://github.com/Kauter1989/ferrum/blob/7112474e2330961fbfee859e00664f5fb0e7d1d0/CHANGELOG.md#L11-L13">CHANGELOG.md:11–13</a></td><td>[0.4.0] Fixed</td><td>решение пользователя: #99 в 0.4.0 (#104)</td></tr>
+    <tr><td>Статус ADR 0014 — Accepted</td><td><a href="https://github.com/Kauter1989/ferrum/blob/7112474e2330961fbfee859e00664f5fb0e7d1d0/docs/decisions/0014-generative-ui-view-host.md#L245-L252">docs/decisions/0014-generative-ui-view-host.md:245–252</a></td><td>Amendment</td><td>append-only (hook C); roadmap и ADR согласованы</td></tr>
+  </tbody>
+</table>
+
+<p class="note">
+  Отчёт описывает голову develop SHA <code>7112474e2330961fbfee859e00664f5fb0e7d1d0</code> (PR #101, develop → main).
+  Не измерено: сборка macOS в dry-run (инфраструктура GitHub; будет перезапуск при публикации).
+  Полевые критерии стадий 18/20/23 остаются за пользователем; clinical остаётся 0.3
+  до сверки с pyradiomics. Публикация: dispatch release.yml на main с tag v0.4.0,
+  проверка архивов/тега/Zenodo.
+</p>
+
+<footer>
+  Источники цифр: <code>git diff --shortstat origin/develop...HEAD</code> (9 файлов, +219/−29);
+  <code>git diff --shortstat 7c0a779 3662552</code> (1 файл, −235); счётчики тестов — из логов
+  прогонов (644 исполнено на Windows, 670 собрано на Linux; 35 bridge, 5 panel);
+  e2e — <code>.claude/state/release-040/e2e/out/e2e-summary.json</code> (42/42);
+  находки — отчёт security-reviewer от 14.11.2026. Отчёт перегенерирован из дерева main (7112474e2330961fbfee859e00664f5fb0e7d1d0, Release 0.4.0 (#101)); номера строк перечитаны из него.
+  Покрытие измерено CI: 93.11 % строк, 90.49 % функций (run 43588705125, floor 87). Не измерено: упаковка на трёх runner-ОС (рекомендован dry-run).
+  Уроки: ретро после слияния (кандидаты: карантин свежих бинарников антивирусом, DX12 device-removal на нагруженной машине).
+</footer>
+
+</main>
+</body>
+</html>

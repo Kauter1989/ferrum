@@ -50,3 +50,17 @@ step needs the viewer as a component a host can place.
 - `ferrum-view/1` ([#70](https://github.com/Kauter1989/ferrum/issues/70))
   gives the events a JSON form and adds agent commands that set the
   widget's state.
+
+## Amendment — events as built (Stage 24 PR 2, 2026-11-14)
+
+Decision 4 is implemented with one refinement: the diff is against the
+state at the end of the **previous frame**, not against a snapshot taken
+before drawing in the same frame, so a use case the host calls itself
+between frames (the example's "next slice" button) is seen too. Window
+and camera changes keep a separate last-emitted baseline and are given
+once when no pointer button is down (the end of a drag); a study switch
+resets the baselines without events. `RoiDrawn` covers a person's new
+annotation or segment and a mask edit of the person's own segment (its
+voxel count changed with the set's revision); engine and agent items are
+excluded by authorship. `examples/embed_host.rs` is the working host of
+decision 1, and its layout is driven by `tests/embed.rs`.

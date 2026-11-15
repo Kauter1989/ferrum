@@ -129,6 +129,14 @@ one platform. When a test fails before the change as well:
 
 Never write "it failed before my change" and stop there.
 
+Windows specifics (0.4.0 prep): a test exe that fails to *launch*
+(os error 2/5/32) is an environment question first — antivirus
+quarantines freshly linked binaries (L39); check the file exists and run
+a surviving build directly. A GPU-test failure on a loaded desktop is
+verified on a second backend (`WGPU_BACKEND=vulkan`) before it is called
+a defect (L40). Never compare file content through the default codepage
+— decode explicitly on both sides (L41, L29).
+
 Notes:
 - **Hooks catch some of this before you do** (`CLAUDE.md`, *Hooks*):
   - `rustfmt` runs after each edit of a `.rs` file, and `ruff format`
@@ -178,6 +186,11 @@ Then run the review agents (`.claude/agents/`) on the branch:
 
 Fix their blocking findings, or answer them in the PR body under
 *Review*.
+
+Run review subagents so partial results survive their death (L42):
+instruct them to send findings in batches via `send_message`, not only
+in the final answer; on a quota death, retry the agent after ~30 s
+(bounded attempts) and keep the batches already received.
 
 Fix what you find before pushing. Never claim a check ran when it
 did not.
