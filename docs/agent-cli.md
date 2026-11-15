@@ -226,6 +226,11 @@ checks the command list, the MCP tools and `commands.json`).
   A NIfTI study carries no identifiers, so the result is empty.
 - The identifiers are read from the source's DICOM headers by `ferrum-io`
   (`read_patient_identifiers`); they never leave FERRUM in any output.
+  The scan reads the workspace's recorded, hash-verified series files with
+  the same per-file read-root checks as `study open` — a planted file or
+  symlink in the source folder does not drive the masking. Values are
+  capped at the DICOM VR maxima (PN 64 per component, LO 64, SH 16, DA 8),
+  so a crafted huge value cannot exhaust the host's per-text scan.
 
 ## Workspace and audit
 

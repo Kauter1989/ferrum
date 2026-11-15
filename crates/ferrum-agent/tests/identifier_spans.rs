@@ -14,6 +14,10 @@ const SECRETS: [&str; 6] = ["IVANOV", "IVAN", "MRN-4711", "19700101", "ACC-0815"
 
 /// A DICOM series with patient data in the header, generated at run time.
 fn write_series(dir: &Path, name: &str) {
+    write_series_with_id(dir, name, "MRN-4711");
+}
+
+fn write_series_with_id(dir: &Path, name: &str, patient_id: &str) {
     use dicom_core::{DataElement, PrimitiveValue, VR};
     use dicom_dictionary_std::{tags, uids};
     use dicom_object::{FileMetaTableBuilder, InMemDicomObject};
@@ -28,7 +32,7 @@ fn write_series(dir: &Path, name: &str) {
             text(tags::SPECIFIC_CHARACTER_SET, VR::CS, "ISO_IR 192"),
             text(tags::MODALITY, VR::CS, "CT"),
             text(tags::PATIENT_NAME, VR::PN, name),
-            text(tags::PATIENT_ID, VR::LO, "MRN-4711"),
+            text(tags::PATIENT_ID, VR::LO, patient_id),
             text(tags::PATIENT_BIRTH_DATE, VR::DA, "19700101"),
             text(tags::ACCESSION_NUMBER, VR::SH, "ACC-0815"),
             text(tags::STUDY_INSTANCE_UID, VR::UI, "1.2.826.0.1.3680043.8.498.12345"),
@@ -61,8 +65,12 @@ fn write_series(dir: &Path, name: &str) {
 
 /// A workspace over a generated series, and the configuration that reads it.
 fn study(dir: &Path, name: &str) -> (AgentConfig, PathBuf) {
+    study_with_id(dir, name, "MRN-4711")
+}
+
+fn study_with_id(dir: &Path, name: &str, patient_id: &str) -> (AgentConfig, PathBuf) {
     let src = dir.join("incoming/series");
-    write_series(&src, name);
+    write_series_with_id(&src, name, patient_id);
     let repo = ferrum_io::CompositeRepository::default();
     let series = repo.scan(std::slice::from_ref(&src), &NoProgress).unwrap().remove(0);
     let ws = dir.join("ws/ct1");
@@ -290,6 +298,18 @@ fn a_swapped_source_file_is_refused() {
     std::fs::write(dir.path().join("incoming/series/s0.dcm"), b"swapped").unwrap();
     let err = scan_identifiers(&config, Path::new("ct1"), "Ivanov").unwrap_err();
     assert_eq!(err.code, ferrum_agent::ErrorCode::SourceChanged);
+}
+
+// covers 27.1-a (security review of #110: a crafted long identifier is
+// capped at the VR maximum, so the scan stays fast and masks the prefix)
+#[test]
+fn a_crafted_long_identifier_is_capped_and_scans() {
+    let dir = tempfile::tempdir().unwrap();
+    let (config, _) = study_with_id(dir.path(), "IVANOV^IVAN", &"B".repeat(5000));
+    let prefix = "B".repeat(64);
+    let text = format!("id {prefix} tail");
+    let spans = scan_identifiers(&config, Path::new("ct1"), &text).unwrap();
+    assert_eq!(spans, vec![at(&text, &prefix, IdentifierKind::PatientId)]);
 }
 
 // covers 27.1-a (security review of #110: a symlink must not lead the

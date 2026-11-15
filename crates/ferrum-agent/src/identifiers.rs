@@ -504,12 +504,14 @@ mod tests {
         }
     }
 
+    // covers 27.1-a
     #[test]
     fn empty_identifiers_give_no_spans() {
         let spans = spans_of("Ivanov Ivan, MRN-4711, 01.01.1970", &PatientIdentifiers::default());
         assert!(spans.is_empty(), "{spans:?}");
     }
 
+    // covers 27.1-a
     #[test]
     fn a_full_name_is_one_span_not_three() {
         let text = "Ivanov Ivan Ivanovich arrived";
@@ -517,6 +519,7 @@ mod tests {
         assert_eq!(spans, vec![Span { start: 0, end: 21, kind: IdentifierKind::PatientName }]);
     }
 
+    // covers 27.1-a
     #[test]
     fn initials_keep_their_dots() {
         let text = "Ivanov I.I. arrived";
@@ -524,6 +527,7 @@ mod tests {
         assert_eq!(spans, vec![Span { start: 0, end: 11, kind: IdentifierKind::PatientName }]);
     }
 
+    // covers 27.1-a
     #[test]
     fn an_inflected_family_name_alone_is_found() {
         let text = "карта Иванова";
@@ -532,6 +536,7 @@ mod tests {
         assert_eq!(spans, vec![Span { start, end: start + "Иванова".len(), kind: IdentifierKind::PatientName }]);
     }
 
+    // covers 27.1-a
     #[test]
     fn a_short_component_matches_as_a_prefix() {
         // "Li" is a real family name; over-masking is the safe direction
@@ -540,6 +545,7 @@ mod tests {
         assert_eq!(spans.len(), 2, "{spans:?}");
     }
 
+    // covers 27.1-a
     #[test]
     fn overlapping_detections_merge_into_one_span() {
         // the given name after the initial must not stay unmasked
@@ -551,6 +557,7 @@ mod tests {
         assert_eq!(spans, vec![Span { start: 0, end: 14, kind: IdentifierKind::PatientName }]);
     }
 
+    // covers 27.1-a
     #[test]
     fn a_reordered_triple_is_one_span() {
         let text = "Ivanovich Ivan Ivanov";
@@ -558,6 +565,7 @@ mod tests {
         assert_eq!(spans, vec![Span { start: 0, end: 21, kind: IdentifierKind::PatientName }]);
     }
 
+    // covers 27.1-a
     #[test]
     fn yo_and_e_are_one_letter() {
         let text = "Иванов Петр";
@@ -573,6 +581,7 @@ mod tests {
         assert_eq!(spans, vec![Span { start, end: text.len(), kind: IdentifierKind::PatientName }]);
     }
 
+    // covers 27.1-a
     #[test]
     fn latin_diacritics_fold_to_the_base_letter() {
         let text = "Müller Hans";
@@ -583,6 +592,7 @@ mod tests {
         assert_eq!(spans, vec![Span { start: 0, end: 6, kind: IdentifierKind::PatientName }]);
     }
 
+    // covers 27.1-a
     #[test]
     fn unpadded_numeric_dates_are_found() {
         for form in ["1.1.1970", "1/1/1970", "1970-1-1", "01 января 1970"] {
@@ -595,5 +605,14 @@ mod tests {
                 "format {form}"
             );
         }
+    }
+
+    // covers 27.1-a (security review of #110: a date overlapping the
+    // initials span must not leave its tail unmasked)
+    #[test]
+    fn a_date_overlapping_the_name_span_is_merged() {
+        let text = "Ivanov 1.1.1970";
+        let spans = spans_of(text, &ids("IVANOV^1X^1Y"));
+        assert_eq!(spans, vec![Span { start: 0, end: 15, kind: IdentifierKind::PatientName }]);
     }
 }

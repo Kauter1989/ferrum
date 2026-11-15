@@ -73,6 +73,7 @@ fn read_file(path: &Path) -> Result<PatientIdentifiers, IoError> {
 mod tests {
     use super::*;
 
+    // covers 27.1-a
     #[test]
     fn a_nifti_file_carries_no_identifiers() {
         let dir = tempfile::tempdir().unwrap();
@@ -82,11 +83,35 @@ mod tests {
         assert_eq!(ids, PatientIdentifiers::default());
     }
 
+    // covers 27.1-a
     #[test]
     fn a_folder_without_dicom_carries_no_identifiers() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("notes.txt"), b"hello").unwrap();
         let ids = read_patient_identifiers(dir.path()).unwrap();
         assert_eq!(ids, PatientIdentifiers::default());
+    }
+
+    // covers 27.1-a (security review of #110: the VR maxima bound the
+    // matcher's input, so a crafted huge value cannot exhaust the host)
+    #[test]
+    fn long_values_are_capped_to_the_vr_maxima() {
+        use dicom_core::{DataElement, PrimitiveValue, VR};
+        use dicom_dictionary_std::tags;
+        use dicom_object::InMemDicomObject;
+        let long = "A".repeat(5000);
+        let obj = InMemDicomObject::from_element_iter([
+            DataElement::new(tags::PATIENT_NAME, VR::PN, PrimitiveValue::from(format!("{long}^{long}"))),
+            DataElement::new(tags::PATIENT_ID, VR::LO, PrimitiveValue::from(long.clone())),
+            DataElement::new(tags::ACCESSION_NUMBER, VR::SH, PrimitiveValue::from(long.clone())),
+            DataElement::new(tags::PATIENT_BIRTH_DATE, VR::DA, PrimitiveValue::from("19700101")),
+        ]);
+        let ids = crate::dicom::header::patient_identifiers(&obj);
+        assert_eq!(ids.patient_id.chars().count(), 64);
+        assert_eq!(ids.accession_number.chars().count(), 16);
+        assert_eq!(ids.birth_date, "19700101");
+        for comp in ids.name.split('^') {
+            assert_eq!(comp.chars().count(), 64);
+        }
     }
 }

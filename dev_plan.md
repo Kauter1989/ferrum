@@ -959,9 +959,9 @@ library-API pattern of `ferrum_agent::decisions` (16.7); the reader lives in
 
 | Task | What | Criteria | PR | State |
 |---|---|---|---|---|
-| 27.T1 `PatientIdentifiers` (domain) + `read_patient_identifiers` (io) | 27.1-a | 1 | |
-| 27.T2 the matcher: fold, names, initials, inflections, dates; `scan_identifiers` | 27.1-a/b | 1 | |
-| 27.T3 tests: exact spans (EN/RU), no values, not a command, errors; docs | 27.1-a/b/c | 1 | |
+| 27.T1 `PatientIdentifiers` (domain) + `read_patient_identifiers` (io) | 27.1-a | 1 | ✅ (#110) |
+| 27.T2 the matcher: fold, names, initials, inflections, dates; `scan_identifiers` | 27.1-a/b | 1 | ✅ (#110) |
+| 27.T3 tests: exact spans (EN/RU), no values, not a command, errors; docs | 27.1-a/b/c | 1 | ✅ (#110) |
 
 ---
 
