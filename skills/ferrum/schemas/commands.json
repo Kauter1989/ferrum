@@ -542,6 +542,201 @@
       "additionalProperties": false
     }
   },
+  "view set": {
+    "description": "Sets what the person sees (component, plane, slice, window, overlays, selected segment, tool, camera) by writing the workspace's view-state artifact; the live viewer applies it and the person takes over at any time. A stale source_hash is refused with source_changed. No decision is created.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "source_hash": {
+          "type": "string",
+          "description": "the source_hash read with view state; when given and stale, the set is refused"
+        },
+        "state": {
+          "type": "object",
+          "description": "what the person sees; missing fields keep their default",
+          "additionalProperties": false,
+          "properties": {
+            "component": {
+              "type": "string",
+              "enum": [
+                "slice",
+                "mpr",
+                "volume"
+              ],
+              "description": "one slice, the MPR grid, or the 3D view"
+            },
+            "plane": {
+              "type": "string",
+              "enum": [
+                "axial",
+                "coronal",
+                "sagittal"
+              ],
+              "description": "slice orientation"
+            },
+            "slice_index": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "0-based slice index, clamped to the volume"
+            },
+            "window": {
+              "type": "object",
+              "properties": {
+                "center": {
+                  "type": "number",
+                  "description": "window centre"
+                },
+                "width": {
+                  "type": "number",
+                  "description": "window width (> 0)"
+                }
+              },
+              "required": [
+                "center",
+                "width"
+              ],
+              "additionalProperties": false
+            },
+            "overlays": {
+              "type": "object",
+              "properties": {
+                "segments_shown": {
+                  "type": "boolean",
+                  "description": "show the segment overlay"
+                },
+                "fill_opacity": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1,
+                  "description": "fill opacity"
+                },
+                "style": {
+                  "type": "string",
+                  "enum": [
+                    "outline",
+                    "fill",
+                    "fill_outline"
+                  ],
+                  "description": "how segments are drawn"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            },
+            "selected_segment": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 255,
+              "description": "selected segment label, or null"
+            },
+            "tool": {
+              "type": "string",
+              "enum": [
+                "pan",
+                "window_level",
+                "probe",
+                "distance",
+                "angle",
+                "area",
+                "rect",
+                "text",
+                "move",
+                "delete",
+                "ai_point",
+                "ai_box",
+                "ai_scribble",
+                "ai_lasso",
+                "region"
+              ],
+              "description": "the active tool"
+            },
+            "camera": {
+              "type": "object",
+              "properties": {
+                "orientation": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 4,
+                  "maxItems": 4,
+                  "description": "quaternion x, y, z, w"
+                },
+                "distance": {
+                  "type": "number",
+                  "description": "orbit distance"
+                },
+                "target": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "description": "orbit centre in model space"
+                },
+                "fov_y": {
+                  "type": "number",
+                  "description": "vertical field of view, radians"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        }
+      },
+      "required": [
+        "workspace",
+        "state"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "view state": {
+    "description": "The current view state (component, plane, slice, window, overlays, selected segment, tool, camera) with its revision and the source_hash to pass back to view set.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        }
+      },
+      "required": [
+        "workspace"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "view events": {
+    "description": "What the person did in the viewer (point_picked, roi_drawn, slice_changed, window_changed, camera_changed, plane_changed, segments_changed), after a sequence number. No event is a decision.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "since": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "only events after this sequence number (default 0)"
+        }
+      },
+      "required": [
+        "workspace"
+      ],
+      "additionalProperties": false
+    }
+  },
   "probe": {
     "description": "Value of the voxel nearest to a point, with unit (HU for CT).",
     "parameters": {

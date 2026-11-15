@@ -230,9 +230,11 @@ asserts identical JSON), `commands.json`/`commands.md` regenerated:
 
 - **`view set -w W --state <json>`** (or `--component/--plane/--slice/--window/
   --show-segments/--select/--tool/--camera` flags) — validates the state
-  against the schema, checks `source_hash` (§6), writes `view.json` with
-  `revision + 1`, returns the applied state and the `unhonoured` list. No
-  decision is created (a test asserts review state is untouched, 28.3-c).
+  against the schema (unknown fields refused), checks `source_hash` (§6),
+  writes `view.json` with `revision + 1`, and returns the stored state,
+  revision and source hash. The live client applies it and reports the fields
+  it cannot honour (§5); the agent itself holds no viewer. No decision is
+  created (a test asserts review state is untouched, 28.3-c).
 - **`view state -w W`** — reads `view.json` (or the default), returns the state
   with the current `source_hash` and `revision`.
 - **`view events -w W [--since <seq>]`** — reads `view-events.json`, returns the
