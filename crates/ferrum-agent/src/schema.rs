@@ -353,6 +353,40 @@ fn mask_schema(command: &str) -> Option<(&'static str, Value)> {
     })
 }
 
+/// The view-state object of `view set` (`ferrum-view/1`, Stage 28).
+fn view_state_object() -> Value {
+    json!({
+        "type": "object",
+        "description": "what the person sees; missing fields keep their default",
+        "additionalProperties": false,
+        "properties": {
+            "component": { "type": "string", "enum": ["slice", "mpr", "volume"], "description": "one slice, the MPR grid, or the 3D view" },
+            "plane": plane(),
+            "slice_index": integer(0, "0-based slice index, clamped to the volume"),
+            "window": obj(json!({ "center": number("window centre"), "width": number("window width (> 0)") }), &["center", "width"]),
+            "overlays": obj(
+                json!({
+                    "segments_shown": { "type": "boolean", "description": "show the segment overlay" },
+                    "fill_opacity": { "type": "number", "minimum": 0, "maximum": 1, "description": "fill opacity" },
+                    "style": { "type": "string", "enum": ["outline", "fill", "fill_outline"], "description": "how segments are drawn" },
+                }),
+                &[],
+            ),
+            "selected_segment": { "type": ["integer", "null"], "minimum": 0, "maximum": 255, "description": "selected segment label, or null" },
+            "tool": { "type": "string", "enum": ["pan", "window_level", "probe", "distance", "angle", "area", "rect", "text", "move", "delete", "ai_point", "ai_box", "ai_scribble", "ai_lasso", "region"], "description": "the active tool" },
+            "camera": obj(
+                json!({
+                    "orientation": numbers(4, "quaternion x, y, z, w"),
+                    "distance": number("orbit distance"),
+                    "target": numbers(3, "orbit centre in model space"),
+                    "fov_y": number("vertical field of view, radians"),
+                }),
+                &[],
+            ),
+        },
+    })
+}
+
 /// Description and parameter schema of `command`, or `None` if unknown.
 pub fn command_schema(command: &str) -> Option<(&'static str, Value)> {
     if let Some(s) = engine_schema(command).or_else(|| mask_schema(command)) {
@@ -378,6 +412,25 @@ pub fn command_schema(command: &str) -> Option<(&'static str, Value)> {
         "view montage" => views().0,
         "view mpr" => views().1,
         "view volume" => volume_view(),
+        "view set" => (
+            "Sets what the person sees (component, plane, slice, window, overlays, selected segment, tool, camera) by writing the workspace's view-state artifact; the live viewer applies it and the person takes over at any time. A stale source_hash is refused with source_changed. No decision is created.",
+            obj(
+                json!({
+                    "workspace": workspace(),
+                    "source_hash": text("the source_hash read with view state; when given and stale, the set is refused"),
+                    "state": view_state_object(),
+                }),
+                &["workspace", "state"],
+            ),
+        ),
+        "view state" => (
+            "The current view state (component, plane, slice, window, overlays, selected segment, tool, camera) with its revision and the source_hash to pass back to view set.",
+            ws_only(),
+        ),
+        "view events" => (
+            "What the person did in the viewer (point_picked, roi_drawn, slice_changed, window_changed, camera_changed, plane_changed, segments_changed), after a sequence number. No event is a decision.",
+            obj(json!({ "workspace": workspace(), "since": integer(0, "only events after this sequence number (default 0)") }), &["workspace"]),
+        ),
         "profile" => (
             "Values along a line between two points (nearest voxel at evenly spaced samples), with distances in mm.",
             obj(
