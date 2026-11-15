@@ -353,6 +353,32 @@ fn mask_schema(command: &str) -> Option<(&'static str, Value)> {
     })
 }
 
+/// Schemas of the view-state commands (`view set/state/events`, Stage 28).
+fn view_state_schema(command: &str) -> Option<(&'static str, Value)> {
+    Some(match command {
+        "view set" => (
+            "Sets what the person sees (component, plane, slice, window, overlays, selected segment, tool, camera) by writing the workspace's view-state artifact; the live viewer applies it and the person takes over at any time. A stale source_hash is refused with source_changed. No decision is created.",
+            obj(
+                json!({
+                    "workspace": workspace(),
+                    "source_hash": text("the source_hash read with view state; when given and stale, the set is refused"),
+                    "state": view_state_object(),
+                }),
+                &["workspace", "state"],
+            ),
+        ),
+        "view state" => (
+            "The current view state (component, plane, slice, window, overlays, selected segment, tool, camera) with its revision and the source_hash to pass back to view set.",
+            ws_only(),
+        ),
+        "view events" => (
+            "What the person did in the viewer (point_picked, roi_drawn, slice_changed, window_changed, camera_changed, plane_changed, segments_changed), after a sequence number. No event is a decision.",
+            obj(json!({ "workspace": workspace(), "since": integer(0, "only events after this sequence number (default 0)") }), &["workspace"]),
+        ),
+        _ => return None,
+    })
+}
+
 /// The view-state object of `view set` (`ferrum-view/1`, Stage 28).
 fn view_state_object() -> Value {
     json!({
@@ -389,7 +415,7 @@ fn view_state_object() -> Value {
 
 /// Description and parameter schema of `command`, or `None` if unknown.
 pub fn command_schema(command: &str) -> Option<(&'static str, Value)> {
-    if let Some(s) = engine_schema(command).or_else(|| mask_schema(command)) {
+    if let Some(s) = engine_schema(command).or_else(|| mask_schema(command)).or_else(|| view_state_schema(command)) {
         return Some(s);
     }
     let measure = |n: usize, what: &'static str| {
@@ -412,25 +438,6 @@ pub fn command_schema(command: &str) -> Option<(&'static str, Value)> {
         "view montage" => views().0,
         "view mpr" => views().1,
         "view volume" => volume_view(),
-        "view set" => (
-            "Sets what the person sees (component, plane, slice, window, overlays, selected segment, tool, camera) by writing the workspace's view-state artifact; the live viewer applies it and the person takes over at any time. A stale source_hash is refused with source_changed. No decision is created.",
-            obj(
-                json!({
-                    "workspace": workspace(),
-                    "source_hash": text("the source_hash read with view state; when given and stale, the set is refused"),
-                    "state": view_state_object(),
-                }),
-                &["workspace", "state"],
-            ),
-        ),
-        "view state" => (
-            "The current view state (component, plane, slice, window, overlays, selected segment, tool, camera) with its revision and the source_hash to pass back to view set.",
-            ws_only(),
-        ),
-        "view events" => (
-            "What the person did in the viewer (point_picked, roi_drawn, slice_changed, window_changed, camera_changed, plane_changed, segments_changed), after a sequence number. No event is a decision.",
-            obj(json!({ "workspace": workspace(), "since": integer(0, "only events after this sequence number (default 0)") }), &["workspace"]),
-        ),
         "profile" => (
             "Values along a line between two points (nearest voxel at evenly spaced samples), with distances in mm.",
             obj(
