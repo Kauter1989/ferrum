@@ -547,7 +547,7 @@ running engine job.
 
 ---
 
-## Stage 24 — Embeddable viewer widget (`ferrum-ui`) 🚧 (G1 ✅, G2 ✅; PR 1 of 2)
+## Stage 24 — Embeddable viewer widget (`ferrum-ui`) 🚧 (G1 ✅, G2 ✅; PR 2 of 2)
 
 Medical Harness shows a conversation and FERRUM's viewer in one egui/wgpu
 window ([#69](https://github.com/Kauter1989/ferrum/issues/69); P1 for the
@@ -602,10 +602,10 @@ through `Viewer` or its own code), theming beyond FERRUM's dark theme.
 | 24.T1 crate `ferrum-ui`; views, panels, theme, widgets, GPU bridge moved | 24.1-a, 24.3-c | 1 | ✅ |
 | 24.T2 `ViewerWidget` (layout, tool bar, polling, GPU sync), `panels::side_panel`, `PanelRequest` | 24.1-b/c | 1 | ✅ |
 | 24.T3 desktop on `ferrum-ui`; UI tests and parity unchanged; renders before and after compared | 24.3-a/b | 1 | ✅ |
-| 24.T4 events | 24.2-a/b/c | 2 | |
-| 24.T5 example host and its UI test | 24.4-a/b | 2 | |
-| 24.T6 licence and badge test in the embedded layout | 24.5-a/b | 2 | |
-| 24.T7 docs, events privacy test | — | 2 | |
+| 24.T4 events | 24.2-a/b/c | 2 | ✅ |
+| 24.T5 example host and its UI test | 24.4-a/b | 2 | ✅ |
+| 24.T6 licence and badge test in the embedded layout | 24.5-a/b | 2 | ✅ |
+| 24.T7 docs, events privacy test | — | 2 | ✅ |
 
 ## Stage 25 — Local GPU view for a harness (`ferrum-view/1`) ✅
 
