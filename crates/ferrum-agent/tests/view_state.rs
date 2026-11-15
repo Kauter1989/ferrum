@@ -77,7 +77,7 @@ fn view_state_defaults_then_set_round_trips() {
 
     let set = f.ok(
         "view set",
-        json!({ "state": { "plane": "coronal", "slice_index": 5, "window": { "center": -600, "width": 1500 }, "tool": "probe" } }),
+        json!({ "source_hash": before["source_hash"], "state": { "plane": "coronal", "slice_index": 5, "window": { "center": -600, "width": 1500 }, "tool": "probe" } }),
     );
     assert_eq!(set["revision"], 1);
     assert_eq!(set["state"]["plane"], "coronal");
@@ -88,6 +88,18 @@ fn view_state_defaults_then_set_round_trips() {
     assert_eq!(after["revision"], 1);
     assert_eq!(after["state"], set["state"]);
     assert_eq!(after["source_hash"], before["source_hash"]);
+
+    // a second set takes the next revision (monotonic under the workspace lock)
+    let again = f.ok("view set", json!({ "source_hash": before["source_hash"], "state": { "slice_index": 6 } }));
+    assert_eq!(again["revision"], 2);
+}
+
+// covers 28.4-a — the binding is fail-closed: source_hash is required
+#[test]
+fn view_set_requires_a_source_hash() {
+    let f = fixture();
+    f.open();
+    assert_eq!(f.err("view set", json!({ "state": { "slice_index": 3 } })), "bad_request");
 }
 
 // covers 28.4-a
@@ -144,7 +156,11 @@ fn view_set_creates_no_decision() {
     f.open();
     f.ok("segment threshold", json!({ "seed": { "voxel": [14, 20, 15] }, "min": 50, "max": 150, "name": "Sphere" }));
     let before = f.ok("review list", json!({}));
-    f.ok("view set", json!({ "state": { "selected_segment": 1, "overlays": { "segments_shown": true } } }));
+    let hash = f.ok("view state", json!({}))["source_hash"].clone();
+    f.ok(
+        "view set",
+        json!({ "source_hash": hash, "state": { "selected_segment": 1, "overlays": { "segments_shown": true } } }),
+    );
     let after = f.ok("review list", json!({}));
     assert_eq!(before, after, "view set must not confirm or reject anything");
     let seg = &f.ok("segment list", json!({}))["segments"][0]["provenance"];

@@ -231,7 +231,7 @@ pub fn to_view_event(event: &ViewerEvent, viewer: &Viewer) -> ferrum_domain::Vie
                     voxel: point.voxel,
                     patient_mm: point.patient_mm,
                     value,
-                    unit: probe_unit(viewer).to_string(),
+                    unit: ferrum_app::value_unit(viewer).to_string(),
                 },
             }
         }
@@ -248,16 +248,6 @@ pub fn to_view_event(event: &ViewerEvent, viewer: &Viewer) -> ferrum_domain::Vie
         }
         ViewerEvent::WindowChanged { center, width } => E::WindowChanged { center: *center, width: *width },
         ViewerEvent::CameraChanged => E::CameraChanged { camera: viewer.volume.camera },
-    }
-}
-
-/// The unit of a probe value: HU for a CT, raw otherwise (as the host writes).
-fn probe_unit(viewer: &Viewer) -> &'static str {
-    let modality = viewer.dataset().map(|d| d.metadata.modality.trim().to_ascii_uppercase()).unwrap_or_default();
-    if modality == "CT" {
-        "HU"
-    } else {
-        "raw"
     }
 }
 

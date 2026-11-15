@@ -248,12 +248,7 @@ fn probe_at(viewer: &Viewer, state: &ViewState, x: u32, y: u32) -> Result<Probe,
 /// The unit of a value: HU for a CT, raw values otherwise (MR, PET without a
 /// unit, an image with no declared modality).
 pub fn value_unit(viewer: &Viewer) -> &'static str {
-    let modality = viewer.dataset().map(|d| d.metadata.modality.trim().to_ascii_uppercase()).unwrap_or_default();
-    if modality == "CT" {
-        "HU"
-    } else {
-        "raw"
-    }
+    ferrum_app::value_unit(viewer)
 }
 
 /// The state document (`ferrum-view/1`).
@@ -328,6 +323,7 @@ pub fn apply_view_2d(
     if state.axis != view.plane {
         state.axis = view.plane;
         viewer.slices.axis = view.plane;
+        state.index = viewer.slice_index(view.plane);
         events.push(("plane_changed", json!({ "plane": view.plane.as_str(), "slice_index": state.index })));
     }
     if state.index != index {

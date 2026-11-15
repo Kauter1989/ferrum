@@ -357,14 +357,14 @@ fn mask_schema(command: &str) -> Option<(&'static str, Value)> {
 fn view_state_schema(command: &str) -> Option<(&'static str, Value)> {
     Some(match command {
         "view set" => (
-            "Sets what the person sees (component, plane, slice, window, overlays, selected segment, tool, camera) by writing the workspace's view-state artifact; the live viewer applies it and the person takes over at any time. A stale source_hash is refused with source_changed. No decision is created.",
+            "Sets what the person sees (component, plane, slice, window, overlays, selected segment, tool, camera) by writing the workspace's view-state artifact; the live viewer applies it and the person takes over at any time. source_hash (from view state) is required: a stale one is refused with source_changed. No decision is created.",
             obj(
                 json!({
                     "workspace": workspace(),
-                    "source_hash": text("the source_hash read with view state; when given and stale, the set is refused"),
+                    "source_hash": text("the source_hash read with view state; a stale one refuses the set (fail-closed)"),
                     "state": view_state_object(),
                 }),
-                &["workspace", "state"],
+                &["workspace", "state", "source_hash"],
             ),
         ),
         "view state" => (
@@ -402,12 +402,12 @@ fn view_state_object() -> Value {
             "tool": { "type": "string", "enum": ["pan", "window_level", "probe", "distance", "angle", "area", "rect", "text", "move", "delete", "ai_point", "ai_box", "ai_scribble", "ai_lasso", "region"], "description": "the active tool" },
             "camera": obj(
                 json!({
-                    "orientation": numbers(4, "quaternion x, y, z, w"),
-                    "distance": number("orbit distance"),
+                    "orientation": numbers(4, "quaternion x, y, z, w (normalized; a zero quaternion is refused)"),
+                    "distance": number("orbit distance (clamped to the camera's 0.2..10 range)"),
                     "target": numbers(3, "orbit centre in model space"),
-                    "fov_y": number("vertical field of view, radians"),
+                    "fov_y": number("vertical field of view in radians, within (0, pi)"),
                 }),
-                &[],
+                &["orientation", "distance", "target", "fov_y"],
             ),
         },
     })

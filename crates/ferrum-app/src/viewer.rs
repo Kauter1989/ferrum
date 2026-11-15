@@ -30,6 +30,7 @@ pub use ai::{AiState, AiStatus};
 pub use metrics::{MetricsOutcome, MetricsState, MetricsView};
 pub use review::ReviewEntry;
 pub use segments::{RegionSettings, SegmentSummary, SegmentationState};
+pub use view_state::value_unit;
 pub use volumes::{VolumeEntry, VOLUME_CACHE_BYTES};
 pub use workflow::SegmentationStep;
 

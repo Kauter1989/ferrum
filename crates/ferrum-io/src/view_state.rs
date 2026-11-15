@@ -97,12 +97,13 @@ pub fn state_from_json(value: &Value) -> Result<ViewState, String> {
 
 fn window_from_json(value: &Value) -> Result<WindowLevel, String> {
     let w = value.as_object().ok_or("window: an object with center and width")?;
-    let center = w.get("center").and_then(Value::as_f64).ok_or("window: center")?;
-    let width = w.get("width").and_then(Value::as_f64).ok_or("window: width")?;
+    // cast first: a huge f64 (1e300) becomes f32 infinity, which must be refused
+    let center = w.get("center").and_then(Value::as_f64).ok_or("window: center")? as f32;
+    let width = w.get("width").and_then(Value::as_f64).ok_or("window: width")? as f32;
     if !center.is_finite() || !width.is_finite() || width <= 0.0 {
         return Err("window: a finite centre and a width above 0".into());
     }
-    Ok(WindowLevel::new(center as f32, width as f32))
+    Ok(WindowLevel::new(center, width))
 }
 
 fn overlays_from_json(value: &Value) -> Result<Overlays, String> {
@@ -157,11 +158,26 @@ fn camera_from_json(value: &Value) -> Result<OrbitCamera, String> {
     if !distance.is_finite() || t.iter().any(|v| !v.is_finite()) || !fov_y.is_finite() {
         return Err("camera: finite distance, target and fov_y".into());
     }
+    // cast first, then validate: a huge f64 becomes f32 infinity (GPU device-loss
+    // risk, L40); a zero quaternion normalizes to NaN, so it is refused.
+    let orientation = Quat::from_xyzw(q[0] as f32, q[1] as f32, q[2] as f32, q[3] as f32);
+    let target = Vec3::new(t[0] as f32, t[1] as f32, t[2] as f32);
+    let distance = distance as f32;
+    let fov_y = fov_y as f32;
+    if !orientation.is_finite() || orientation.length() < 1e-6 {
+        return Err("camera: orientation is a finite, non-zero quaternion".into());
+    }
+    if !target.is_finite() || !distance.is_finite() || !fov_y.is_finite() {
+        return Err("camera: finite distance, target and fov_y".into());
+    }
+    if !(0.0..std::f32::consts::PI).contains(&fov_y) {
+        return Err("camera: fov_y in (0, pi)".into());
+    }
     Ok(OrbitCamera {
-        orientation: Quat::from_xyzw(q[0] as f32, q[1] as f32, q[2] as f32, q[3] as f32),
-        distance: distance as f32,
-        target: Vec3::new(t[0] as f32, t[1] as f32, t[2] as f32),
-        fov_y: fov_y as f32,
+        orientation: orientation.normalize(),
+        distance: distance.clamp(OrbitCamera::MIN_DISTANCE, OrbitCamera::MAX_DISTANCE),
+        target,
+        fov_y,
     })
 }
 
@@ -322,6 +338,26 @@ mod tests {
         assert!(state_from_json(&json!({ "window": { "center": 0, "width": 0 } })).is_err());
         assert!(state_from_json(&json!({ "overlays": { "style": "glow" } })).is_err());
         assert!(state_from_json(&json!({ "selected_segment": 300 })).is_err());
+    }
+
+    // covers 28.1-a — crafted values must not reach the renderer (L40)
+    #[test]
+    fn crafted_camera_and_window_are_refused_or_sanitized() {
+        let cam = |orientation: Value, distance: f64, fov_y: f64| json!({ "camera": { "orientation": orientation, "distance": distance, "target": [0, 0, 0], "fov_y": fov_y } });
+        // a zero quaternion normalizes to NaN
+        assert!(state_from_json(&cam(json!([0, 0, 0, 0]), 2.0, 0.8)).is_err());
+        // a huge distance becomes f32 infinity
+        assert!(state_from_json(&cam(json!([0, 0, 0, 1]), 1e30, 0.8)).is_err());
+        // fov outside (0, pi)
+        assert!(state_from_json(&cam(json!([0, 0, 0, 1]), 2.0, 4.0)).is_err());
+        // a window of 1e300 becomes f32 infinity
+        assert!(state_from_json(&json!({ "window": { "center": 1e300, "width": 1.0 } })).is_err());
+        assert!(state_from_json(&json!({ "window": { "center": 0.0, "width": 1e300 } })).is_err());
+        // a valid camera is normalized and clamped, not refused
+        let state = state_from_json(&cam(json!([0, 0, 0, 2]), 100.0, 0.8)).unwrap();
+        let camera = state.camera.unwrap();
+        assert!((camera.orientation.length() - 1.0).abs() < 1e-5, "normalized");
+        assert!(camera.distance <= OrbitCamera::MAX_DISTANCE, "clamped");
     }
 
     // covers 28.1-b

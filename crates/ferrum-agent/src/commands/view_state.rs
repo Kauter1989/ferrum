@@ -4,24 +4,27 @@
 //! ([`ferrum_app::Viewer::apply_view_state`]); the agent never links the app
 //! or the host (ADR 0018). No command creates a decision.
 
-use ferrum_domain::{ViewState, WindowLevel};
+use ferrum_domain::{storage_histogram, SliceAxis, ViewState, WindowLevel, AUTO_WINDOW_BINS};
 use serde_json::{json, Value};
 
 use super::Ctx;
+use crate::decisions::DecisionLock;
 use crate::envelope::{AgentError, ErrorCode, Output};
 use crate::params::Params;
+use crate::study::Study;
 
-/// The fields a view state may carry (`probe` is read-only and ignored).
+/// The fields a view state may carry. `probe` is read-only: a set refuses it
+/// (the schema omits it too, so CLI and MCP agree).
 const STATE_FIELDS: &[&str] =
-    &["component", "plane", "slice_index", "window", "overlays", "selected_segment", "tool", "camera", "probe"];
+    &["component", "plane", "slice_index", "window", "overlays", "selected_segment", "tool", "camera"];
 
-/// `view state`: the saved state (or the volume's default), with the current
-/// revision and source hash the host passes back to `view set`.
+/// `view state`: the saved state (or the viewer's own default), with the
+/// current revision and source hash the host passes back to `view set`.
 pub fn state(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     let study = ctx.study(p)?;
     let (state, revision) = match study.workspace.load_view_state()? {
         Some((state, revision, _)) => (state, revision),
-        None => (default_state(&study.volume), 0),
+        None => (default_state(study), 0),
     };
     Ok(Output::new(json!({
         "format": ferrum_io::VIEW_STATE_FORMAT,
@@ -31,10 +34,13 @@ pub fn state(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     })))
 }
 
-/// `view set`: validates a state, refuses a stale `source_hash`, and writes
-/// the artifact with the next revision. The person takes over at any time —
-/// this locks nothing. Returns the stored state, revision and source hash.
+/// `view set`: validates a state, refuses a stale `source_hash` (fail-closed,
+/// as `decisions::record`), and writes the artifact with the next revision
+/// under the workspace lock (a concurrent set cannot lose an update or write
+/// a revision the watcher would not report). The person takes over at any
+/// time — this locks nothing against the person. Returns the stored state.
 pub fn set(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
+    let root = ctx.workspace_path(p)?;
     let study = ctx.study(p)?;
     let value = p.req("state")?;
     let object = value.as_object().ok_or_else(|| AgentError::bad_request("state must be an object"))?;
@@ -46,16 +52,16 @@ pub fn set(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     let mut state = ferrum_io::state_from_json(value).map_err(AgentError::bad_request)?;
     state.probe = None; // read-only: a set never carries a pick
 
-    if let Some(given) = p.str("source_hash")? {
-        if given != study.source_sha256 {
-            return Err(AgentError::new(
-                ErrorCode::SourceChanged,
-                "the study changed since the state was read; nothing was applied",
-            )
-            .hint("read view state again and let the person decide on the current study"));
-        }
+    let given = p.req_str("source_hash")?;
+    if given != study.source_sha256 {
+        return Err(AgentError::new(
+            ErrorCode::SourceChanged,
+            "the study changed since the state was read; nothing was applied",
+        )
+        .hint("read view state again and let the person decide on the current study"));
     }
 
+    let _lock = DecisionLock::take(&root)?;
     let revision = study.workspace.load_view_state()?.map(|(_, r, _)| r).unwrap_or(0) + 1;
     study.workspace.save_view_state(&state, revision, &study.source_sha256)?;
     Ok(Output::new(json!({
@@ -83,7 +89,14 @@ pub fn events(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     })))
 }
 
-/// The default state of a volume: a slice view at the volume's own window.
-fn default_state(volume: &ferrum_domain::Volume) -> ViewState {
-    ViewState { window: WindowLevel::full_range(volume.range()), ..Default::default() }
+/// The default state matches what the viewer shows after opening the study:
+/// the axial mid-slice and the series' own window (else the auto window), so
+/// a host passing `view state` back to `view set` changes nothing unintended.
+fn default_state(study: &Study) -> ViewState {
+    let volume = &study.volume;
+    let window = study
+        .metadata
+        .default_window
+        .unwrap_or_else(|| WindowLevel::auto(volume.range(), &storage_histogram(volume.data(), AUTO_WINDOW_BINS)));
+    ViewState { plane: SliceAxis::Axial, slice_index: volume.dims().z / 2, window, ..Default::default() }
 }

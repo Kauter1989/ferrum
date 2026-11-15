@@ -215,12 +215,20 @@ reported in the answer's `unhonoured` list, not silently dropped (28.2-b).
 ## 6. Binding to the source (`source_changed`)
 
 `ViewState.source_hash` is the study's `source_sha256` (the value
-`ferrum_agent::decisions` binds to, `Study::load`). `view set` takes the
-`source_hash` the host read with the state; if it differs from the current
-study's, the command refuses with `source_changed` and applies nothing — the
-same rule as `decisions::record` (16.8). `view state` returns the current
-`source_hash` so the host can pass it back. A workspace whose sources changed
-under a long-lived client is already refused by `Study::load`/`verify_sources`.
+`ferrum_agent::decisions` binds to, `Study::load`). `view set` **requires** the
+`source_hash` the host read with the state (fail-closed, as `decisions::record`
+makes its hashes mandatory); if it differs from the current study's, the
+command refuses with `source_changed` and applies nothing. The read-modify-write
+of the revision runs under the workspace lock (`DecisionLock`), so concurrent
+sets cannot lose an update or write a revision the watcher would not report.
+`view state` returns the current `source_hash` so the host can pass it back. A
+workspace whose sources changed under a long-lived client is already refused by
+`Study::load`/`verify_sources`.
+
+The parser sanitizes what reaches the renderer (L40): a window is validated
+**after** the `f32` cast (a huge `f64` becomes infinity, refused); a camera
+quaternion must be finite and non-zero (normalized), the distance is clamped to
+`OrbitCamera::MIN_DISTANCE..MAX_DISTANCE`, and `fov_y` must lie in `(0, pi)`.
 
 ## 7. Agent commands
 

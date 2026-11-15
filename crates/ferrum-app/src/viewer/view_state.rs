@@ -166,7 +166,8 @@ impl Viewer {
 }
 
 /// The unit of a value: HU for a CT, raw otherwise (as the view host writes).
-fn value_unit(viewer: &Viewer) -> &'static str {
+/// The one implementation every layer shares (widget, host, agent default).
+pub fn value_unit(viewer: &Viewer) -> &'static str {
     let modality = viewer.dataset().map(|d| d.metadata.modality.trim().to_ascii_uppercase()).unwrap_or_default();
     if modality == "CT" {
         "HU"

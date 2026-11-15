@@ -102,6 +102,8 @@ fn session(agent: &Agent, ws: &str, src: &Path) -> Vec<Value> {
         ("view montage", json!({ "workspace": ws, "plane": "coronal", "size": 128 })),
         ("view mpr", json!({ "workspace": ws, "at": { "voxel": [8, 8, 3] }, "size": 192 })),
         ("view volume", json!({ "workspace": ws, "mode": "isosurface", "threshold": 200, "size": 64 })),
+        ("view state", json!({ "workspace": ws })),
+        ("view events", json!({ "workspace": ws })),
         ("probe", json!({ "workspace": ws, "point": { "voxel": [8, 8, 3] } })),
         ("stats", json!({ "workspace": ws, "sphere": { "center": { "voxel": [8, 8, 3] }, "radius_mm": 3 } })),
         ("profile", json!({ "workspace": ws, "from": { "voxel": [0, 8, 3] }, "to": { "voxel": [15, 8, 3] } })),
@@ -151,6 +153,18 @@ fn outputs_contain_no_identifiers() {
     }
     // the workspace's own annotation file follows the same rules
     scan_text("annotations.json", &std::fs::read_to_string(ws.join("annotations.json")).unwrap(), &mut found);
+    // view set (Stage 28): the envelope and the artifact carry no identifiers
+    let view_state = envelopes.iter().find(|e| e["provenance"]["command"] == "view state").unwrap();
+    let hash = view_state["data"]["source_hash"].as_str().unwrap();
+    let set = Agent::default().run(
+        "view set",
+        &json!({ "workspace": ws_text, "source_hash": hash, "state": { "plane": "coronal", "slice_index": 3, "window": { "center": 40, "width": 400 }, "overlays": { "segments_shown": true } } }),
+    );
+    assert_eq!(set["ok"], true, "{set:#}");
+    let mut clean = set.clone();
+    clean["provenance"]["params"] = Value::Null;
+    scan_text("envelope of view set", &clean.to_string(), &mut found);
+    scan_text("view.json", &std::fs::read_to_string(ws.join("view.json")).unwrap(), &mut found);
     assert!(found.is_empty(), "identifiers leaked: {found:#?}");
 
     // with the operator's consent, dates and accession numbers may be shared

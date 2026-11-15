@@ -229,6 +229,16 @@ fn remove_if_exists(path: &Path) -> Result<(), IoError> {
     }
 }
 
+/// Refuses a symlink or other non-regular file, as the change watcher does:
+/// a planted link must not drive a read of a target outside the workspace.
+fn refuse_non_regular(path: &Path) -> Result<(), IoError> {
+    let meta = std::fs::symlink_metadata(path).map_err(|e| IoError::os(path, e))?;
+    if !meta.file_type().is_file() {
+        return Err(IoError::invalid(path, "not a regular file"));
+    }
+    Ok(())
+}
+
 impl Workspace {
     /// Creates a workspace in `root` (created if needed) for `series`,
     /// opened from `source`. Hashes every file of the series. Fails if
@@ -446,6 +456,7 @@ impl Workspace {
         if !path.exists() {
             return Ok(None);
         }
+        refuse_non_regular(&path)?;
         let bytes = std::fs::read(&path).map_err(|e| IoError::os(&path, e))?;
         let doc: Value = serde_json::from_slice(&bytes).map_err(|e| IoError::parse(&path, e))?;
         let revision = doc["revision"].as_u64().unwrap_or(0);
@@ -486,6 +497,7 @@ impl Workspace {
         if !path.exists() {
             return Ok((Vec::new(), 0, 0));
         }
+        refuse_non_regular(&path)?;
         let bytes = std::fs::read(&path).map_err(|e| IoError::os(&path, e))?;
         let doc: Value = serde_json::from_slice(&bytes).map_err(|e| IoError::parse(&path, e))?;
         let next = doc["next"].as_u64().unwrap_or(0);
