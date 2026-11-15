@@ -47,6 +47,21 @@ Legend: ✅ done · 🚧 in progress · 📋 planned.
 |---|---|---|
 | 6.1 | As a **user**, I want progress. | [6.1-a] Being built. |
 
+## Stage 8 — Bullet format ✅
+
+**Criteria**
+
+- [8.1-a] First bullet criterion
+  with a continuation line. ✅
+- [8.1-b] Second bullet criterion.
+- ~~[8.1-c] Struck bullet.~~ reason
+
+**Verification**
+
+| Criterion | Level | Evidence | Outcome |
+|---|---|---|---|
+| 8.1-b | test | somewhere | ✅ |
+
 ## Roadmap
 
 ### Next
@@ -118,6 +133,21 @@ Legend: ✅ done · 🚧 in progress · 📋 planned.
 | # | User story | Acceptance criteria |
 |---|---|---|
 | 7.1 | As a **user**, I want hotfixes. | [7.1-a] Fixed on main only (PR 7). |
+
+## Stage 8 — Bullet format ✅
+
+**Criteria**
+
+- [8.1-a] First bullet criterion
+  with a continuation line. ✅
+- [8.1-b] Second bullet criterion.
+- ~~[8.1-c] Struck bullet.~~ reason
+
+**Verification**
+
+| Criterion | Level | Evidence | Outcome |
+|---|---|---|---|
+| 8.1-b | test | somewhere | ✅ |
 
 ## Stage F1 — A bug ✅
 

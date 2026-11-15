@@ -177,6 +177,55 @@ def _parse_stories(sid: str, body: str, heading: str, warnings: list[str], draft
     return stories
 
 
+def _parse_bullet_criteria(sid: str, body: str) -> list[dict]:
+    """Criteria written as a bullet list (Stages 26, F1, F2): '- [N.k-x] …'
+    with indented continuation lines, grouped into stories by the N.k
+    prefix. A struck bullet (~~[N.k-x]~~) is excluded."""
+    bullet_re = re.compile(rf"^-\s+(~~)?\[({re.escape(sid)}\.\d+-[a-z])\]")
+    units: dict[str, dict] = {}
+    order: list[str] = []
+    current: dict | None = None
+    for line in body.splitlines():
+        match = bullet_re.match(line)
+        if match:
+            struck, cid = match.group(1), match.group(2)
+            current = None
+            if not struck:
+                current = {"kind": "criterion", "id": cid, "text": line[match.end() :], "done_marker": False, "prs": []}
+                units[cid] = current
+                order.append(cid)
+            continue
+        if current is None:
+            continue
+        if line.startswith((" ", "\t")) and line.strip() and not line.lstrip().startswith(("- ", "#", "|", "**")):
+            current["text"] += " " + line.strip()
+        else:
+            current = None
+    stories: dict[str, dict] = {}
+    for cid in order:
+        unit = units[cid]
+        unit["text"] = re.sub(r"\s+", " ", unit["text"]).strip()
+        unit["done_marker"] = "✅" in unit["text"]
+        unit["prs"] = _prs(unit["text"])
+        prefix = cid.rsplit("-", 1)[0]
+        stories.setdefault(prefix, {"id": prefix, "text": "", "criteria": []})["criteria"].append(unit)
+    return list(stories.values())
+
+
+def _mark_verified(stories: list[dict], body: str, sid: str) -> None:
+    """A Verification-table row '| N.k-x | … | ✅ |' marks the criterion done."""
+    by_id = {u["id"]: u for s in stories for u in s["criteria"]}
+    id_re = re.compile(rf"^({re.escape(sid)}\.\d+-[a-z])$")
+    for line in body.splitlines():
+        if not line.lstrip().startswith("|"):
+            continue
+        cells = _cells(line)
+        if len(cells) >= 2 and id_re.fullmatch(cells[0]) and "✅" in cells[-1]:
+            unit = by_id.get(cells[0])
+            if unit is not None:
+                unit["done_marker"] = True
+
+
 def parse_plan(text: str) -> dict:
     """Stages, roadmap and warnings of one dev_plan.md revision (30.1-a/f)."""
     warnings: list[str] = []
@@ -192,12 +241,16 @@ def parse_plan(text: str) -> dict:
             status = _heading_status(title)
             if status == "unknown":
                 warnings.append(f"Stage {sid}: unknown heading marker")
+            stories = _parse_stories(sid, body, status, warnings)
+            if not stories:
+                stories = _parse_bullet_criteria(sid, body)
+            _mark_verified(stories, body, sid)
             stages.append(
                 {
                     "id": sid,
                     "title": stage_match.group(2).strip(),
                     "heading_status": status,
-                    "stories": _parse_stories(sid, body, status, warnings),
+                    "stories": stories,
                 }
             )
         elif title == "Roadmap":

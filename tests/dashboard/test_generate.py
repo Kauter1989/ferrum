@@ -16,7 +16,7 @@ import generate
 def test_plan_parses_to_the_exact_fixture():
     parsed = generate.parse_plan(generate_target_plan())
     stages = parsed["stages"]
-    assert [s["id"] for s in stages] == ["1", "2", "3", "4", "5", "6", "7", "F1"]
+    assert [s["id"] for s in stages] == ["1", "2", "3", "4", "5", "6", "7", "8", "F1"]
     assert [s["heading_status"] for s in stages] == [
         "done",
         "progress",
@@ -25,6 +25,7 @@ def test_plan_parses_to_the_exact_fixture():
         "progress",
         "progress",
         "progress",
+        "done",
         "done",
     ]
     assert stages[1]["title"].startswith("Mixed")
@@ -57,6 +58,21 @@ def test_implementation_tables_are_not_stories():
     assert [st["id"] for st in stage6["stories"]] == ["6.1"]
     assert len(stage6["stories"][0]["criteria"]) == 1
     assert not any("Stage 6" in w for w in parsed["warnings"])
+
+
+# covers 30.1-a
+
+
+def test_bullet_criteria_parse():
+    """Stages 26/F1/F2 write criteria as bullets, not a story table."""
+    parsed = generate.parse_plan(generate_target_plan())
+    stage8 = next(s for s in parsed["stages"] if s["id"] == "8")
+    assert [st["id"] for st in stage8["stories"]] == ["8.1"]
+    criteria = stage8["stories"][0]["criteria"]
+    assert [c["id"] for c in criteria] == ["8.1-a", "8.1-b"]
+    assert criteria[0]["text"] == "First bullet criterion with a continuation line. ✅"
+    assert criteria[0]["done_marker"] is True
+    assert criteria[1]["done_marker"] is True  # via the Verification table
 
 
 # covers 30.1-a
@@ -110,6 +126,7 @@ def test_lifecycle_buckets_on_a_fixture_repository(repo_data):
         "5": ("unknown", {"unknown": 1}),
         "6": ("progress", {"progress": 1}),
         "7": ("released", {"released": 1}),
+        "8": ("released", {"released": 2}),
         "F1": ("develop", {"develop": 1}),
     }
     for stage in repo_data["stages"]:
