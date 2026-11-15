@@ -102,7 +102,7 @@ fn mcp_over_stdio_and_schemas() {
     );
     assert_eq!(init["result"]["serverInfo"]["name"], "ferrum");
     let tools = ask(serde_json::json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }), true);
-    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 36);
+    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 39);
     let open = ask(
         serde_json::json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call",
         "params": { "name": "ferrum_study_open", "arguments": { "workspace": "a", "path": src } } }),
@@ -117,7 +117,7 @@ fn mcp_over_stdio_and_schemas() {
     let schema: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(schema["parameters"]["required"], serde_json::json!(["workspace", "point"]));
     let all = Command::new(env!("CARGO_BIN_EXE_ferrum-cli")).arg("schema").output().unwrap();
-    assert_eq!(serde_json::from_slice::<Value>(&all.stdout).unwrap().as_object().unwrap().len(), 36);
+    assert_eq!(serde_json::from_slice::<Value>(&all.stdout).unwrap().as_object().unwrap().len(), 39);
     assert_eq!(
         Command::new(env!("CARGO_BIN_EXE_ferrum-cli")).args(["schema", "nope"]).status().unwrap().code(),
         Some(2)
