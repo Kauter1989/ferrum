@@ -1,21 +1,19 @@
 #!/usr/bin/env python3
-"""Generate the FERRUM development dashboard (Stage 30, dashboard/1).
+"""Generate the FERRUM development dashboard data (Stage 30, dashboard/1).
 
-A derived view of the plan and the architecture: every number comes from
-git and the repository, never from hand entry. Reads committed state only
-(two revisions of dev_plan.md, cargo metadata, git grep), so two runs on
-the same inputs are byte-identical. The wall clock is not an input: the
-generation stamp is the target commit's date.
+A derived view of the plan: every number comes from git and the
+repository, never from hand entry. Reads committed state only (two
+revisions of dev_plan.md, git grep, git log), so two runs on the same
+inputs are byte-identical. The wall clock is not an input: the generation
+stamp is the target commit's date. The crate graph with the layering
+check and the self-contained page are PR 2 of Stage 30.
 
 Usage (repo root):
     python scripts/dashboard/generate.py [--root .] [--ref HEAD]
         [--release-ref origin/main] [--out target/dashboard-site]
 
-Writes <out>/data.json (dashboard/1). The page renderer (page.py +
-template.html) is PR 2 of Stage 30; this module is the data engine.
-Python 3.11+ (tomllib); git and cargo on PATH (cargo optional: Cargo.toml
-fallback). Design: docs/dashboard.md. Tests: tests/dashboard (cite the
-criteria).
+Writes <out>/data.json (dashboard/1). Python 3.11+; git on PATH.
+Design: docs/dashboard.md. Tests: tests/dashboard (cite the criteria).
 """
 
 from __future__ import annotations
@@ -27,8 +25,6 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-
-import tomllib
 
 SCHEMA = "dashboard/1"
 BUCKETS = ("released", "develop", "progress", "planned", "unknown")
@@ -46,32 +42,9 @@ SKIP_DIRS = {"target", ".git", ".claude", "node_modules", "__pycache__", ".venv"
 LEVELS = ("visual", "field", "manual")
 CID_PATTERN = r"\b[A-Za-z0-9]+\.[0-9]+-[a-z]\b"
 
-# The declared layering (CLAUDE.md): dependencies point inward. Tiers run
-# inner → outer; an edge is allowed when it points strictly inward or is a
-# documented same-tier pair. The mermaid in docs/architecture.md draws the
-# main edges, not a closed whitelist — a host or adapter may reach any inner
-# crate (ferrum-app → ferrum-radiomics is named in CLAUDE.md itself).
-TIERS = {
-    "ferrum-domain": 0,
-    "ferrum-gpu-lock": 1,
-    "ferrum-processing": 2,
-    "ferrum-render": 2,
-    "ferrum-io": 2,
-    "ferrum-engines": 2,
-    "ferrum-radiomics": 2,
-    "ferrum-app": 3,
-    "ferrum-ui": 4,
-    "ferrum-view": 4,
-    "ferrum-agent": 4,
-    "ferrum": 5,
-    "ferrum-cli": 5,
-    "ferrum-wasm": 5,
-}
-SAME_TIER_ALLOWED = {("ferrum-engines", "ferrum-gpu-lock"), ("ferrum-render", "ferrum-processing")}
-APP_FORBIDDEN = {"wgpu", "egui", "egui-wgpu", "eframe"}
-APP_RULE = "ferrum-app must compile without wgpu/egui"
-GPU_LOCK_RULE = "ferrum-gpu-lock depends on no other FERRUM crate"
-INWARD_RULE = "layering: dependencies point inward"
+# The crate graph and the layering model (tiers, per-crate prohibitions)
+# are PR 2 of Stage 30, with the page's architecture section; this module
+# is the plan-state engine. Reference copy: the PR 2 holding notes.
 
 
 class Git:
@@ -295,18 +268,26 @@ def stage_aggregate(buckets: list[str]) -> tuple[str, dict]:
 
 
 def pr_ancestry(git: Git, ref: str, release_sha: str | None, prs: list[int]) -> dict:
-    """For each cited PR: is its merge commit an ancestor of target / tag."""
+    """For each cited PR: is a merge with that number an ancestor of target / tag.
+
+    Merges are identified by SUBJECT only, across all refs: a body mention
+    of an issue number is not a merge (review finding), and a release-only
+    merge invisible from the target must still count for the tag.
+    """
+    log = git.try_run("log", "--all", "--format=%H%x09%s")
+    candidates: dict[int, list[str]] = {}
+    for line in log.splitlines():
+        sha, _, subject = line.partition("\t")
+        match = re.match(r"^Merge pull request #(\d+) ", subject) or re.search(r"\(#(\d+)\)$", subject)
+        if match:
+            candidates.setdefault(int(match.group(1)), []).append(sha)
     ancestry = {}
     for number in prs:
-        log = git.try_run(
-            "log", "--format=%H", "-F", f"--grep=Merge pull request #{number} ", f"--grep=(#{number})", ref
-        )
-        lines = log.strip().splitlines()
-        if not lines:
-            ancestry[number] = {"target": False, "tag": False}
-            continue
-        merge = lines[0]
-        ancestry[number] = {"target": True, "tag": bool(release_sha) and git.is_ancestor(merge, release_sha)}
+        shas = candidates.get(number, [])
+        ancestry[number] = {
+            "target": any(git.is_ancestor(sha, ref) for sha in shas),
+            "tag": bool(release_sha) and any(git.is_ancestor(sha, release_sha) for sha in shas),
+        }
     return ancestry
 
 
@@ -341,115 +322,6 @@ def scan_coverage(git: Git, ref: str) -> dict:
         cid: {"tests": sorted(tests.get(cid, set())), "levels": sorted(levels.get(cid, set()))}
         for cid in set(tests) | set(levels)
     }
-
-
-# ---------------------------------------------------------------- crates
-
-
-def _crate_deps(name: str, dep_names: list[str], workspace: set[str]) -> list[str]:
-    """Intra-workspace edges; for ferrum-app also the forbidden externals."""
-    deps = {d for d in dep_names if d in workspace}
-    if name == "ferrum-app":
-        deps |= {d for d in dep_names if d in APP_FORBIDDEN}
-    return sorted(deps)
-
-
-def crates_from_metadata(meta: dict) -> list[dict]:
-    packages = meta["packages"]
-    workspace = {p["name"] for p in packages}
-    crates = []
-    for package in packages:
-        names = [d["name"] for d in package.get("dependencies", []) if d.get("kind") is None]
-        crates.append(
-            {
-                "name": package["name"],
-                "description": package.get("description") or "",
-                "deps": _crate_deps(package["name"], names, workspace),
-            }
-        )
-    return sorted(crates, key=lambda c: c["name"])
-
-
-def crates_from_toml(root: Path) -> list[dict]:
-    """Fallback when cargo is unavailable: parse the workspace manifests."""
-    workspace_toml = tomllib.loads((root / "Cargo.toml").read_text(encoding="utf-8"))
-    members = workspace_toml["workspace"]["members"]
-    parsed = [tomllib.loads((root / m / "Cargo.toml").read_text(encoding="utf-8")) for m in members]
-    workspace = {p["package"]["name"] for p in parsed}
-    crates = []
-    for data in parsed:
-        package = data["package"]
-        crates.append(
-            {
-                "name": package["name"],
-                "description": package.get("description", ""),
-                "deps": _crate_deps(package["name"], list(data.get("dependencies", {})), workspace),
-            }
-        )
-    return sorted(crates, key=lambda c: c["name"])
-
-
-def load_crates(root: Path, warnings: list[str]) -> list[dict]:
-    manifest = root / "Cargo.toml"
-    if not manifest.exists():
-        warnings.append("no cargo workspace found; the crate graph is empty")
-        return []
-    try:
-        argv = ["cargo", "metadata", "--no-deps", "--format-version", "1", "--manifest-path", str(manifest)]
-        proc = subprocess.run(  # noqa: S603 - cargo on PATH, no shell
-            argv,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=True,
-            cwd=str(root),
-        )
-        return crates_from_metadata(json.loads(proc.stdout))
-    except (OSError, subprocess.SubprocessError, ValueError, KeyError):
-        try:
-            return crates_from_toml(root)
-        except (OSError, ValueError, KeyError):
-            warnings.append("cargo metadata and the Cargo.toml fallback both failed; the crate graph is empty")
-            return []
-
-
-def check_layering(crates: list[dict]) -> list[dict]:
-    """Name every edge against the declared layering (30.1-d)."""
-    workspace = {c["name"] for c in crates}
-    violations = []
-    for crate in crates:
-        name = crate["name"]
-        tier = TIERS.get(name)
-        found = []
-        for dep in crate["deps"]:
-            rule = None
-            if name == "ferrum-app" and dep in APP_FORBIDDEN:
-                rule = APP_RULE
-            elif name == "ferrum-gpu-lock" and dep in workspace:
-                rule = GPU_LOCK_RULE
-            elif dep in workspace and tier is not None:
-                dep_tier = TIERS.get(dep)
-                inward = dep_tier is not None and dep_tier < tier
-                if not inward and (name, dep) not in SAME_TIER_ALLOWED:
-                    rule = INWARD_RULE
-            if rule:
-                found.append(f"{name} → {dep} ({rule})")
-                violations.append({"from": name, "to": dep, "rule": rule})
-        crate["violations"] = found
-    return violations
-
-
-def changed_crates(git: Git, release_sha: str | None, target_sha: str) -> set[str]:
-    if not release_sha:
-        return set()
-    diff = git.run("diff", "--name-only", release_sha, target_sha, "--", "crates")
-    names = set()
-    for line in diff.splitlines():
-        parts = Path(line).parts
-        if len(parts) >= 3 and parts[0] == "crates":
-            names.add(parts[1])
-    return names
 
 
 # ---------------------------------------------------------------- aggregate
@@ -504,9 +376,7 @@ def build_data(root: Path, ref: str = "HEAD", release_ref: str = "origin/main") 
         buckets = []
         for unit in units:
             tag_unit = tag_units.get(unit["id"])
-            if tag_stage is None:
-                done_tag = False
-            elif tag_unit is not None:
+            if tag_unit is not None:
                 merged_prs = sorted(set(tag_unit.get("prs", [])) | set(unit["prs"]))
                 done_tag = done_at({**tag_unit, "prs": merged_prs}, tag_heading, tag_ancestry)
             else:
@@ -524,14 +394,6 @@ def build_data(root: Path, ref: str = "HEAD", release_ref: str = "origin/main") 
         if stage["heading_status"] == "progress" and units and all(u["done"] for u in units):
             warnings.append(f"Stage {stage['id']}: heading 🚧 lags — all criteria done")
         stages.append({**stage, "bucket": bucket, "counts": counts})
-    crates = load_crates(Path(root), warnings)
-    for crate in crates:
-        if crate["name"] not in TIERS:
-            warnings.append(f"crate {crate['name']} is not in the layering tier table")
-    violations = check_layering(crates)
-    changed = changed_crates(git, release_sha if tag else None, target_sha)
-    for crate in crates:
-        crate["changed_since_release"] = crate["name"] in changed
     reports = [
         {"path": path, "label": Path(path).stem.removesuffix("-report")}
         for path in git.run("ls-tree", "-r", "--name-only", target_sha, "--", "docs").splitlines()
@@ -551,8 +413,6 @@ def build_data(root: Path, ref: str = "HEAD", release_ref: str = "origin/main") 
         "meta": meta,
         "stages": stages,
         "roadmap": plan["roadmap"],
-        "crates": crates,
-        "layering_violations": violations,
         "reports": reports,
     }
 
@@ -583,10 +443,7 @@ def main() -> int:
     criteria = sum(len(stage_units(s)) for s in data["stages"])
     buckets = {b: sum(s["counts"][b] for s in data["stages"]) for b in BUCKETS}
     print(f"dashboard: {len(data['stages'])} stages, {criteria} items, buckets {buckets}")
-    print(
-        f"dashboard: {len(data['crates'])} crates, {len(data['layering_violations'])} violations, "
-        f"{len(data['meta']['warnings'])} warnings"
-    )
+    print(f"dashboard: {len(data['meta']['warnings'])} warnings")
     print(f"dashboard: wrote {out / 'data.json'} in {elapsed:.2f}s")
     return 0
 

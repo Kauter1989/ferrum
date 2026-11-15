@@ -46,7 +46,8 @@ the user in chat on 2026-11-15 and lands in PR 2.
 ### 3.1 Components
 
 ```
-scripts/dashboard/generate.py     the data engine (Python stdlib + git + cargo)
+scripts/dashboard/generate.py     the plan-state engine (Python stdlib + git)
+scripts/dashboard/crates.py       PR 2: crate graph + layering model (cargo metadata)
 scripts/dashboard/page.py         PR 2: the renderer (aggregate → HTML fragments)
 scripts/dashboard/template.html   PR 2: the page skeleton (inline CSS, placeholders)
 tests/dashboard/                  pytest fixtures and structural tests
@@ -66,9 +67,9 @@ git show <ref>:dev_plan.md ────────────────→ p
 parse both ─→ done@tag, done@target ───────→ lifecycle buckets (§3.3)
 git grep covers-citations at <ref> ────────→ coverage per criterion (analyze convention)
 git log --grep PR merges + merge-base ─────→ PR-ancestry refinement (§3.3)
-cargo metadata --no-deps (or Cargo.toml) ──→ crate nodes, edges, descriptions
-git diff --name-only <tag>..<ref> crates/ ─→ changed-since-release marks
-layering constant (CLAUDE.md) ─────────────→ named violations
+cargo metadata --no-deps (or Cargo.toml) ──→ crate nodes, edges, descriptions (PR 2)
+git diff --name-only <tag>..<ref> crates/ ─→ changed-since-release marks (PR 2)
+layering model (CLAUDE.md) ────────────────→ named violations (PR 2)
 git ls-tree docs/*-report.html ────────────→ report index
 → data.json (sorted, git-derived stamp); PR 2: + template → index.html
 ```
@@ -117,16 +118,18 @@ the `schema` field; a breaking change bumps it and updates this section.
   }],
   "roadmap": {"next": [{"n": 1, "what": "…", "kind": "…", "why": "…"}],
                "backlog": ["…"], "drafts": [{"id": "21", "title": "…", "stories": ["…"]}]},
-  "crates": [{"name": "ferrum-domain", "description": "…",
-               "deps": [], "changed_since_release": false, "violations": []}],
-  "layering_violations": [{"from": "…", "to": "…", "rule": "…"}],
   "reports": [{"path": "docs/webgpu-panel/pr-91-report.html", "label": "pr-91"}]
 }
 ```
 
-Story-level units (early stages without criterion IDs) carry
-`"criteria": []` and a story-level `bucket`/`done` instead; the stage
-counts then count stories. Links are not stored: the renderer builds
+PR 2 adds `crates[]` (name, description, deps, changed_since_release,
+violations) and `layering_violations[]` — a non-breaking extension, same
+schema id.
+
+Story-level units (early stages without criterion IDs) appear as a single
+unit of `"kind": "story"` inside `criteria[]`, carrying the story's text
+and marker; the stage counts then count stories. Links are not stored:
+the renderer builds
 them from `meta.repo_url` and `meta.target_sha`. `index.html` renders the
 data into the HTML with `data-*` attributes (`data-stage`, `data-bucket`,
 `data-crate`, `data-changed`) — PR 3's interactivity reads the DOM, so the
@@ -137,8 +140,11 @@ for machine consumers.
 
 - `done(item, rev)` = inline ✅ on the criterion, OR the stage heading at
   `rev` is ✅ (and the item is not struck through), OR a PR cited on the
-  item has its merge commit (`Merge pull request #N ` or `(#N)`) an
-  ancestor of `rev` (`git merge-base --is-ancestor`).
+  item has a merge commit — matched by SUBJECT only (`Merge pull request
+  #N ` or a squash subject ending `(#N)`), across all refs, so a body
+  mention of an issue number is not a merge and a release-only merge is
+  still found — that is an ancestor of `rev`
+  (`git merge-base --is-ancestor`).
 - Criterion bucket: `released` if done at the release tag; else `develop`
   if done at the target; else `progress` if the target heading is 🚧;
   else `planned` if 📋; else `unknown` (with a warning).
@@ -151,7 +157,7 @@ for machine consumers.
 - No release tag reachable → `release_tag: null`, every done item is
   `develop`, one warning. The page still renders.
 
-### 3.4 Layering model
+### 3.4 Layering model (PR 2)
 
 The constitution's rule is "dependencies point inward" plus specific
 prohibitions — not the mermaid's drawn edges as a closed whitelist (the
@@ -163,8 +169,12 @@ flagged). The generator encodes:
   engines/radiomics 2; app 3; ui/view/agent 4; ferrum/cli/wasm 5. An edge
   is allowed when it points strictly inward, or is a documented same-tier
   pair (`SAME_TIER_ALLOWED`: engines → gpu-lock, render → processing).
-- `ferrum-app` must not depend on wgpu/egui (`APP_FORBIDDEN`).
-- `ferrum-gpu-lock` depends on no other FERRUM crate.
+- Per-crate prohibitions (`FORBIDDEN_EXTERNALS`, `AGENT_ALLOWED`):
+  `ferrum-app` without wgpu/egui; `ferrum-agent` depends only on
+  domain/io/engines/radiomics/render and never on wgpu/egui (so
+  agent → app is a violation even though it points inward); `ferrum-ui`
+  without eframe/rfd; `ferrum-view` without egui; `ferrum-gpu-lock`
+  depends on no other FERRUM crate.
 - A crate missing from `TIERS` produces a warning, not a silent pass.
 
 Every violating edge is named in `crates[].violations` and
@@ -235,7 +245,7 @@ surface is touched.
 | [30.1-a] | `tests/dashboard/test_generate.py::test_plan_parses_to_the_exact_fixture`, `…struck_criteria…`, `…letter_and_draft_stages…`, `…idless_stages…`, `…implementation_tables_are_not_stories…` (planned) | test |
 | [30.1-b] | `test_lifecycle_buckets_on_a_fixture_repository`, `test_lagging_heading_criterion_is_develop`, `test_stage_bucket_priority_and_counts` (planned) | test |
 | [30.1-c] | `test_coverage_follows_the_analyze_convention` (planned) | test |
-| [30.1-d] | `test_crate_graph_and_layering_violations`, `test_fallback_parses_the_workspace_toml`, `test_changed_crates_are_marked` (planned) | test |
+| [30.1-d] | `test_crate_graph_and_layering_violations`, `test_fallback_parses_the_workspace_toml`, `test_changed_crates_are_marked` (PR 2) | test |
 | [30.1-e] | `test_output_is_byte_identical_across_runs`, `test_output_holds_no_machine_paths` (planned) | test |
 | [30.1-f] | `test_unknown_marker_warns_and_marks_unknown`, `test_empty_criteria_cell_warns` (planned) | test |
 | [30.1-g] | `test_ci_runs_the_dashboard_tests` (planned); `ci.yml` python-lint step runs `tests/dashboard`; CI green on the PR; `analyze.py --stage 30` exit 0 locally | test |
@@ -252,14 +262,16 @@ surface is touched.
 
 | PR | Tasks | Est. lines (code/tests/docs) | Files | Surfaces | Class | Field test after |
 |---|---|---|---|---|---|---|
-| 1 | 30.T1, T3 | 590/540/330 | 7 | dashboard/1 (internal) | M | no (no engines/rendering/formats) |
-| 2 | 30.T2 | 280/110/40 | 5 | — | S | no |
+| 1 | 30.T1, T3 | 480/430/300 | 7 | dashboard/1 (internal) | M | no (no engines/rendering/formats) |
+| 2 | 30.T2 | 650/220/60 | ~9 | — | M | no |
 | 3 | 30.T4–T5 | 700/250/200 | ~12 | — (workflow) | M | no |
 
 Autonomous mode allows M per PR. The whole feature measured 1844 lines
-(L), so it was split at the module boundary — data engine first (the
-dashboard/1 contract and its producer), the page consumer next, the
-workflow integration last (L36; ferrum-size §3). Re-measure with
+(L), so it was split at the module boundary — plan-state engine first
+(the dashboard/1 contract and its producer), crate graph + page next,
+the workflow integration last (L36; ferrum-size §3). The review fixes
+pushed PR 1 to 1576, so the crate graph (30.1-d) moved to PR 2 as well
+(ferrum-size §4: deliver what is complete within M). Re-measure with
 `git diff --shortstat origin/develop...HEAD` before each push.
 
 ## 8. Tasks

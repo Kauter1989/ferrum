@@ -113,6 +113,12 @@ Legend: ✅ done · 🚧 in progress · 📋 planned.
 |---|---|---|---|---|
 | 6.1 | build it | 6.1-a | 1 | |
 
+## Stage 7 — Hotfix 🚧
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 7.1 | As a **user**, I want hotfixes. | [7.1-a] Fixed on main only (PR 7). |
+
 ## Stage F1 — A bug ✅
 
 | # | User story | Acceptance criteria |
@@ -136,48 +142,6 @@ Legend: ✅ done · 🚧 in progress · 📋 planned.
 | # | User story (draft) |
 |---|---|
 | 9.1 | As a **user**, I want drafts. |
-"""
-
-WORKSPACE_TOML = """[workspace]
-resolver = "2"
-members = ["crates/ferrum-domain", "crates/ferrum-io", "crates/ferrum-app"]
-"""
-
-DOMAIN_TOML = """[package]
-name = "ferrum-domain"
-description = "Domain."
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-ferrum-io = { path = "../ferrum-io" }
-"""
-
-IO_TOML = """[package]
-name = "ferrum-io"
-description = "IO."
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-ferrum-domain = { path = "../ferrum-domain" }
-"""
-
-APP_TOML = """[package]
-name = "ferrum-app"
-description = "App."
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-ferrum-domain = { path = "../ferrum-domain" }
-wgpu = { path = "../../dummy/wgpu" }
-"""
-
-WGPU_TOML = """[package]
-name = "wgpu"
-version = "30.0.0"
-edition = "2021"
 """
 
 VALIDATION_MD = """# Validation
@@ -225,17 +189,17 @@ def plan_repo(tmp_path_factory):
         tmp_path,
         {
             "dev_plan.md": PLAN_TAG,
-            "Cargo.toml": WORKSPACE_TOML,
-            "crates/ferrum-domain/Cargo.toml": DOMAIN_TOML,
-            "crates/ferrum-io/Cargo.toml": IO_TOML,
-            "crates/ferrum-app/Cargo.toml": APP_TOML,
-            "dummy/wgpu/Cargo.toml": WGPU_TOML,
         },
         "init",
     )
-    merge_pr(tmp_path, "feat/five", 5)
-    run_git(tmp_path, "tag", "v0.1.0")
+    # develop starts at init: the release-only hotfix (PR #7, merged into
+    # main before the tag) never reaches it.
     run_git(tmp_path, "checkout", "-b", "develop")
+    run_git(tmp_path, "checkout", "main")
+    merge_pr(tmp_path, "feat/five", 5)
+    merge_pr(tmp_path, "feat/hotfix", 7)
+    run_git(tmp_path, "tag", "v0.1.0")
+    run_git(tmp_path, "checkout", "develop")
     commit_files(
         tmp_path,
         {
@@ -247,6 +211,10 @@ def plan_repo(tmp_path_factory):
         "develop plan",
     )
     merge_pr(tmp_path, "feat/six", 6)
+    # A body mention of an issue number is not a merge (review finding).
+    (tmp_path / "note.txt").write_text("note\n", encoding="utf-8", newline="\n")
+    run_git(tmp_path, "add", "-A")
+    run_git(tmp_path, "commit", "-m", "docs: note", "-m", "mentions (#99) in the body")
     run_git(tmp_path, "remote", "add", "origin", "https://github.com/test/repo.git")
     return tmp_path
 

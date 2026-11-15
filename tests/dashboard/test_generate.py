@@ -16,12 +16,13 @@ import generate
 def test_plan_parses_to_the_exact_fixture():
     parsed = generate.parse_plan(generate_target_plan())
     stages = parsed["stages"]
-    assert [s["id"] for s in stages] == ["1", "2", "3", "4", "5", "6", "F1"]
+    assert [s["id"] for s in stages] == ["1", "2", "3", "4", "5", "6", "7", "F1"]
     assert [s["heading_status"] for s in stages] == [
         "done",
         "progress",
         "planned",
         "unknown",
+        "progress",
         "progress",
         "progress",
         "done",
@@ -108,6 +109,7 @@ def test_lifecycle_buckets_on_a_fixture_repository(repo_data):
         "4": ("unknown", {"unknown": 1}),
         "5": ("unknown", {"unknown": 1}),
         "6": ("progress", {"progress": 1}),
+        "7": ("released", {"released": 1}),
         "F1": ("develop", {"develop": 1}),
     }
     for stage in repo_data["stages"]:
@@ -161,6 +163,28 @@ def test_no_release_tag_makes_done_items_develop(plan_repo):
     assert any("no release tag" in w for w in data["meta"]["warnings"])
 
 
+# covers 30.1-b
+
+
+def test_issue_body_mentions_are_not_merges(plan_repo):
+    """A commit body mentioning (#99) is not PR #99's merge (review finding)."""
+    git = generate.Git(plan_repo)
+    tag_sha = git.run("rev-parse", "v0.1.0^{commit}").strip()
+    ancestry = generate.pr_ancestry(git, "develop", tag_sha, [99, 6])
+    assert ancestry[99] == {"target": False, "tag": False}
+    assert ancestry[6] == {"target": True, "tag": False}
+
+
+# covers 30.1-b
+
+
+def test_release_only_merge_counts_for_the_tag(repo_data):
+    """PR #7 merged into main before the tag; develop never received it."""
+    criteria = {c["id"]: c for s in repo_data["stages"] for c in generate.stage_units(s)}
+    assert criteria["7.1-a"]["bucket"] == "released"
+    assert criteria["7.1-a"]["done"] is False
+
+
 # covers 30.1-c
 
 
@@ -170,41 +194,6 @@ def test_coverage_follows_the_analyze_convention(repo_data):
     assert criteria["2.1-b"]["levels"] == ["visual"]
     assert criteria["3.1-a"]["tests"] == []
     assert criteria["3.1-a"]["levels"] == []
-
-
-# covers 30.1-d
-
-
-def test_crate_graph_and_layering_violations(repo_data):
-    crates = {c["name"]: c for c in repo_data["crates"]}
-    assert set(crates) == {"ferrum-domain", "ferrum-io", "ferrum-app"}
-    assert crates["ferrum-domain"]["description"] == "Domain."
-    assert crates["ferrum-io"]["deps"] == ["ferrum-domain"]
-    assert crates["ferrum-domain"]["violations"] == ["ferrum-domain → ferrum-io (layering: dependencies point inward)"]
-    assert crates["ferrum-app"]["violations"] == ["ferrum-app → wgpu (ferrum-app must compile without wgpu/egui)"]
-    assert crates["ferrum-io"]["violations"] == []
-    rules = {(v["from"], v["to"]) for v in repo_data["layering_violations"]}
-    assert rules == {("ferrum-domain", "ferrum-io"), ("ferrum-app", "wgpu")}
-
-
-# covers 30.1-d
-
-
-def test_fallback_parses_the_workspace_toml(plan_repo):
-    crates = {c["name"]: c for c in generate.crates_from_toml(plan_repo)}
-    assert set(crates) == {"ferrum-domain", "ferrum-io", "ferrum-app"}
-    assert crates["ferrum-app"]["deps"] == ["ferrum-domain", "wgpu"]
-    assert crates["ferrum-domain"]["description"] == "Domain."
-
-
-# covers 30.1-d
-
-
-def test_changed_crates_are_marked(repo_data):
-    crates = {c["name"]: c for c in repo_data["crates"]}
-    assert crates["ferrum-io"]["changed_since_release"] is True
-    assert crates["ferrum-domain"]["changed_since_release"] is False
-    assert crates["ferrum-app"]["changed_since_release"] is False
 
 
 # covers 30.1-e
