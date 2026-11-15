@@ -52,8 +52,8 @@ pub use region::{grow_region_robust, RegionError, RegionParams};
 pub use render_settings::{RenderMode, RenderSettings, TissueThresholds};
 pub use report::{AnnotationRecord, AnnotationReport};
 pub use repository::{
-    parse_modality, CancelFlag, LoadedSeries, NoProgress, ProgressSink, RepositoryError, SeriesDescriptor,
-    SeriesMetadata, StudyInfo, VolumeInfo, VolumeRepository,
+    parse_modality, CancelFlag, LoadedSeries, NoProgress, PatientIdentifiers, ProgressSink, RepositoryError,
+    SeriesDescriptor, SeriesMetadata, StudyInfo, VolumeInfo, VolumeRepository,
 };
 pub use review::{ResultStore, ReviewDecision, ReviewItem};
 pub use segmentation::{

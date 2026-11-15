@@ -146,6 +146,24 @@ pub struct StudyInfo {
     pub modality: String,
 }
 
+/// Patient identification of a loaded series, taken from the DICOM header
+/// (empty strings when the format has no such field). Dates keep the DICOM
+/// `YYYYMMDD` form. These values never leave FERRUM in outputs: the privacy
+/// scan (`ferrum_agent::identifiers`) reads them to find their positions in
+/// a host's text and returns positions and kinds only.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PatientIdentifiers {
+    /// Patient name (DICOM PN: `FAMILY^GIVEN^MIDDLE^^SUFFIX`).
+    pub name: String,
+    /// Patient ID.
+    pub patient_id: String,
+    /// Birth date (`YYYYMMDD`).
+    pub birth_date: String,
+    /// Accession number of the study (as in [`StudyInfo`], gathered here so
+    /// the privacy scan reads one struct).
+    pub accession_number: String,
+}
+
 /// Descriptive metadata of a loaded series.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SeriesMetadata {

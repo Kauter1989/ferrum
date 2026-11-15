@@ -58,7 +58,7 @@ pub fn scan(paths: &[PathBuf]) -> Result<Vec<SeriesDescriptor>, AgentError> {
 /// normalises it lexically, but the readers of the manifest open the raw
 /// spelling, where the OS resolves `..` in filesystem order — behind a
 /// symlink the two diverge. Legitimate manifests never contain one.
-fn refuse_parent_components(path: &Path) -> Result<(), AgentError> {
+pub(crate) fn refuse_parent_components(path: &Path) -> Result<(), AgentError> {
     if path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
         return Err(AgentError::new(
             ErrorCode::Forbidden,

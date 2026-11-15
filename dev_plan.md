@@ -940,6 +940,34 @@ choice, no agent boundary).
 | F2.2 | no-follow bounded walk in `collect_files`; `RepositoryError::Limit` | F2.2-a, F2.2-b | [#99](https://github.com/Kauter1989/ferrum/pull/99) | ✅ |
 | F2.3 | the tests, red first; docs and CHANGELOG | F2.3 | [#99](https://github.com/Kauter1989/ferrum/pull/99) | ✅ |
 
+## Stage 27 — Identifier spans for host privacy layers (#74) 🚧 (feature, autonomous)
+
+Medical Harness de-identifies free text before it reaches a model, a log or
+a report ([#74](https://github.com/Kauter1989/ferrum/issues/74); P1 for the
+harness's Demo 3). FERRUM knows the study's real identifiers, so it can say
+**where** they appear in a host's text — positions and kinds only, never
+the values. A library API (`ferrum_agent::identifiers`), **not an agent
+command**: a model must not be able to test guessed names against the
+patient's identifiers.
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 27.1 | As a **harness developer**, I want the positions of a study's identifiers in a text so that my privacy layer can mask them without the values ever leaving FERRUM. | [27.1-a] `scan_identifiers(config, workspace, text)` returns `Vec<Span{start, end, kind}>` (byte offsets; kinds: patient name, patient ID, birth date, accession number) for English and Russian text, tolerant to case, Cyrillic↔Latin transliteration, initials («Иванов И.И.»), inflected forms and the common date formats of a DICOM `YYYYMMDD` date; a NIfTI study gives none; a missing workspace is `no_study`, a source outside the read roots `forbidden`. [27.1-b] The output carries positions and kinds only, never a value (scanned). [27.1-c] The agent command set is unchanged: the scan is in neither the command list, the MCP tools nor `commands.json` (a test checks all three). |
+
+**Size:** M, one PR. **Design:** the module's own docs and the ADR-free
+library-API pattern of `ferrum_agent::decisions` (16.7); the reader lives in
+`ferrum-io` (only it parses files), the matcher in `ferrum-agent`.
+
+### Implementation
+
+| Task | What | Criteria | PR | State |
+|---|---|---|---|---|
+| 27.T1 `PatientIdentifiers` (domain) + `read_patient_identifiers` (io) | 27.1-a | 1 | ✅ (#110) |
+| 27.T2 the matcher: fold, names, initials, inflections, dates; `scan_identifiers` | 27.1-a/b | 1 | ✅ (#110) |
+| 27.T3 tests: exact spans (EN/RU), no values, not a command, errors; docs | 27.1-a/b/c | 1 | ✅ (#110) |
+
+---
+
 ## Roadmap
 
 Updated 2026-11-14, before the 0.4.0 release. Order is a proposal; each
