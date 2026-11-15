@@ -217,20 +217,26 @@ checks the command list, the MCP tools and `commands.json`).
   missing workspace is `no_study`, a source outside the roots `forbidden`.
 - Matching is tolerant, biased toward recall (over-masking is safe for a
   privacy layer): case-insensitive; Cyrillic and Latin transliterated into
-  one canonical form (Latin diacritics stripped to the base letter, `ё`
+  one canonical form (Latin diacritics and the common extended letters —
+  Turkish, Polish, Czech, Hungarian, Baltic — fold to the base letter, `ё`
   and `е` one letter); name components in either order; initials
   («Иванов И.И.»); inflected forms (a stem plus up to three letters); the
   common formats of a DICOM `YYYYMMDD` birth date, padded and unpadded,
   with English and Russian month names. Overlapping spans are merged into
   one, so no part of an identifier stays unmasked between two detections.
-  A NIfTI study carries no identifiers, so the result is empty.
+  A value at its VR maximum may have been truncated by the reader and then
+  matches as a prefix. A NIfTI study carries no identifiers, so the result
+  is empty.
 - The identifiers are read from the source's DICOM headers by `ferrum-io`
   (`read_patient_identifiers`); they never leave FERRUM in any output.
   The scan reads the workspace's recorded, hash-verified series files with
   the same per-file read-root checks as `study open` — a planted file or
   symlink in the source folder does not drive the masking. Values are
   capped at the DICOM VR maxima (PN 64 per component, LO 64, SH 16, DA 8),
-  so a crafted huge value cannot exhaust the host's per-text scan.
+  so a crafted huge value cannot exhaust the host's per-text scan. Each
+  call hash-verifies the whole recorded series (the `study open` posture);
+  a host masking many text chunks should cache the spans per dataset
+  revision — the caching follow-up covers the hashing too.
 
 ## Workspace and audit
 

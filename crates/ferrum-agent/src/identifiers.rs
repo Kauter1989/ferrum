@@ -153,17 +153,28 @@ fn fold_char(c: char) -> Vec<char> {
         'ы' => "y",
         'ю' => "yu",
         'я' => "ya",
-        'à' | 'á' | 'â' | 'ä' | 'å' | 'ã' => "a",
-        'è' | 'é' | 'ê' | 'ë' => "e",
-        'ì' | 'í' | 'î' | 'ï' => "i",
-        'ò' | 'ó' | 'ô' | 'ö' | 'õ' | 'ø' => "o",
-        'ù' | 'ú' | 'û' | 'ü' => "u",
-        'ñ' => "n",
-        'ç' => "c",
+        'à' | 'á' | 'â' | 'ä' | 'å' | 'ã' | 'ā' | 'ą' => "a",
+        'è' | 'é' | 'ê' | 'ë' | 'ē' | 'ę' | 'ė' | 'ě' => "e",
+        'ì' | 'í' | 'î' | 'ï' | 'ī' | 'į' | 'ı' => "i",
+        'ò' | 'ó' | 'ô' | 'ö' | 'õ' | 'ø' | 'ō' | 'ő' => "o",
+        'ù' | 'ú' | 'û' | 'ü' | 'ū' | 'ű' | 'ų' | 'ů' => "u",
+        'ñ' | 'ň' | 'ņ' | 'ń' => "n",
+        'ç' | 'ć' | 'č' => "c",
         'ß' => "ss",
         'ý' | 'ÿ' => "y",
         'æ' => "ae",
         'œ' => "oe",
+        'ğ' | 'ģ' => "g",
+        'ş' | 'š' | 'ś' | 'ſ' => "s",
+        'ł' | 'ļ' | 'ľ' => "l",
+        'ř' | 'ŗ' | 'ŕ' => "r",
+        'ť' | 'ŧ' => "t",
+        'ď' | 'đ' | 'ð' => "d",
+        'ž' | 'ź' | 'ż' => "z",
+        'ķ' => "k",
+        'ħ' => "h",
+        'ŋ' => "n",
+        'þ' => "th",
         _ => return vec![c],
     };
     s.chars().collect()
@@ -233,8 +244,12 @@ fn spans_of(text: &str, ids: &PatientIdentifiers) -> Vec<Span> {
     let mut spans = Vec::new();
     let comps = name_components(&ids.name);
     name_spans(&folded, &ws, &comps, &mut spans);
-    value_spans(&folded, &ids.patient_id, IdentifierKind::PatientId, &mut spans);
-    value_spans(&folded, &ids.accession_number, IdentifierKind::AccessionNumber, &mut spans);
+    // a value at its VR maximum may have been truncated by the reader:
+    // match it as a prefix then (over-masking is the safe direction)
+    let id = ids.patient_id.trim();
+    let acc = ids.accession_number.trim();
+    value_spans(&folded, id, IdentifierKind::PatientId, id.chars().count() >= 64, &mut spans);
+    value_spans(&folded, acc, IdentifierKind::AccessionNumber, acc.chars().count() >= 16, &mut spans);
     date_spans(&folded, &ids.birth_date, &mut spans);
     resolve_overlaps(spans)
 }
@@ -383,7 +398,9 @@ fn initials_before(
 }
 
 /// A value (ID, accession) found with word boundaries, case-insensitive.
-fn value_spans(folded: &[Folded], value: &str, kind: IdentifierKind, out: &mut Vec<Span>) {
+/// `prefix_ok` drops the trailing boundary: a value capped at its VR
+/// maximum may be truncated, and its prefix must still mask.
+fn value_spans(folded: &[Folded], value: &str, kind: IdentifierKind, prefix_ok: bool, out: &mut Vec<Span>) {
     let v: Vec<char> = fold(value.trim()).iter().map(|f| f.ch).collect();
     if v.is_empty() || v.len() > folded.len() {
         return;
@@ -393,7 +410,7 @@ fn value_spans(folded: &[Folded], value: &str, kind: IdentifierKind, out: &mut V
             continue;
         }
         let before = i == 0 || !folded[i - 1].ch.is_ascii_alphanumeric();
-        let after = i + v.len() == folded.len() || !folded[i + v.len()].ch.is_ascii_alphanumeric();
+        let after = i + v.len() == folded.len() || prefix_ok || !folded[i + v.len()].ch.is_ascii_alphanumeric();
         if before && after {
             out.push(Span { start: folded[i].start, end: folded[i + v.len() - 1].end, kind });
         }
@@ -432,7 +449,7 @@ fn date_spans(folded: &[Folded], birth: &str, out: &mut Vec<Span>) {
         }
     }
     for form in forms {
-        value_spans(folded, &form, IdentifierKind::BirthDate, out);
+        value_spans(folded, &form, IdentifierKind::BirthDate, false, out);
     }
 }
 
@@ -590,6 +607,30 @@ mod tests {
         let text = "MULLER";
         let spans = spans_of(text, &ids("MÜLLER^HANS"));
         assert_eq!(spans, vec![Span { start: 0, end: 6, kind: IdentifierKind::PatientName }]);
+    }
+
+    // covers 27.1-a (the extended Latin letters: Turkish, Polish, Czech…)
+    #[test]
+    fn extended_latin_letters_fold_to_the_base() {
+        let text = "Yılmaz Mehmet";
+        let spans = spans_of(text, &ids("YILMAZ^MEHMET"));
+        assert_eq!(spans, vec![Span { start: 0, end: text.len(), kind: IdentifierKind::PatientName }]);
+        let text = "Kowałski Jan";
+        let spans = spans_of(text, &ids("KOWALSKI^JAN"));
+        assert_eq!(spans, vec![Span { start: 0, end: text.len(), kind: IdentifierKind::PatientName }]);
+    }
+
+    // covers 27.1-a (a value at the VR maximum may be truncated by the
+    // reader: its prefix must still mask — over-masking is safe)
+    #[test]
+    fn a_value_at_the_vr_maximum_matches_as_a_prefix() {
+        let mut ids = ids("IVANOV^IVAN");
+        // the reader caps a 19-char accession to 16 (SH maximum)
+        ids.accession_number = "ACC-0815-EXTRA-L".into();
+        let text = "acc ACC-0815-EXTRA-LONG tail";
+        let spans = spans_of(text, &ids);
+        let start = text.find("ACC-0815-EXTRA-L").unwrap();
+        assert_eq!(spans, vec![Span { start, end: start + 16, kind: IdentifierKind::AccessionNumber }]);
     }
 
     // covers 27.1-a
