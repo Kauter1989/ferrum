@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FERRUM · PR #111 — финальный отчёт: полевой прогон GPU-sharing и рецепт 12 GB</title>
+<style>
+  :root {
+    --bg: #fbfbfd; --fg: #1d1f26; --muted: #5b6070; --line: #e2e5ec;
+    --accent: #1f6feb; --ok: #1a7f37; --warn: #9a6700; --bad: #b42318;
+    --card: #ffffff; --code: #f3f4f7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12141a; --fg: #e6e7ea; --muted: #a2a8b6; --line: #2a2e38;
+      --accent: #6ba6ff; --ok: #4ac26b; --warn: #d4a72c; --bad: #ff7b72;
+      --card: #191c23; --code: #1f232c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.6 -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  main { max-width: 1080px; margin: 0 auto; padding: 40px 24px 80px; }
+  h1 { font-size: 30px; line-height: 1.25; margin: 0 0 8px; letter-spacing: -0.02em; }
+  h2 { font-size: 21px; margin: 44px 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 16px; margin: 26px 0 8px; }
+  p, li { color: var(--fg); }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 28px; }
+  .pill {
+    font-size: 13px; padding: 3px 10px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--card); color: var(--muted);
+  }
+  .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px 20px; margin: 14px 0;
+  }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 13px; }
+  code { background: var(--code); padding: 1px 5px; border-radius: 4px; }
+  pre { background: var(--code); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; overflow-x: auto; }
+  pre code { background: none; padding: 0; }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 14px; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .tag { font-size: 12px; font-weight: 600; padding: 2px 7px; border-radius: 5px; white-space: nowrap; }
+  .t-should { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+  .t-nit { background: color-mix(in srgb, var(--muted) 16%, transparent); color: var(--muted); }
+  .t-fixed { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+  .stat { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+  .stat b { display: block; font-size: 26px; line-height: 1.2; }
+  .stat span { color: var(--muted); font-size: 13px; }
+  ul { padding-left: 22px; }
+  li { margin: 4px 0; }
+  .note { border-left: 3px solid var(--accent); padding-left: 14px; color: var(--muted); margin: 14px 0; }
+  footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>PR #111 — полевой прогон GPU-sharing и рецепт 12 GB</h1>
+<p class="sub">Финальный отчёт: архитектура, анализ, история ревью. FERRUM, ноябрь 2026. Описывает head SHA <code>a95326bb76960b5aba0c1e7e27b71bd587d2526f</code>. Отчёт живёт в самом PR и правится по итогам ревью; при мердже остаётся в последней версии (правило пользователя).</p>
+
+<div class="meta">
+  <span class="pill">Ветка <code>fix/68-gpu-sharing-field</code> → <code>develop</code></span>
+  <span class="pill ok">merge-ready · preflight: all checks passed</span>
+  <span class="pill">3 коммита</span>
+  <span class="pill">8 файлов, +257 / −26</span>
+  <span class="pill ok">20/20 вызовов с holder, без OOM</span>
+</div>
+
+<div class="grid">
+  <div class="stat"><b>20/20</b><span>вызовов движков рядом с резидентной моделью</span></div>
+  <div class="stat"><b>8750</b><span>MiB пик карты из 12288</span></div>
+  <div class="stat"><b>24.3 s</b><span>перезагрузка весов после unload</span></div>
+  <div class="stat"><b>0 MiB</b><span>памяти движка после unload</span></div>
+</div>
+
+<h2>1. Что закрывает PR</h2>
+
+<p>
+  Код GPU-sharing (Stage 23) смержен в PR #81/#84/#86; открытым оставался
+  полевой прогон на карте пользователя и рецепт (#68, P0). Этот PR:
+  (1) фикс бенчмарка — <code>--peaks-mib</code> пишет операторские пики в
+  конфиг, иначе движки без собственных <code>expected_peak_mib</code> (оба
+  моста) берут всю группу и ждут holder'а бесконечно; (2) сам прогон
+  2026-11-14 и рецепт по его результатам.
+</p>
+
+<h3>Измерения (RTX 3080 12 GB, driver 610.74, WSL 2 Ubuntu 24.04, MSD Task09 spleen_10)</h3>
+
+<table>
+  <thead><tr><th>Величина</th><th class="num">Измерено</th></tr></thead>
+  <tbody>
+    <tr><td>Holder: Qwen2.5-3B-Instruct Q4_K_M, llama.cpp b12387 CUDA 12.8, <code>-ngl 99 -c 4096</code> (assumed-заменитель модели харнесса)</td><td class="num">2325 MiB → lease 2816</td></tr>
+    <tr><td>Ёмкость (12288 − 1938 desktop − 256)</td><td class="num">10094 MiB</td></tr>
+    <tr><td>nnInteractive на вызов рядом с holder (ROI)</td><td class="num">3586–4068 MiB</td></tr>
+    <tr><td>TotalSegmentator <code>total</code>, 2 органа, рядом с holder</td><td class="num">1793–2332 MiB</td></tr>
+    <tr><td>Пик карты за 20 вызовов с holder</td><td class="num">8750 MiB</td></tr>
+    <tr><td>Бенчмарк со своим holder (23.5-a): auto / ROI</td><td class="num">6943 / 8273 MiB, waited 0 s</td></tr>
+    <tr><td>M1: после DELETE карта возвращается к weights-only</td><td class="num">±14 MiB</td></tr>
+    <tr><td>M2: TTL-истечение (60 s) освобождает образ</td><td class="num">подтверждено</td></tr>
+    <tr><td>M3: <code>engine unload</code> → 0 MiB памяти движка; reload</td><td class="num">24.3 s</td></tr>
+    <tr><td>M4: unload во время job</td><td class="num"><code>busy</code></td></tr>
+  </tbody>
+</table>
+
+<h3>Изменённые файлы</h3>
+<table>
+  <thead><tr><th>Файл</th><th>Что</th></tr></thead>
+  <tbody>
+    <tr><td><code>scripts/benchmark_engines.py</code> (+27/−4)</td><td><code>--peaks-mib</code> пишет <code>gpu_peaks_mib</code> для всех движков группы; запуск с holder без пиков помечается в stderr.</td></tr>
+    <tr><td><code>bridges/tests/test_benchmark.py</code> (+36/−1)</td><td>dry-run тесты: пики доходят до конфига; без флага пиков нет.</td></tr>
+    <tr><td><code>docs/gpu-sharing.md</code> (+91/−14)</td><td>§5 рецепт (числа, конфиг, правила сайзинга 3B/7B, оговорки WSL); §3.7 as-built дополнен; риски переведены из оценок в измеренное; нумерация §§6–9.</td></tr>
+    <tr><td><code>docs/agent-segmentation.md</code> (+26)</td><td>§2.1 «With a resident model»: таблица footprints и release/unload/reload/busy.</td></tr>
+    <tr><td><code>docs/testing.md</code> (+1)</td><td>строка полевого прогона 23.4-a/b, 23.5-a/b.</td></tr>
+    <tr><td><code>dev_plan.md</code>, <code>CHANGELOG.md</code>, <code>.claude/lessons.md</code></td><td>Stage 23 ✅; запись Added; уроки L45–L48.</td></tr>
+  </tbody>
+</table>
+
+<h2>2. Анализ и честные оговорки</h2>
+
+<ul>
+  <li><b>Метрика успеха достигнута:</b> 20/20 вызовов с резидентным holder, без CUDA OOM и без ожиданий; fit-check 2816 + 4352 = 7168 ≤ 10094.</li>
+  <li><b>Assumed-модель:</b> своей модели харнесса на машине нет; holder — репрезентативный 3B Q4 (записано в прогоне). Перезапуск с <code>LLAMA_CMD</code>; §5.3 даёт правило для 7B (nnInteractive уже не помещается — unload_idle моста или меньший контекст).</li>
+  <li><b>Один транзиентный сбой фазы A:</b> liver-refinement превысил HTTP-таймаут агента (62.8 s, <code>engine_unavailable</code>); тот же вызов успешен в фазе B. Сессия, оставленная таймаутом, завышает card-delta следующего вызова — пики рецепта взяты из чистой фазы B.</li>
+  <li><b>WSL:</b> per-process VRAM — <code>[N/A]</code>, поэтому footprints измеряются дельтой полной памяти карты (L46). Первый holder оказался на CPU: CUDA-runtime llama.cpp — отдельный asset релиза, без него <code>libggml-cuda.so</code> молча не грузится (L47); поймано по 0 MiB дельты, исправлено; guard — <code>ldd</code>.</li>
+  <li><b>Скрипт прогонов — throw-away</b> (правило field-test skill: приложен в сессии, не коммитится). Баг glob'а счётчика отказов (L48, «20/20» был вакуумным) исправлен в сессионной копии; результаты фаз также прочитаны глазами по step-логу.</li>
+  <li><b>Рендеры проверены глазами</b> (L1): замкнутые контуры со всех четырёх сторон, печень справа пациента, селезёнка слева (LPS), полупрозрачная заливка корректна.</li>
+</ul>
+
+<h3>Тесты, которые могут упасть</h3>
+<table>
+  <thead><tr><th>Проверка</th><th>Чем падает</th></tr></thead>
+  <tbody>
+    <tr><td><code>test_peaks_mib_reaches_the_config…</code></td><td>Точная строка <code>gpu_peaks_mib = { "…8765" = 6000, "…8766" = 6000 }</code> в конфиге; без флага — assert отсутствия пиков.</td></tr>
+    <tr><td>Полевой счётчик отказов</td><td>После фикса glob'а — реальный отказ фазы A виден в счётчике (проверено на прогоне с таймаутом).</td></tr>
+    <tr><td>Holder на GPU</td><td>Дельта карты при старте сервера &gt; 0 (2325 MiB); <code>ldd libggml-cuda.so</code> без «not found».</td></tr>
+  </tbody>
+</table>
+
+<h2>3. Этапы ревью</h2>
+
+<p>
+  Изменения — Python-бенчмарк и документация; Rust-код не тронут.
+  Ревью выполнил lead по чек-листу (корректность конфига, матрица
+  документация/план/CHANGELOG/уроки, нумерация разделов, ссылки).
+  Субагенты ревью на этом PR не запускались (квота маршрута, L42 —
+  записано честно).
+</p>
+
+<table>
+  <thead><tr><th>Уровень</th><th>Замечание</th><th>Решение</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><span class="tag t-should">should-fix</span></td>
+      <td>Бенчмарк с holder без пиков: все вызовы ждут вечно</td>
+      <td><b>Fixed.</b> <code>--peaks-mib</code> + предупреждение в stderr + dry-run тесты (коммит 5c03683).</td>
+    </tr>
+    <tr>
+      <td><span class="tag t-should">should-fix</span></td>
+      <td>Holder на CPU (0 MiB) — фаза B ничего не шерила</td>
+      <td><b>Fixed.</b> cudart-asset + ldd-проверка; повторный прогон: 2325 MiB, 20/20.</td>
+    </tr>
+    <tr>
+      <td><span class="tag t-should">should-fix</span></td>
+      <td>Вакуумный счётчик отказов (glob без NN-префикса)</td>
+      <td><b>Fixed</b> в сессионной копии скрипта; урок L48; результаты прочитаны глазами.</td>
+    </tr>
+    <tr>
+      <td><span class="tag t-nit">nit</span></td>
+      <td>Коллизия нумерации §§6 после вставки рецепта; ссылка dev_plan на §7–8</td>
+      <td><b>Fixed.</b> §§6–9 перенумерованы, ссылка и якорь обновлены (amend).</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Оценка качества</h3>
+<table>
+  <thead><tr><th>Аспект</th><th class="num">Оценка</th><th>Обоснование</th></tr></thead>
+  <tbody>
+    <tr><td>Достоверность измерений</td><td class="num">сильная</td><td>Дельты карты, чистая фаза B, оговорки названы; assumed-модель помечена.</td></tr>
+    <tr><td>Документация</td><td class="num">сильная</td><td>Рецепт с конфигом и сайзингом; матрица закрыта (agent-segmentation, testing, план, CHANGELOG, уроки).</td></tr>
+    <tr><td>Процесс</td><td class="num">средняя</td><td>Три итерации полевого скрипта (DNS/bridge-args/cudart/glob) — каждая поймана до финального прогона; уроки записаны.</td></tr>
+    <tr><td>Верификация</td><td class="num">полная</td><td>preflight «all checks passed» в CI-дистрибутиве; pytest dry-run; рендеры глазами.</td></tr>
+  </tbody>
+</table>
+
+<h2>4. Где это лежит (code map, SHA <code>a95326b</code>)</h2>
+
+<table>
+  <thead><tr><th>Что</th><th>file:lines</th><th>Символ</th></tr></thead>
+  <tbody>
+    <tr><td>Пики доходят до конфига</td><td><a href="https://github.com/Kauter1989/ferrum/blob/a95326bb76960b5aba0c1e7e27b71bd587d2526f/scripts/benchmark_engines.py#L262-L272">benchmark_engines.py:262-272</a></td><td><code>peaks_mib</code> → <code>gpu_peaks_mib</code></td></tr>
+    <tr><td>Dry-run тест пиков</td><td><a href="https://github.com/Kauter1989/ferrum/blob/a95326bb76960b5aba0c1e7e27b71bd587d2526f/bridges/tests/test_benchmark.py#L112-L130">test_benchmark.py:112-130</a></td><td><code>test_peaks_mib_reaches_the_config…</code></td></tr>
+    <tr><td>Рецепт 12 GB</td><td><a href="https://github.com/Kauter1989/ferrum/blob/a95326bb76960b5aba0c1e7e27b71bd587d2526f/docs/gpu-sharing.md#L376-L447">gpu-sharing.md:376-447</a></td><td>§5 (числа, конфиг, сайзинг)</td></tr>
+    <tr><td>Риски — измерено</td><td><a href="https://github.com/Kauter1989/ferrum/blob/a95326bb76960b5aba0c1e7e27b71bd587d2526f/docs/gpu-sharing.md#L449-L474">gpu-sharing.md:449-474</a></td><td>§6</td></tr>
+    <tr><td>Бюджет с резидентной моделью</td><td><a href="https://github.com/Kauter1989/ferrum/blob/a95326bb76960b5aba0c1e7e27b71bd587d2526f/docs/agent-segmentation.md#L88-L113">agent-segmentation.md:88-113</a></td><td>§2.1</td></tr>
+    <tr><td>Строка полевого прогона</td><td><a href="https://github.com/Kauter1989/ferrum/blob/a95326bb76960b5aba0c1e7e27b71bd587d2526f/docs/testing.md#L78">testing.md:78</a></td><td>23.4-a/b, 23.5-a/b</td></tr>
+    <tr><td>Уроки среды и измерений</td><td><a href="https://github.com/Kauter1989/ferrum/blob/a95326bb76960b5aba0c1e7e27b71bd587d2526f/.claude/lessons.md#L859-L921">lessons.md:859-921</a></td><td>L45–L48</td></tr>
+    <tr><td>Stage 23 закрыт</td><td><a href="https://github.com/Kauter1989/ferrum/blob/a95326bb76960b5aba0c1e7e27b71bd587d2526f/dev_plan.md#L470">dev_plan.md:470</a></td><td>заголовок ✅</td></tr>
+  </tbody>
+</table>
+
+<footer>
+  Источник данных: git-история ветки (<code>git diff --shortstat origin/develop...HEAD</code> → 8 файлов, +257/−26; 2 коммита: 5c03683, a95326b),
+  полевой прогон 2026-11-14 (results/gpu-sharing-20261114-230749: field-summary.md, steps.txt, benchmark.md, logs/, PNG),
+  preflight в WSL Ubuntu 24.04 на head a95326b — «all checks passed». Все числа — из артефактов прогона и git, не по памяти.
+</footer>
+
+</main>
+</body>
+</html>
