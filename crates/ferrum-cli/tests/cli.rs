@@ -59,7 +59,7 @@ fn scripted_session() {
     assert_eq!(cli(&["probe", "-w", "s1", "15,3,4"], c).0, 2);
     assert_eq!(cli(&["frobnicate"], c).0, 2);
     let (code, env) = cli(&["commands"], None);
-    assert_eq!((code, env["commands"].as_array().map(Vec::len)), (0, Some(36)));
+    assert_eq!((code, env["commands"].as_array().map(Vec::len)), (0, Some(39)));
     // a broken configuration is an error envelope, never a silent default
     std::fs::write(&config, "[data]\nread_root = []\n").unwrap();
     let (code, env) = cli(&["study", "info", "-w", "s1"], c);
