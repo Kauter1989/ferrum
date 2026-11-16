@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PR #118 — дашборд: граф крейтов и страница (финальный отчёт)</title>
+<style>
+  :root { --bg:#f7f8fa; --card:#fff; --fg:#1a1d23; --muted:#5c6470; --line:#e3e6ea; --accent:#2563eb;
+    --ok:#16a34a; --warn:#d97706; --bad:#dc2626; --code:#f1f3f5; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0f1115; --card:#171a21; --fg:#e6e8ec; --muted:#9aa3af;
+    --line:#2a2f3a; --accent:#60a5fa; --ok:#4ade80; --warn:#fbbf24; --bad:#f87171; --code:#1e222b; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.55 system-ui,sans-serif; }
+  main { max-width:960px; margin:0 auto; padding:32px 20px 64px; }
+  h1 { font-size:26px; margin:0 0 4px; } h2 { font-size:20px; margin:36px 0 10px; border-bottom:1px solid var(--line); padding-bottom:6px; }
+  .sub { color:var(--muted); margin:0 0 18px; }
+  .meta { display:flex; flex-wrap:wrap; gap:8px; margin:14px 0; }
+  .pill { background:var(--card); border:1px solid var(--line); border-radius:999px; padding:3px 12px; font-size:13px; }
+  .pill.ok { border-color:var(--ok); color:var(--ok); }
+  table { width:100%; border-collapse:collapse; margin:10px 0; font-size:14px; }
+  th,td { border:1px solid var(--line); padding:6px 9px; text-align:left; vertical-align:top; }
+  th { background:var(--code); }
+  code { background:var(--code); padding:1px 5px; border-radius:4px; font-size:13px; }
+  a { color:var(--accent); }
+  .note { color:var(--muted); font-size:13px; }
+  footer { margin-top:48px; padding-top:14px; border-top:1px solid var(--line); color:var(--muted); font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+<h1>PR #118 — дашборд разработки: граф крейтов и self-contained страница</h1>
+<p class="sub">Финальный отчёт (фаза 11). FERRUM, ноябрь 2026. Head SHA <code>845b12d</code>, смержен в <code>develop</code> коммитом <code>98405f0</code> (PR #118, 2026-11-16).</p>
+<div class="meta">
+  <span class="pill">Ветка <code>feat/dashboard-page</code> → <code>develop</code></span>
+  <span class="pill ok">смержен 2026-11-16 · 98405f0</span>
+  <span class="pill">11 файлов, +1002 / −50 · M</span>
+  <span class="pill ok">CI зелёный (5/5)</span>
+</div>
+
+<h2>1. Что сделано</h2>
+<p><code>scripts/dashboard/crate_graph.py</code> строит граф крейтов из <code>cargo metadata --no-deps</code> (fallback <code>Cargo.toml</code>): описания, отметки «изменён с релиза», проверка лееринга — тиры «зависимости направлены внутрь», документированные same-tier пары и per-crate запреты (<code>ferrum-app</code> без wgpu/egui, закрытый список <code>ferrum-agent</code>, <code>ferrum-ui</code> без eframe/rfd, <code>ferrum-view</code> без egui, <code>ferrum-gpu-lock</code> standalone). Это усиленная модель из находки ревью PR #117 (критерий 30.1-d, зарезервирован там size-гейтом L36).</p>
+<p><code>scripts/dashboard/page.py</code> + <code>template.html</code> рендерят self-contained <code>index.html</code>: четыре цвета жизненного цикла из палитры отчётов с текстовыми бейджами (светлая/тёмная темы), карточки стадий с сегментированными барами критериев, ссылки на тесты/PR с пином SHA, таблица крейтов, roadmap, индекс отчётов, warnings, футер источников. <code>data-*</code> атрибуты несут состояние для интерактива PR 3; без дублирующего JSON, без внешних подзагрузок, рендерится из <code>file://</code>.</p>
+<p>Также несёт <code>docs/dashboard/117-report.html</code> — финальный отчёт по смерженному PR #117.</p>
+
+<h2>2. Verification</h2>
+<table>
+  <thead><tr><th>Критерий</th><th>Уровень</th><th>Evidence</th><th>Итог</th></tr></thead>
+  <tbody>
+    <tr><td>30.1-d</td><td>test</td><td>граф + нарушения тиров (исходящее ребро, wgpu, agent→app/egui); TOML-fallback; отметки изменений</td><td>✅</td></tr>
+    <tr><td>30.2-a</td><td>test</td><td>self-contained (нет внешних подзагрузок)</td><td>✅</td></tr>
+    <tr><td>30.2-b</td><td>test</td><td>4 цвета + текстовые бейджи, палитра light/dark</td><td>✅</td></tr>
+    <tr><td>30.2-c</td><td>test</td><td>карточки, точные ширины сегментов, ссылки с пином, футер, экранирование, data-атрибуты</td><td>✅</td></tr>
+    <tr><td>30.2-d</td><td>test</td><td>таблица крейтов: отметки + именованные нарушения</td><td>✅</td></tr>
+    <tr><td>30.2-a…d</td><td>manual</td><td>открыть страницу в обеих темах, раскрыть стадии, перейти по ссылкам</td><td>⏳ пользователь</td></tr>
+    <tr><td>метрики</td><td>measured</td><td>index.html 240 КБ (≤300 КБ); 14 крейтов / 0 нарушений / 0 warnings; генерация 2.1 с</td><td>✅</td></tr>
+  </tbody>
+</table>
+<p class="note">30 pytest зелёные; ruff 0.16.9 чист; analyze --stage 30 exit 0; preflight WSL Ubuntu-24.04 — all checks passed.</p>
+
+<h2>3. Code map (head <code>845b12d</code>)</h2>
+<table>
+  <thead><tr><th>Что</th><th>file:lines</th><th>Символ</th></tr></thead>
+  <tbody>
+    <tr><td>Тиры и запреты</td><td><a href="https://github.com/Kauter1989/ferrum/blob/845b12d/scripts/dashboard/crate_graph.py#L26-L60">crate_graph.py:26-60</a></td><td><code>TIERS</code>, <code>FORBIDDEN_EXTERNALS</code>, <code>AGENT_ALLOWED</code></td></tr>
+    <tr><td>Рёбра графа (оба пути)</td><td><a href="https://github.com/Kauter1989/ferrum/blob/845b12d/scripts/dashboard/crate_graph.py#L63-L103">crate_graph.py:63-103</a></td><td><code>_crate_deps</code>, <code>crates_from_metadata</code>, <code>crates_from_toml</code></td></tr>
+    <tr><td>Загрузка графа + fallback</td><td><a href="https://github.com/Kauter1989/ferrum/blob/845b12d/scripts/dashboard/crate_graph.py#L106-L129">crate_graph.py:106-129</a></td><td><code>load_crates</code></td></tr>
+    <tr><td>Именованные нарушения</td><td><a href="https://github.com/Kauter1989/ferrum/blob/845b12d/scripts/dashboard/crate_graph.py#L132-L157">crate_graph.py:132-157</a></td><td><code>check_layering</code></td></tr>
+    <tr><td>Изменённые с релиза крейты</td><td><a href="https://github.com/Kauter1989/ferrum/blob/845b12d/scripts/dashboard/crate_graph.py#L160-L170">crate_graph.py:160-170</a></td><td><code>changed_crates</code></td></tr>
+    <tr><td>Цвет/бейдж/бар</td><td><a href="https://github.com/Kauter1989/ferrum/blob/845b12d/scripts/dashboard/page.py#L20-L33">page.py:20-33</a></td><td><code>_badge</code>, <code>_bar</code></td></tr>
+    <tr><td>Критерий со ссылками с пином SHA</td><td><a href="https://github.com/Kauter1989/ferrum/blob/845b12d/scripts/dashboard/page.py#L36-L48">page.py:36-48</a></td><td><code>_criterion</code></td></tr>
+    <tr><td>Карточка стадии (data-атрибуты)</td><td><a href="https://github.com/Kauter1989/ferrum/blob/845b12d/scripts/dashboard/page.py#L51-L67">page.py:51-67</a></td><td><code>_stage_card</code></td></tr>
+    <tr><td>Сборка страницы</td><td><a href="https://github.com/Kauter1989/ferrum/blob/845b12d/scripts/dashboard/page.py#L121-L156">page.py:121-156</a></td><td><code>render_page</code></td></tr>
+  </tbody>
+</table>
+
+<h2>4. История ревью</h2>
+<p>Lead self-review (субагент code-reviewer умирал на квоте во время PR #117, L42): граф сверен с реальным планом — 14 крейтов, 0 нарушений (модель флагит исходящие рёбра и per-crate запреты, закреплено тестами); страница структурно протестирована (точные ширины, экранирование, self-contained); docs-контракт сверен. Усиленная модель лееринга — реализация находки #117. Блокирующих находок нет.</p>
+<p class="note">CI: первый прогон coverage упал с SIGSEGV в инструментированном <code>ferrum --test ui</code> под cargo-llvm-cov (lavapipe); PR 2 не меняет Rust, джоб check с теми же UI-тестами зелёный; перезапуск coverage прошёл (3m30s) — флейк инструментированного GPU-прогона, не регрессия. Все 5 джобов зелёные на финальном head.</p>
+
+<footer>
+  Источники: <code>git diff --shortstat origin/develop...HEAD</code> (11 файлов, +1002/−50);
+  <code>generate.py --ref HEAD</code> (240 КБ, 14 крейтов / 0 нарушений / 0 warnings);
+  analyze --stage 30 exit 0; preflight WSL — all checks passed; ruff 0.16.9; pytest 30/30.
+  Финальный отчёт по смерженному PR #118 (<code>845b12d</code> → <code>98405f0</code>); code map закреплён на <code>845b12d</code>.
+</footer>
+</main>
+</body>
+</html>
