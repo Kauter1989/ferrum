@@ -20,6 +20,7 @@ pub mod segment;
 pub mod study;
 pub mod tiles;
 pub mod view;
+pub mod view_state;
 pub mod volume;
 
 /// Receives the progress (`0..=1`) and a message of a long command.
@@ -73,6 +74,9 @@ pub const COMMANDS: &[(&str, Command)] = &[
     ("view montage", tiles::montage),
     ("view mpr", tiles::mpr),
     ("view volume", volume::volume),
+    ("view set", view_state::set),
+    ("view state", view_state::state),
+    ("view events", view_state::events),
     ("probe", inspect::probe),
     ("stats", inspect::stats),
     ("profile", inspect::profile),

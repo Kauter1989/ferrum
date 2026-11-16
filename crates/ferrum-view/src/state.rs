@@ -248,12 +248,7 @@ fn probe_at(viewer: &Viewer, state: &ViewState, x: u32, y: u32) -> Result<Probe,
 /// The unit of a value: HU for a CT, raw values otherwise (MR, PET without a
 /// unit, an image with no declared modality).
 pub fn value_unit(viewer: &Viewer) -> &'static str {
-    let modality = viewer.dataset().map(|d| d.metadata.modality.trim().to_ascii_uppercase()).unwrap_or_default();
-    if modality == "CT" {
-        "HU"
-    } else {
-        "raw"
-    }
+    ferrum_app::value_unit(viewer)
 }
 
 /// The state document (`ferrum-view/1`).
@@ -309,4 +304,114 @@ fn probe_json(probe: &Probe) -> Value {
         "value": (probe.value * 1e4).round() / 1e4,
         "unit": probe.unit,
     })
+}
+
+/// Applies the 2D subset of a `ferrum-view/1` view state (Stage 28, #70) to
+/// the host's viewer and state, returning the events produced and the fields
+/// the 2D host cannot honour yet (a 3D component, camera, selected segment,
+/// tool — Stage 29 streams them). The person takes over at any time; nothing
+/// is locked (criterion 28.2-b).
+pub fn apply_view_2d(
+    viewer: &mut Viewer,
+    state: &mut ViewState,
+    view: &ferrum_domain::ViewState,
+) -> (Vec<(&'static str, Value)>, Vec<&'static str>) {
+    let mut events = Vec::new();
+    let count = viewer.dataset().map(|d| view.plane.slice_count(&d.volume)).unwrap_or(0);
+    let index = view.slice_index.min(count.saturating_sub(1));
+
+    if state.axis != view.plane {
+        state.axis = view.plane;
+        viewer.slices.axis = view.plane;
+        state.index = viewer.slice_index(view.plane);
+        events.push(("plane_changed", json!({ "plane": view.plane.as_str(), "slice_index": state.index })));
+    }
+    if state.index != index {
+        viewer.set_slice_index(view.plane, index);
+        state.index = index;
+        events.push(("slice_changed", json!({ "plane": view.plane.as_str(), "slice_index": index })));
+    }
+    if state.window != view.window {
+        viewer.set_window(view.window);
+        state.window = view.window;
+        events.push(("window_changed", json!({ "center": view.window.center, "width": view.window.width })));
+    }
+    if state.segments != view.overlays.segments_shown {
+        viewer.set_segments_shown(view.overlays.segments_shown);
+        state.segments = view.overlays.segments_shown;
+        events.push(("segments_changed", json!({ "shown": view.overlays.segments_shown })));
+    }
+
+    let mut unhonoured = Vec::new();
+    if view.component != ferrum_domain::ViewComponent::Slice {
+        unhonoured.push("component");
+    }
+    if view.camera.is_some() {
+        unhonoured.push("camera");
+    }
+    if view.selected_segment.is_some() {
+        unhonoured.push("selected_segment");
+    }
+    if view.tool != ferrum_domain::ViewTool::Pan {
+        unhonoured.push("tool");
+    }
+    (events, unhonoured)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ferrum_domain::{Overlays, ViewComponent, ViewState as DomainView, ViewTool};
+
+    fn viewer() -> Viewer {
+        Viewer::new(std::sync::Arc::new(ferrum_io::CompositeRepository::default()))
+    }
+    fn state() -> ViewState {
+        ViewState {
+            axis: SliceAxis::Axial,
+            index: 0,
+            window: WindowLevel::new(0.5, 1.0),
+            segments: false,
+            rev: 0,
+            probe: None,
+        }
+    }
+
+    // covers 28.2-b
+    #[test]
+    fn applies_the_2d_subset_and_reports_the_unhonoured() {
+        let mut v = viewer();
+        let mut s = state();
+        let view = DomainView {
+            plane: SliceAxis::Coronal,
+            window: WindowLevel::new(-600.0, 1500.0),
+            overlays: Overlays { segments_shown: true, ..Default::default() },
+            component: ViewComponent::Volume,
+            camera: Some(Default::default()),
+            selected_segment: Some(3),
+            tool: ViewTool::Probe,
+            ..Default::default()
+        };
+        let (events, unhonoured) = apply_view_2d(&mut v, &mut s, &view);
+        assert_eq!(s.axis, SliceAxis::Coronal);
+        assert_eq!(s.window, WindowLevel::new(-600.0, 1500.0));
+        assert!(s.segments);
+        let kinds: Vec<&str> = events.iter().map(|(k, _)| *k).collect();
+        assert!(kinds.contains(&"plane_changed"), "{kinds:?}");
+        assert!(kinds.contains(&"window_changed"), "{kinds:?}");
+        assert!(kinds.contains(&"segments_changed"), "{kinds:?}");
+        for field in ["component", "camera", "selected_segment", "tool"] {
+            assert!(unhonoured.contains(&field), "{unhonoured:?}");
+        }
+    }
+
+    // covers 28.2-b
+    #[test]
+    fn a_two_d_only_state_honours_everything() {
+        let mut v = viewer();
+        let mut s = state();
+        let view = DomainView { window: WindowLevel::new(40.0, 400.0), ..Default::default() };
+        let (_, unhonoured) = apply_view_2d(&mut v, &mut s, &view);
+        assert!(unhonoured.is_empty(), "{unhonoured:?}");
+    }
 }

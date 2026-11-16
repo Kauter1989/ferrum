@@ -1032,10 +1032,15 @@ several viewers per host.
 
 | Task | What | Criteria | PR | State |
 |---|---|---|---|---|
-| 28.T1 `ViewState`/event types (domain), the JSON schema, spec page, conformance fixtures | 28.1-a/b | 1 | |
-| 28.T2 the artifact (io) + apply use case (app) + widget apply + JSON events + privacy | 28.2-a, 28.5-a | 1 | |
-| 28.T3 the host applies the 2D subset; `source_hash` → `source_changed` | 28.2-b, 28.4-a | 1 | |
-| 28.T4 `view set/state/events`, schemas, contract tests, CLI = MCP, docs | 28.3-a/b/c | 2 | |
+| 28.T1 `ViewState`/event types (domain), the JSON schema, spec page, conformance fixtures | 28.1-a/b | 1 | ✅ |
+| 28.T2 the artifact (io) + apply use case (app) + widget event mapping + privacy | 28.2-a, 28.5-a | 1 | ✅ |
+| 28.T3 the host applies the 2D subset + `unhonoured`; `source_hash` → `source_changed` | 28.2-b, 28.4-a | 1 | ✅ |
+| 28.T4 `view set/state/events`, schemas, contract tests, CLI = MCP, docs | 28.3-a/b/c | 1 | ✅ |
+
+Delivered as one PR (within size L); G1 and G2 approved, G3 pending. The widget
+maps its frame events to the contract form (`ferrum_ui::to_view_event`); the
+host that embeds it watches the artifact through `ferrum-io` (the widget and
+app do not depend on io).
 
 ## Stage 29 — The view everywhere: full streaming, the browser panel, hardening 🚧 (stage, gated)
 

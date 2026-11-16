@@ -22,6 +22,13 @@ underscores) and a `ferrum-cli` sub-command. The parameters are listed in
 | `view mpr` | `at`, `window?` | axial, coronal and sagittal through a point, crosshair |
 | `view volume` | `mode` (`mip`, `isosurface` + `threshold`, `transfer_function` + `preset`), `view` | 3D render; no pixel mapping |
 
+## Driving the view
+| Command | Key parameters | Returns |
+|---|---|---|
+| `view state` | `workspace` | the current view state (`component`, `plane`, `slice_index`, `window`, `overlays`, `selected_segment`, `tool`, `camera`), its `revision` and `source_hash` |
+| `view set` | `workspace`, `state` (the fields above), `source_hash?` (stale → `source_changed`) | the stored state, `revision`, `source_hash`; the live viewer applies it, the person takes over at any time; no decision |
+| `view events` | `workspace`, `since?` | the person's events (`point_picked`, `roi_drawn`, `slice_changed`, `window_changed`, `camera_changed`, `plane_changed`, `segments_changed`) after a sequence number, with `next`/`dropped`; no event is a decision |
+
 ## Measuring
 | Command | Key parameters | Returns |
 |---|---|---|

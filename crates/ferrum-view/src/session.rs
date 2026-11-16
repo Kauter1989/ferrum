@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use ferrum_app::Viewer;
 use ferrum_domain::{ResultStore, SliceAxis, WindowLevel};
-use ferrum_io::workspace::changes::WorkspaceWatcher;
+use ferrum_io::workspace::changes::{WorkspaceChange, WorkspaceWatcher};
 use ferrum_io::{CompositeRepository, WorkspaceStore};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -82,6 +82,9 @@ pub struct Session {
     dropped: u64,
     frame: Option<Frame>,
     watcher: WorkspaceWatcher,
+    /// Fields of the last applied view state the 2D host cannot honour yet
+    /// (Stage 28; Stage 29 streams them).
+    unhonoured: Vec<&'static str>,
 }
 
 impl Session {
@@ -120,6 +123,7 @@ impl Session {
             dropped: 0,
             frame: None,
             watcher,
+            unhonoured: Vec::new(),
         })
     }
 
@@ -137,6 +141,9 @@ impl Session {
     /// frame when there is one.
     pub fn state_json(&self) -> Result<Value, ViewError> {
         let mut state = state_json(&self.viewer, &self.state)?;
+        if !self.unhonoured.is_empty() {
+            state["unhonoured"] = json!(self.unhonoured);
+        }
         if let Some(frame) = &self.frame {
             state["frame"] = json!({
                 "rev": frame.rev,
@@ -205,6 +212,7 @@ impl Session {
         let input = Input::parse(body)?;
         let (kind, data) = input.apply(&mut self.viewer, &mut self.state)?;
         self.record(kind, data);
+        self.persist_events();
         Ok(())
     }
 
@@ -220,27 +228,63 @@ impl Session {
         })
     }
 
-    /// Reloads the workspace's segments when another process changed it.
-    /// Returns `true` when the next frame differs.
+    /// Reloads the workspace when another process changed it: a view state
+    /// written by an agent is applied for its 2D subset (Stage 28), and
+    /// segments are reloaded. Returns `true` when the next frame differs.
     pub fn refresh(&mut self) -> bool {
         let changes = self.watcher.poll();
         if changes.is_empty() {
             return false;
         }
-        let Some(dataset) = self.viewer.dataset().cloned() else {
-            return false;
+        let mut changed = false;
+        let view_changed = changes.iter().any(|c| matches!(c, WorkspaceChange::ViewStateChanged { .. }));
+        let data_changed = changes.iter().any(|c| !matches!(c, WorkspaceChange::ViewStateChanged { .. }));
+
+        if view_changed {
+            if let Ok(ws) = ferrum_io::Workspace::open(&self.workspace) {
+                if let Ok(Some((view, _revision, _hash))) = ws.load_view_state() {
+                    let (events, unhonoured) = crate::state::apply_view_2d(&mut self.viewer, &mut self.state, &view);
+                    self.unhonoured = unhonoured;
+                    for (kind, data) in events {
+                        self.record(kind, data);
+                    }
+                    self.state.rev += 1;
+                    changed = true;
+                }
+            }
+        }
+
+        if data_changed {
+            if let Some(dataset) = self.viewer.dataset().cloned() {
+                match self.store.load(&dataset.volume) {
+                    Ok((_annotations, segments)) => {
+                        self.viewer.adopt_segments(segments);
+                        self.state.segments = self.viewer.segmentation().overlay_active();
+                        self.state.rev += 1;
+                        changed = true;
+                    }
+                    Err(e) => {
+                        log::warn!("ferrum-view: the workspace changed but could not be read again: {e}");
+                    }
+                }
+            }
+        }
+        if changed {
+            self.persist_events();
+        }
+        changed
+    }
+
+    /// Writes the event ring to the workspace's `view-events.json`, so an
+    /// agent's `view events` reads the same sequence the host serves.
+    fn persist_events(&self) {
+        let Ok(ws) = ferrum_io::Workspace::open(&self.workspace) else {
+            return;
         };
-        match self.store.load(&dataset.volume) {
-            Ok((_annotations, segments)) => {
-                self.viewer.adopt_segments(segments);
-                self.state.segments = self.viewer.segmentation().overlay_active();
-                self.state.rev += 1;
-                true
-            }
-            Err(e) => {
-                log::warn!("ferrum-view: the workspace changed but could not be read again: {e}");
-                false
-            }
+        let events: Vec<(u64, ferrum_domain::ViewEvent)> =
+            self.events.iter().filter_map(|e| ferrum_io::event_from_json(&e.to_json()).ok()).collect();
+        if let Err(e) = ws.save_view_events(&events, self.seq, self.dropped) {
+            log::warn!("ferrum-view: could not persist the view events: {e}");
         }
     }
 

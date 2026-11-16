@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FERRUM · PR #116 — финальный отчёт: Stage 28, view-state contract и agent-команды</title>
+<style>
+  :root {
+    --bg: #fbfbfd; --fg: #1d1f26; --muted: #5b6070; --line: #e2e5ec;
+    --accent: #1f6feb; --ok: #1a7f37; --warn: #9a6700; --bad: #b42318;
+    --card: #ffffff; --code: #f3f4f7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12141a; --fg: #e6e7ea; --muted: #a2a8b6; --line: #2a2e38;
+      --accent: #6ba6ff; --ok: #4ac26b; --warn: #d4a72c; --bad: #ff7b72;
+      --card: #191c23; --code: #1f232c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.6 -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+  main { max-width: 1080px; margin: 0 auto; padding: 40px 24px 80px; }
+  h1 { font-size: 30px; line-height: 1.25; margin: 0 0 8px; letter-spacing: -0.02em; }
+  h2 { font-size: 21px; margin: 44px 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 16px; margin: 26px 0 8px; }
+  p, li { color: var(--fg); }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 28px; }
+  .pill { font-size: 13px; padding: 3px 10px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--card); color: var(--muted); }
+  .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; margin: 14px 0; }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 13px; }
+  code { background: var(--code); padding: 1px 5px; border-radius: 4px; }
+  pre { background: var(--code); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; overflow-x: auto; }
+  pre code { background: none; padding: 0; }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 14px; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .tag { font-size: 12px; font-weight: 600; padding: 2px 7px; border-radius: 5px; white-space: nowrap; }
+  .t-block { background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--bad); }
+  .t-should { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+  .t-nit { background: color-mix(in srgb, var(--muted) 16%, transparent); color: var(--muted); }
+  .t-fixed { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+  .stat { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+  .stat b { display: block; font-size: 26px; line-height: 1.2; }
+  .stat span { color: var(--muted); font-size: 13px; }
+  ul { padding-left: 22px; }
+  li { margin: 4px 0; }
+  .note { border-left: 3px solid var(--accent); padding-left: 14px; color: var(--muted); margin: 14px 0; }
+  footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>PR #116 — Stage 28: view-state contract и agent-команды</h1>
+<p class="sub">Финальный отчёт: архитектура, код-карта, покрытие критериев, верификация, ревью. FERRUM, ноябрь 2026. Описывает head SHA <code>6ad35247f684ba34c3c8cc0ba3509de29f52f5a3</code>. Отчёт живёт в самом PR и правится по итогам ревью; при мердже остаётся в последней версии (правило пользователя).</p>
+
+<div class="meta">
+  <span class="pill">Stage 28 · #70</span>
+  <span class="pill">track: stage · gated</span>
+  <span class="pill">size L (один PR)</span>
+  <span class="pill ok">G1 утверждён</span>
+  <span class="pill ok">G2 утверждён</span>
+  <span class="pill">ADR 0018</span>
+  <span class="pill ok">preflight: all checks passed</span>
+</div>
+
+<div class="grid">
+  <div class="stat"><b>30</b><span>файлов изменено</span></div>
+  <div class="stat"><b>~2100</b><span>строк добавлено (нетто)</span></div>
+  <div class="stat"><b>9/9</b><span>критериев покрыто тестами</span></div>
+  <div class="stat"><b>3</b><span>новые agent-команды (39 всего)</span></div>
+</div>
+
+<h2>1. Что сделано</h2>
+<p>Агент управляет тем, что видит человек, не сидя в render-loop: открывает лёгочное окно, переходит на срез 142, показывает сегмент 3 — а человек перехватывает управление в любой момент. Контракт <code>ferrum-view/1</code> расширен полным <strong>ViewState</strong> и JSON-формой событий; состояние стало <strong>артефактом workspace</strong>, который пишет агент и применяют живые клиенты.</p>
+<div class="note">Ключевое решение (ADR 0018): <code>ferrum-agent</code> не линкует <code>ferrum-app</code>/<code>ferrum-view</code>, поэтому состояние — данные в workspace (<code>view.json</code> + <code>view-events.json</code>, слой <code>ferrum-io</code>), а не живой объект. Тип <code>ViewState</code> в домене, apply-use case в приложении, команды читают/пишут артефакт через io.</div>
+
+<h2>2. Архитектура и слоистость</h2>
+<pre><code>ferrum-agent (view set/state/events) ── пишет/читает ──▶ ferrum-io артефакт (view.json, view-events.json)
+                                                              │  changes::publish / WorkspaceWatcher
+                                                              ▼
+хост (ferrum-view / embedder) ── apply via ─▶ ferrum-app::Viewer::apply_view_state
+ferrum-ui widget ── рендерит Viewer + to_view_event ─▶ доменный ViewEvent (хост persist'ит)</code></pre>
+<ul>
+  <li><strong>Домен</strong> (<code>ferrum-domain</code>): чистые типы <code>ViewState</code>/<code>ViewEvent</code>/<code>ViewComponent</code>/<code>ViewTool</code>/<code>Overlays</code>/<code>ViewProbe</code>/<code>RoiItem</code> с wire-именами; без serde/IO.</li>
+  <li><strong>IO</strong>: единственное место, где типы становятся JSON (<code>state_to_json</code>/<code>state_from_json</code>, <code>event_to_json</code>/<code>event_from_json</code>); атомарная запись артефакта; уведомление <code>ViewStateChanged</code> через существующий механизм.</li>
+  <li><strong>App</strong>: <code>Viewer::apply_view_state</code> (возвращает события, клампит срез, ничего не блокирует) и <code>view_state</code> (read-back); аксессор выбранного сегмента.</li>
+  <li><strong>UI</strong>: <code>to_view_event</code> маппит события кадра в контрактную форму; widget не зависит от io — артефакт смотрит хост.</li>
+  <li><strong>View-хост</strong>: <code>refresh</code> применяет 2D-подмножество, репортит <code>unhonoured</code> (component/camera/selected/tool — Stage 29), persist'ит кольцо событий.</li>
+  <li><strong>Agent</strong>: <code>view set/state/events</code>, схемы, CLI = MCP; ни одна команда не создаёт decision.</li>
+</ul>
+<p>Rendering rule не затронут: image-formation (<code>volume.wgsl</code>/<code>raycast.rs</code>) не менялся — только состояние. <code>gpu_parity.rs</code> зелёный.</p>
+
+<h2>3. Код-карта</h2>
+<p class="sub">Каждое архитектурное утверждение → <code>file:lines</code>, pinned к head SHA <code>6ad3524</code>.</p>
+<table>
+  <tr><th>Утверждение</th><th>Реализация</th></tr>
+  <tr><td>Доменный тип ViewState (component/plane/slice/window/overlays/selected/tool/camera/probe)</td><td class="mono">crates/ferrum-domain/src/view_state.rs:171</td></tr>
+  <tr><td>Wire-имена компонента/инструмента, kind'и событий</td><td class="mono">crates/ferrum-domain/src/view_state.rs:30–130, 280</td></tr>
+  <tr><td>JSON-контракт состояния (to/from json, отказ плохих значений)</td><td class="mono">crates/ferrum-io/src/view_state.rs:24, 49</td></tr>
+  <tr><td>Санитизация camera (f64-валидация до каста, normalize/clamp/fov) и window</td><td class="mono">crates/ferrum-io/src/view_state.rs:104, 141</td></tr>
+  <tr><td>JSON-контракт событий (7 kind'ов, seq)</td><td class="mono">crates/ferrum-io/src/view_state.rs:190–280</td></tr>
+  <tr><td>Атомарная запись артефакта + publish; отказ нерегулярных файлов</td><td class="mono">crates/ferrum-io/src/workspace.rs:431, 234</td></tr>
+  <tr><td>Уведомление ViewStateChanged (diff по revision)</td><td class="mono">crates/ferrum-io/src/workspace/changes.rs:97, 398</td></tr>
+  <tr><td>Apply use case: события, клампинг, no-op на текущем состоянии</td><td class="mono">crates/ferrum-app/src/viewer/view_state.rs:80</td></tr>
+  <tr><td>Read-back view_state; общий value_unit</td><td class="mono">crates/ferrum-app/src/viewer/view_state.rs:135, 170</td></tr>
+  <tr><td>Аксессор выбранного сегмента (новый)</td><td class="mono">crates/ferrum-app/src/viewer/segments.rs:161–170</td></tr>
+  <tr><td>Маппинг событий widget → контракт</td><td class="mono">crates/ferrum-ui/src/events.rs:224</td></tr>
+  <tr><td>Хост применяет 2D-подмножество + unhonoured; plane index новой плоскости</td><td class="mono">crates/ferrum-view/src/state.rs:314</td></tr>
+  <tr><td>refresh: view-apply отдельно от сегментов; persist событий</td><td class="mono">crates/ferrum-view/src/session.rs:232–292</td></tr>
+  <tr><td>view set: валидация, required source_hash, DecisionLock, запись ревизии</td><td class="mono">crates/ferrum-agent/src/commands/view_state.rs:42</td></tr>
+  <tr><td>view state / view events; default как у viewer</td><td class="mono">crates/ferrum-agent/src/commands/view_state.rs:23, 78, 95</td></tr>
+  <tr><td>Схемы команд (helper, бюджет сложности)</td><td class="mono">crates/ferrum-agent/src/schema.rs:357</td></tr>
+  <tr><td>Регистрация в COMMANDS (CLI = MCP)</td><td class="mono">crates/ferrum-agent/src/commands/mod.rs:75–77</td></tr>
+</table>
+
+<h2>4. Покрытие критериев</h2>
+<table>
+  <tr><th>Критерий</th><th>Тест</th><th>Статус</th></tr>
+  <tr><td>28.1-a схема ViewState + фикстуры</td><td class="mono">domain view_state::tests; io --test view_state (round trip, bad values); io --lib view_state::tests</td><td><span class="tag t-fixed">✅</span></td></tr>
+  <tr><td>28.1-b события JSON + фикстуры</td><td class="mono">domain event_kinds; io every_event_kind_round_trips; ui widget_events_map</td><td><span class="tag t-fixed">✅</span></td></tr>
+  <tr><td>28.2-a in-process apply, человек перехватывает</td><td class="mono">app --test view_state (4 теста: события, read-back, клампинг, no-op)</td><td><span class="tag t-fixed">✅</span></td></tr>
+  <tr><td>28.2-b хост 2D + unhonoured</td><td class="mono">view --lib state::tests (2 теста)</td><td><span class="tag t-fixed">✅</span></td></tr>
+  <tr><td>28.3-a команды + схемы</td><td class="mono">agent --test view_state (round trip, unknown field)</td><td><span class="tag t-fixed">✅</span></td></tr>
+  <tr><td>28.3-b контрактные тесты, CLI = MCP</td><td class="mono">agent view_events_reads_the_log; cli_and_mcp_give_identical_json</td><td><span class="tag t-fixed">✅</span></td></tr>
+  <tr><td>28.3-c ни одна команда не создаёт decision</td><td class="mono">agent view_set_creates_no_decision</td><td><span class="tag t-fixed">✅</span></td></tr>
+  <tr><td>28.4-a stale source_hash → source_changed</td><td class="mono">agent a_stale_source_hash_is_refused</td><td><span class="tag t-fixed">✅</span></td></tr>
+  <tr><td>28.5-a приватность артефакта/событий</td><td class="mono">io the_artifact_carries_no_path_or_patient_name</td><td><span class="tag t-fixed">✅</span></td></tr>
+</table>
+
+<h2>5. Верификация</h2>
+<ul>
+  <li><strong>Preflight</strong> (WSL Ubuntu-24.04, CI-порядок + GPU parity + analyze.py): <code>all checks passed</code>.</li>
+  <li>Новые тесты: domain 2, io 4+4, app 4, ui 1, view 2+13, agent 6 — все зелёные.</li>
+  <li>Schema freshness: <code>commands.json</code> регенерирован (<code>ferrum-cli schema</code>), <code>commands.md</code> дополнен; тесты package/cli зелёные.</li>
+  <li>Счётчики команд обновлены 36 → 39 (commands.rs, cli.rs ×2).</li>
+  <li>fmt/clippy <code>-D warnings</code> чистые; бюджет сложности соблюдён (схемы вынесены в helper).</li>
+</ul>
+
+<h2>6. История ревью</h2>
+<div class="card" id="review">
+  <p><strong>Раунд 1</strong> (code + security, агент <code>review-70</code>, все находки подтверждены выполнением в WSL): вердикт <em>changes requested</em> — 0 blocking, 4 should-fix (2 security), 6 nits.</p>
+  <table>
+    <tr><th>Находка</th><th>Исправление</th><th>Статус</th></tr>
+    <tr><td><span class="tag t-should">should·sec</span> crafted camera (zero quat, 1e30 distance) и window (1e300) принимались → NaN/inf uniforms (L40)</td><td>io-парсер: window проверяется после f32-каста; кватернион finite/non-zero (нормализуется), distance клампится к 0.2..10, fov_y в (0,π); регрессионный тест</td><td><span class="tag t-fixed">fixed</span></td></tr>
+    <tr><td><span class="tag t-should">should·sec</span> source_hash опционален → binding обходится</td><td>view set требует source_hash (fail-closed, как decisions::record); schema required; тест missing-hash</td><td><span class="tag t-fixed">fixed</span></td></tr>
+    <tr><td><span class="tag t-should">should</span> revision read-modify-write без лока → lost update + same-revision не репортится</td><td>DecisionLock вокруг read-modify-write (pub(crate)); тест монотонных ревизий</td><td><span class="tag t-fixed">fixed</span></td></tr>
+    <tr><td><span class="tag t-should">should</span> plane_changed нёс индекс старой плоскости</td><td>state.index = viewer.slice_index(new plane) до события (как Input::Plane)</td><td><span class="tag t-fixed">fixed</span></td></tr>
+    <tr><td><span class="tag t-nit">nit</span> probe в STATE_FIELDS, но не в схеме → CLI≠MCP</td><td>probe убран из STATE_FIELDS (отказывается единообразно)</td><td><span class="tag t-fixed">fixed</span></td></tr>
+    <tr><td><span class="tag t-nit">nit</span> value_unit скопирован 3×</td><td>один pub-хелпер ferrum_app::value_unit; ui/view делегируют</td><td><span class="tag t-fixed">fixed</span></td></tr>
+    <tr><td><span class="tag t-nit">nit</span> default window агента ≠ окну клиента</td><td>default_state = окно серии (else auto) + axial mid-slice, как viewer</td><td><span class="tag t-fixed">fixed</span></td></tr>
+    <tr><td><span class="tag t-nit">nit</span> privacy.rs не сканировал новые envelope</td><td>view set/state/events + view.json добавлены в скан</td><td><span class="tag t-fixed">fixed</span></td></tr>
+    <tr><td><span class="tag t-nit">nit</span> schema camera без required/диапазонов</td><td>required orientation/distance/target/fov_y + описания</td><td><span class="tag t-fixed">fixed</span></td></tr>
+    <tr><td><span class="tag t-nit">nit</span> symlink view.json читался бы loader'ом</td><td>refuse_non_regular в load_view_state/load_view_events</td><td><span class="tag t-fixed">fixed</span></td></tr>
+    <tr><td><span class="tag t-nit">nit</span> embed_host не обновлён; нет live-widget end-to-end теста</td><td>назван как gap: in-process apply покрыт на уровне Viewer (app-тесты); live-widget UI-тест — follow-up Stage 29</td><td><span class="tag t-nit">named</span></td></tr>
+  </table>
+  <p class="sub">Подтверждено чистым: loop persist_events→watcher закрыт (view-events.json не отслеживается watcher'ом); слоистость; rendering rule; source_changed fail-closed; приватность артефакта; no-decision; CLI=MCP; матрица изменений.</p>
+  <p><strong>Раунд 2</strong> (re-review, агент <code>review-70b</code>): fixes 2/3/4 подтверждены; <span class="tag t-block">blocking</span> — санитизация camera обойдена: <code>fov_y=0</code> принимался (Range inclusive), а большой конечный кватернион <code>[1e30,0,0,0]</code> давал f32 length²=inf → normalize()=ноль → NaN uniforms. <strong>Исправлено</strong>: величины проверяются в f64 ДО f32-каста (длина кватерниона 1e-6..1e6, |target|/|distance| ≤ 1e6), fov строго (0,π); регрессионные探针 fov=0, [1e30,0,0,0], [1e38;4], огромный target. <span class="tag t-fixed">fixed</span></p>
+  <p><strong>Раунд 3</strong>: закрыт end-to-end gap (nit 7) — тест <code>view_host::the_host_applies_a_view_artifact_and_the_person_takes_over</code>: артефакт записан → <code>Session::refresh</code> применяет plane/slice/window, репортит unhonoured camera, persist'ит события; ввод человека (slice) не откатывается последующим refresh. Полный preflight: <code>all checks passed</code>.</p>
+</div>
+
+<h2>7. Out of scope (Stage 29)</h2>
+<p>Полный стриминг ViewState (camera/3D/overlays/selected/tool) в HTTP-хост и браузер; панель браузера (сегменты/overlay, transfer-function editor, измерения); сжатая/16-bit передача тома; rotating token (сначала ADR); консолидация CPU overlay; WebGPU-автоматизация тестов. Decisions через view остаются за <code>ferrum_agent::decisions</code>.</p>
+
+<footer>
+  FERRUM · Stage 28 · head SHA <code>6ad35247f684ba34c3c8cc0ba3509de29f52f5a3</code> · отчёт коммичен в PR и правится по итогам ревью пользователя.
+</footer>
+
+</main>
+</body>
+</html>

@@ -63,8 +63,13 @@ ferrum-ui widget ─┐                                   ferrum-view host ─�
   becomes use cases) and `Viewer::view_state` (read it back).
 - `ferrum-agent` commands read/write the artifact through `ferrum-io`; they
   never link the app or the host.
-- `ferrum-ui` (widget) and `ferrum-view` (host) watch the artifact and apply
-  it; they record the events it produces.
+- The **host** that embeds the widget (and the `ferrum-view` host) watches the
+  artifact through `ferrum-io` and applies it with `Viewer::apply_view_state`.
+  `ferrum-ui` and `ferrum-app` do not depend on `ferrum-io` (layering), so the
+  widget itself does not read the artifact: it renders the `Viewer` the host
+  drives, and maps its frame events to the contract form
+  (`ferrum_ui::to_view_event`) for the host to record. The `ferrum-view` host
+  already depends on `ferrum-io` and watches the workspace.
 
 **In process first** (the issue): the widget applies the full state. The HTTP
 host adopts the artifact for its existing 2D controls in this stage and
@@ -210,12 +215,20 @@ reported in the answer's `unhonoured` list, not silently dropped (28.2-b).
 ## 6. Binding to the source (`source_changed`)
 
 `ViewState.source_hash` is the study's `source_sha256` (the value
-`ferrum_agent::decisions` binds to, `Study::load`). `view set` takes the
-`source_hash` the host read with the state; if it differs from the current
-study's, the command refuses with `source_changed` and applies nothing — the
-same rule as `decisions::record` (16.8). `view state` returns the current
-`source_hash` so the host can pass it back. A workspace whose sources changed
-under a long-lived client is already refused by `Study::load`/`verify_sources`.
+`ferrum_agent::decisions` binds to, `Study::load`). `view set` **requires** the
+`source_hash` the host read with the state (fail-closed, as `decisions::record`
+makes its hashes mandatory); if it differs from the current study's, the
+command refuses with `source_changed` and applies nothing. The read-modify-write
+of the revision runs under the workspace lock (`DecisionLock`), so concurrent
+sets cannot lose an update or write a revision the watcher would not report.
+`view state` returns the current `source_hash` so the host can pass it back. A
+workspace whose sources changed under a long-lived client is already refused by
+`Study::load`/`verify_sources`.
+
+The parser sanitizes what reaches the renderer (L40): a window is validated
+**after** the `f32` cast (a huge `f64` becomes infinity, refused); a camera
+quaternion must be finite and non-zero (normalized), the distance is clamped to
+`OrbitCamera::MIN_DISTANCE..MAX_DISTANCE`, and `fov_y` must lie in `(0, pi)`.
 
 ## 7. Agent commands
 
@@ -225,9 +238,11 @@ asserts identical JSON), `commands.json`/`commands.md` regenerated:
 
 - **`view set -w W --state <json>`** (or `--component/--plane/--slice/--window/
   --show-segments/--select/--tool/--camera` flags) — validates the state
-  against the schema, checks `source_hash` (§6), writes `view.json` with
-  `revision + 1`, returns the applied state and the `unhonoured` list. No
-  decision is created (a test asserts review state is untouched, 28.3-c).
+  against the schema (unknown fields refused), checks `source_hash` (§6),
+  writes `view.json` with `revision + 1`, and returns the stored state,
+  revision and source hash. The live client applies it and reports the fields
+  it cannot honour (§5); the agent itself holds no viewer. No decision is
+  created (a test asserts review state is untouched, 28.3-c).
 - **`view state -w W`** — reads `view.json` (or the default), returns the state
   with the current `source_hash` and `revision`.
 - **`view events -w W [--since <seq>]`** — reads `view-events.json`, returns the

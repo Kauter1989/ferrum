@@ -353,9 +353,69 @@ fn mask_schema(command: &str) -> Option<(&'static str, Value)> {
     })
 }
 
+/// Schemas of the view-state commands (`view set/state/events`, Stage 28).
+fn view_state_schema(command: &str) -> Option<(&'static str, Value)> {
+    Some(match command {
+        "view set" => (
+            "Sets what the person sees (component, plane, slice, window, overlays, selected segment, tool, camera) by writing the workspace's view-state artifact; the live viewer applies it and the person takes over at any time. source_hash (from view state) is required: a stale one is refused with source_changed. No decision is created.",
+            obj(
+                json!({
+                    "workspace": workspace(),
+                    "source_hash": text("the source_hash read with view state; a stale one refuses the set (fail-closed)"),
+                    "state": view_state_object(),
+                }),
+                &["workspace", "state", "source_hash"],
+            ),
+        ),
+        "view state" => (
+            "The current view state (component, plane, slice, window, overlays, selected segment, tool, camera) with its revision and the source_hash to pass back to view set.",
+            ws_only(),
+        ),
+        "view events" => (
+            "What the person did in the viewer (point_picked, roi_drawn, slice_changed, window_changed, camera_changed, plane_changed, segments_changed), after a sequence number. No event is a decision.",
+            obj(json!({ "workspace": workspace(), "since": integer(0, "only events after this sequence number (default 0)") }), &["workspace"]),
+        ),
+        _ => return None,
+    })
+}
+
+/// The view-state object of `view set` (`ferrum-view/1`, Stage 28).
+fn view_state_object() -> Value {
+    json!({
+        "type": "object",
+        "description": "what the person sees; missing fields keep their default",
+        "additionalProperties": false,
+        "properties": {
+            "component": { "type": "string", "enum": ["slice", "mpr", "volume"], "description": "one slice, the MPR grid, or the 3D view" },
+            "plane": plane(),
+            "slice_index": integer(0, "0-based slice index, clamped to the volume"),
+            "window": obj(json!({ "center": number("window centre"), "width": number("window width (> 0)") }), &["center", "width"]),
+            "overlays": obj(
+                json!({
+                    "segments_shown": { "type": "boolean", "description": "show the segment overlay" },
+                    "fill_opacity": { "type": "number", "minimum": 0, "maximum": 1, "description": "fill opacity" },
+                    "style": { "type": "string", "enum": ["outline", "fill", "fill_outline"], "description": "how segments are drawn" },
+                }),
+                &[],
+            ),
+            "selected_segment": { "type": ["integer", "null"], "minimum": 0, "maximum": 255, "description": "selected segment label, or null" },
+            "tool": { "type": "string", "enum": ["pan", "window_level", "probe", "distance", "angle", "area", "rect", "text", "move", "delete", "ai_point", "ai_box", "ai_scribble", "ai_lasso", "region"], "description": "the active tool" },
+            "camera": obj(
+                json!({
+                    "orientation": numbers(4, "quaternion x, y, z, w (normalized; a zero quaternion is refused)"),
+                    "distance": number("orbit distance (clamped to the camera's 0.2..10 range)"),
+                    "target": numbers(3, "orbit centre in model space"),
+                    "fov_y": number("vertical field of view in radians, within (0, pi)"),
+                }),
+                &["orientation", "distance", "target", "fov_y"],
+            ),
+        },
+    })
+}
+
 /// Description and parameter schema of `command`, or `None` if unknown.
 pub fn command_schema(command: &str) -> Option<(&'static str, Value)> {
-    if let Some(s) = engine_schema(command).or_else(|| mask_schema(command)) {
+    if let Some(s) = engine_schema(command).or_else(|| mask_schema(command)).or_else(|| view_state_schema(command)) {
         return Some(s);
     }
     let measure = |n: usize, what: &'static str| {
