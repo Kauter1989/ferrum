@@ -1157,23 +1157,24 @@ patient data — the dashboard holds only plan and code metadata.
 
 ## Roadmap
 
-Updated 2026-11-15, before the 0.4.0 release. Order is a proposal; each
-stage starts with its spec at gate G1. Sizes follow `ferrum-size`.
+Updated 2026-11-16, after the 0.4.0 release (v0.4.0, 2026-11-14). Order is
+a proposal; each stage starts with its spec at gate G1. Sizes follow
+`ferrum-size`. Rows marked ✅ are delivered; the rest are upcoming.
 
 ### Next
 
 | # | What | Kind | Why now |
 |---|---|---|---|
-| 1 | Release 0.4.0: Stages 18 and 20, loader warnings (2.7), DICOM in LPS (2.8), lossless HU (18.13) since 0.3.0 | release (`ferrum-release`) | `develop` holds a large unreleased change set; the user decides |
+| 1 | Release 0.4.0: Stages 18 and 20, loader warnings (2.7), DICOM in LPS (2.8), lossless HU (18.13) since 0.3.0 | ✅ done (v0.4.0, 2026-11-14) | released; the change set shipped |
 | 2 | Field test on the user's machine: Stage 20 on a scanner's Enhanced MR or PET (success metric, 0.01 mm), switch time and VRAM on the GPU; 18.13-f against pyradiomics | field test (`ferrum-field-test`) | the open criteria of Stages 18 and 20 can only be closed there |
 | 3 | Stage 21 — PET quantification (below) | stage, L | from the MR/PET assessment (2026-10-14): without units and SUV a PET study has no usable numbers |
 | 4 | Stage 22 — PET/CT fusion (below) | stage, L, new ADR | the main way PET is read; needs a second volume in `Dataset` and `GpuSink` |
 | 5 | Stage 16 — the rest: 16.1 confirm all, 16.2 export only confirmed, 16.3 provenance of a corrected segment, 16.4 annotation mode | stage, M per story | open since Stage 16; 16.5–16.6 are done |
-| 6 | Stage 19 — reproducible radiomics and comparison (IBSI, textures, change over time) | stage, XL, G1 again | waits for the release of Stage 18 (its own rule); MR normalisation joins it |
+| 6 | Stage 19 — reproducible radiomics and comparison (IBSI, textures, change over time) | stage, XL, G1 again | Stage 18 released in 0.4.0, so this is unblocked; MR normalisation joins it |
 | 7 | Interactive view host for generative UI — delivered as Stages 25 and 26: `view serve`, the DeepSeek Harness plugin, the WebGPU panel ([ADR 0014](docs/decisions/0014-generative-ui-view-host.md), [ADR 0017](docs/decisions/0017-view-host-crate.md)) | ✅ done | follow-ups → Stage 29: rotating tokens (an ADR first), the CPU overlay consolidation, WebGPU test automation, the browser panel's segments/measurements |
 | 8 | Stage 23 — GPU sharing with an external model server ([#68](https://github.com/Kauter1989/ferrum/issues/68)) — code complete, PRs 1–3 merged | ✅ field run 2026-11-14: 20/20 with holder, recipe §5 | — |
 | 9 | Stage 24 PR 2 — widget events and the example host (24.T4–T7, [design](docs/embeddable-viewer.md)) | ✅ done (#109) | — |
-| 10 | Stage 28 — drive the view: `ferrum-view/1` ViewState and agent commands ([#70](https://github.com/Kauter1989/ferrum/issues/70)) | stage, L, new ADR 0018, G1 | the harness's Demo 4; in-process first, the contract and the agent commands |
+| 10 | Stage 28 — drive the view: `ferrum-view/1` ViewState and agent commands ([#70](https://github.com/Kauter1989/ferrum/issues/70)) | 🚧 in develop (#116 merged); gated | ViewState + agent commands delivered (#116); the gated stage's remainder is in progress |
 | 11 | Stage 29 — the view everywhere: full streaming, the browser panel, hardening | stage, XL, G1 again | closes the out-of-scope of Stages 25–26 and the #91 follow-ups |
 
 ### Backlog (feature or small, any time)
