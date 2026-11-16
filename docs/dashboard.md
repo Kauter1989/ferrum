@@ -66,7 +66,7 @@ git show <tag>:dev_plan.md ────────────────→ p
 git show <ref>:dev_plan.md ────────────────→ plan at target (HEAD / origin/develop)
 parse both ─→ done@tag, done@target ───────→ lifecycle buckets (§3.3)
 git grep covers-citations at <ref> ────────→ coverage per criterion (analyze convention)
-git log --grep PR merges + merge-base ─────→ PR-ancestry refinement (§3.3)
+git log --all (merge subjects) + is-ancestor → PR-ancestry refinement (§3.3)
 cargo metadata --no-deps (or Cargo.toml) ──→ crate nodes, edges, descriptions
 git diff --name-only <tag>..<ref> crates/ ─→ changed-since-release marks
 layering model (CLAUDE.md) ────────────────→ named violations
@@ -109,15 +109,15 @@ the `schema` field; a breaking change bumps it and updates this section.
     "stories": [{
       "id": "23.1", "text": "As a …",
       "criteria": [{
-        "id": "23.1-a", "text": "…", "done": true, "prs": [111],
+        "kind": "criterion", "id": "23.1-a", "text": "…", "done": true, "prs": [111],
         "bucket": "released",
         "tests": ["crates/ferrum-gpu-lock/tests/leases.rs"],
         "levels": ["field"]
       }]
     }]
   }],
-  "roadmap": {"next": [{"n": 1, "what": "…", "kind": "…", "why": "…"}],
-               "backlog": ["…"], "drafts": [{"id": "21", "title": "…", "stories": ["…"]}]},
+  "roadmap": {"next": [{"n": "1", "what": "…", "kind": "…", "why": "…"}],
+               "backlog": ["…"], "drafts": [{"id": "21", "title": "…", "heading_status": "planned", "stories": [{"id": "21.1", "text": "…", "criteria": []}]}]},
   "crates": [{"name": "ferrum-domain", "description": "…",
                "deps": [], "changed_since_release": false, "violations": []}],
   "layering_violations": [{"from": "…", "to": "…", "rule": "…"}],
@@ -167,7 +167,8 @@ flagged). The generator encodes:
 - `TIERS` (inner → outer): domain 0; gpu-lock 1; processing/render/io/
   engines/radiomics 2; app 3; ui/view/agent 4; ferrum/cli/wasm 5. An edge
   is allowed when it points strictly inward, or is a documented same-tier
-  pair (`SAME_TIER_ALLOWED`: engines → gpu-lock, render → processing).
+  pair (`SAME_TIER_ALLOWED`: render → processing; engines → gpu-lock is
+  strictly inward, tier 2 → 1).
 - Per-crate prohibitions (`FORBIDDEN_EXTERNALS`, `AGENT_ALLOWED`):
   `ferrum-app` without wgpu/egui; `ferrum-agent` depends only on
   domain/io/engines/radiomics/render and never on wgpu/egui (so
@@ -241,13 +242,13 @@ surface is touched.
 
 | Criterion | Verified by | Level |
 |---|---|---|
-| [30.1-a] | `tests/dashboard/test_generate.py::test_plan_parses_to_the_exact_fixture`, `…struck_criteria…`, `…letter_and_draft_stages…`, `…idless_stages…`, `…implementation_tables_are_not_stories…` (planned) | test |
-| [30.1-b] | `test_lifecycle_buckets_on_a_fixture_repository`, `test_lagging_heading_criterion_is_develop`, `test_stage_bucket_priority_and_counts` (planned) | test |
-| [30.1-c] | `test_coverage_follows_the_analyze_convention` (planned) | test |
-| [30.1-d] | `test_crate_graph_and_layering_violations`, `test_fallback_parses_the_workspace_toml`, `test_changed_crates_are_marked` | test |
-| [30.1-e] | `test_output_is_byte_identical_across_runs`, `test_output_holds_no_machine_paths` (planned) | test |
-| [30.1-f] | `test_unknown_marker_warns_and_marks_unknown`, `test_empty_criteria_cell_warns` (planned) | test |
-| [30.1-g] | `test_ci_runs_the_dashboard_tests` (planned); `ci.yml` python-lint step runs `tests/dashboard`; CI green on the PR; `analyze.py --stage 30` exit 0 locally | test |
+| [30.1-a] | `tests/dashboard/test_generate.py::test_plan_parses_to_the_exact_fixture`, `…struck_criteria…`, `…letter_and_draft_stages…`, `…idless_stages…`, `…implementation_tables_are_not_stories…`, `…bullet_criteria_parse…`, `…bullet_criteria_strip_struck_spans…`, `…cells_keep_last_cell_without_trailing_pipe…` | test |
+| [30.1-b] | `test_lifecycle_buckets_on_a_fixture_repository`, `test_lagging_heading_criterion_is_develop`, `test_stage_bucket_priority_and_counts`, `test_tag_only_pr_citation_counts_for_the_tag`, `test_done_at_rules`, `test_item_bucket_rules`, `test_issue_body_mentions_are_not_merges`, `test_release_only_merge_counts_for_the_tag`, `test_no_release_tag_makes_done_items_develop`, `test_squash_merge_subject_counts_for_ancestry` | test |
+| [30.1-c] | `test_coverage_follows_the_analyze_convention` | test |
+| [30.1-d] | `test_crate_graph_and_layering_violations`, `test_fallback_parses_the_workspace_toml`, `test_changed_crates_are_marked`, `test_same_tier_pair_allowed_and_other_same_tier_flagged` | test |
+| [30.1-e] | `test_output_is_byte_identical_across_runs`, `test_output_holds_no_machine_paths`, `test_repo_url_rejects_credential_and_local_remotes`, `test_output_byte_identical_across_hash_seeds` | test |
+| [30.1-f] | `test_unknown_marker_warns_and_marks_unknown`, `test_empty_criteria_cell_warns`, `test_prose_only_stage_warns` | test |
+| [30.1-g] | `test_ci_runs_the_dashboard_tests`; `ci.yml` python-lint step runs `tests/dashboard`; CI green on the PR; `analyze.py --stage 30` exit 0 locally | test |
 | [30.2-a] | `tests/dashboard/test_page.py::test_page_is_self_contained` | test |
 | [30.2-a] | open `index.html` from `file://` in a browser: page renders, network panel empty | manual |
 | [30.2-b] | `test_four_colours_and_text_badges_both_themes` | test |
@@ -269,7 +270,7 @@ Autonomous mode allows M per PR. The whole feature measured 1844 lines
 (L), so it was split at the module boundary — plan-state engine first
 (the dashboard/1 contract and its producer), crate graph + page next,
 the workflow integration last (L36; ferrum-size §3). The review fixes
-pushed PR 1 to 1576, so the crate graph (30.1-d) moved to PR 2 as well
+pushed PR 1 to 1407, so the crate graph (30.1-d) moved to PR 2 as well
 (ferrum-size §4: deliver what is complete within M). Re-measure with
 `git diff --shortstat origin/develop...HEAD` before each push.
 

@@ -39,7 +39,7 @@ TIERS = {
     "ferrum-cli": 5,
     "ferrum-wasm": 5,
 }
-SAME_TIER_ALLOWED = {("ferrum-engines", "ferrum-gpu-lock"), ("ferrum-render", "ferrum-processing")}
+SAME_TIER_ALLOWED = {("ferrum-render", "ferrum-processing")}
 APP_FORBIDDEN = {"wgpu", "egui", "egui-wgpu", "eframe"}
 APP_RULE = "ferrum-app must compile without wgpu/egui"
 GPU_LOCK_RULE = "ferrum-gpu-lock depends on no other FERRUM crate"

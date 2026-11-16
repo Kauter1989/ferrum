@@ -17,7 +17,7 @@ import generate
 def test_plan_parses_to_the_exact_fixture():
     parsed = generate.parse_plan(generate_target_plan())
     stages = parsed["stages"]
-    assert [s["id"] for s in stages] == ["1", "2", "3", "4", "5", "6", "7", "8", "F1"]
+    assert [s["id"] for s in stages] == ["1", "2", "3", "4", "5", "6", "7", "8", "10", "F1"]
     assert [s["heading_status"] for s in stages] == [
         "done",
         "progress",
@@ -27,6 +27,7 @@ def test_plan_parses_to_the_exact_fixture():
         "progress",
         "progress",
         "done",
+        "progress",
         "done",
     ]
     assert stages[1]["title"].startswith("Mixed")
@@ -128,6 +129,7 @@ def test_lifecycle_buckets_on_a_fixture_repository(repo_data):
         "6": ("progress", {"progress": 1}),
         "7": ("released", {"released": 1}),
         "8": ("released", {"released": 2}),
+        "10": ("released", {"released": 1}),
         "F1": ("develop", {"develop": 1}),
     }
     for stage in repo_data["stages"]:
@@ -161,6 +163,9 @@ def test_lagging_heading_criterion_is_develop(repo_data):
 def test_stage_bucket_priority_and_counts():
     assert generate.stage_aggregate(["released", "develop"])[0] == "develop"
     assert generate.stage_aggregate(["released", "progress"])[0] == "progress"
+    assert generate.stage_aggregate(["develop", "progress"])[0] == "progress"
+    assert generate.stage_aggregate(["unknown", "progress"])[0] == "unknown"
+    assert generate.stage_aggregate([])[0] == "unknown"
     assert generate.stage_aggregate(["planned", "unknown"])[0] == "unknown"
     assert generate.stage_aggregate(["released", "released"])[0] == "released"
     assert generate.stage_aggregate(["planned"])[0] == "planned"
@@ -334,3 +339,174 @@ def test_item_bucket_rules():
     assert generate.item_bucket(False, False, "progress") == "progress"
     assert generate.item_bucket(False, False, "planned") == "planned"
     assert generate.item_bucket(False, False, "unknown") == "unknown"
+
+
+# covers 30.1-b
+
+
+def test_tag_only_pr_citation_counts_for_the_tag(repo_data):
+    """A PR cited only at the tag (edited away at target) still marks done@tag.
+
+    Stage 10's criterion cites PR 8 at the tag (merged before it) and loses
+    the citation at target; the ancestry universe must union both plans.
+    """
+    stage10 = next(s for s in repo_data["stages"] if s["id"] == "10")
+    unit = generate.stage_units(stage10)[0]
+    assert unit["id"] == "10.1-a"
+    assert unit["bucket"] == "released"
+    assert unit["done"] is False  # not done at target: citation removed, no marker
+
+
+# covers 30.1-d
+
+
+def test_same_tier_pair_allowed_and_other_same_tier_flagged():
+    crates = [
+        {"name": "ferrum-render", "description": "", "deps": ["ferrum-processing"]},
+        {"name": "ferrum-processing", "description": "", "deps": []},
+        {"name": "ferrum-io", "description": "", "deps": ["ferrum-render"]},
+    ]
+    pairs = {(v["from"], v["to"]) for v in crate_graph.check_layering(crates)}
+    assert ("ferrum-render", "ferrum-processing") not in pairs  # the documented same-tier pair
+    assert ("ferrum-io", "ferrum-render") in pairs  # same tier, not allowed → inward rule
+
+
+# covers 30.1-a
+
+
+def test_cells_keep_last_cell_without_trailing_pipe():
+    assert generate._cells("| 1.1 | story | criteria") == ["1.1", "story", "criteria"]
+    assert generate._cells("| 1.1 | story | criteria |") == ["1.1", "story", "criteria"]
+    assert generate._cells("| a | b\\|") == ["a", "b|"]  # escaped content pipe, no delimiter
+
+
+# covers 30.1-a
+
+
+def test_bullet_criteria_strip_struck_spans():
+    """A struck ✅ or (PR n) inside a bullet body must not count (table path parity)."""
+    body = "**Criteria**\n\n- [8.1-a] shipped ~~✅~~ (reopened) ~~(PR 6)~~.\n"
+    unit = generate._parse_bullet_criteria("8", body)[0]["criteria"][0]
+    assert unit["done_marker"] is False
+    assert unit["prs"] == []
+    assert "✅" not in unit["text"] and "PR 6" not in unit["text"]
+
+
+# covers 30.1-e
+
+
+def test_repo_url_rejects_credential_and_local_remotes(tmp_path):
+    import subprocess
+
+    def run(*args, check=True):
+        subprocess.run(["git", "-C", str(tmp_path), *args], check=check, capture_output=True)  # noqa: S603, S607 - git on PATH, no shell
+
+    run("init", "-q")
+    git = generate.Git(tmp_path)
+    for bad in (
+        "https://user:token@github.com/x/y.git",
+        "/mnt/e/projects/ferrum",
+        "https://gitlab.com/x/y.git",
+        "git@github.com:tok:sec@host/x",
+        "git@github.com:x/y/z.git",
+    ):
+        run("remote", "remove", "origin", check=False)
+        run("remote", "add", "origin", bad)
+        warnings = []
+        assert generate._repo_url(git, warnings) is None
+        assert warnings and "repo_url omitted" in warnings[0]
+        assert "token" not in warnings[0] and "/mnt/" not in warnings[0] and "sec" not in warnings[0]
+    run("remote", "remove", "origin")
+    run("remote", "add", "origin", "git@github.com:x/y.git")
+    assert generate._repo_url(git, []) == "https://github.com/x/y"
+    run("remote", "remove", "origin")
+    run("remote", "add", "origin", "ssh://git@github.com/x/y.git")
+    assert generate._repo_url(git, []) == "https://github.com/x/y"
+    run("remote", "remove", "origin")
+    assert generate._repo_url(git, []) is None  # no origin → None
+
+
+# covers 30.1-b
+
+
+def test_squash_merge_subject_counts_for_ancestry(tmp_path):
+    """The `(#N)$` subject arm (squash merges) must count, not only merge commits."""
+    import subprocess
+
+    def run(*args):
+        subprocess.run(["git", "-C", str(tmp_path), *args], check=True, capture_output=True)  # noqa: S603, S607 - git on PATH, no shell
+
+    run("init", "-q", "-b", "main")
+    run("config", "user.email", "t@example.com")
+    run("config", "user.name", "t")
+    run("config", "commit.gpgsign", "false")
+    run("commit", "--allow-empty", "-m", "init")
+    run("commit", "--allow-empty", "-m", "fix: squash merge (#9)")
+    git = generate.Git(tmp_path)
+    head = git.run("rev-parse", "HEAD").strip()
+    ancestry = generate.pr_ancestry(git, head, head, [9])
+    assert ancestry[9]["target"] is True
+    assert ancestry[9]["tag"] is True
+
+
+# covers 30.1-e
+
+
+def test_output_byte_identical_across_hash_seeds(plan_repo, tmp_path):
+    """main()'s written data.json is byte-identical across PYTHONHASHSEED values."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    script = Path(__file__).resolve().parents[2] / "scripts" / "dashboard" / "generate.py"
+    payloads = []
+    for seed in ("0", "12345"):
+        out = tmp_path / f"site{seed}"
+        env = {**os.environ, "PYTHONHASHSEED": seed}
+        subprocess.run(  # noqa: S603 - python on PATH, no shell
+            [
+                sys.executable,
+                str(script),
+                "--root",
+                str(plan_repo),
+                "--ref",
+                "develop",
+                "--release-ref",
+                "main",
+                "--out",
+                str(out),
+            ],
+            check=True,
+            capture_output=True,
+            env=env,
+        )
+        payloads.append((out / "data.json").read_bytes())
+    assert payloads[0] == payloads[1]
+
+
+# covers 30.1-f
+
+
+def test_prose_only_stage_warns(tmp_path):
+    """A stage that parses to zero units warns instead of silently defaulting (L37)."""
+    import subprocess
+
+    def run(*args):
+        subprocess.run(["git", "-C", str(tmp_path), *args], check=True, capture_output=True)  # noqa: S603, S607 - git on PATH, no shell
+
+    run("init", "-q", "-b", "main")
+    run("config", "user.email", "t@example.com")
+    run("config", "user.name", "t")
+    run("config", "commit.gpgsign", "false")
+    (tmp_path / "dev_plan.md").write_text(
+        "# Plan\n\n## Stage 99 — Prose ✅\n\nNo table here.\n", encoding="utf-8", newline="\n"
+    )
+    (tmp_path / "Cargo.toml").write_text("[workspace]\nmembers = []\n", encoding="utf-8", newline="\n")
+    run("add", "-A")
+    run("commit", "-m", "init")
+    run("tag", "v0.1.0")
+    data = generate.build_data(tmp_path, ref="main", release_ref="main")
+    assert any("Stage 99" in w and "no parseable" in w for w in data["meta"]["warnings"])
+    stage99 = next(s for s in data["stages"] if s["id"] == "99")
+    assert stage99["bucket"] == "unknown"
