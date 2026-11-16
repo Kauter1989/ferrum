@@ -1063,8 +1063,12 @@ and hardens the protocol and the rendering rule.
 "tests that cannot fail" left by #91's review fold into 29.5 or a small
 track.
 
-**Size:** XL, several PRs; G2 plans the split. A new ADR for the rotating
-token.
+**Size:** XL, seven PRs; G2 plans the split. **Design:**
+[docs/view-streaming.md](docs/view-streaming.md),
+[ADR 0019](docs/decisions/0019-view-host-rotating-token.md) (rotating token;
+G2 design written, pending approval). Two consumers share the ViewState: the
+host-rendered page/`frame.png` (full state + MPR/3D frames) and the
+browser-rendered WebGPU panel (segments/overlay, TF editor, measurements).
 
 **Where the Stage 26 out-of-scope lands:** segments/overlay → 29.2-a; the
 transfer-function editor → 29.2-b; measurements → 29.2-c; compressed/16-bit
@@ -1076,11 +1080,16 @@ orbit / volume view over HTTP → 29.1.
 
 | Task | What | Criteria | PR | State |
 |---|---|---|---|---|
-| 29.T1 the host streams the full ViewState + camera/roi events; parity | 29.1-a/b | TBD | |
-| 29.T2 the browser panel: segments/overlay, transfer editor, measurements | 29.2-a/b/c | TBD | |
-| 29.T3 compressed/16-bit volume transfer | 29.3-a | TBD | |
-| 29.T4 rotating token (ADR first) | 29.4-a | TBD | |
-| 29.T5 CPU overlay consolidation; WebGPU test automation | 29.5-a/b | TBD | |
+| 29.T1 one CPU slice-overlay rule + CPU slice renderer + slice parity | 29.5-a | 1 | |
+| 29.T2 host full ViewState + MPR/3D frames + camera/roi events + parity | 29.1-a/b | 2 | |
+| 29.T3 16-bit + gzip volume transfer + `/api/labels` | 29.3-a | 3 | |
+| 29.T4 rotating token (ADR 0019) | 29.4-a | 4 | |
+| 29.T5 panel segments/overlay + host sync (verify wasm build of app) | 29.2-a | 5 | |
+| 29.T6 panel TF editor + measurements | 29.2-b/c | 6 | |
+| 29.T7 headed-browser WebGPU automation | 29.5-b | 7 | |
+
+PR 1 is foundational (the rendering rule); PRs 3 and 4 are independent and can
+land while PR 2 is in review; PRs 5–7 build the panel on the full state + wire.
 
 ---
 
