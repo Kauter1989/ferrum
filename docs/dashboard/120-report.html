@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PR #120 — дашборд: интерактив, скилл, публикация (финальный отчёт)</title>
+<style>
+  :root { --bg:#f7f8fa; --card:#fff; --fg:#1a1d23; --muted:#5c6470; --line:#e3e6ea; --accent:#2563eb;
+    --ok:#16a34a; --warn:#d97706; --bad:#dc2626; --code:#f1f3f5; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0f1115; --card:#171a21; --fg:#e6e8ec; --muted:#9aa3af;
+    --line:#2a2f3a; --accent:#60a5fa; --ok:#4ade80; --warn:#fbbf24; --bad:#f87171; --code:#1e222b; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.55 system-ui,sans-serif; }
+  main { max-width:960px; margin:0 auto; padding:32px 20px 64px; }
+  h1 { font-size:26px; margin:0 0 4px; } h2 { font-size:20px; margin:36px 0 10px; border-bottom:1px solid var(--line); padding-bottom:6px; }
+  .sub { color:var(--muted); margin:0 0 18px; }
+  .meta { display:flex; flex-wrap:wrap; gap:8px; margin:14px 0; }
+  .pill { background:var(--card); border:1px solid var(--line); border-radius:999px; padding:3px 12px; font-size:13px; }
+  .pill.ok { border-color:var(--ok); color:var(--ok); }
+  table { width:100%; border-collapse:collapse; margin:10px 0; font-size:14px; }
+  th,td { border:1px solid var(--line); padding:6px 9px; text-align:left; vertical-align:top; }
+  th { background:var(--code); }
+  code { background:var(--code); padding:1px 5px; border-radius:4px; font-size:13px; }
+  a { color:var(--accent); }
+  .note { color:var(--muted); font-size:13px; }
+  footer { margin-top:48px; padding-top:14px; border-top:1px solid var(--line); color:var(--muted); font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+<h1>PR #120 — дашборд разработки: интерактив, скилл, публикация gh-pages</h1>
+<p class="sub">Финальный отчёт (фаза 11). FERRUM, ноябрь 2026. Head SHA <code>145d7c1</code>, смержен в <code>develop</code> коммитом <code>c6696e1</code> (PR #120, 2026-11-16).</p>
+<div class="meta">
+  <span class="pill">Ветка <code>feat/dashboard-workflow</code> → <code>develop</code></span>
+  <span class="pill ok">смержен 2026-11-16 · c6696e1</span>
+  <span class="pill">13 файлов, +618 / −10 · M</span>
+  <span class="pill ok">CI зелёный (5/5)</span>
+</div>
+
+<h2>1. Что сделано</h2>
+<p><b>Интерактив (30.3).</b> Панель фильтров (чекбоксы жизненного цикла, селект статуса заголовка, поиск) сужает карточки стадий по <code>data-bucket</code>/<code>data-status</code>/тексту со счётчиком visible/total. Серверный SVG-граф крейтов (узел на крейт, ребро на внутрирабочую зависимость) с подсветкой соседей по клику, зумом колесом и панорамированием перетаскиванием. Нативные селекты объявляют <code>color-scheme</code> и стилизуют опции для светлой/тёмной темы (L35). Inline-скрипт проходит <code>node --check</code>.</p>
+<p><b>Workflow (30.4).</b> Скилл <code>ferrum-dashboard</code> (generate / verify / G3-снапшот / publish после мержа и релиза). <code>scripts/dashboard/publish.py</code> пушит сайт в <code>gh-pages</code> (orphan-ветка + <code>.nojekyll</code>) через временный detached worktree, не трогая ветку вызывающего — GitHub Pages отдаёт сайт <b>без CI-минут</b>. Хуки exempt <code>gh-pages</code> от правила имён и локального cargo-гейта (J/E), напоминают регенерировать при правках плана/архитектуры/манифеста (G), отмечают устаревший опубликованный дашборд на старте сессии (H). CLAUDE.md, <code>ferrum-change</code>, <code>ferrum-release</code> называют дашборд.</p>
+
+<h2>2. Verification</h2>
+<table>
+  <thead><tr><th>Критерий</th><th>Уровень</th><th>Evidence</th><th>Итог</th></tr></thead>
+  <tbody>
+    <tr><td>30.3-a</td><td>test</td><td>контролы фильтров; inline-скрипт passes node --check</td><td>✅</td></tr>
+    <tr><td>30.3-b</td><td>test</td><td>SVG-узел на крейт, ребро на зависимость</td><td>✅</td></tr>
+    <tr><td>30.3-c</td><td>test</td><td>селекты: color-scheme + стили опций</td><td>✅</td></tr>
+    <tr><td>30.4-a</td><td>test</td><td>скилл с секциями generate/verify/publish</td><td>✅</td></tr>
+    <tr><td>30.4-b</td><td>test</td><td>gh-pages exempt (J/E); нестандартные имена по-прежнему denied (test_hooks + test_workflow)</td><td>✅</td></tr>
+    <tr><td>30.4-c</td><td>test</td><td>строка матрицы + freshness helper; stale/fresh session-start (test_hooks)</td><td>✅</td></tr>
+    <tr><td>30.4-d</td><td>test</td><td>функциональная публикация в gh-pages на bare-origin фикстуре; ветка вызывающего не тронута</td><td>✅</td></tr>
+    <tr><td>30.4-e</td><td>test</td><td>CLAUDE.md / ferrum-change / ferrum-release называют дашборд</td><td>✅</td></tr>
+    <tr><td>30.3-a…c</td><td>manual</td><td>клики по фильтрам/графу в обеих темах</td><td>⏳ пользователь</td></tr>
+    <tr><td>метрики</td><td>measured</td><td>index.html 253 КБ (≤300 КБ); 14 крейтов / 0 нарушений / 0 warnings; генерация 2.0 с</td><td>✅</td></tr>
+  </tbody>
+</table>
+<p class="note">39 pytest (node-тест на хосте/CI; в WSL пропущен — node отсутствует); test_hooks 41 OK; ruff чист; analyze --stage 30 exit 0 (19 критериев); preflight полного стека WSL — all checks passed.</p>
+
+<h2>3. Code map (head <code>145d7c1</code>)</h2>
+<table>
+  <thead><tr><th>Что</th><th>file:lines</th><th>Символ</th></tr></thead>
+  <tbody>
+    <tr><td>Публикация в gh-pages (worktree, orphan, .nojekyll)</td><td><a href="https://github.com/Kauter1989/ferrum/blob/145d7c1/scripts/dashboard/publish.py#L33-L63">publish.py:33-63</a></td><td><code>publish</code></td></tr>
+    <tr><td>CLI публикации</td><td><a href="https://github.com/Kauter1989/ferrum/blob/145d7c1/scripts/dashboard/publish.py#L66-L80">publish.py:66-80</a></td><td><code>main</code></td></tr>
+    <tr><td>SVG-граф крейтов</td><td><a href="https://github.com/Kauter1989/ferrum/blob/145d7c1/scripts/dashboard/page.py#L71-L118">page.py:71-118</a></td><td><code>_crate_graph</code></td></tr>
+    <tr><td>data-status карточки для фильтра</td><td><a href="https://github.com/Kauter1989/ferrum/blob/145d7c1/scripts/dashboard/page.py#L52-L68">page.py:52-68</a></td><td><code>_stage_card</code></td></tr>
+    <tr><td>Exempt gh-pages (J)</td><td><a href="https://github.com/Kauter1989/ferrum/blob/145d7c1/.claude/hooks/ferrum_hooks.py#L268-L277">ferrum_hooks.py:268-277</a></td><td><code>check_branch_names</code></td></tr>
+    <tr><td>Пропуск cargo-гейта для gh-pages (E)</td><td><a href="https://github.com/Kauter1989/ferrum/blob/145d7c1/.claude/hooks/ferrum_hooks.py#L317-L321">ferrum_hooks.py:317-321</a></td><td><code>check_push</code></td></tr>
+    <tr><td>Напоминание о дашборде (G)</td><td><a href="https://github.com/Kauter1989/ferrum/blob/145d7c1/.claude/hooks/ferrum_hooks.py#L107-L112">ferrum_hooks.py:107-112</a></td><td><code>MATRIX</code></td></tr>
+    <tr><td>Свежесть опубликованного дашборда (H)</td><td><a href="https://github.com/Kauter1989/ferrum/blob/145d7c1/.claude/hooks/ferrum_hooks.py#L762-L776">ferrum_hooks.py:762-776</a></td><td><code>dashboard_freshness</code></td></tr>
+    <tr><td>Фильтры/поиск/подсветка/zoom (JS) + L35 (CSS)</td><td><a href="https://github.com/Kauter1989/ferrum/blob/145d7c1/scripts/dashboard/template.html">template.html</a></td><td>inline <code>&lt;script&gt;</code>, <code>.filters</code></td></tr>
+    <tr><td>Скилл публикации</td><td><a href="https://github.com/Kauter1989/ferrum/blob/145d7c1/.claude/skills/ferrum-dashboard/SKILL.md">SKILL.md</a></td><td><code>ferrum-dashboard</code></td></tr>
+  </tbody>
+</table>
+
+<h2>4. История ревью</h2>
+<p>Lead self-review (субагент code-reviewer умирал на квоте, L42): интерактив структурно протестирован + синтаксис JS проверен node; публикация протестирована функционально (bare-origin фикстура, ветка вызывающего не тронута, .nojekyll на месте); хуки покрыты test_hooks (41 OK) и test_workflow; exempt gh-pages обоснован (CI не запускается на этой ветке). Блокирующих находок нет. Manual-строки (браузер, обе темы) — за пользователем.</p>
+
+<h2>5. Публикация</h2>
+<p>После мержа: <code>python scripts/dashboard/publish.py --ref origin/develop</code> → <code>gh-pages</code>; Settings → Pages → Deploy from a branch → <code>gh-pages</code> / (root); сайт на <a href="https://kauter1989.github.io/ferrum/">https://kauter1989.github.io/ferrum/</a>. Без CI-минут.</p>
+
+<footer>
+  Источники: <code>git diff --shortstat</code> против базы (13 файлов, +618/−10);
+  <code>generate.py --ref HEAD</code> (253 КБ, 14 крейтов / 0 нарушений / 0 warnings);
+  analyze --stage 30 exit 0 (19 критериев); preflight WSL — all checks passed; ruff; pytest 39; test_hooks 41.
+  Финальный отчёт по смерженному PR #120 (<code>145d7c1</code> → <code>c6696e1</code>); code map закреплён на <code>145d7c1</code>.
+</footer>
+</main>
+</body>
+</html>

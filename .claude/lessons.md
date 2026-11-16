@@ -959,6 +959,28 @@ that says so instead of editing the old one.
   intention. (Renumbered from the draft's L39 on merge: the 0.4.0 retro
   had already taken L39–L44.)
 
+### L50 — The coverage job's instrumented UI test segfaults at teardown (2026-11, Stage 30)
+
+- **Symptom:** On PRs #118 and #120 (which change no Rust) the `coverage`
+  CI job failed: every `ferrum --test ui` test printed `ok`, then the
+  binary died with `signal: 11, SIGSEGV` as the process exited, under
+  `cargo llvm-cov`. The `check` job ran the same UI tests green.
+- **Root cause:** the llvm-cov-instrumented binary crashes in lavapipe
+  teardown at exit (the same family as L45's TLS-teardown crash, here on
+  CI's own mesa under instrumentation). Environmental, not FERRUM's; a
+  flake, not a regression — the assertions all passed before the crash.
+- **Fix:** re-ran the failed job (`gh run rerun <run-id> --failed`); it
+  passed. No code change.
+- **Guard:** when `coverage` fails with a SIGSEGV in `ferrum --test ui`
+  *after* all tests printed ok, the `check` job is green, and the PR
+  touches no Rust, treat it as the instrumented-teardown flake: confirm
+  the log shows the segfault at exit (not a failed assertion or a floor
+  breach), then re-run `--failed` once. A failed assertion or a coverage
+  floor breach is a real defect (L33), not this flake.
+- **Rule:** a crash in libc/mesa teardown after every assertion passed is
+  the environment until proven otherwise (L45); the uninstrumented
+  `check` job is authoritative for whether the UI tests pass.
+
 ## What worked
 
 ### W1 — Field test on the user's GPU with a throw-away script (2026-10, Stage 17)
