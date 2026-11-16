@@ -21,6 +21,9 @@ use ferrum_domain::SegmentStyle;
 /// native resolution a screen pixel is a voxel. `segment(label)` gives the
 /// colour and opacity of a *visible* segment, or `None` to leave the pixel
 /// grey. Neighbours clamp to the image border, as the shader's clamped UV does.
+///
+/// `rgba` must hold `width × height × 4` bytes (RGBA, row-major); only the RGB
+/// channels are written.
 pub fn slice_overlay(
     rgba: &mut [u8],
     width: u32,
@@ -105,7 +108,7 @@ mod tests {
         // -> not an edge -> fill at alpha 0.5, not the full-colour outline
         assert_eq!([rgba[0], rgba[1], rgba[2]], [100, 50, 25]);
         // an interior border of the block (2,0 is background; (1,0) touches it) is an edge
-        let i = (0 * w + 1) as usize;
+        let i = 1usize;
         assert_eq!([rgba[i * 4], rgba[i * 4 + 1], rgba[i * 4 + 2]], [200, 100, 50]);
     }
 
@@ -115,7 +118,15 @@ mod tests {
         let (w, h) = (4u32, 4u32);
         let label_at = |x: u32, y: u32| u8::from((1..3).contains(&x) && (1..3).contains(&y));
         let mut rgba: Vec<u8> = (0..w * h).flat_map(|_| [10u8, 10, 10, 255]).collect();
-        slice_overlay(&mut rgba, w, h, label_at, |l| (l == 1).then_some(([200u8, 100, 50], 1.0)), SegmentStyle::Outline, 1.0);
+        slice_overlay(
+            &mut rgba,
+            w,
+            h,
+            label_at,
+            |l| (l == 1).then_some(([200u8, 100, 50], 1.0)),
+            SegmentStyle::Outline,
+            1.0,
+        );
         let px = |x: u32, y: u32| {
             let i = (y * w + x) as usize;
             [rgba[i * 4], rgba[i * 4 + 1], rgba[i * 4 + 2]]
@@ -126,12 +137,28 @@ mod tests {
         let (w2, h2) = (6u32, 6u32);
         let big = |x: u32, y: u32| u8::from((1..5).contains(&x) && (1..5).contains(&y));
         let mut rgba2: Vec<u8> = (0..w2 * h2).flat_map(|_| [10u8, 10, 10, 255]).collect();
-        slice_overlay(&mut rgba2, w2, h2, big, |l| (l == 1).then_some(([200u8, 100, 50], 1.0)), SegmentStyle::Outline, 1.0);
+        slice_overlay(
+            &mut rgba2,
+            w2,
+            h2,
+            big,
+            |l| (l == 1).then_some(([200u8, 100, 50], 1.0)),
+            SegmentStyle::Outline,
+            1.0,
+        );
         let i = (2 * w2 + 2) as usize;
         assert_eq!([rgba2[i * 4], rgba2[i * 4 + 1], rgba2[i * 4 + 2]], [10, 10, 10], "the interior stays grey");
         // zero opacity: nothing is drawn
         let mut rgba3: Vec<u8> = (0..w2 * h2).flat_map(|_| [10u8, 10, 10, 255]).collect();
-        slice_overlay(&mut rgba3, w2, h2, big, |l| (l == 1).then_some(([200u8, 100, 50], 0.0)), SegmentStyle::FillAndOutline, 1.0);
+        slice_overlay(
+            &mut rgba3,
+            w2,
+            h2,
+            big,
+            |l| (l == 1).then_some(([200u8, 100, 50], 0.0)),
+            SegmentStyle::FillAndOutline,
+            1.0,
+        );
         assert_eq!([rgba3[0], rgba3[1], rgba3[2]], [10, 10, 10]);
     }
 }
