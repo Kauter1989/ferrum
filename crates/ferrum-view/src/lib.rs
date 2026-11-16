@@ -41,6 +41,9 @@ mod page;
 mod server;
 mod session;
 mod state;
+mod token;
+
+pub use token::TOKEN_TTL;
 
 pub use cpu::CpuFrameSource;
 pub use frame::{Backend, BackendPreference, FrameSource, RawFrame};

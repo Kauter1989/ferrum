@@ -105,7 +105,7 @@ fn view_serve(workspace: &std::path::Path, port: u16, cpu: bool) -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let mut server = match ViewServer::start(session, ServeOptions { port }) {
+    let mut server = match ViewServer::start(session, ServeOptions { port, ..Default::default() }) {
         Ok(server) => server,
         Err(e) => {
             eprintln!("ferrum-cli view serve: {e}");
@@ -117,6 +117,7 @@ fn view_serve(workspace: &std::path::Path, port: u16, cpu: bool) -> ExitCode {
         json!({
             "url": server.url(),
             "token": server.token(),
+            "expires_in": ferrum_view::TOKEN_TTL.as_secs(),
             "workspace": server.workspace(),
             "backend": server.backend(),
         })

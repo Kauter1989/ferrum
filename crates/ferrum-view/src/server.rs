@@ -14,6 +14,7 @@ use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
 use crate::page::PAGE;
 use crate::session::{Session, ViewError};
+use crate::token::{RotatingToken, TOKEN_GRACE, TOKEN_TTL};
 
 /// The name of the cookie that carries the token after the page loads.
 pub const COOKIE: &str = "ferrum-view";
@@ -21,11 +22,21 @@ pub const COOKIE: &str = "ferrum-view";
 /// Largest body accepted on `POST /api/input`.
 pub const MAX_BODY: usize = 64 * 1024;
 
-/// How the host starts: the port the page is served on.
-#[derive(Debug, Clone, Copy, Default)]
+/// How the host starts: the port the page is served on, and the token lifetime.
+#[derive(Debug, Clone, Copy)]
 pub struct ServeOptions {
     /// Port on `127.0.0.1`; `0` lets the operating system choose one.
     pub port: u16,
+    /// How long a token is valid before it must be refreshed (ADR 0019).
+    pub token_ttl: std::time::Duration,
+    /// How long the previous token stays valid after a rotation.
+    pub token_grace: std::time::Duration,
+}
+
+impl Default for ServeOptions {
+    fn default() -> Self {
+        Self { port: 0, token_ttl: TOKEN_TTL, token_grace: TOKEN_GRACE }
+    }
 }
 
 /// A running view host (stopped when dropped).
@@ -41,24 +52,24 @@ pub struct ViewServer {
 impl ViewServer {
     /// Starts serving `session` on loopback.
     pub fn start(session: Session, options: ServeOptions) -> Result<Self, ViewError> {
-        let token = new_token()?;
+        let token = RotatingToken::new(options.token_ttl, options.token_grace)?;
+        let initial = token.current().to_owned();
         let backend = session.backend().as_str();
         let workspace = session.workspace().to_string_lossy().into_owned();
         let server = Server::http(("127.0.0.1", options.port)).map_err(|e| ViewError::Internal(e.to_string()))?;
         let addr = server.server_addr().to_ip().ok_or_else(|| ViewError::Internal("not an IP listener".into()))?;
         let server = Arc::new(server);
         let worker = server.clone();
-        let token_for_thread = token.clone();
         let thread = std::thread::Builder::new()
             .name("ferrum-view".into())
             .spawn(move || {
-                let mut host = Host { session, token: token_for_thread };
+                let mut host = Host { session, token };
                 for request in worker.incoming_requests() {
                     host.serve(request);
                 }
             })
             .map_err(|e| ViewError::Internal(e.to_string()))?;
-        Ok(Self { addr, token, backend, workspace, server, thread: Some(thread) })
+        Ok(Self { addr, token: initial, backend, workspace, server, thread: Some(thread) })
     }
 
     /// The base URL, e.g. `http://127.0.0.1:41234`.
@@ -98,17 +109,10 @@ impl Drop for ViewServer {
     }
 }
 
-/// A 32-hex-digit token from the operating system's random source.
-fn new_token() -> Result<String, ViewError> {
-    let mut bytes = [0u8; 16];
-    getrandom::fill(&mut bytes).map_err(|e| ViewError::Internal(format!("cannot read random bytes: {e}")))?;
-    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
-}
-
 /// Everything one thread needs to answer requests.
 struct Host {
     session: Session,
-    token: String,
+    token: RotatingToken,
 }
 
 impl Host {
@@ -155,7 +159,7 @@ impl Host {
             .iter()
             .find(|h| h.field.equiv("Cookie"))
             .and_then(|h| cookie_value(h.value.as_str(), COOKIE));
-        [from_query, from_header, from_cookie].into_iter().flatten().any(|t| constant_time_eq(&t, &self.token))
+        [from_query, from_header, from_cookie].into_iter().flatten().any(|t| self.token.accepts(&t))
     }
 
     fn route(&mut self, method: &Method, url: &str, body: &[u8]) -> Reply {
@@ -163,7 +167,7 @@ impl Host {
         let get = *method == Method::Get;
         let post = *method == Method::Post;
         match path {
-            "/" | "/index.html" if get => Reply::page(self.token.clone()),
+            "/" | "/index.html" if get => Reply::page(self.token.current().to_owned()),
             "/api/state" if get => {
                 self.session.refresh();
                 match self.session.state_json() {
@@ -208,6 +212,20 @@ impl Host {
                 Err(e @ ViewError::BadRequest(_)) => Reply::json(StatusCode(400), json!({ "error": e.to_string() })),
                 Err(e) => internal(e),
             },
+            // A live token rotates to a fresh one (ADR 0019); the previous token
+            // stays valid for the grace window. The cookie is re-set.
+            "/api/token/refresh" if post => match self.token.rotate() {
+                Ok(token) => Reply {
+                    status: StatusCode(200),
+                    content_type: "application/json",
+                    headers: vec![(
+                        "Set-Cookie".into(),
+                        format!("{COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict"),
+                    )],
+                    body: json!({ "token": token, "expires_in": self.token.expires_in() }).to_string().into_bytes(),
+                },
+                Err(e) => internal(e),
+            },
             // The browser panel: the built wasm module and its JS glue, taken
             // from the folder next to the executable (see
             // integrations/dsh/panel/build.cmd). A client that draws the study
@@ -228,7 +246,9 @@ impl Host {
                 None => Reply::json(StatusCode(404), json!({ "error": "no such panel file" })),
             },
             "/api/state" | "/api/events" | "/api/frame.png" | "/api/volume" | "/api/volume.json" | "/api/input"
-            | "/" | "/index.html" => Reply::json(StatusCode(405), json!({"error": "wrong method"})),
+            | "/api/token/refresh" | "/" | "/index.html" => {
+                Reply::json(StatusCode(405), json!({"error": "wrong method"}))
+            }
             _ => Reply::json(StatusCode(404), json!({"error": "no such route"})),
         }
     }
@@ -331,17 +351,4 @@ fn cookie_value(header: &str, name: &str) -> Option<String> {
         let (key, value) = part.trim().split_once('=')?;
         (key == name).then(|| value.to_owned())
     })
-}
-
-/// Compares two strings without stopping at the first differing byte.
-fn constant_time_eq(a: &str, b: &str) -> bool {
-    let (a, b) = (a.as_bytes(), b.as_bytes());
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b) {
-        diff |= x ^ y;
-    }
-    diff == 0
 }

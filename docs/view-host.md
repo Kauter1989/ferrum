@@ -69,6 +69,18 @@ A missing or wrong token is `401` with `{"error":"token required"}` and
 nothing else. The token never appears in a log line, in the workspace or in
 a frame. It is 32 hex digits from the operating system's random source.
 
+The token is **short-lived and rotates** ([ADR 0019](decisions/0019-view-host-rotating-token.md)):
+it is valid for 15 minutes (`expires_in` in the boot line and the refresh
+answer). `POST /api/token/refresh`, authorized by a live token, returns the next
+one — `{"token":"<32 hex>","expires_in":900}` — and re-sets the cookie. The
+previous token stays valid for a 60-second grace window, so requests in flight
+and a panel mid-refresh do not `401`; at most two tokens are live at once, both
+compared in constant time. An expired token authorizes nothing and cannot
+refresh. The panel refreshes proactively (at ~80% of the TTL); the boot token
+printed by `view serve` only starts the session. A harness that draws
+`/api/frame.png` with the boot token must refresh too, or reconnect after the
+TTL.
+
 ### 4.2 Routes
 
 | Method | Path | Answer |
@@ -78,6 +90,7 @@ a frame. It is 32 hex digits from the operating system's random source.
 | `GET` | `/api/frame.png` | the slice at native resolution, `image/png`; header `X-Ferrum-Rev` |
 | `GET` | `/api/events?since=<seq>` | events with `seq` greater than `since` |
 | `POST` | `/api/input` | one input object; answers with the new state |
+| `POST` | `/api/token/refresh` | a fresh token `{"token","expires_in"}`; re-sets the cookie (4.1) |
 | `GET` | `/api/volume` | the voxels as little-endian `f32`, `application/octet-stream`; the grid, spacing and range travel in `X-Ferrum-Volume` as JSON (26.3-a) |
 | `GET` | `/api/volume.json` | the same description as `application/json`, with `sha256` of the voxels |
 | `GET` | `/panel/<file>` | the browser renderer module (`ferrum_wasm.js`, `ferrum_wasm_bg.wasm`); **no token** (26.3-b) |
