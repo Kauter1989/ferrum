@@ -87,7 +87,10 @@ ferrum-wasm (browser) → ferrum-render (gpu), ferrum-app, ferrum-processing —
 
 `crates/ferrum-render/src/shaders/volume.wgsl` and
 `crates/ferrum-render/src/cpu/raycast.rs` implement the same image-formation
-model. Any change to one must be mirrored in the other and covered by
+model; the slice segment overlay is one rule,
+`crates/ferrum-render/src/shaders/slice.wgsl` ↔
+`crates/ferrum-render/src/cpu/slice.rs` (used by the view host's CPU backend).
+Any change to one must be mirrored in the other and covered by
 `crates/ferrum-render/tests/gpu_parity.rs`.
 
 ## Commands

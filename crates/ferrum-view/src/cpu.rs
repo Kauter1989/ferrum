@@ -4,10 +4,10 @@
 //! The grayscale values come from the slice oracle the parity tests use
 //! ([`ferrum_domain::SliceImage::extract`] plus
 //! [`WindowLevel::apply`](ferrum_domain::WindowLevel::apply) and
-//! [`ferrum_domain::color::unit_to_u8`]); the segment overlay repeats the
-//! rule of `slice.wgsl`: a pixel in full segment colour where a four-neighbour
-//! label differs, otherwise the fill blended with the segment's opacity and
-//! the fill opacity.
+//! [`ferrum_domain::color::unit_to_u8`]); the segment overlay goes through the
+//! one CPU rule ([`ferrum_render::cpu::slice_overlay`], mirroring `slice.wgsl`):
+//! a pixel in full segment colour where a four-neighbour label differs,
+//! otherwise the fill blended with the segment's opacity and the fill opacity.
 
 use ferrum_app::Viewer;
 use ferrum_domain::color::unit_to_u8;

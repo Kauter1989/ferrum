@@ -1080,7 +1080,7 @@ orbit / volume view over HTTP → 29.1.
 
 | Task | What | Criteria | PR | State |
 |---|---|---|---|---|
-| 29.T1 one CPU slice-overlay rule + CPU slice renderer + slice parity | 29.5-a | 1 | |
+| 29.T1 one CPU slice-overlay rule + CPU slice renderer + slice parity | 29.5-a | 1 | ✅ |
 | 29.T2 host full ViewState + MPR/3D frames + camera/roi events + parity | 29.1-a/b | 2 | |
 | 29.T3 16-bit + gzip volume transfer + `/api/labels` | 29.3-a | 3 | |
 | 29.T4 rotating token (ADR 0019) | 29.4-a | 4 | |

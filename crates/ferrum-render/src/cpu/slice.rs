@@ -90,4 +90,48 @@ mod tests {
         // interior fill: grey 0 blended toward the colour at alpha 0.5
         assert_eq!([rgba[i * 4], rgba[i * 4 + 1], rgba[i * 4 + 2]], [100, 50, 25]);
     }
+
+    // covers 29.5-a — out-of-bounds neighbours clamp to the edge pixel (as the
+    // shader's clamped UV), not to background: a corner block pixel is a fill,
+    // not an outline, because its off-image neighbours are itself.
+    #[test]
+    fn border_neighbours_clamp_to_the_edge_pixel() {
+        let (w, h) = (3u32, 3u32);
+        let label_at = |x: u32, y: u32| u8::from(x < 2 && y < 2); // block at the top-left corner
+        let segment = |l: u8| (l == 1).then_some(([200u8, 100, 50], 1.0));
+        let mut rgba = vec![0u8; (w * h * 4) as usize];
+        slice_overlay(&mut rgba, w, h, label_at, segment, SegmentStyle::FillAndOutline, 0.5);
+        // corner (0,0): left/up clamp to itself, right/down are the same label
+        // -> not an edge -> fill at alpha 0.5, not the full-colour outline
+        assert_eq!([rgba[0], rgba[1], rgba[2]], [100, 50, 25]);
+        // an interior border of the block (2,0 is background; (1,0) touches it) is an edge
+        let i = (0 * w + 1) as usize;
+        assert_eq!([rgba[i * 4], rgba[i * 4 + 1], rgba[i * 4 + 2]], [200, 100, 50]);
+    }
+
+    // covers 29.5-a — Outline draws only the edge; a zero-opacity segment is grey.
+    #[test]
+    fn outline_style_and_zero_opacity() {
+        let (w, h) = (4u32, 4u32);
+        let label_at = |x: u32, y: u32| u8::from((1..3).contains(&x) && (1..3).contains(&y));
+        let mut rgba: Vec<u8> = (0..w * h).flat_map(|_| [10u8, 10, 10, 255]).collect();
+        slice_overlay(&mut rgba, w, h, label_at, |l| (l == 1).then_some(([200u8, 100, 50], 1.0)), SegmentStyle::Outline, 1.0);
+        let px = |x: u32, y: u32| {
+            let i = (y * w + x) as usize;
+            [rgba[i * 4], rgba[i * 4 + 1], rgba[i * 4 + 2]]
+        };
+        assert_eq!(px(1, 1), [200, 100, 50], "the edge is full colour");
+        // a 2×2 block has no interior pixel: every block pixel is an edge, so
+        // check the outline-only rule on a larger block's centre instead
+        let (w2, h2) = (6u32, 6u32);
+        let big = |x: u32, y: u32| u8::from((1..5).contains(&x) && (1..5).contains(&y));
+        let mut rgba2: Vec<u8> = (0..w2 * h2).flat_map(|_| [10u8, 10, 10, 255]).collect();
+        slice_overlay(&mut rgba2, w2, h2, big, |l| (l == 1).then_some(([200u8, 100, 50], 1.0)), SegmentStyle::Outline, 1.0);
+        let i = (2 * w2 + 2) as usize;
+        assert_eq!([rgba2[i * 4], rgba2[i * 4 + 1], rgba2[i * 4 + 2]], [10, 10, 10], "the interior stays grey");
+        // zero opacity: nothing is drawn
+        let mut rgba3: Vec<u8> = (0..w2 * h2).flat_map(|_| [10u8, 10, 10, 255]).collect();
+        slice_overlay(&mut rgba3, w2, h2, big, |l| (l == 1).then_some(([200u8, 100, 50], 0.0)), SegmentStyle::FillAndOutline, 1.0);
+        assert_eq!([rgba3[0], rgba3[1], rgba3[2]], [10, 10, 10]);
+    }
 }
