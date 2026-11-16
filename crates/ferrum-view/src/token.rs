@@ -114,9 +114,9 @@ mod tests {
     // covers 29.4-a
     #[test]
     fn an_expired_token_authorizes_nothing() {
-        let mut token = RotatingToken::new(Duration::from_millis(40), Duration::from_millis(20)).unwrap();
+        let mut token = RotatingToken::new(Duration::from_millis(120), Duration::from_millis(60)).unwrap();
         let first = token.current().to_owned();
-        std::thread::sleep(Duration::from_millis(70));
+        std::thread::sleep(Duration::from_millis(250));
         assert!(!token.accepts(&first), "the current token expired");
         // a rotation after expiry does not resurrect the dead token
         let new = token.rotate().unwrap();
@@ -127,11 +127,11 @@ mod tests {
     // covers 29.4-a
     #[test]
     fn the_grace_window_itself_expires() {
-        let mut token = RotatingToken::new(Duration::from_millis(200), Duration::from_millis(30)).unwrap();
+        let mut token = RotatingToken::new(Duration::from_millis(600), Duration::from_millis(120)).unwrap();
         let old = token.current().to_owned();
         token.rotate().unwrap();
         assert!(token.accepts(&old));
-        std::thread::sleep(Duration::from_millis(60));
+        std::thread::sleep(Duration::from_millis(250));
         assert!(!token.accepts(&old), "the grace window passed");
     }
 }

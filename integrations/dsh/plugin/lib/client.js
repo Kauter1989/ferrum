@@ -175,7 +175,9 @@ window.__ModuleLoader__.load({
 		const originRef = React.useRef(origin);
 		originRef.current = origin;
 		const refreshTimer = React.useRef(null);
+		const sessionGen = React.useRef(0);
 		const refreshToken = React.useCallback(async () => {
+			const gen = sessionGen.current;
 			const clean = originRef.current.trim().replace(/\/+$/, "");
 			const secret = tokenRef.current.trim();
 			if (!isLoopback(clean) || !tokenLooksValid(secret)) return;
@@ -183,7 +185,7 @@ window.__ModuleLoader__.load({
 				const response = await fetch(clean + "/api/token/refresh?token=" + encodeURIComponent(secret), { method: "POST" });
 				if (!response.ok) return; // expired or host gone: a reconnect needs a fresh boot token
 				const reply = await response.json();
-				if (reply && reply.token) {
+				if (reply && reply.token && sessionGen.current === gen) {
 					write(KEY_TOKEN, reply.token);
 					setToken(reply.token);
 					const ttlMs = (reply.expires_in || 900) * 1000;
@@ -254,6 +256,7 @@ window.__ModuleLoader__.load({
 					draw();
 					// start keeping the token alive (the first refresh learns the TTL)
 					clearTimeout(refreshTimer.current);
+					sessionGen.current += 1;
 					refreshTimer.current = setTimeout(refreshToken, 5000);
 				} catch (e) {
 					setError(e && e.message ? e.message : String(e));

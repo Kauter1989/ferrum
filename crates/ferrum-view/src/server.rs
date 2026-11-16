@@ -77,7 +77,9 @@ impl ViewServer {
         format!("http://{}", self.addr)
     }
 
-    /// The token every request needs.
+    /// The boot token printed at start. It rotates afterwards (ADR 0019): a
+    /// client keeps it alive with `POST /api/token/refresh`, so this snapshot is
+    /// for starting the session, not for long-lived use.
     pub fn token(&self) -> &str {
         &self.token
     }
