@@ -192,9 +192,10 @@ gives.
 - The GPU backend uploads the volume once per dataset revision and the label
   map once per segmentation revision, then renders and reads back.
 - The CPU backend draws `SliceImage::extract` + `WindowLevel::apply` (the
-  same oracle `gpu_parity.rs` uses) and repeats the overlay rule of
-  `slice.wgsl`: a pixel in full segment colour where a four-neighbour label
-  differs, otherwise the fill blended with `opacity × fill_opacity`.
+  same oracle `gpu_parity.rs` uses) and applies the one segment-overlay rule
+  (`ferrum_render::cpu::slice_overlay`, mirroring `slice.wgsl`): a pixel in full
+  segment colour where a four-neighbour label differs, otherwise the fill
+  blended with `opacity × fill_opacity`. A CPU-vs-GPU slice parity case pins it.
 - The two backends are compared in `crates/ferrum-view/tests/view_host.rs`
   (mean deviation and the four outline sides), which also pins the CPU
   output to the oracle exactly.

@@ -422,6 +422,65 @@ fn slice_rendering_matches_domain_extraction() {
     }
 }
 
+// covers 29.5-a — the one CPU slice-overlay rule matches the GPU pixel by pixel
+#[test]
+fn slice_overlay_cpu_matches_gpu() {
+    let Some(gpu) = gpu() else {
+        return;
+    };
+    let mut g = gpu.lock().unwrap();
+    let Gpu { ctx, renderer } = &mut *g;
+    let volume = phantom();
+    renderer.set_volume(&ctx.device, &ctx.queue, &volume);
+    let (labels, lut) = segment_fixture(volume.dims());
+    renderer.update_labels(&ctx.device, &ctx.queue, Some(&labels), None);
+    renderer.set_segment_colors(&ctx.queue, &lut);
+    let window = WindowLevel::new(0.5, 1.0);
+    let (lo, hi) = window.normalized_bounds(volume.range());
+    for axis in SliceAxis::ALL {
+        let index = axis.slice_count(&volume) / 2;
+        let img = SliceImage::extract(&volume, axis, index).unwrap();
+        let (w, h) = (img.width, img.height);
+        let params = SliceParams {
+            rect: (Vec2::ZERO, Vec2::new(w as f32, h as f32)),
+            window: (lo, hi),
+            position: axis.slice_position(&volume, index),
+            axis: axis.id(),
+            nearest: true,
+            background: [0.0, 0.0, 0.0, 1.0],
+            segments: true,
+            segment_style: ferrum_domain::SegmentStyle::FillAndOutline,
+            fill_opacity: 1.0,
+        };
+        let gpu_img = renderer.render_slice_image(&ctx.device, &ctx.queue, &params, UVec2::new(w, h)).unwrap();
+        // the CPU side: the same grey extraction plus the one overlay rule
+        let mut cpu = vec![0u8; img.pixels.len() * 4];
+        for (pixel, &stored) in img.pixels.iter().enumerate() {
+            let grey = ferrum_domain::color::unit_to_u8(window.apply(volume.range().from_storage(stored)));
+            cpu[pixel * 4..pixel * 4 + 4].copy_from_slice(&[grey, grey, grey, 255]);
+        }
+        let label_at =
+            |x: u32, y: u32| axis.voxel_at(&volume, index, x, y).and_then(|v| labels.label(v.x, v.y, v.z)).unwrap_or(0);
+        let segment = |l: u8| {
+            let c = lut[l as usize];
+            (c[3] > 0).then_some(([c[0], c[1], c[2]], f32::from(c[3]) / 255.0))
+        };
+        ferrum_render::cpu::slice_overlay(
+            &mut cpu,
+            w,
+            h,
+            label_at,
+            segment,
+            ferrum_domain::SegmentStyle::FillAndOutline,
+            1.0,
+        );
+        let (cpu_px, _rest) = cpu.as_chunks::<4>();
+        let (mean, bad) = compare(&gpu_img, cpu_px);
+        assert!(mean < 2.0 && bad < 0.01, "{axis:?}: mean {mean}, bad {bad}");
+    }
+    renderer.update_labels(&ctx.device, &ctx.queue, None, None);
+}
+
 #[test]
 fn oversized_volumes_are_downsampled_to_fit_the_device() {
     let Some(gpu) = gpu() else {
