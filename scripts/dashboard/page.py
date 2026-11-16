@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import html
 
+from crate_graph import TIERS
 from generate import BADGE_TEXT, BUCKETS, HEADING_BADGE
 
 
@@ -59,11 +60,58 @@ def _stage_card(stage: dict, meta: dict) -> str:
     head = HEADING_BADGE[stage["heading_status"]]
     return (
         f'<details class="stage" id="stage-{_esc(stage["id"])}" data-stage="{_esc(stage["id"])}" '
-        f'data-bucket="{stage["bucket"]}"><summary>'
+        f'data-bucket="{stage["bucket"]}" data-status="{stage["heading_status"]}"><summary>'
         f'<span class="sid">{_esc(stage["id"])}</span> <span class="stitle">{_esc(stage["title"])}</span> '
         f'<span class="badge hs">{head}</span> {_badge(stage["bucket"])} {_bar(stage)} '
         f'<span class="counts">{sum(stage["counts"].values())} items</span></summary>'
         f'<div class="stories">{"".join(stories)}</div></details>'
+    )
+
+
+def _crate_graph(data: dict) -> str:
+    """A layered dependency graph: tiers as rows, crates as nodes, edges as
+    lines. Rendered server-side so it works without JS; the inline script
+    adds click-to-highlight and pan/zoom."""
+    crates = data["crates"]
+    if not crates:
+        return "<p>No crate graph.</p>"
+    by_tier: dict[int, list[dict]] = {}
+    for crate in crates:
+        by_tier.setdefault(TIERS.get(crate["name"], 99), []).append(crate)
+    pos: dict[str, tuple[float, float]] = {}
+    nodes = []
+    for row, tier in enumerate(sorted(by_tier)):
+        members = sorted(by_tier[tier], key=lambda c: c["name"])
+        y = 50 + row * 90
+        for i, crate in enumerate(members):
+            x = 40 + i * 190
+            pos[crate["name"]] = (x + 80, y + 22)
+            classes = "crate-node"
+            if crate["changed_since_release"]:
+                classes += " changed"
+            if crate["violations"]:
+                classes += " viol"
+            nodes.append(
+                f'<g class="{classes}" data-crate="{_esc(crate["name"])}" transform="translate({x},{y})">'
+                f'<rect width="160" height="44" rx="8"></rect>'
+                f'<text x="80" y="27">{_esc(crate["name"])}</text></g>'
+            )
+    edges = []
+    for crate in crates:
+        x1, y1 = pos[crate["name"]]
+        for dep in crate["deps"]:
+            if dep in pos:
+                x2, y2 = pos[dep]
+                edges.append(
+                    f'<line class="crate-edge" data-from="{_esc(crate["name"])}" data-to="{_esc(dep)}" '
+                    f'x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}"></line>'
+                )
+    width = max(40 + len(members) * 190 for members in by_tier.values()) + 40
+    height = 50 + len(by_tier) * 90
+    return (
+        f'<svg id="crate-svg" viewBox="0 0 {width} {height}" role="img" '
+        f'aria-label="Crate dependency graph, {len(crates)} crates">'
+        f'<g id="crate-edges">{"".join(edges)}</g><g id="crate-nodes">{"".join(nodes)}</g></svg>'
     )
 
 
@@ -144,6 +192,7 @@ def render_page(data: dict, template: str) -> str:
         "<!--META_PILLS-->": pills,
         "<!--STAGES-->": "".join(_stage_card(s, meta) for s in data["stages"]),
         "<!--CRATES-->": _crate_table(data),
+        "<!--CRATE_GRAPH-->": _crate_graph(data),
         "<!--ROADMAP-->": _roadmap(data["roadmap"]),
         "<!--REPORTS-->": _reports(data),
         "<!--WARNINGS-->": warnings_html,
