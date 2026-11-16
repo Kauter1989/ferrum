@@ -181,6 +181,65 @@ VALIDATION_MD = """# Validation
 | [2.1-b] | look at it | visual |
 """
 
+WORKSPACE_TOML = """[workspace]
+resolver = "2"
+members = ["crates/ferrum-domain", "crates/ferrum-io", "crates/ferrum-app", "crates/ferrum-agent"]
+"""
+
+DOMAIN_TOML = """[package]
+name = "ferrum-domain"
+description = "Domain."
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ferrum-io = { path = "../ferrum-io" }
+"""
+
+IO_TOML = """[package]
+name = "ferrum-io"
+description = "IO."
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ferrum-domain = { path = "../ferrum-domain" }
+"""
+
+APP_TOML = """[package]
+name = "ferrum-app"
+description = "App."
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ferrum-domain = { path = "../ferrum-domain" }
+wgpu = { path = "../../dummy/wgpu" }
+"""
+
+WGPU_TOML = """[package]
+name = "wgpu"
+version = "30.0.0"
+edition = "2021"
+"""
+
+AGENT_TOML = """[package]
+name = "ferrum-agent"
+description = "Agent."
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ferrum-app = { path = "../ferrum-app" }
+egui = { path = "../../dummy/egui" }
+"""
+
+EGUI_TOML = """[package]
+name = "egui"
+version = "0.36.0"
+edition = "2021"
+"""
+
 
 def run_git(root, *args):
     argv = ["git", "-C", str(root), *args]
@@ -219,6 +278,13 @@ def plan_repo(tmp_path_factory):
         tmp_path,
         {
             "dev_plan.md": PLAN_TAG,
+            "Cargo.toml": WORKSPACE_TOML,
+            "crates/ferrum-domain/Cargo.toml": DOMAIN_TOML,
+            "crates/ferrum-io/Cargo.toml": IO_TOML,
+            "crates/ferrum-app/Cargo.toml": APP_TOML,
+            "crates/ferrum-agent/Cargo.toml": AGENT_TOML,
+            "dummy/wgpu/Cargo.toml": WGPU_TOML,
+            "dummy/egui/Cargo.toml": EGUI_TOML,
         },
         "init",
     )
@@ -247,6 +313,12 @@ def plan_repo(tmp_path_factory):
     run_git(tmp_path, "commit", "-m", "docs: note", "-m", "mentions (#99) in the body")
     run_git(tmp_path, "remote", "add", "origin", "https://github.com/test/repo.git")
     return tmp_path
+
+
+@pytest.fixture
+def template_text():
+    path = Path(__file__).resolve().parents[2] / "scripts" / "dashboard" / "template.html"
+    return path.read_text(encoding="utf-8")
 
 
 @pytest.fixture(scope="session")

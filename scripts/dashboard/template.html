@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FERRUM — development dashboard</title>
+<style>
+/* Palette: the ferrum-report template, light and dark defined once (L35). */
+:root {
+  --bg:#fbfbfd; --fg:#1d1f26; --muted:#5b6070; --line:#e2e5ec;
+  --accent:#1f6feb; --ok:#1a7f37; --warn:#9a6700; --bad:#b42318;
+  --card:#ffffff; --code:#f3f4f7;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:#12141a; --fg:#e6e7ea; --muted:#a2a8b6; --line:#2a2e38;
+    --accent:#6ba6ff; --ok:#4ac26b; --warn:#d4a72c; --bad:#ff7b72;
+    --card:#191c23; --code:#1f232c;
+  }
+}
+* { box-sizing: border-box; }
+body { margin:0 auto; padding:16px; max-width:1200px; background:var(--bg); color:var(--fg);
+       font:15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+h1 { font-size:24px; margin:8px 0; }
+h2 { font-size:19px; margin:28px 0 8px; border-bottom:1px solid var(--line); padding-bottom:4px; }
+h3 { font-size:16px; margin:16px 0 6px; }
+a { color:var(--accent); text-decoration:none; }
+a:hover { text-decoration:underline; }
+.sub { color:var(--muted); margin:0 0 10px; }
+nav { position:sticky; top:0; background:var(--bg); padding:6px 0; border-bottom:1px solid var(--line); z-index:1; }
+nav a { margin-right:14px; }
+.pill { display:inline-block; padding:2px 10px; margin:2px 6px 2px 0; border:1px solid var(--line);
+        border-radius:12px; font-size:12px; color:var(--muted); background:var(--card); }
+.badge { display:inline-block; padding:1px 8px; border-radius:10px; font-size:12px; white-space:nowrap; }
+.badge.hs { color:var(--muted); background:var(--code); }
+.lc-released { color:var(--ok); background:color-mix(in srgb, var(--ok) 16%, transparent); }
+.lc-develop { color:var(--accent); background:color-mix(in srgb, var(--accent) 16%, transparent); }
+.lc-progress { color:var(--warn); background:color-mix(in srgb, var(--warn) 16%, transparent); }
+.lc-planned { color:var(--muted); background:color-mix(in srgb, var(--muted) 16%, transparent); }
+.lc-unknown { color:var(--bad); background:color-mix(in srgb, var(--bad) 16%, transparent); }
+.bar { display:inline-flex; width:140px; height:8px; border-radius:4px; overflow:hidden;
+       background:var(--code); vertical-align:middle; }
+.seg-released { background:var(--ok); }
+.seg-develop { background:var(--accent); }
+.seg-progress { background:var(--warn); }
+.seg-planned { background:var(--muted); }
+.seg-unknown { background:var(--bad); }
+details.stage { background:var(--card); border:1px solid var(--line); border-radius:10px; margin:8px 0; }
+details.stage summary { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:10px 14px; cursor:pointer; }
+.sid { font-weight:700; min-width:2.5em; }
+.stitle { flex:1; }
+.counts { color:var(--muted); font-size:12px; }
+.stories { padding:0 0 8px; }
+.storytext { padding:8px 14px 2px; font-weight:600; font-size:14px; }
+.criterion { padding:6px 14px 6px 28px; border-top:1px dashed var(--line); font-size:14px; }
+.cid { font-family:ui-monospace, monospace; font-size:13px; }
+.cov { font-size:12px; color:var(--muted); }
+table { border-collapse:collapse; width:100%; margin:8px 0; font-size:14px; }
+th, td { text-align:left; padding:6px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+th { color:var(--muted); font-size:12px; }
+td.mark { color:var(--accent); font-size:12px; }
+td.viol { color:var(--bad); font-size:12px; }
+ul.warnings li { color:var(--warn); }
+footer { margin-top:32px; padding-top:8px; border-top:1px solid var(--line); color:var(--muted); font-size:12px; }
+</style>
+</head>
+<body>
+<header>
+<h1>FERRUM — development dashboard</h1>
+<p class="sub">A derived view of dev_plan.md and the crate architecture: what the release holds,
+what develop holds unreleased, what is in development, what is planned. No hand entry.</p>
+<div class="meta"><!--META_PILLS--></div>
+</header>
+<nav>
+<a href="#plan">Plan</a>
+<a href="#architecture">Architecture</a>
+<a href="#roadmap">Roadmap</a>
+<a href="#reports">Reports</a>
+<a href="#warnings">Warnings</a>
+</nav>
+<main>
+<section id="plan">
+<h2>Plan</h2>
+<p class="sub">Colour is the lifecycle: <span class="badge lc-released">in release</span>
+<span class="badge lc-develop">in develop</span> <span class="badge lc-progress">in progress</span>
+<span class="badge lc-planned">planned</span> <span class="badge lc-unknown">unknown</span>.
+The badge next to it is the plan's own heading marker. Click a stage to expand its criteria.</p>
+<!--STAGES-->
+</section>
+<section id="architecture">
+<h2>Architecture</h2>
+<p class="sub">Workspace crates from cargo metadata; dependencies are intra-workspace edges.
+Layering follows CLAUDE.md — every violating edge is named.</p>
+<!--CRATES-->
+</section>
+<section id="roadmap">
+<h2>Roadmap</h2>
+<!--ROADMAP-->
+</section>
+<section id="reports">
+<h2>Feature reports</h2>
+<!--REPORTS-->
+</section>
+<section id="warnings">
+<h2>Warnings</h2>
+<!--WARNINGS-->
+</section>
+</main>
+<footer><!--FOOTER--></footer>
+<!--INTERACTIVE-->
+</body>
+</html>

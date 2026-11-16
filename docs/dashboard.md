@@ -39,21 +39,21 @@ git and the plan, never from hand entry (the `ferrum-report` §3 discipline).
 
 No ADR is needed: the architecture does not change. The workflow
 integration (skill, hook exceptions, CLAUDE.md table row) was approved by
-the user in chat on 2026-11-15 and lands in PR 2.
+the user in chat on 2026-11-15 and lands in PR 3.
 
 ## 3. Design
 
 ### 3.1 Components
 
 ```
-scripts/dashboard/generate.py     the plan-state engine (Python stdlib + git)
-scripts/dashboard/crates.py       PR 2: crate graph + layering model (cargo metadata)
-scripts/dashboard/page.py         PR 2: the renderer (aggregate → HTML fragments)
-scripts/dashboard/template.html   PR 2: the page skeleton (inline CSS, placeholders)
+scripts/dashboard/generate.py     the data engine (Python stdlib + git + cargo)
+scripts/dashboard/crate_graph.py  crate graph + layering model (cargo metadata)
+scripts/dashboard/page.py         the renderer (aggregate → HTML fragments)
+scripts/dashboard/template.html   the page skeleton (inline CSS, placeholders)
 tests/dashboard/                  pytest fixtures and structural tests
 site output (default target/dashboard-site/):
     data.json                     dashboard/1 — the machine-readable aggregate
-    index.html                    PR 2: the self-contained page
+    index.html                    the self-contained page
 .claude/skills/ferrum-dashboard/  PR 3: when and how the workflow runs it
 gh-pages branch                   PR 3: the published site (Pages from branch)
 ```
@@ -67,11 +67,11 @@ git show <ref>:dev_plan.md ────────────────→ p
 parse both ─→ done@tag, done@target ───────→ lifecycle buckets (§3.3)
 git grep covers-citations at <ref> ────────→ coverage per criterion (analyze convention)
 git log --grep PR merges + merge-base ─────→ PR-ancestry refinement (§3.3)
-cargo metadata --no-deps (or Cargo.toml) ──→ crate nodes, edges, descriptions (PR 2)
-git diff --name-only <tag>..<ref> crates/ ─→ changed-since-release marks (PR 2)
-layering model (CLAUDE.md) ────────────────→ named violations (PR 2)
+cargo metadata --no-deps (or Cargo.toml) ──→ crate nodes, edges, descriptions
+git diff --name-only <tag>..<ref> crates/ ─→ changed-since-release marks
+layering model (CLAUDE.md) ────────────────→ named violations
 git ls-tree docs/*-report.html ────────────→ report index
-→ data.json (sorted, git-derived stamp); PR 2: + template → index.html
+→ data.json (sorted, git-derived stamp) + template → index.html
 ```
 
 CLI:
@@ -118,13 +118,12 @@ the `schema` field; a breaking change bumps it and updates this section.
   }],
   "roadmap": {"next": [{"n": 1, "what": "…", "kind": "…", "why": "…"}],
                "backlog": ["…"], "drafts": [{"id": "21", "title": "…", "stories": ["…"]}]},
+  "crates": [{"name": "ferrum-domain", "description": "…",
+               "deps": [], "changed_since_release": false, "violations": []}],
+  "layering_violations": [{"from": "…", "to": "…", "rule": "…"}],
   "reports": [{"path": "docs/webgpu-panel/pr-91-report.html", "label": "pr-91"}]
 }
 ```
-
-PR 2 adds `crates[]` (name, description, deps, changed_since_release,
-violations) and `layering_violations[]` — a non-breaking extension, same
-schema id.
 
 Story-level units (early stages without criterion IDs) appear as a single
 unit of `"kind": "story"` inside `criteria[]`, carrying the story's text
@@ -157,7 +156,7 @@ for machine consumers.
 - No release tag reachable → `release_tag: null`, every done item is
   `develop`, one warning. The page still renders.
 
-### 3.4 Layering model (PR 2)
+### 3.4 Layering model
 
 The constitution's rule is "dependencies point inward" plus specific
 prohibitions — not the mermaid's drawn edges as a closed whitelist (the
@@ -181,7 +180,7 @@ Every violating edge is named in `crates[].violations` and
 `layering_violations`. The model is reviewed against CLAUDE.md in the
 PR's code map; tests pin an outward edge and a forbidden dependency.
 
-### 3.5 Page (PR 2)
+### 3.5 Page
 
 One skeleton (`template.html`), the report palette (`--ok`/`--accent`/
 `--warn`/`--muted`, light + dark via `prefers-color-scheme`, L35), sections:
@@ -192,7 +191,7 @@ One skeleton (`template.html`), the report palette (`--ok`/`--accent`/
    the stories and their criteria (text, badge, coverage links pinned to
    the target SHA, PR links);
 3. architecture: the crate table (description, deps, changed mark,
-   violations) — the interactive SVG graph is PR 2 (30.3);
+   violations) — the interactive SVG graph is PR 3 (30.3);
 4. roadmap: Next table, backlog, draft stages;
 5. reports: links to the committed HTML reports (GitHub blob, pinned SHA);
 6. footer: sources (tag, SHAs, commands), warnings in full, schema id.
@@ -245,17 +244,17 @@ surface is touched.
 | [30.1-a] | `tests/dashboard/test_generate.py::test_plan_parses_to_the_exact_fixture`, `…struck_criteria…`, `…letter_and_draft_stages…`, `…idless_stages…`, `…implementation_tables_are_not_stories…` (planned) | test |
 | [30.1-b] | `test_lifecycle_buckets_on_a_fixture_repository`, `test_lagging_heading_criterion_is_develop`, `test_stage_bucket_priority_and_counts` (planned) | test |
 | [30.1-c] | `test_coverage_follows_the_analyze_convention` (planned) | test |
-| [30.1-d] | `test_crate_graph_and_layering_violations`, `test_fallback_parses_the_workspace_toml`, `test_changed_crates_are_marked` (PR 2) | test |
+| [30.1-d] | `test_crate_graph_and_layering_violations`, `test_fallback_parses_the_workspace_toml`, `test_changed_crates_are_marked` | test |
 | [30.1-e] | `test_output_is_byte_identical_across_runs`, `test_output_holds_no_machine_paths` (planned) | test |
 | [30.1-f] | `test_unknown_marker_warns_and_marks_unknown`, `test_empty_criteria_cell_warns` (planned) | test |
 | [30.1-g] | `test_ci_runs_the_dashboard_tests` (planned); `ci.yml` python-lint step runs `tests/dashboard`; CI green on the PR; `analyze.py --stage 30` exit 0 locally | test |
-| [30.2-a] | `tests/dashboard/test_page.py::test_page_is_self_contained` (PR 2) | test |
+| [30.2-a] | `tests/dashboard/test_page.py::test_page_is_self_contained` | test |
 | [30.2-a] | open `index.html` from `file://` in a browser: page renders, network panel empty | manual |
-| [30.2-b] | `test_four_colours_and_text_badges_both_themes` (PR 2) | test |
+| [30.2-b] | `test_four_colours_and_text_badges_both_themes` | test |
 | [30.2-b] | emulate light and dark: chips legible, badges present | manual |
-| [30.2-c] | `test_stage_cards_counts_links_and_footer`, `test_page_carries_data_attributes`, `test_plan_text_is_html_escaped`, `test_warnings_are_shown` (PR 2) | test |
+| [30.2-c] | `test_stage_cards_counts_links_and_footer`, `test_page_carries_data_attributes`, `test_plan_text_is_html_escaped`, `test_warnings_are_shown` | test |
 | [30.2-c] | expand a stage, follow a criterion's test link (pinned SHA) | manual |
-| [30.2-d] | `test_crate_table_marks_and_violations` (PR 2) | test |
+| [30.2-d] | `test_crate_table_marks_and_violations` | test |
 | [30.2-d] | read the crate table: changed marks and violations visible | manual |
 
 ## 7. Size and PR split (ferrum-size)

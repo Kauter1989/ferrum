@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
-"""Generate the FERRUM development dashboard data (Stage 30, dashboard/1).
+"""Generate the FERRUM development dashboard (Stage 30, dashboard/1).
 
-A derived view of the plan: every number comes from git and the
-repository, never from hand entry. Reads committed state only (two
-revisions of dev_plan.md, git grep, git log), so two runs on the same
-inputs are byte-identical. The wall clock is not an input: the generation
-stamp is the target commit's date. The crate graph with the layering
-check and the self-contained page are PR 2 of Stage 30.
+A derived view of the plan and the architecture: every number comes from
+git and the repository, never from hand entry. Reads committed state only
+(two revisions of dev_plan.md, cargo metadata, git grep, git log), so two
+runs on the same inputs are byte-identical. The wall clock is not an
+input: the generation stamp is the target commit's date.
 
 Usage (repo root):
     python scripts/dashboard/generate.py [--root .] [--ref HEAD]
         [--release-ref origin/main] [--out target/dashboard-site]
 
-Writes <out>/data.json (dashboard/1). Python 3.11+; git on PATH.
-Design: docs/dashboard.md. Tests: tests/dashboard (cite the criteria).
+Writes <out>/data.json (dashboard/1) and <out>/index.html (the
+self-contained page). Python 3.11+ (tomllib); git and cargo on PATH
+(cargo optional: Cargo.toml fallback). Design: docs/dashboard.md.
+Tests: tests/dashboard (cite the criteria).
 """
 
 from __future__ import annotations
@@ -25,6 +26,8 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+
+from crate_graph import TIERS, changed_crates, check_layering, load_crates
 
 SCHEMA = "dashboard/1"
 BUCKETS = ("released", "develop", "progress", "planned", "unknown")
@@ -41,10 +44,6 @@ CODE_EXT = (".rs", ".py", ".sh", ".wgsl")
 SKIP_DIRS = {"target", ".git", ".claude", "node_modules", "__pycache__", ".venv"}
 LEVELS = ("visual", "field", "manual")
 CID_PATTERN = r"\b[A-Za-z0-9]+\.[0-9]+-[a-z]\b"
-
-# The crate graph and the layering model (tiers, per-crate prohibitions)
-# are PR 2 of Stage 30, with the page's architecture section; this module
-# is the plan-state engine. Reference copy: the PR 2 holding notes.
 
 
 class Git:
@@ -447,6 +446,14 @@ def build_data(root: Path, ref: str = "HEAD", release_ref: str = "origin/main") 
         if stage["heading_status"] == "progress" and units and all(u["done"] for u in units):
             warnings.append(f"Stage {stage['id']}: heading 🚧 lags — all criteria done")
         stages.append({**stage, "bucket": bucket, "counts": counts})
+    crates = load_crates(Path(root), warnings)
+    for crate in crates:
+        if crate["name"] not in TIERS:
+            warnings.append(f"crate {crate['name']} is not in the layering tier table")
+    violations = check_layering(crates)
+    changed = changed_crates(git, release_sha if tag else None, target_sha)
+    for crate in crates:
+        crate["changed_since_release"] = crate["name"] in changed
     reports = [
         {"path": path, "label": Path(path).stem.removesuffix("-report")}
         for path in git.run("ls-tree", "-r", "--name-only", target_sha, "--", "docs").splitlines()
@@ -466,6 +473,8 @@ def build_data(root: Path, ref: str = "HEAD", release_ref: str = "origin/main") 
         "meta": meta,
         "stages": stages,
         "roadmap": plan["roadmap"],
+        "crates": crates,
+        "layering_violations": violations,
         "reports": reports,
     }
 
@@ -492,12 +501,19 @@ def main() -> int:
     (out / "data.json").write_text(
         json.dumps(data, sort_keys=True, ensure_ascii=False, indent=1) + "\n", encoding="utf-8", newline="\n"
     )
+    from page import render_page
+
+    template = (Path(__file__).resolve().parent / "template.html").read_text(encoding="utf-8")
+    (out / "index.html").write_text(render_page(data, template), encoding="utf-8", newline="\n")
     elapsed = time.monotonic() - started
     criteria = sum(len(stage_units(s)) for s in data["stages"])
     buckets = {b: sum(s["counts"][b] for s in data["stages"]) for b in BUCKETS}
     print(f"dashboard: {len(data['stages'])} stages, {criteria} items, buckets {buckets}")
-    print(f"dashboard: {len(data['meta']['warnings'])} warnings")
-    print(f"dashboard: wrote {out / 'data.json'} in {elapsed:.2f}s")
+    print(
+        f"dashboard: {len(data['crates'])} crates, {len(data['layering_violations'])} violations, "
+        f"{len(data['meta']['warnings'])} warnings"
+    )
+    print(f"dashboard: wrote {out / 'data.json'} and {out / 'index.html'} in {elapsed:.2f}s")
     return 0
 
 
