@@ -99,8 +99,10 @@ def _heading_status(line: str) -> str:
 
 
 def _cells(line: str) -> list[str]:
+    """The trimmed cells of a Markdown table row (trailing pipe optional)."""
     parts = re.split(r"(?<!\\)\|", line)
-    return [p.strip().replace("\\|", "|") for p in parts[1:-1]]
+    end = -1 if parts[-1].strip() == "" else None
+    return [p.strip().replace("\\|", "|") for p in parts[1:end]]
 
 
 def _is_separator(cells: list[str]) -> bool:
@@ -108,6 +110,7 @@ def _is_separator(cells: list[str]) -> bool:
 
 
 def _prs(text: str) -> list[int]:
+    """PR numbers cited as #N or (PR N), in order, deduplicated."""
     numbers = re.findall(r"#(\d+)", text) + re.findall(r"\(PR (\d+)\)", text)
     return list(dict.fromkeys(int(n) for n in numbers))
 
@@ -203,7 +206,7 @@ def _parse_bullet_criteria(sid: str, body: str) -> list[dict]:
     stories: dict[str, dict] = {}
     for cid in order:
         unit = units[cid]
-        unit["text"] = re.sub(r"\s+", " ", unit["text"]).strip()
+        unit["text"] = re.sub(r"\s+", " ", re.sub(r"~~.*?~~", "", unit["text"])).strip()
         unit["done_marker"] = "✅" in unit["text"]
         unit["prs"] = _prs(unit["text"])
         prefix = cid.rsplit("-", 1)[0]
@@ -300,6 +303,7 @@ def done_at(unit: dict, heading_status: str, ancestry: dict[int, bool]) -> bool:
 
 
 def item_bucket(done_tag: bool, done_target: bool, target_heading: str) -> str:
+    """One criterion's lifecycle bucket from done@tag, done@target and the heading."""
     if done_tag:
         return "released"
     if done_target:
@@ -312,6 +316,7 @@ def item_bucket(done_tag: bool, done_target: bool, target_heading: str) -> str:
 
 
 def stage_aggregate(buckets: list[str]) -> tuple[str, dict]:
+    """A stage's bucket (highest-priority present) and exact per-bucket counts."""
     counts = {b: buckets.count(b) for b in BUCKETS}
     for bucket in STAGE_PRIORITY:
         if counts[bucket]:
@@ -363,7 +368,7 @@ def scan_coverage(git: Git, ref: str) -> dict:
     docs = git.try_run("grep", "-n", "-E", CID_PATTERN, ref, "--", "docs")
     for line in docs.splitlines():
         parts = line.split(":", 3)
-        if len(parts) < 4 or not parts[3].lstrip().startswith("|"):
+        if len(parts) < 4 or Path(parts[1]).suffix != ".md" or not parts[3].lstrip().startswith("|"):
             continue
         content = parts[3]
         for cid in set(re.findall(CID_PATTERN, content)):
@@ -379,17 +384,26 @@ def scan_coverage(git: Git, ref: str) -> dict:
 # ---------------------------------------------------------------- aggregate
 
 
-def _repo_url(git: Git) -> str | None:
+def _repo_url(git: Git, warnings: list[str]) -> str | None:
+    """The public GitHub HTTPS URL of origin, or None (links disabled)."""
     try:
         url = git.try_run("remote", "get-url", "origin").strip()
     except RuntimeError:
+        warnings.append("no origin remote; repo_url omitted (links disabled)")
         return None
     if not url:
         return None
-    ssh = re.match(r"git@github\.com:(.+?)(?:\.git)?$", url)
+    ssh = re.match(r"git@github\.com:([^/@]+/[^/@]+?)(?:\.git)?$", url) or re.match(
+        r"ssh://git@github\.com/([^/@]+/[^/@]+?)(?:\.git)?$", url
+    )
     if ssh:
         return f"https://github.com/{ssh.group(1)}"
-    return re.sub(r"\.git$", "", url)
+    https = re.match(r"https://github\.com/([^/@]+/[^/@]+?)(?:\.git)?$", url)
+    if https:
+        return f"https://github.com/{https.group(1)}"
+    # Never publish a credential-bearing or local-path remote (30.1-e).
+    warnings.append("origin remote is not a public GitHub HTTPS URL; repo_url omitted")
+    return None
 
 
 def build_data(root: Path, ref: str = "HEAD", release_ref: str = "origin/main") -> dict:
@@ -413,10 +427,11 @@ def build_data(root: Path, ref: str = "HEAD", release_ref: str = "origin/main") 
     if tag:
         tag_plan = parse_plan(git.show(release_sha, "dev_plan.md"))
         tag_stages = {s["id"]: s for s in tag_plan["stages"]}
-    prs = sorted({pr for stage in plan["stages"] for unit in stage_units(stage) for pr in unit["prs"]})
+    all_stages = list(plan["stages"]) + list(tag_stages.values())
+    prs = sorted({pr for stage in all_stages for unit in stage_units(stage) for pr in unit["prs"]})
     ancestry = pr_ancestry(git, target_sha, release_sha if tag else None, prs)
     coverage = scan_coverage(git, target_sha)
-    repo_url = _repo_url(git)
+    repo_url = _repo_url(git, warnings)
     stages = []
     for stage in plan["stages"]:
         tag_stage = tag_stages.get(stage["id"])
@@ -443,6 +458,8 @@ def build_data(root: Path, ref: str = "HEAD", release_ref: str = "origin/main") 
             unit.pop("empty_cell", None)
             buckets.append(bucket)
         bucket, counts = stage_aggregate(buckets)
+        if not units:
+            warnings.append(f"Stage {stage['id']}: no parseable criteria (prose-only?)")
         if stage["heading_status"] == "progress" and units and all(u["done"] for u in units):
             warnings.append(f"Stage {stage['id']}: heading 🚧 lags — all criteria done")
         stages.append({**stage, "bucket": bucket, "counts": counts})
@@ -483,6 +500,7 @@ def build_data(root: Path, ref: str = "HEAD", release_ref: str = "origin/main") 
 
 
 def main() -> int:
+    """CLI: write data.json and the self-contained index.html for a revision."""
     parser = argparse.ArgumentParser(description="generate the FERRUM development dashboard data (dashboard/1)")
     parser.add_argument("--root", default=".", help="repository root")
     parser.add_argument("--ref", default="HEAD", help="target revision (branch, SHA, origin/develop)")

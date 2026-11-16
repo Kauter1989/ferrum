@@ -62,6 +62,12 @@ Legend: ✅ done · 🚧 in progress · 📋 planned.
 |---|---|---|---|
 | 8.1-b | test | somewhere | ✅ |
 
+## Stage 10 — Tag-only ancestry 🚧
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 10.1 | As a **user**, I want tag-only PR ancestry. | [10.1-a] Done via (PR 8). |
+
 ## Roadmap
 
 ### Next
@@ -148,6 +154,12 @@ Legend: ✅ done · 🚧 in progress · 📋 planned.
 | Criterion | Level | Evidence | Outcome |
 |---|---|---|---|
 | 8.1-b | test | somewhere | ✅ |
+
+## Stage 10 — Tag-only ancestry 🚧
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 10.1 | As a **user**, I want tag-only PR ancestry. | [10.1-a] Done. |
 
 ## Stage F1 — A bug ✅
 
@@ -243,7 +255,7 @@ edition = "2021"
 
 def run_git(root, *args):
     argv = ["git", "-C", str(root), *args]
-    return subprocess.run(argv, check=True, capture_output=True, text=True, encoding="utf-8").stdout  # noqa: S603
+    return subprocess.run(argv, check=True, capture_output=True, text=True, encoding="utf-8").stdout  # noqa: S603 - git on PATH, no shell
 
 
 def commit_files(root, files, message):
@@ -294,6 +306,7 @@ def plan_repo(tmp_path_factory):
     run_git(tmp_path, "checkout", "main")
     merge_pr(tmp_path, "feat/five", 5)
     merge_pr(tmp_path, "feat/hotfix", 7)
+    merge_pr(tmp_path, "feat/eight", 8)
     run_git(tmp_path, "tag", "v0.1.0")
     run_git(tmp_path, "checkout", "develop")
     commit_files(
