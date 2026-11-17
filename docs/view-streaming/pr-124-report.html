@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FERRUM · PR #124 — финальный отчёт: rotating token view-хоста (Stage 29 PR 4)</title>
+<style>
+  :root { --bg:#fbfbfd; --fg:#1d1f26; --muted:#5b6070; --line:#e2e5ec; --accent:#1f6feb; --ok:#1a7f37; --warn:#9a6700; --bad:#b42318; --card:#fff; --code:#f3f4f7; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#12141a; --fg:#e6e7ea; --muted:#a2a8b6; --line:#2a2e38; --accent:#6ba6ff; --ok:#4ac26b; --warn:#d4a72c; --bad:#ff7b72; --card:#191c23; --code:#1f232c; } }
+  * { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.6 -apple-system,"Segoe UI",Roboto,Arial,sans-serif; }
+  main { max-width:1080px; margin:0 auto; padding:40px 24px 80px; }
+  h1 { font-size:29px; line-height:1.25; margin:0 0 8px; letter-spacing:-0.02em; }
+  h2 { font-size:21px; margin:44px 0 14px; padding-bottom:8px; border-bottom:1px solid var(--line); }
+  .sub { color:var(--muted); margin:0 0 24px; }
+  .meta { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:28px; }
+  .pill { font-size:13px; padding:3px 10px; border-radius:999px; border:1px solid var(--line); background:var(--card); color:var(--muted); }
+  .pill.ok { color:var(--ok); border-color:color-mix(in srgb,var(--ok) 40%,transparent); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px 20px; margin:14px 0; }
+  code,.mono { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:13px; }
+  code { background:var(--code); padding:1px 5px; border-radius:4px; }
+  table { width:100%; border-collapse:collapse; margin:14px 0; font-size:14px; }
+  th,td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; font-size:13px; text-transform:uppercase; letter-spacing:.04em; }
+  .tag { font-size:12px; font-weight:600; padding:2px 7px; border-radius:5px; white-space:nowrap; }
+  .t-fixed { background:color-mix(in srgb,var(--ok) 16%,transparent); color:var(--ok); }
+  .t-nit { background:color-mix(in srgb,var(--muted) 16%,transparent); color:var(--muted); }
+  .grid { display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); }
+  .stat { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px; }
+  .stat b { display:block; font-size:26px; line-height:1.2; } .stat span { color:var(--muted); font-size:13px; }
+  ul { padding-left:22px; } li { margin:4px 0; }
+  .note { border-left:3px solid var(--accent); padding-left:14px; color:var(--muted); margin:14px 0; }
+  footer { margin-top:56px; padding-top:18px; border-top:1px solid var(--line); color:var(--muted); font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+<h1>PR #124 — rotating token view-хоста</h1>
+<p class="sub">Финальный отчёт: Stage 29 PR 4 (критерий 29.4-a, ADR 0019). FERRUM, ноябрь 2026. Описывает head SHA <code>c7b9fd5fdb58c296ddcf8508dad13ad30ebcca49</code>. Отчёт живёт в самом PR и правится по итогам ревью; при мердже остаётся в последней версии (правило пользователя).</p>
+<div class="meta">
+  <span class="pill">Stage 29 PR 4 · 29.4-a</span>
+  <span class="pill">ADR 0019</span>
+  <span class="pill">size S</span>
+  <span class="pill ok">G1+G2 утверждены</span>
+  <span class="pill ok">preflight: all checks passed</span>
+  <span class="pill ok">ревью: approve</span>
+</div>
+<div class="grid">
+  <div class="stat"><b>15 мин</b><span>TTL токена</span></div>
+  <div class="stat"><b>60 с</b><span>grace-окно ротации</span></div>
+  <div class="stat"><b>≤ 2</b><span>живых токенов одновременно</span></div>
+  <div class="stat"><b>6</b><span>новых тестов (4 unit + 2 интеграционных)</span></div>
+</div>
+
+<h2>1. Что и зачем</h2>
+<p>Токен view-хоста был статическим на жизнь процесса: утёкший токен (URL, referrer, дамп) действовал до рестарта. Теперь он <strong>короткоживущий и ротируется</strong> (ADR 0019): TTL 15 мин, <code>POST /api/token/refresh</code> выдаёт следующий, предыдущий жив ещё 60 с (grace), чтобы запросы в полёте и панель в момент обновления не получали 401. Просроченный токен не авторизует ничего и не может обновиться.</p>
+<div class="note">Только loopback, без TLS (out of scope). Токен — локальная capability, не сетевой credential; ротация ограничивает окно usefulness утечки. Модель безопасности подтверждена ревью выполнением + мутациями.</div>
+
+<h2>2. Код-карта</h2>
+<p class="sub">Pinned к head SHA <code>c7b9fd5</code>.</p>
+<table>
+  <tr><th>Утверждение</th><th>Реализация</th></tr>
+  <tr><td>TTL 15 мин / grace 60 с</td><td class="mono">crates/ferrum-view/src/token.rs:15,18</td></tr>
+  <tr><td>Constant-time сравнение токенов</td><td class="mono">crates/ferrum-view/src/token.rs:28</td></tr>
+  <tr><td>RotatingToken: new / accepts / rotate / expires_in</td><td class="mono">crates/ferrum-view/src/token.rs:52,68,78,62</td></tr>
+  <tr><td>accepts: только живой current или previous в grace</td><td class="mono">crates/ferrum-view/src/token.rs:68</td></tr>
+  <tr><td>rotate: previous только если current был жив</td><td class="mono">crates/ferrum-view/src/token.rs:78</td></tr>
+  <tr><td>Route POST /api/token/refresh + Set-Cookie</td><td class="mono">crates/ferrum-view/src/server.rs:217</td></tr>
+  <tr><td>Authorization gate до route (401 без живого токена)</td><td class="mono">crates/ferrum-view/src/server.rs:139</td></tr>
+  <tr><td>ServeOptions ttl/grace (injectable для тестов)</td><td class="mono">crates/ferrum-view/src/server.rs:27</td></tr>
+  <tr><td>Boot-линия CLI: expires_in</td><td class="mono">crates/ferrum-cli/src/main.rs:119</td></tr>
+  <tr><td>Панель: проактивный refresh (~80% TTL) + generation-guard</td><td class="mono">integrations/dsh/plugin/lib/client.js:175</td></tr>
+  <tr><td>Unit-тесты (accept/rotate/expiry/grace)</td><td class="mono">crates/ferrum-view/src/token.rs:100</td></tr>
+  <tr><td>Интеграционные (refresh/grace/wrong/expired)</td><td class="mono">crates/ferrum-view/tests/view_host.rs:381</td></tr>
+</table>
+
+<h2>3. Покрытие критериев</h2>
+<table>
+  <tr><th>Критерий</th><th>Тест</th><th>Статус</th></tr>
+  <tr><td>29.4-a короткоживущий ротируемый токен</td><td class="mono">token unit 4; view_host the_token_rotates… + an_expired_token_is_refused; мутации M2/M3 краснеют</td><td><span class="tag t-fixed">✅</span></td></tr>
+</table>
+
+<h2>4. Верификация</h2>
+<ul>
+  <li>Полный preflight (WSL Ubuntu-24.04, CI-порядок + GPU parity + analyze.py): <code>all checks passed</code>.</li>
+  <li>Token unit 4/4; view_host 16/16 (включая 2 новых); panel smoke-load ok (5 слотов).</li>
+  <li>fmt/clippy <code>-D warnings</code> чистые; мутации (grace=0, constant-time→true) ловятся тестами.</li>
+  <li>Первый прогон preflight упал на environmental lavapipe-teardown флейке в <code>ferrum-view --lib</code> при параллельной GPU-нагрузке (L45/L51); изолированно 6/6 в GPU-mode, re-run зелёный.</li>
+</ul>
+
+<h2>5. История ревью</h2>
+<div class="card">
+  <p><strong>Раунд 1</strong> (code + security, агент <code>review-token</code>, выполнение + мутации в WSL): вердикт <span class="tag t-fixed">approve</span> — 0 blocking, 0 should-fix, 6 nits. Security-модель sound: refresh gated живым токеном, constant-time, expired не воскрешается, ≤2 живых, cookie HttpOnly/SameSite=Strict, CORS только на 2xx, токен не в логах.</p>
+  <p>Nits исправлены: широкие timing-зазоры unit-тестов (anti-flake), doc boot-токена <code>ViewServer.token()</code>, generation-guard от гонки таймера панели. Остальные nits (косметика indentation, латентная нестройность кастомного TTL в CLI) — не блокируют, CLI всегда default.</p>
+</div>
+
+<footer>FERRUM · Stage 29 PR 4 · head SHA <code>c7b9fd5fdb58c296ddcf8508dad13ad30ebcca49</code> · отчёт коммичен в PR и правится по итогам ревью пользователя.</footer>
+</main>
+</body>
+</html>

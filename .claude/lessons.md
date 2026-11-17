@@ -981,6 +981,28 @@ that says so instead of editing the old one.
   the environment until proven otherwise (L45); the uninstrumented
   `check` job is authoritative for whether the UI tests pass.
 
+### L51 — The `check` job also hits the UI-teardown SIGSEGV; admin-merge with the user's word (2026-11, Stage 29 PR 1)
+
+- **Symptom:** On PR #123 the `check` job (not only `coverage`, cf. L50) failed:
+  all 19 `ferrum --test ui` tests printed `ok`, then the binary died with
+  `signal: 11, SIGSEGV` at process exit. Three `gh run rerun --failed` attempts
+  reproduced it on the same head.
+- **Root cause:** the same lavapipe/mesa teardown crash (L45/L50 family), now on
+  the CI runner image used by `check`. Environmental: the *identical* UI-test
+  binary (same build hash) had passed full CI on the previous head, the local
+  preflight was green, and the only delta to the failing head was an HTML report
+  (no Rust). No assertion failed.
+- **Fix:** confirmed the log shows the segfault at exit after every assertion
+  passed (not a failed assertion), then merged with `gh pr merge --admin` **with
+  the user's explicit word**, and documented the environmental block in a PR
+  comment. Re-runs alone did not clear it.
+- **Guard:** when `check` (or `coverage`) fails with a SIGSEGV in `ferrum --test
+  ui` *after* all tests printed ok, and the PR's Rust is verified green (a prior
+  head passed CI / local preflight green), treat it as the teardown flake. Do not
+  change code to chase it (L50). If re-runs keep failing, surface it to the user
+  and admin-merge only on their word, noting the environmental block in the PR.
+  A failed assertion remains a real defect (L33), not this flake.
+
 ## What worked
 
 ### W1 — Field test on the user's GPU with a throw-away script (2026-10, Stage 17)

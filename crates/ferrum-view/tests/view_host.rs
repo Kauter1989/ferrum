@@ -378,6 +378,54 @@ fn a_wrong_token_an_unknown_route_and_a_wrong_method_are_refused() {
     assert!(!body.is_empty());
 }
 
+// covers 29.4-a — a live token rotates; the previous one stays valid for the
+// grace window; a wrong token refreshes nothing.
+#[test]
+fn the_token_rotates_and_the_previous_stays_valid_for_the_grace() {
+    let f = fixture(false);
+    let server = open(&f);
+    let old = server.token().to_owned();
+    let (status, reply) = post(&token_url(&server, "/api/token/refresh"), "{}");
+    assert_eq!(status, 200, "{reply}");
+    let new = reply["token"].as_str().unwrap().to_owned();
+    assert_ne!(new, old);
+    assert!(reply["expires_in"].as_u64().unwrap() > 0);
+    // the new token works
+    let (status, _) = get(&format!("{}/api/state?token={new}", server.url()));
+    assert_eq!(status, 200);
+    // the old token still works within the grace window
+    let (status, _) = get(&token_url(&server, "/api/state"));
+    assert_eq!(status, 200);
+    // a wrong token is refused, and refreshes nothing
+    let (status, _) = get(&format!("{}/api/state?token=0000", server.url()));
+    assert_eq!(status, 401);
+    let (status, _) = post(&format!("{}/api/token/refresh?token=0000", server.url()), "{}");
+    assert_eq!(status, 401);
+    // refresh is POST-only
+    let (status, _) = get(&token_url(&server, "/api/token/refresh"));
+    assert_eq!(status, 405);
+}
+
+// covers 29.4-a — an expired token authorizes nothing (short TTL for the test).
+#[test]
+fn an_expired_token_is_refused() {
+    let f = fixture(false);
+    let options = ServeOptions {
+        token_ttl: std::time::Duration::from_millis(600),
+        token_grace: std::time::Duration::from_millis(200),
+        ..Default::default()
+    };
+    let server = open_with(&f, BackendPreference::Cpu, options);
+    let (status, _) = get(&token_url(&server, "/api/state"));
+    assert_eq!(status, 200);
+    std::thread::sleep(std::time::Duration::from_millis(900));
+    let (status, _) = get(&token_url(&server, "/api/state"));
+    assert_eq!(status, 401, "the token expired");
+    // with no live token, a refresh is refused too
+    let (status, _) = post(&token_url(&server, "/api/token/refresh"), "{}");
+    assert_eq!(status, 401);
+}
+
 #[test]
 fn the_volume_crosses_the_wire_once_for_a_client_that_renders_it() {
     // covers 26.3-a: the header names the grid, the range and a hash, the body

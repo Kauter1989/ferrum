@@ -166,7 +166,38 @@ window.__ModuleLoader__.load({
 				requestAnimationFrame(draw);
 			}, []);
 
-			const connect = React.useCallback(async () => {
+			// The host's token is short-lived and rotates (ADR 0019). The panel
+		// refreshes it proactively so a reconnect — and the state sync to come —
+		// always has a live token; the boot token printed by `view serve` only
+		// starts the session.
+		const tokenRef = React.useRef(token);
+		tokenRef.current = token;
+		const originRef = React.useRef(origin);
+		originRef.current = origin;
+		const refreshTimer = React.useRef(null);
+		const sessionGen = React.useRef(0);
+		const refreshToken = React.useCallback(async () => {
+			const gen = sessionGen.current;
+			const clean = originRef.current.trim().replace(/\/+$/, "");
+			const secret = tokenRef.current.trim();
+			if (!isLoopback(clean) || !tokenLooksValid(secret)) return;
+			try {
+				const response = await fetch(clean + "/api/token/refresh?token=" + encodeURIComponent(secret), { method: "POST" });
+				if (!response.ok) return; // expired or host gone: a reconnect needs a fresh boot token
+				const reply = await response.json();
+				if (reply && reply.token && sessionGen.current === gen) {
+					write(KEY_TOKEN, reply.token);
+					setToken(reply.token);
+					const ttlMs = (reply.expires_in || 900) * 1000;
+					refreshTimer.current = setTimeout(refreshToken, Math.max(ttlMs * 0.8, 5000));
+				}
+			} catch (e) {
+				/* host unreachable: stop refreshing until the next Connect */
+			}
+		}, []);
+		React.useEffect(() => () => clearTimeout(refreshTimer.current), []);
+
+		const connect = React.useCallback(async () => {
 				const clean = origin.trim().replace(/\/+$/, "");
 				const secret = token.trim();
 				if (!isLoopback(clean)) {
@@ -223,6 +254,10 @@ window.__ModuleLoader__.load({
 					view.set_render_mode(renderMode);
 					setStatus(view.adapter_info() + " · " + header.dims.join("×") + " · " + header.value_unit);
 					draw();
+					// start keeping the token alive (the first refresh learns the TTL)
+					clearTimeout(refreshTimer.current);
+					sessionGen.current += 1;
+					refreshTimer.current = setTimeout(refreshToken, 5000);
 				} catch (e) {
 					setError(e && e.message ? e.message : String(e));
 					setStatus("failed");
