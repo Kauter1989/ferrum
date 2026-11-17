@@ -39,14 +39,18 @@ mapping. The two backends are comparable pixel by pixel.
 
 ```
 ferrum-cli → ferrum-view → ferrum-app → ferrum-domain
-                        ↘ ferrum-render (gpu)   ← ferrum-io (workspace)
+                        ↘ ferrum-render (gpu), ferrum-processing   ← ferrum-io (workspace)
 ```
 
 - `ferrum-view` is the only crate that knows about HTTP and the token.
 - Every operation is a `Viewer` use case; the crate holds no business logic.
-- The image-formation model stays where it is: `slice.wgsl` on the GPU and
-  `SliceImage` / `cpu/raycast.rs` on the CPU. `ferrum-view` adds no third
-  renderer (ADR 0014 decision 5).
+  The GPU backend implements the `GpuSink` port (whose signature names
+  `ferrum-processing`'s `AmbientOcclusion`); `Viewer::sync_gpu` decides what
+  to upload, the sink only forwards — the same glue as `ferrum-ui`.
+- The image-formation model stays where it is: `slice.wgsl` / `volume.wgsl`
+  on the GPU and `SliceImage` / `cpu/raycast.rs` on the CPU. `ferrum-view`
+  adds no third renderer (ADR 0014 decision 5); the MPR compositor is a
+  display blit shared by both backends, not image formation.
 - `ferrum-agent` does not depend on `ferrum-view`; the agent command set is
   unchanged in this stage.
 
