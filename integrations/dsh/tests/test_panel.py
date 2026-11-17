@@ -161,3 +161,33 @@ def test_the_transfer_function_editor_drives_the_modules_edit_api():
     assert 'renderMode === "transfer_function"' in text, "the editor is not tied to the transfer_function mode"
     # The editor is mounted only once a view exists (no edits before Connect).
     assert "viewRef.current ? h(TfEditor" in text, "the editor mounts without a loaded view"
+
+
+def test_the_measurement_tools_draw_through_the_host_and_show_its_values():
+    """29.2-c: the panel sends `draw` inputs and reads the measured values.
+
+    The tool machine stays in the host (PR 2): the panel collects pixels of
+    the active plane's slice, sends them with `POST /api/input`, and displays
+    the values the host computed — it does not measure by its own math. The
+    plane and slice go to the host before the draw, so the measurement lands
+    on the slice the person sees.
+    """
+    # covers 29.2-c
+    text = BUNDLE.read_text(encoding="utf-8")
+
+    for tool in ("distance", "rect", "angle", "area"):
+        assert f'"{tool}"' in text, f"the tool selector does not offer {tool}"
+    assert '"aria-label": "Measurement tool"' in text, "there is no tool selector"
+    assert "sendInput({ draw: { tool: toolName, points } })" in text, "the draw does not go through the input path"
+    assert "/api/annotations" in text, "the panel does not read the host's annotation values"
+    # The host measures on its active plane's slice: both are synced first.
+    commit = text[text.index("const commitDraw") :]
+    commit = commit[: commit.index("}, [sendInput, fetchAnnotations]);")]
+    assert commit.index("{ plane:") < commit.index("{ slice:") < commit.index("{ draw:"), (
+        "the plane and slice must reach the host before the draw"
+    )
+    # The values are displayed with their units, and drawn over the slice.
+    for unit in ('"mm"', '"deg"', '"mm2"'):
+        assert unit in text, f"the panel does not display the {unit} unit"
+    assert "measureCanvasRef" in text, "there is no measurement overlay canvas"
+    assert "drawAnnotation(ctx, a, toScreen)" in text, "committed annotations are not drawn"

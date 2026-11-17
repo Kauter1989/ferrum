@@ -57,6 +57,7 @@ window.__ModuleLoader__.load({
 			option: { background: "#ffffff", color: "#1d1f26" },
 			stage: { position: "relative", flex: "1 1 auto", minHeight: 0, borderRadius: "10px", border: "1px solid var(--dsh-border, #d0d5dd)", overflow: "hidden", background: "#0b0d10" },
 			canvas: { display: "block", width: "100%", height: "100%", cursor: "grab" },
+			measureCanvas: { position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" },
 			labels: { position: "absolute", inset: 0, pointerEvents: "none", font: "12px/1.2 ui-monospace, monospace", color: "#c8ccd4" },
 			label: { position: "absolute", padding: "2px 4px", background: "rgba(13,14,17,.55)", borderRadius: "4px" },
 			note: { fontSize: "12px", opacity: 0.7 },
@@ -310,6 +311,83 @@ window.__ModuleLoader__.load({
 			);
 		}
 
+		/** A measured value with its unit, as the panel displays it (29.2-c). */
+		function formatMeasure(value, unit) {
+			if (unit === "mm") return value.toFixed(1) + " mm";
+			if (unit === "deg") return value.toFixed(1) + "°";
+			if (unit === "mm2") return value.toFixed(2) + " mm²";
+			return String(value);
+		}
+
+		/** Distance between two slice pixels, in millimetres. */
+		function mmDistance(a, b, spacing) {
+			const dx = (a[0] - b[0]) * spacing[0];
+			const dy = (a[1] - b[1]) * spacing[1];
+			return Math.sqrt(dx * dx + dy * dy);
+		}
+
+		/** Where an annotation's value label sits, in screen pixels. */
+		function labelAnchor(kind, pts) {
+			if (kind === "Angle" && pts.length >= 2) return pts[1];
+			if (kind === "Area" && pts.length > 0) {
+				const sum = pts.reduce((acc, p) => [acc[0] + p[0], acc[1] + p[1]], [0, 0]);
+				return [sum[0] / pts.length, sum[1] / pts.length];
+			}
+			if (pts.length >= 2) return [(pts[0][0] + pts[1][0]) / 2, (pts[0][1] + pts[1][1]) / 2];
+			return pts[0] || [0, 0];
+		}
+
+		/**
+		 * Draws one committed annotation over the slice: its outline and its
+		 * measured value. The shape comes from the host's in-plane millimetre
+		 * points; the value is the host's own — the panel measures nothing.
+		 */
+		function drawAnnotation(ctx, a, toScreen) {
+			const pts = (a.points_mm || []).map(toScreen);
+			if (pts.length === 0) return;
+			ctx.strokeStyle = "#ffd166";
+			ctx.fillStyle = "#ffd166";
+			ctx.beginPath();
+			if (a.kind === "Rectangle" && pts.length === 2) {
+				ctx.rect(
+					Math.min(pts[0][0], pts[1][0]), Math.min(pts[0][1], pts[1][1]),
+					Math.abs(pts[1][0] - pts[0][0]), Math.abs(pts[1][1] - pts[0][1])
+				);
+			} else {
+				pts.forEach((p, i) => { if (i === 0) ctx.moveTo(p[0], p[1]); else ctx.lineTo(p[0], p[1]); });
+				if (a.kind === "Area") ctx.closePath();
+			}
+			ctx.stroke();
+			const text = a.value != null ? formatMeasure(a.value, a.unit) : (a.label || a.name || "");
+			const anchor = labelAnchor(a.kind, pts);
+			ctx.fillText(text, anchor[0] + 6, anchor[1] - 6);
+		}
+
+		/** Draws the in-progress measurement (the drag preview) in blue. */
+		function drawDraft(ctx, draft, toScreen) {
+			const pts = draft.points.map(toScreen);
+			const hover = draft.hover ? toScreen(draft.hover) : null;
+			ctx.strokeStyle = "#4fb3d9";
+			ctx.fillStyle = "#4fb3d9";
+			ctx.beginPath();
+			if (draft.tool === "rect" && pts.length === 1 && hover) {
+				ctx.rect(
+					Math.min(pts[0][0], hover[0]), Math.min(pts[0][1], hover[1]),
+					Math.abs(hover[0] - pts[0][0]), Math.abs(hover[1] - pts[0][1])
+				);
+			} else {
+				const all = hover ? pts.concat([hover]) : pts;
+				all.forEach((p, i) => { if (i === 0) ctx.moveTo(p[0], p[1]); else ctx.lineTo(p[0], p[1]); });
+				if (draft.tool === "area" && all.length >= 3) ctx.closePath();
+			}
+			ctx.stroke();
+			for (const p of pts) {
+				ctx.beginPath();
+				ctx.arc(p[0], p[1], 3, 0, Math.PI * 2);
+				ctx.fill();
+			}
+		}
+
 		/** The panel: address and token, a mode bar, and the live canvas. */
 		function FerrumPage() {
 			const [origin, setOrigin] = React.useState(read(KEY_ORIGIN, DEFAULT_ORIGIN));
@@ -336,6 +414,54 @@ window.__ModuleLoader__.load({
 			const [overlayFill, setOverlayFill] = React.useState(0.5);
 			const overlayRef = React.useRef({ shown: false, fill: 0.5, style: "fill_outline" });
 
+			// Measurements (29.2-c): the tool machine stays in the host. The
+			// panel collects slice pixels, sends a `draw` input and displays the
+			// values the host computed (/api/annotations) over its own slice.
+			const [tool, setTool] = React.useState("navigate");
+			const [annotations, setAnnotations] = React.useState([]);
+			const toolRef = React.useRef("navigate");
+			const annotationsRef = React.useRef([]);
+			const draftRef = React.useRef(null);
+			const dimsRef = React.useRef(null);
+			const measureCanvasRef = React.useRef(null);
+			const pollTimer = React.useRef(null);
+			toolRef.current = tool;
+
+			/**
+			 * The measurement overlay: committed annotations of the shown slice
+			 * and the in-progress draft, on a 2D canvas above the WebGPU one.
+			 * Runs in the frame loop, so it follows resize and slice scrolls.
+			 */
+			const drawMeasureOverlay = React.useCallback(() => {
+				const canvas = measureCanvasRef.current;
+				const info = dimsRef.current;
+				if (!canvas || !info) return;
+				const rect = canvas.getBoundingClientRect();
+				const dpr = window.devicePixelRatio || 1;
+				const w = Math.max(1, Math.round(rect.width * dpr));
+				const h = Math.max(1, Math.round(rect.height * dpr));
+				if (canvas.width !== w || canvas.height !== h) {
+					canvas.width = w;
+					canvas.height = h;
+				}
+				const ctx = canvas.getContext("2d");
+				ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+				ctx.clearRect(0, 0, rect.width, rect.height);
+				if (modeRef.current !== "slice") return;
+				// The 2D view stretches the axial slice over the canvas, so both
+				// the host's millimetre points and the draft's pixels map linearly.
+				const mmW = info.dims[0] * info.spacing[0];
+				const mmH = info.dims[1] * info.spacing[1];
+				const toScreen = (mm) => [(mm[0] / mmW) * rect.width, (mm[1] / mmH) * rect.height];
+				const pxToScreen = (px) => [(px[0] / info.dims[0]) * rect.width, (px[1] / info.dims[1]) * rect.height];
+				ctx.lineWidth = 1.5;
+				ctx.font = "12px ui-monospace, monospace";
+				for (const a of annotationsRef.current) {
+					if (a.plane === "axial" && a.slice_index === sliceRef.current) drawAnnotation(ctx, a, toScreen);
+				}
+				if (draftRef.current) drawDraft(ctx, draftRef.current, pxToScreen);
+			}, []);
+
 			/** One frame of the loop: sizes the drawing buffer and draws. */
 			const draw = React.useCallback(() => {
 				const view = viewRef.current;
@@ -356,8 +482,9 @@ window.__ModuleLoader__.load({
 					setError(e && e.message ? e.message : String(e));
 					return;
 				}
+				drawMeasureOverlay();
 				requestAnimationFrame(draw);
-			}, []);
+			}, [drawMeasureOverlay]);
 
 			// The host's token is short-lived and rotates (ADR 0019). The panel
 		// refreshes it proactively so a reconnect — and the state sync to come —
@@ -404,6 +531,9 @@ window.__ModuleLoader__.load({
 				write(KEY_ORIGIN, clean);
 				write(KEY_TOKEN, secret);
 				setError(null);
+				draftRef.current = null;
+				annotationsRef.current = [];
+				setAnnotations([]);
 				setStatus("loading the renderer…");
 				try {
 					const wasm = await loadWasm(clean);
@@ -441,6 +571,9 @@ window.__ModuleLoader__.load({
 					}
 					view.set_volume(new Uint32Array(header.dims), new Float32Array(header.spacing_mm), voxels);
 					view.set_window(header.value_range[0], header.value_range[1]);
+					// The measurement overlay maps the host's millimetre points and
+					// the draft's pixels through the grid it was loaded with.
+					dimsRef.current = { dims: header.dims, spacing: header.spacing_mm };
 					// A CT is shown with the desktop's own preset: `tissue` has its
 					// own palette, so the transfer-function mode is the one that
 					// follows `set_ct_preset`.
@@ -450,7 +583,7 @@ window.__ModuleLoader__.load({
 					} catch (presetError) {
 						/* a non-CT volume keeps the default ramp */
 					}
-					sliceRef.current = header.dims[2] / 2;
+					sliceRef.current = Math.floor(header.dims[2] / 2);
 					// The mode goes through by name: the module validates it and refuses
 					// an unknown value, where a local ternary would fall back to a
 					// single 2D slice without saying so (F1).
@@ -492,6 +625,15 @@ window.__ModuleLoader__.load({
 					}
 					setStatus(view.adapter_info() + " · " + header.dims.join("×") + " · " + header.value_unit);
 					draw();
+					// The measurements the host already holds, then a light poll so
+					// an agent's drawn annotations appear too (the endpoint refreshes
+					// the workspace on every read).
+					fetchAnnotations();
+					clearInterval(pollTimer.current);
+					const gen = sessionGen.current + 1;
+					pollTimer.current = setInterval(() => {
+						if (sessionGen.current === gen) fetchAnnotations();
+					}, 5000);
 					// start keeping the token alive (the first refresh learns the TTL)
 					clearTimeout(refreshTimer.current);
 					sessionGen.current += 1;
@@ -502,17 +644,115 @@ window.__ModuleLoader__.load({
 				}
 			}, [origin, token, renderMode, draw]);
 
-			// Pointer and wheel drive the 3D camera or the axial slice.
+			// Send a view input to the host (the person's change). The host is the
+			// source of truth; the local renderer is kept in step optimistically.
+			// sendInput answers with the new state (or null); pushInput is the
+			// fire-and-forget form for display changes.
+			const sendInput = React.useCallback((body) => {
+				const clean = originRef.current.trim().replace(/\/+$/, "");
+				const secret = tokenRef.current.trim();
+				if (!isLoopback(clean) || !tokenLooksValid(secret)) return Promise.resolve(null);
+				return fetch(clean + "/api/input?token=" + encodeURIComponent(secret), {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify(body)
+				})
+					.then((r) => (r.ok ? r.json() : null))
+					.catch(() => null);
+			}, []);
+			const pushInput = React.useCallback((body) => { sendInput(body); }, [sendInput]);
+
+			/** Read the host's measured values (the panel computes none itself). */
+			const fetchAnnotations = React.useCallback(async () => {
+				const clean = originRef.current.trim().replace(/\/+$/, "");
+				const secret = tokenRef.current.trim();
+				if (!isLoopback(clean) || !tokenLooksValid(secret)) return;
+				try {
+					const response = await fetch(clean + "/api/annotations?token=" + encodeURIComponent(secret));
+					if (!response.ok) return;
+					const doc = await response.json();
+					annotationsRef.current = doc.annotations || [];
+					setAnnotations(annotationsRef.current);
+				} catch (e) {
+					/* host unreachable: the last values stay on screen */
+				}
+			}, []);
+			React.useEffect(() => () => clearInterval(pollTimer.current), []);
+
+			/**
+			 * Commit a measurement: the host measures on its active plane's
+			 * slice, so the panel's axial plane and slice go first (in order),
+			 * then the draw; the values come back from /api/annotations.
+			 */
+			const commitDraw = React.useCallback(async (toolName, points) => {
+				await sendInput({ plane: "axial" });
+				await sendInput({ slice: sliceRef.current });
+				await sendInput({ draw: { tool: toolName, points } });
+				draftRef.current = null;
+				await fetchAnnotations();
+			}, [sendInput, fetchAnnotations]);
+
+			/** The pointer as a pixel of the axial slice the 2D view shows. */
+			const slicePixelAt = (e) => {
+				const canvas = canvasRef.current;
+				const info = dimsRef.current;
+				if (!canvas || !info) return null;
+				const rect = canvas.getBoundingClientRect();
+				const x = Math.floor(((e.clientX - rect.left) / rect.width) * info.dims[0]);
+				const y = Math.floor(((e.clientY - rect.top) / rect.height) * info.dims[1]);
+				return [
+					Math.max(0, Math.min(info.dims[0] - 1, x)),
+					Math.max(0, Math.min(info.dims[1] - 1, y))
+				];
+			};
+
+			// Pointer and wheel drive the 3D camera, the axial slice, or a
+			// measurement draft when a tool is active in the 2D view.
 			React.useEffect(() => {
 				const canvas = canvasRef.current;
 				if (!canvas) return undefined;
 				let dragging = null;
+				const spacing = () => (dimsRef.current ? dimsRef.current.spacing : [1, 1, 1]);
 				const onDown = (e) => {
+					const toolName = toolRef.current;
+					if (modeRef.current === "slice" && toolName !== "navigate") {
+						const px = slicePixelAt(e);
+						if (!px) return;
+						canvas.setPointerCapture(e.pointerId);
+						canvas.style.cursor = "crosshair";
+						if (toolName === "distance" || toolName === "rect") {
+							draftRef.current = { tool: toolName, points: [px], hover: px };
+							return;
+						}
+						const draft =
+							draftRef.current && draftRef.current.tool === toolName
+								? draftRef.current
+								: { tool: toolName, points: [], hover: px };
+						const pts = draft.points;
+						// Area closes when a click lands near the first point — the
+						// host tool's own 6 mm rule; a repeated click adds nothing.
+						if (toolName === "area" && pts.length >= 3 && mmDistance(pts[0], px, spacing()) <= 6.0) {
+							commitDraw(toolName, pts);
+							return;
+						}
+						const last = pts[pts.length - 1];
+						if (!last || last[0] !== px[0] || last[1] !== px[1]) pts.push(px);
+						draft.hover = px;
+						draftRef.current = draft;
+						if (toolName === "angle" && pts.length === 3) commitDraw(toolName, pts);
+						return;
+					}
 					canvas.setPointerCapture(e.pointerId);
 					dragging = { x: e.clientX, y: e.clientY };
 					canvas.style.cursor = "grabbing";
 				};
 				const onMove = (e) => {
+					const draft = draftRef.current;
+					if (draft) {
+						const px = slicePixelAt(e);
+						if (px) draft.hover = px;
+						return;
+					}
 					const view = viewRef.current;
 					if (!dragging || !view) return;
 					const dx = e.clientX - dragging.x;
@@ -520,9 +760,33 @@ window.__ModuleLoader__.load({
 					dragging = { x: e.clientX, y: e.clientY };
 					if (modeRef.current !== "slice") view.orbit(dx * 0.01, dy * 0.01);
 				};
-				const onUp = () => {
+				const onUp = (e) => {
+					const draft = draftRef.current;
+					if (draft && (draft.tool === "distance" || draft.tool === "rect")) {
+						const px = slicePixelAt(e) || draft.hover;
+						const start = draft.points[0];
+						// The host commits a distance/rect from 0.5 mm on; a smaller
+						// drag (or a plain click) draws nothing.
+						if (px && mmDistance(start, px, spacing()) >= 0.5) {
+							commitDraw(draft.tool, [start, px]);
+						} else {
+							draftRef.current = null;
+						}
+						canvas.style.cursor = "crosshair";
+						return;
+					}
 					dragging = null;
-					canvas.style.cursor = "grab";
+					canvas.style.cursor = toolRef.current !== "navigate" && modeRef.current === "slice" ? "crosshair" : "grab";
+				};
+				const onDblClick = () => {
+					const draft = draftRef.current;
+					if (draft && draft.tool === "area" && draft.points.length >= 3) commitDraw(draft.tool, draft.points);
+				};
+				const onContextMenu = (e) => {
+					if (draftRef.current) {
+						e.preventDefault();
+						draftRef.current = null;
+					}
 				};
 				const onWheel = (e) => {
 					const view = viewRef.current;
@@ -532,24 +796,32 @@ window.__ModuleLoader__.load({
 						view.zoom(e.deltaY > 0 ? -0.08 : 0.08);
 						return;
 					}
-					sliceRef.current = Math.max(0, sliceRef.current + (e.deltaY > 0 ? 1 : -1));
+					const info = dimsRef.current;
+					const max = info ? info.dims[2] - 1 : 4096;
+					sliceRef.current = Math.max(0, Math.min(max, sliceRef.current + (e.deltaY > 0 ? 1 : -1)));
 					try {
 						view.set_slice("axial", sliceRef.current);
 					} catch (err) {
 						/* the volume may not be loaded yet */
 					}
+					// The host measures on its own slice: keep it on the shown one.
+					pushInput({ slice: sliceRef.current });
 				};
 				canvas.addEventListener("pointerdown", onDown);
 				canvas.addEventListener("pointermove", onMove);
 				canvas.addEventListener("pointerup", onUp);
+				canvas.addEventListener("dblclick", onDblClick);
+				canvas.addEventListener("contextmenu", onContextMenu);
 				canvas.addEventListener("wheel", onWheel, { passive: false });
 				return () => {
 					canvas.removeEventListener("pointerdown", onDown);
 					canvas.removeEventListener("pointermove", onMove);
 					canvas.removeEventListener("pointerup", onUp);
+					canvas.removeEventListener("dblclick", onDblClick);
+					canvas.removeEventListener("contextmenu", onContextMenu);
 					canvas.removeEventListener("wheel", onWheel);
 				};
-			}, []);
+			}, [commitDraw, pushInput]);
 
 			// The mode bar drives the renderer's layout.
 			React.useEffect(() => {
@@ -575,19 +847,6 @@ window.__ModuleLoader__.load({
 					setError(e && e.message ? e.message : String(e));
 				}
 			}, [renderMode]);
-
-			// Send a view input to the host (the person's change). The host is the
-			// source of truth; the local renderer is kept in step optimistically.
-			const pushInput = React.useCallback((body) => {
-				const clean = originRef.current.trim().replace(/\/+$/, "");
-				const secret = tokenRef.current.trim();
-				if (!isLoopback(clean) || !tokenLooksValid(secret)) return;
-				fetch(clean + "/api/input?token=" + encodeURIComponent(secret), {
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify(body)
-				}).catch(() => {});
-			}, []);
 
 			const changeOverlay = (patch) => {
 				const next = Object.assign({}, overlayRef.current, patch);
@@ -620,12 +879,35 @@ window.__ModuleLoader__.load({
 					h("button", { type: "button", style: styles.button, onClick: connect }, "Connect"),
 					button("MPR", mode === "mpr", () => { setMode("mpr"); pushInput({ component: "mpr" }); }),
 					button("3D", mode === "volume", () => { setMode("volume"); pushInput({ component: "volume" }); }),
-					button("2D", mode === "slice", () => { setMode("slice"); pushInput({ component: "slice" }); }),
+					button("2D", mode === "slice", () => { setMode("slice"); pushInput({ component: "slice" }); pushInput({ plane: "axial" }); }),
 					h(
 						"select",
 						{ style: styles.select, value: renderMode, onChange: (e) => setRenderMode(e.target.value), "aria-label": "3D mode" },
 						["tissue", "isosurface", "mip", "transfer_function"].map((m) =>
 							h("option", { key: m, value: m, style: styles.option }, m)
+						)
+					),
+					// The measurement tools (29.2-c): picking one switches to the 2D
+					// view, where a drag draws on the slice and the host measures.
+					h(
+						"select",
+						{
+							style: styles.select, value: tool, "aria-label": "Measurement tool",
+							onChange: (e) => {
+								const next = e.target.value;
+								setTool(next);
+								draftRef.current = null;
+								if (next !== "navigate") {
+									setMode("slice");
+									pushInput({ component: "slice" });
+									pushInput({ tool: next });
+								} else {
+									pushInput({ tool: "pan" });
+								}
+							}
+						},
+						["navigate", "distance", "rect", "angle", "area"].map((t) =>
+							h("option", { key: t, value: t, style: styles.option }, t)
 						)
 					),
 					button("Overlay", overlayShown, () => changeOverlay({ shown: !overlayRef.current.shown })),
@@ -644,6 +926,10 @@ window.__ModuleLoader__.load({
 					"div",
 					{ style: styles.stage },
 					h("canvas", { ref: canvasRef, style: styles.canvas }),
+					// The measurement overlay: committed values and the draft, above
+					// the WebGPU canvas and below the MPR labels; it takes no pointer
+					// events, so the canvas underneath keeps the drag.
+					h("canvas", { ref: measureCanvasRef, style: styles.measureCanvas, "aria-hidden": "true" }),
 					mode === "mpr"
 						? h(
 								"div",
@@ -655,6 +941,17 @@ window.__ModuleLoader__.load({
 							)
 						: null
 				),
+				// The measured values as text, every slice: the overlay draws the
+				// shown slice's shapes, this list names what the host measured.
+				annotations.length > 0
+					? h(
+							"div", { style: styles.note },
+							annotations
+								.map((a) => a.name + " (" + a.plane + " " + a.slice_index + "): " +
+									(a.value != null ? formatMeasure(a.value, a.unit) : a.label || ""))
+								.join(" · ")
+						)
+					: null,
 				// The TF editor is a render setting of the transfer_function mode
 				// (panel-local, Stage 29 design §5): it appears once a view is
 				// loaded and that mode is chosen.
