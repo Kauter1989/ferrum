@@ -10,7 +10,8 @@ use std::path::Path;
 use ferrum_domain::{
     storage_histogram, SegmentStyle, SliceAxis, Volume, VoxelBox, WindowLevel, WindowPreset, AUTO_WINDOW_BINS,
 };
-use glam::{DVec2, DVec3};
+use ferrum_engines::{HttpConfig, OcrBridge, OcrOutcome, OcrRegion};
+use glam::{DVec2, DVec3, UVec3};
 use serde_json::{json, Value};
 
 use super::inspect::point;
@@ -285,9 +286,13 @@ pub(super) fn mask_plan(study: &Study, p: &Params) -> Result<MaskPlan, AgentErro
     Ok(MaskPlan { requested: true, boxes: Vec::new(), source: "none" })
 }
 
-/// `view slice`: plane, slice_number or at, window, size, overlays, masked.
+/// `view slice`: plane, slice_number or at, window, size, overlays, masked,
+/// ocr. With `ocr`, the optional OCR bridge check runs on the unmasked
+/// render; its detected regions extend the mask when masking is requested.
+/// The sidecar reports the mask and the OCR outcome — never silently passed.
 pub fn slice(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     let max = ctx.config.max_render_px;
+    let ocr_bridge = ctx.config.ocr_bridge.clone();
     let study = ctx.study(p)?;
     let plane = parse_plane(p.req_str("plane")?)?;
     let index = slice_index(study, p, plane)?;
@@ -295,16 +300,69 @@ pub fn slice(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     let size = size_param(p, max, DEFAULT_SIZE)?;
     let overlay = segment_overlay(p)?;
     let layout = Layout::new(&study.volume, plane, index, size);
-    let mask = mask_plan(study, p)?;
-    let masked;
-    let volume: &Volume = if mask.boxes.is_empty() {
-        &study.volume
+    let mut mask = mask_plan(study, p)?;
+    let ocr_requested = p.bool("ocr")?.unwrap_or(false);
+    // The unmasked render: the OCR check's input, and the final image when
+    // nothing is masked.
+    let base =
+        (ocr_requested || mask.boxes.is_empty()).then(|| render_pixels(study, &study.volume, &layout, w, overlay));
+    let mut ocr_json = None;
+    if ocr_requested {
+        let rgb = base.as_ref().ok_or_else(|| AgentError::internal("no base render"))?;
+        let png = png_bytes(layout.width, layout.height, rgb)?;
+        let bridge = ocr_bridge.as_deref().map(|url| OcrBridge::new(HttpConfig::new(url)));
+        let outcome = ferrum_engines::ocr::check(bridge.as_ref(), &png);
+        if mask.requested {
+            if let OcrOutcome::Detected { regions } = &outcome {
+                if mask.boxes.is_empty() {
+                    mask.source = "ocr";
+                }
+                mask.boxes.extend(regions.iter().map(|r| ocr_region_box(&layout, study.volume.dims(), r)));
+            }
+        }
+        ocr_json = Some(outcome.json());
+    }
+    let rgb = if mask.boxes.is_empty() {
+        base.ok_or_else(|| AgentError::internal("no render"))?
     } else {
-        masked = study.volume.masked_copy(&mask.boxes, MASK_FILL);
-        &masked
+        let masked = study.volume.masked_copy(&mask.boxes, MASK_FILL);
+        render_pixels(study, &masked, &layout, w, overlay)
     };
-    let rgb = render_pixels(study, volume, &layout, w, overlay);
-    save_render(study, layout.width, layout.height, rgb, |id| sidecar(study, &layout, id, w, overlay, &mask))
+    save_render(study, layout.width, layout.height, rgb, |id| sidecar(study, &layout, id, w, overlay, &mask, ocr_json))
+}
+
+/// The PNG bytes of an RGB render (the OCR bridge's input).
+fn png_bytes(width: u32, height: u32, rgb: &[u8]) -> Result<Vec<u8>, AgentError> {
+    let img =
+        image::RgbImage::from_raw(width, height, rgb.to_vec()).ok_or_else(|| AgentError::internal("image size"))?;
+    let mut out = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut out, image::ImageFormat::Png).map_err(|e| AgentError::internal(e.to_string()))?;
+    Ok(out.into_inner())
+}
+
+/// The voxel box covering an OCR region of the render: the region's corners
+/// mapped through the render's pixel-to-voxel affine, rounded outwards
+/// (conservative — a privacy mask may cover more, never less), on the
+/// render's own slice.
+fn ocr_region_box(l: &Layout, dims: ferrum_domain::Dims3, r: &OcrRegion) -> VoxelBox {
+    let p0 = apply(&l.to_voxel, f64::from(r.x), f64::from(r.y));
+    let p1 = apply(&l.to_voxel, f64::from(r.x + r.w), f64::from(r.y + r.h));
+    let (lo, hi) = (p0.min(p1), p0.max(p1));
+    let d = dims.as_uvec3();
+    let clamp = |v: f64, n: u32| v.clamp(0.0, f64::from(n)) as u32;
+    let mut min = UVec3::new(clamp(lo.x.floor(), d.x), clamp(lo.y.floor(), d.y), clamp(lo.z.floor(), d.z));
+    let mut max = UVec3::new(clamp(hi.x.ceil(), d.x), clamp(hi.y.ceil(), d.y), clamp(hi.z.ceil(), d.z));
+    // the render shows one slice: the box stays on it
+    let n = l.plane.normal_axis();
+    min[n] = l.index;
+    max[n] = l.index + 1;
+    // at least one voxel along each in-plane axis
+    for a in [l.plane.screen_axis(0), l.plane.screen_axis(1)] {
+        if max[a] <= min[a] {
+            max[a] = (min[a] + 1).min(d[a]);
+        }
+    }
+    VoxelBox::new(min, max)
 }
 
 /// Size parameter: largest side in pixels, capped by the operator.
@@ -379,6 +437,7 @@ fn sidecar(
     w: WindowLevel,
     overlay: Option<SegmentOverlay>,
     mask: &MaskPlan,
+    ocr: Option<Value>,
 ) -> Value {
     let mut s = json!({ "render": id, "kind": "slice" });
     if let (Some(o), Value::Object(m)) = (s.as_object_mut(), slice_json(&study.volume, l)) {
@@ -392,6 +451,9 @@ fn sidecar(
     }
     if mask.requested {
         s["mask"] = mask.json();
+    }
+    if let Some(o) = ocr {
+        s["ocr"] = o;
     }
     s["note"] = json!(NOTE);
     s

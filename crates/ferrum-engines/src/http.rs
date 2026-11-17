@@ -58,26 +58,27 @@ impl HttpEngine {
     }
 }
 
-/// Shared request plumbing of the engine and its sessions.
+/// Shared request plumbing of the engine and its sessions (also used by
+/// the OCR bridge kind, [`crate::ocr`]).
 #[derive(Debug, Clone)]
-struct Client {
-    config: HttpConfig,
+pub(crate) struct Client {
+    pub(crate) config: HttpConfig,
 }
 
-fn transport(e: ureq::Error) -> EngineError {
+pub(crate) fn transport(e: ureq::Error) -> EngineError {
     EngineError::Unreachable(e.to_string())
 }
 
 impl Client {
-    fn agent(&self, timeout: Duration) -> ureq::Agent {
+    pub(crate) fn agent(&self, timeout: Duration) -> ureq::Agent {
         ureq::Agent::config_builder().timeout_global(Some(timeout)).http_status_as_error(false).build().into()
     }
 
-    fn url(&self, path: &str) -> String {
+    pub(crate) fn url(&self, path: &str) -> String {
         format!("{}/v1{path}", self.config.base_url)
     }
 
-    fn auth<B>(&self, req: ureq::RequestBuilder<B>) -> ureq::RequestBuilder<B> {
+    pub(crate) fn auth<B>(&self, req: ureq::RequestBuilder<B>) -> ureq::RequestBuilder<B> {
         match &self.config.token {
             Some(t) => req.header("Authorization", format!("Bearer {t}")),
             None => req,
@@ -85,7 +86,7 @@ impl Client {
     }
 
     /// Turns an error status into an [`EngineError`].
-    fn check(resp: Response<Body>) -> Result<Response<Body>, EngineError> {
+    pub(crate) fn check(resp: Response<Body>) -> Result<Response<Body>, EngineError> {
         let status = resp.status().as_u16();
         if (200..300).contains(&status) {
             return Ok(resp);
@@ -96,13 +97,13 @@ impl Client {
         Err(wire::error_from_response(status, &body, retry))
     }
 
-    fn json(resp: Response<Body>) -> Result<Value, EngineError> {
+    pub(crate) fn json(resp: Response<Body>) -> Result<Value, EngineError> {
         let mut resp = Self::check(resp)?;
         let text = resp.body_mut().read_to_string().map_err(|e| EngineError::Protocol(e.to_string()))?;
         serde_json::from_str(&text).map_err(|e| EngineError::Protocol(format!("invalid JSON: {e}")))
     }
 
-    fn get_json(&self, path: &str) -> Result<Value, EngineError> {
+    pub(crate) fn get_json(&self, path: &str) -> Result<Value, EngineError> {
         let req = self.auth(self.agent(self.config.timeout).get(&self.url(path)));
         Self::json(req.call().map_err(transport)?)
     }

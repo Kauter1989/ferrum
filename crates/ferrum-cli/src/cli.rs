@@ -315,6 +315,9 @@ pub enum View {
         /// Mask region: two corner points (as --box); repeatable; implies --masked.
         #[arg(long = "mask", num_args = 2, value_names = ["MIN", "MAX"])]
         masks: Vec<String>,
+        /// Run the optional OCR bridge check on the render (Clean Pixel Data).
+        #[arg(long)]
+        ocr: bool,
         #[command(flatten)]
         display: SegmentDisplay,
     },
@@ -850,7 +853,7 @@ fn view_call(v: &View) -> Result<(String, Value), String> {
     let call = |name: &str, fields: Vec<(&str, Option<Value>)>| (name.to_owned(), object(fields));
     Ok(match v {
         View::Serve { .. } => return Err("view serve is run by main, not by the agent".into()),
-        View::Slice { ws: w, plane, slice_number, at, window, size, overlays, display, masked, masks } => {
+        View::Slice { ws: w, plane, slice_number, at, window, size, overlays, display, masked, masks, ocr } => {
             // num_args = 2: every --mask occurrence contributes one pair.
             let boxes = masks
                 .as_chunks::<2>()
@@ -872,6 +875,7 @@ fn view_call(v: &View) -> Result<(String, Value), String> {
                     ("overlays", (!overlays.is_empty()).then(|| json!(overlays))),
                     ("masked", (*masked || !boxes.is_empty()).then(|| json!(true))),
                     ("masks", (!boxes.is_empty()).then(|| json!(boxes))),
+                    ("ocr", ocr.then(|| json!(true))),
                 ]
                 .into_iter()
                 .chain(display.fields())
@@ -1199,6 +1203,11 @@ mod tests {
         let (_, p) = call(&base);
         assert!(p.get("masked").is_none());
         assert!(p.get("masks").is_none());
+        assert!(p.get("ocr").is_none());
+        // --ocr is its own flag (does not imply masking)
+        let (_, p) = call(&[base.as_slice(), &["--ocr"]].concat());
+        assert_eq!(p["ocr"], json!(true));
+        assert!(p.get("masked").is_none());
         // a malformed corner point is refused
         let bad = Cli::try_parse_from([base.as_slice(), &["--mask", "v:5,3", "v:16,8,0"]].concat()).unwrap();
         assert!(bad.command.to_call().is_err());
