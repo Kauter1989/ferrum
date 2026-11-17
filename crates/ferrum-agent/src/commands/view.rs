@@ -346,7 +346,8 @@ fn png_bytes(width: u32, height: u32, rgb: &[u8]) -> Result<Vec<u8>, AgentError>
 /// render's own slice.
 fn ocr_region_box(l: &Layout, dims: ferrum_domain::Dims3, r: &OcrRegion) -> VoxelBox {
     let p0 = apply(&l.to_voxel, f64::from(r.x), f64::from(r.y));
-    let p1 = apply(&l.to_voxel, f64::from(r.x + r.w), f64::from(r.y + r.h));
+    // add in f64: a crafted OCR region (x = u32::MAX, w = 1) must not overflow
+    let p1 = apply(&l.to_voxel, f64::from(r.x) + f64::from(r.w), f64::from(r.y) + f64::from(r.h));
     let (lo, hi) = (p0.min(p1), p0.max(p1));
     let d = dims.as_uvec3();
     let clamp = |v: f64, n: u32| v.clamp(0.0, f64::from(n)) as u32;
@@ -457,4 +458,21 @@ fn sidecar(
     }
     s["note"] = json!(NOTE);
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // covers 31.3-b — a crafted OCR region must not overflow (review of #133):
+    // x + w is added in f64, so x = u32::MAX, w = 1 cannot panic or wrap.
+    #[test]
+    fn a_crafted_ocr_region_does_not_overflow() {
+        let dims = ferrum_domain::Dims3::new(8, 8, 4);
+        let v = Volume::from_physical(dims, glam::Vec3::ONE, &vec![0.0; dims.voxel_count()]).unwrap();
+        let l = Layout::new(&v, ferrum_domain::SliceAxis::Axial, 2, 64);
+        let r = OcrRegion { x: u32::MAX, y: u32::MAX, w: 1, h: 1 };
+        let bx = ocr_region_box(&l, dims, &r);
+        assert!(bx.max.x <= dims.x && bx.max.y <= dims.y, "the box is clamped to the grid: {bx:?}");
+    }
 }
