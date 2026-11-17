@@ -96,6 +96,7 @@ TTL.
 | `GET` | `/api/state` | the state document below, `application/json` |
 | `GET` | `/api/frame.png` | the state component's frame (`slice` at native resolution, `volume`/`mpr` at 512×512), `image/png`; header `X-Ferrum-Rev` |
 | `GET` | `/api/events?since=<seq>` | events with `seq` greater than `since` |
+| `GET` | `/api/annotations` | the measurements the tool machine committed, with their values (4.6, 29.2-c) |
 | `POST` | `/api/input` | one input object; answers with the new state |
 | `POST` | `/api/token/refresh` | a fresh token `{"token","expires_in"}`; re-sets the cookie (4.1) |
 | `GET` | `/api/volume` | the voxels as little-endian `u16` storage by default (`?storage=f32` for physical `f32`), `application/octet-stream`; the grid, spacing, range and storage form travel in `X-Ferrum-Volume` as JSON (26.3-a, 29.3-a). The client reconstructs `min + stored × (max − min) / 65535` |
@@ -245,6 +246,35 @@ the last 512 events and counts the dropped ones. Events hold numbers and
 labels only, and `point_picked` carries the same voxel and value `probe`
 gives. No event is a decision.
 
+### 4.6 Annotations
+
+`GET /api/annotations` serves the measurements the host's tool machine
+committed (the `draw` input, §4.4), so a panel that sends `draw` can display
+the value the host computed — distance in mm, angle in degrees, area in mm²
+(Stage 29, criterion 29.2-c). The route refreshes the workspace first, so
+annotations an agent wrote are adopted the way segments are.
+
+```json
+{
+  "format": "ferrum-view/1",
+  "annotations": [
+    { "id": 0, "name": "Distance 1", "kind": "Distance", "plane": "axial",
+      "slice_index": 119, "value": 12.3, "unit": "mm", "label": "12.3 mm",
+      "points_mm": [[40.5, 60.5], [52.5, 63.5]] }
+  ]
+}
+```
+
+- `kind` is the domain's own (`Distance`, `Angle`, `Rectangle`, `Area`,
+  `Text`); `value`/`unit`/`label` come from `Annotation::value/unit/label`
+  (`mm`, `deg`, `mm2`; `label` prints areas in cm²). `value` is null for text.
+- `points_mm` are in-plane millimetres from the top-left corner of the
+  displayed slice (x right, y down) — the same frame the `draw` input's
+  pixels map into, so a client can draw the shape over its own slice.
+- `roi_drawn` names the committed annotation's `id`; this document resolves
+  it to a value. Numbers and labels only: no path, UID or header value
+  (25.5-a).
+
 ## 5. Frames
 
 `GET /api/frame.png` draws the state's `component`:
@@ -344,8 +374,9 @@ Probe and draw:
   elsewhere in this stage.
 - The token is the only credential; a wrong one changes nothing.
 - Documents hold voxel indices, patient millimetres, window values, segment
-  labels and names. A test scans the state, the events and the page for the
-  study's file name and folder and finds none of them.
+  labels and names, and annotation values and names. A test scans the state,
+  the events, the annotations and the page for the study's file name and
+  folder and finds none of them.
 - Bodies are capped at 64 KiB; the event log at 512 entries; the page is one
   static document.
 - The host sends no request to any other origin.

@@ -5,13 +5,13 @@
 use std::path::PathBuf;
 
 use ferrum_domain::{
-    LabelMap, NoProgress, ResultStore, Segment, SegmentStyle, SegmentationSet, SliceAxis, SliceImage, Volume,
-    VolumeRepository, WindowLevel,
+    Annotation, AnnotationReport, AnnotationSet, LabelMap, NoProgress, ResultStore, Segment, SegmentStyle,
+    SegmentationSet, SliceAxis, SliceImage, SliceKey, StudyInfo, Volume, VolumeRepository, WindowLevel,
 };
 use ferrum_io::workspace::Workspace;
 use ferrum_io::{write_nifti, CompositeRepository, WorkspaceStore};
 use ferrum_view::{BackendPreference, ServeOptions, Session, ViewServer};
-use glam::Vec3;
+use glam::{Vec2, Vec3};
 use serde_json::Value;
 
 /// A workspace with a synthetic study: a bright block of 400 HU at voxels
@@ -824,6 +824,89 @@ fn a_draw_commits_an_annotation_through_the_tool_machine() {
     let (status, _) =
         post(&token_url(&server, "/api/input"), r#"{"draw":{"tool":"distance","points":[[99,99],[100,100]]}}"#);
     assert_eq!(status, 400, "a pixel outside the slice is refused");
+}
+
+// covers 29.2-c — the panel reads the measured values from /api/annotations:
+// the host's tool machine computed them, the document names value/unit/label
+// and the in-plane millimetre points, and holds no identifiers.
+#[test]
+fn the_annotations_endpoint_serves_the_measured_values() {
+    let f = fixture(false);
+    let server = open(&f);
+    let (status, doc) = get_json(&token_url(&server, "/api/annotations"));
+    assert_eq!(status, 200, "{doc}");
+    assert_eq!(doc["format"].as_str(), Some("ferrum-view/1"));
+    assert_eq!(doc["annotations"].as_array().unwrap().len(), 0, "a fresh study has no measurements");
+
+    let (_, state) = get_json(&token_url(&server, "/api/state"));
+    let index = slice_index(&state);
+    // distance (5,4)-(6,5) at 1 mm: the pixel centres are √2 mm apart
+    let (status, _) = post(&token_url(&server, "/api/input"), r#"{"draw":{"tool":"distance","points":[[5,4],[6,5]]}}"#);
+    assert_eq!(status, 200);
+    let (_, doc) = get_json(&token_url(&server, "/api/annotations"));
+    let items = doc["annotations"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    let a = &items[0];
+    assert_eq!(a["kind"].as_str(), Some("Distance"));
+    assert_eq!(a["plane"].as_str(), Some("axial"));
+    assert_eq!(a["slice_index"].as_u64(), Some(index));
+    assert_eq!(a["unit"].as_str(), Some("mm"));
+    let value = a["value"].as_f64().unwrap();
+    assert!((value - 2.0f64.sqrt()).abs() < 1e-3, "the host measured √2 mm, got {value}");
+    assert_eq!(a["label"].as_str(), Some("1.4 mm"));
+    assert_eq!(a["points_mm"][0][0].as_f64(), Some(5.5));
+    assert_eq!(a["points_mm"][1][1].as_f64(), Some(5.5));
+    assert!(a["id"].as_u64().is_some(), "the event's id resolves to this item");
+    assert_eq!(a["name"].as_str(), Some("Distance 1"));
+
+    // angle (90°), rect and area carry their own units and values. The area
+    // polygon is larger than the tool's 6 mm close tolerance: a vertex nearer
+    // the first one would close the polygon early (the tool machine's rule).
+    for (body, kind, unit, expected) in [
+        (r#"{"draw":{"tool":"angle","points":[[4,4],[6,4],[6,6]]}}"#, "Angle", "deg", 90.0),
+        (r#"{"draw":{"tool":"rect","points":[[4,3],[7,6]]}}"#, "Rectangle", "mm2", 9.0),
+        (r#"{"draw":{"tool":"area","points":[[2,2],[12,2],[12,9],[2,9]]}}"#, "Area", "mm2", 70.0),
+    ] {
+        let (status, _) = post(&token_url(&server, "/api/input"), body);
+        assert_eq!(status, 200, "{body}");
+        let (_, doc) = get_json(&token_url(&server, "/api/annotations"));
+        let last = doc["annotations"].as_array().unwrap().last().unwrap();
+        assert_eq!(last["kind"].as_str(), Some(kind), "{body}");
+        assert_eq!(last["unit"].as_str(), Some(unit), "{body}");
+        assert!((last["value"].as_f64().unwrap() - expected).abs() < 1e-3, "{body}: {last}");
+    }
+
+    // numbers and labels only: the study's name never appears (25.5-a)
+    let (_, doc) = get_json(&token_url(&server, "/api/annotations"));
+    let text = doc.to_string();
+    assert!(!text.contains("Jane_Doe") && !text.contains("patient_") && !text.contains("phantom"), "{text}");
+
+    // the token guards the document; a wrong method is refused
+    let (status, _) = get_json(&format!("{}/api/annotations", server.url()));
+    assert_eq!(status, 401);
+    let (status, _) = post(&token_url(&server, "/api/annotations"), "{}");
+    assert_eq!(status, 405);
+}
+
+// covers 29.2-c — annotations an agent writes into the workspace reach the
+// endpoint through the host's reload, the way segments do.
+#[test]
+fn agent_written_annotations_reach_the_annotations_endpoint() {
+    let f = fixture(false);
+    let server = open(&f);
+    let workspace = Workspace::open(&f.workspace).unwrap();
+    let mut set = AnnotationSet::default();
+    set.add(SliceKey::new(SliceAxis::Axial, 4), Annotation::Distance { a: Vec2::ZERO, b: Vec2::new(3.0, 4.0) });
+    let report = AnnotationReport::build(f.workspace.join("study"), StudyInfo::default(), &f.volume, &set);
+    workspace.save_annotations(&report, "FERRUM test").unwrap();
+    drop(workspace);
+    let (status, doc) = get_json(&token_url(&server, "/api/annotations"));
+    assert_eq!(status, 200);
+    let items = doc["annotations"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "the agent's measurement is served: {doc}");
+    assert!((items[0]["value"].as_f64().unwrap() - 5.0).abs() < 1e-3, "a 3-4-5 distance measures 5 mm");
+    assert_eq!(items[0]["slice_index"].as_u64(), Some(4));
+    assert!(!doc.to_string().contains("patient_"), "the source path never crosses the wire");
 }
 
 // covers 29.1-a — the volume frame is the 3D view at the fixed size, its

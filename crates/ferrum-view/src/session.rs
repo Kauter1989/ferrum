@@ -18,7 +18,7 @@ use sha2::{Digest, Sha256};
 use crate::cpu::CpuFrameSource;
 use crate::frame::{Backend, BackendPreference, FrameSource};
 use crate::gpu::GpuFrameSource;
-use crate::state::{events_json, state_json, Input};
+use crate::state::{annotations_json, events_json, state_json, Input};
 
 /// The lower-case hex SHA-256 of `bytes`, as the workspace format writes it.
 fn hex_sha256(bytes: &[u8]) -> String {
@@ -267,10 +267,17 @@ impl Session {
         events_json(&self.events, self.seq, self.dropped, since)
     }
 
+    /// The measurements drawn on the study, as the annotations document
+    /// (`ferrum-view/1`): the values the host's tool machine computed, for a
+    /// panel that displays them (Stage 29, criterion 29.2-c).
+    pub fn annotations_json(&self) -> Value {
+        annotations_json(&self.viewer)
+    }
+
     /// Reloads the workspace when another process changed it: a view state
     /// written by an agent is applied in full (Stage 29 — the host honours
-    /// every field of the contract), and segments are reloaded. Returns
-    /// `true` when the next frame differs.
+    /// every field of the contract), and segments and annotations are
+    /// reloaded. Returns `true` when the next frame differs.
     pub fn refresh(&mut self) -> bool {
         let changes = self.watcher.poll();
         if changes.is_empty() {
@@ -295,7 +302,12 @@ impl Session {
         if data_changed {
             if let Some(dataset) = self.viewer.dataset().cloned() {
                 match self.store.load(&dataset.volume) {
-                    Ok((_annotations, segments)) => {
+                    Ok((annotations, segments)) => {
+                        // The annotations an agent wrote reach the panel the same
+                        // way the segments do: the workspace is the source of
+                        // truth, and the host's own draws are saved there too
+                        // (29.2-c). An absent file means no annotations.
+                        self.viewer.set_annotations(annotations.unwrap_or_default());
                         self.viewer.adopt_segments(segments);
                         self.rev += 1;
                         changed = true;

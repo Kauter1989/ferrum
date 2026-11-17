@@ -101,3 +101,44 @@ The panel now draws the segment overlay and follows the host's view state:
   headed-browser automated test of the binding (PR 7). The overlay rendering
   itself is verified by the host's GPU↔CPU parity suite and a field browser
   check, not by a native test (a WebGPU run needs a headed browser).
+
+## As built (Stage 29 PR 6, criteria 29.2-b/c)
+
+The panel edits the transfer function and measures, without adding any
+image-formation code:
+
+- **TF editor (29.2-b).** `ferrum-wasm` exposes the domain's edit-API:
+  `tf_points()` (the control points as five floats each — position, opacity,
+  r, g, b; `src/tf.rs`, host-tested), `tf_histogram()` (the volume's
+  `storage_histogram`, 256 bins normalised to `[0, 1]`), `tf_move_point`,
+  `tf_insert_point`, `tf_remove_point`, `tf_set_color` and `tf_hit_test`.
+  Every mutating binding re-bakes the LUT through the existing
+  `upload_occupancy` (`bake(256)` → `renderer.set_transfer_function`), so the
+  edited function is drawn by the **existing** `volume.wgsl` in
+  `transfer_function` mode — no new shader, no second sampling path
+  (rendering rule). The panel's `TfEditor` is a small 2D canvas shown for that
+  mode: histogram background, draggable handles, a colour strip the browser
+  interpolates, and a per-point colour picker; double-click inserts,
+  right-click removes an interior point. The TF stays **panel-local**: the
+  ViewState contract does not carry it (design §5).
+- **Measurements (29.2-c).** The tool machine stays in the host (PR 2's
+  `draw` input → `Viewer::slice_input`); the panel runs no tool logic of its
+  own. A tool selector (`navigate`/`distance`/`rect`/`angle`/`area`) switches
+  to the 2D view, where a drag collects pixels of the axial slice the panel
+  shows; the commit syncs `plane` and `slice` to the host in order and sends
+  `{"draw":{"tool","points"}}`. The host computes the value; the panel reads
+  it from the new `GET /api/annotations` (kind, plane, slice, value/unit/label
+  from `Annotation::value/unit/label`, `points_mm`; numbers and labels only,
+  [view-host.md](view-host.md) §4.6) and displays it twice: shapes with
+  mm/deg/mm² labels on a canvas2d overlay above the WebGPU canvas (the shown
+  slice's annotations plus the drag preview), and a text list. A light poll
+  picks up annotations an agent writes — the host's workspace reload now
+  adopts annotations the way it adopts segments. The overlay's close/dedup
+  rules mirror the host tool's 6 mm tolerance and 0.5 mm minimum.
+- Tests: `tests/tf_editor.rs` (the wire form round-trips, every edit reaches
+  it, the histogram normalises), `test_one_renderer.py` (the bindings call
+  the domain API and re-bake), `test_panel.py` (editor and tool wiring),
+  `view_host.rs` (the endpoint's exact values, token guard, privacy, and the
+  agent-written reload). The browser render of the edited TF and the drawn
+  measurements is a field check (PR 7's headed-browser path), **not verified
+  locally** — a WebGPU run needs a headed browser.

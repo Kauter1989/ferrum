@@ -504,6 +504,34 @@ pub fn events_json(events: &[(u64, ViewEvent)], seq: u64, dropped: u64, since: O
     json!({ "format": FORMAT, "events": list, "next": seq, "dropped": dropped })
 }
 
+/// The annotations document (`ferrum-view/1`): the measurements the viewer
+/// holds, read live from [`Viewer::annotations`] — the host's tool machine
+/// commits them (the `draw` input) and a panel displays their values
+/// (Stage 29, criterion 29.2-c). The value, unit and label are the domain's
+/// own ([`ferrum_domain::Annotation`]); the points are in-plane millimetres,
+/// the same frame the `draw` input takes pixels for. Numbers and labels only:
+/// no path, UID, patient name or header value appears here (25.5-a).
+pub fn annotations_json(viewer: &Viewer) -> Value {
+    let items: Vec<Value> = viewer
+        .annotations()
+        .iter()
+        .map(|(id, key, annotation, name)| {
+            json!({
+                "id": id,
+                "name": name,
+                "kind": annotation.kind(),
+                "plane": key.slice_axis().map(plane_name),
+                "slice_index": key.index,
+                "value": annotation.value(),
+                "unit": annotation.unit(),
+                "label": annotation.label(),
+                "points_mm": annotation.points().iter().map(|p| [p.x, p.y]).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    json!({ "format": FORMAT, "annotations": items })
+}
+
 /// Reads the voxel under a frame pixel of the current component: the 2D
 /// affine on a slice, the camera projection in 3D, and the quarter's own
 /// mapping in the MPR grid.

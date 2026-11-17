@@ -95,6 +95,18 @@ editing it while the harness runs does not load the plugin.
 4. **3D** and **2D** switch to a single full-canvas view, and the select
    picks the 3D mode (`transfer_function` by default, with the desktop's CT
    soft tissue + bone preset; `tissue`, `isosurface` and `mip` are the others).
+5. in `transfer_function` mode the **TF editor** appears under the canvas
+   (Stage 29 PR 6): drag the control points over the histogram, double-click
+   to add one, right-click to remove an interior one, and pick the selected
+   point's colour. The 3D view follows on its next frame; the editor is a
+   panel-local render setting (the host's view state does not carry it).
+6. the **measurement tool** select (`navigate`, `distance`, `rect`, `angle`,
+   `area`) switches to the 2D view: drag to draw a distance or rect, click
+   three points for an angle, click a polygon and close it near the first
+   point (or double-click) for an area. The host measures; the value appears
+   over the slice (mm, deg, mm²) and in the list under the canvas, and the
+   annotation is saved into the workspace (`roi_drawn`). Right-click cancels
+   a draft; scrolling keeps the host on the shown slice.
 
 The address and the token are kept in `localStorage`. The token changes when
 `view serve` restarts.
@@ -110,10 +122,16 @@ node integrations\dsh\smoke.js http://127.0.0.1:41234 <token>    # the host over
 
 - The panel draws the segment overlay (Stage 29 PR 5): it takes `/api/labels`
   and the segment metadata from `/api/state`, and offers an overlay toggle,
-  style and fill-opacity controls that go back through `POST /api/input`. The
-  transfer-function editor and measurements are a follow-up (PR 6).
+  style and fill-opacity controls that go back through `POST /api/input`.
+- The TF editor and measurements are here since Stage 29 PR 6: the editor
+  drives the module's `tf_*` bindings (the existing volume shader draws the
+  edited function), and the measurement tools send `draw` inputs to the host
+  and display the values from `GET /api/annotations`. The TF is panel-local;
+  measurements are 2D (the axial slice the 2D view shows).
 - The whole volume crosses the wire once as `u16` storage (half the bytes of
   `f32`; Stage 29 PR 3), reconstructed from `value_range`; `?storage=f32` keeps
   the original form.
 - The panel does not start the host; the operator runs one command.
 - No automated test of the WebGPU path yet: it needs a headed browser (PR 7).
+  The TF editor's and the measurement tools' browser render is therefore not
+  verified locally — a field check on the GPU machine.

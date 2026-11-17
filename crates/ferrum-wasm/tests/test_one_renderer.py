@@ -93,3 +93,30 @@ def test_the_crate_is_inert_off_wasm_so_the_workspace_builds():
     manifest = (CRATE / "Cargo.toml").read_text(encoding="utf-8")
     assert 'target_arch = "wasm32"' in manifest, "the dependencies are not gated on wasm"
     assert "[lib]" in manifest, "no [lib] section"
+
+
+def test_the_tf_editor_bindings_edit_the_domain_function_and_rebake():
+    # covers 29.2-b
+    #
+    # The edits are the domain's TransferFunction API (one implementation, as
+    # the desktop's tf_editor.rs uses), and every mutating binding re-uploads
+    # the baked lookup table through `upload_occupancy` — the existing volume
+    # shader draws it, so no image-formation code is added here.
+    text = SOURCE.read_text(encoding="utf-8")
+    for binding in (
+        "tf_points",
+        "tf_histogram",
+        "tf_move_point",
+        "tf_insert_point",
+        "tf_remove_point",
+        "tf_set_color",
+        "tf_hit_test",
+    ):
+        assert f"pub fn {binding}" in text, f"the module does not expose {binding}"
+    for edit in ("move_point(", "insert_point(", "remove_point(", "set_color(", "hit_test("):
+        assert edit in text, f"the binding does not call the domain's {edit}"
+    # Each of the four mutating bindings re-bakes the LUT after its edit.
+    body = text[text.index("pub fn tf_move_point") : text.index("pub fn tf_hit_test")]
+    assert body.count("self.upload_occupancy()") == 4, "an edit binding does not re-upload the baked transfer function"
+    # The wire data is the host-tested module, not a second copy in the binding.
+    assert "tf::points(" in text and "tf::histogram(" in text, "the bindings do not use the tested wire form"

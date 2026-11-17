@@ -152,6 +152,19 @@ locally; Stage 29 wires what it lacks:
   agree on the view. Plane switch / window drag / probe in 2D and the MPR
   crosshair + per-plane scroll come with this sync.
 
+**As built (PR 6):** the TF editor binds the domain edit-API (`tf_points`,
+`tf_histogram`, `tf_move_point`, `tf_insert_point`, `tf_remove_point`,
+`tf_set_color`, `tf_hit_test`); every edit re-bakes the LUT through the
+existing `upload_occupancy`, and the panel's `TfEditor` canvas drives it for
+the `transfer_function` mode (panel-local, as decided). Measurements took the
+**host-side fallback** this section names: the tool machine stays in
+`ferrum-app` on the host (PR 2's `draw` input), the panel collects slice
+pixels and sends them, and reads the computed values from the new
+`GET /api/annotations` ([view-host.md](view-host.md) §4.6) — the panel adds no
+`ferrum-app` dependency and no tool logic. The host's workspace reload adopts
+written annotations the way it adopts segments, so an agent's measurements
+reach the panel. The browser render of both is PR 7's field check.
+
 ## 6. One overlay rule; a tested WebGPU path (29.5)
 
 - **CPU overlay consolidation (29.5-a)**: the 2D slice-overlay rule exists in
