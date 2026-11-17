@@ -453,6 +453,14 @@ fn the_volume_crosses_the_wire_once_for_a_client_that_renders_it() {
     let stored = u16::from_le_bytes([body[0], body[1]]);
     let first = range.min + f32::from(stored) * (range.max - range.min) / 65535.0;
     assert!((first - f.volume.physical(0, 0, 0).unwrap()).abs() < 1e-3, "first voxel {first}");
+    // A non-zero voxel pins the byte order and the reconstruction formula (the
+    // background voxel (0,0,0) is 0 and would survive a byte-order mutation).
+    let block_idx = (BLOCK.0 + BLOCK.1 * dims.x + BLOCK.2 * dims.x * dims.y) as usize;
+    let stored_block = u16::from_le_bytes([body[block_idx * 2], body[block_idx * 2 + 1]]);
+    assert_ne!(stored_block, 0, "the block voxel is non-zero");
+    let recon_block = range.min + f32::from(stored_block) * (range.max - range.min) / 65535.0;
+    let want = f.volume.physical(BLOCK.0, BLOCK.1, BLOCK.2).unwrap();
+    assert!((recon_block - want).abs() < 1e-3, "block voxel {recon_block} != {want}");
     assert_eq!(header["sha256"].as_str().map(str::len), Some(64), "the header names a SHA-256");
 
     // The original f32 form stays available for a client that asks for it.
@@ -465,6 +473,10 @@ fn the_volume_crosses_the_wire_once_for_a_client_that_renders_it() {
     assert_eq!(body.len() as u64, count * 4);
     let first = f32::from_le_bytes([body[0], body[1], body[2], body[3]]);
     assert!((first - f.volume.physical(0, 0, 0).unwrap()).abs() < 1e-3, "f32 first voxel {first}");
+    let block_idx = (BLOCK.0 + BLOCK.1 * dims.x + BLOCK.2 * dims.x * dims.y) as usize;
+    let block = f32::from_le_bytes([body[block_idx * 4], body[block_idx * 4 + 1], body[block_idx * 4 + 2], body[block_idx * 4 + 3]]);
+    let want = f.volume.physical(BLOCK.0, BLOCK.1, BLOCK.2).unwrap();
+    assert!((block - want).abs() < 1e-3, "f32 block voxel {block} != {want}");
 
     // The voxels need the token like every other data route.
     let (status, _) = get(&format!("{}/api/volume", server.url()));
@@ -494,6 +506,10 @@ fn the_label_map_crosses_the_wire_for_the_overlay() {
     let (status, header) = get_json(&token_url(&server, "/api/labels.json"));
     assert_eq!(status, 200);
     assert!(header["segments"].as_array().unwrap().is_empty());
+    let (status, body) = get(&token_url(&server, "/api/labels"));
+    assert_eq!(status, 200);
+    assert_eq!(body.len() as u64, count);
+    assert!(body.iter().all(|&b| b == 0), "a study without segmentation gives a zero grid");
     let (status, _) = get(&format!("{}/api/labels", server.url()));
     assert_eq!(status, 401);
 }
