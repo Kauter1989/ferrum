@@ -16,3 +16,6 @@ build/
 # Build artifacts of the browser panel (integrations/dsh/panel/build.cmd)
 integrations/dsh/panel/*.wasm
 integrations/dsh/panel/*.js
+
+# Node dependencies of the browser tests (integrations/dsh/tests)
+node_modules/
