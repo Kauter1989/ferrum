@@ -135,3 +135,29 @@ def test_the_mode_reaches_the_view_by_name_so_an_unknown_one_is_reported():
     for mode in ("slice", "volume", "mpr"):
         assert f'"{mode}"' in bundle, f"the panel does not offer mode {mode}"
         assert f'"{mode}"' in stand, f"the stand page does not offer mode {mode}"
+
+
+def test_the_transfer_function_editor_drives_the_modules_edit_api():
+    """29.2-b: the panel edits the TF through the module, not by its own math.
+
+    Every edit binding is used, the editor reads the points and the histogram
+    back from the module, and it is offered for the transfer_function mode —
+    the one mode whose colours follow the transfer function.
+    """
+    # covers 29.2-b
+    text = BUNDLE.read_text(encoding="utf-8")
+
+    for binding in (
+        "tf_points(",
+        "tf_histogram(",
+        "tf_move_point(",
+        "tf_insert_point(",
+        "tf_remove_point(",
+        "tf_set_color(",
+        "tf_hit_test(",
+    ):
+        assert binding in text, f"the panel does not use {binding}"
+    assert "function TfEditor(" in text, "the panel has no transfer-function editor"
+    assert 'renderMode === "transfer_function"' in text, "the editor is not tied to the transfer_function mode"
+    # The editor is mounted only once a view exists (no edits before Connect).
+    assert "viewRef.current ? h(TfEditor" in text, "the editor mounts without a loaded view"

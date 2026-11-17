@@ -22,11 +22,12 @@
 
 pub mod layout;
 pub mod mode;
+pub mod tf;
 
 use std::sync::Arc;
 
 use ferrum_domain::{
-    Dims3, LabelMap, OrbitCamera, RenderMode, RenderSettings, SegmentStyle, SegmentationSet, SliceAxis,
+    Dims3, LabelMap, OrbitCamera, RenderMode, RenderSettings, Rgb, SegmentStyle, SegmentationSet, SliceAxis,
     TransferFunction, Volume, WindowLevel,
 };
 use ferrum_processing::BrickGrid;
@@ -403,6 +404,67 @@ impl FerrumView {
         self.transfer_function = TransferFunction::ct_preset(chosen, self.volume.range());
         self.upload_occupancy();
         Ok(())
+    }
+
+    /// The transfer function's control points as a flat array, five floats
+    /// per point: position, opacity, red, green, blue (all in `[0, 1]`),
+    /// sorted by position. The editor reads this after every edit.
+    pub fn tf_points(&self) -> Vec<f32> {
+        tf::points(&self.transfer_function)
+    }
+
+    /// The volume's storage histogram: 256 bins normalised to `[0, 1]`, the
+    /// background the transfer-function editor draws behind the curve.
+    pub fn tf_histogram(&self) -> Vec<f32> {
+        tf::histogram(&self.volume)
+    }
+
+    /// Moves control point `index` to `(position, opacity)` and re-uploads the
+    /// baked lookup table, so the next frame draws the edited function through
+    /// the existing volume shader. Endpoints keep their position; interior
+    /// points stay between their neighbours (the domain's edit rules).
+    pub fn tf_move_point(&mut self, index: usize, position: f32, opacity: f32) -> Result<(), JsValue> {
+        self.transfer_function
+            .move_point(index, position, opacity)
+            .map_err(|e| JsValue::from_str(&format!("cannot move the point: {e}")))?;
+        self.upload_occupancy();
+        Ok(())
+    }
+
+    /// Inserts a control point at `position` (colour and opacity equal the
+    /// current curve there, so it is unchanged) and re-uploads the baked
+    /// lookup table. Returns the new point's index.
+    pub fn tf_insert_point(&mut self, position: f32) -> usize {
+        let index = self.transfer_function.insert_point(position);
+        self.upload_occupancy();
+        index
+    }
+
+    /// Removes the interior control point `index` and re-uploads the baked
+    /// lookup table. The endpoints cannot be removed; the error names why.
+    pub fn tf_remove_point(&mut self, index: usize) -> Result<(), JsValue> {
+        self.transfer_function
+            .remove_point(index)
+            .map_err(|e| JsValue::from_str(&format!("cannot remove the point: {e}")))?;
+        self.upload_occupancy();
+        Ok(())
+    }
+
+    /// Sets the colour of control point `index` (red, green, blue in `[0, 1]`)
+    /// and re-uploads the baked lookup table.
+    pub fn tf_set_color(&mut self, index: usize, r: f32, g: f32, b: f32) -> Result<(), JsValue> {
+        self.transfer_function
+            .set_color(index, Rgb::new(r, g, b))
+            .map_err(|e| JsValue::from_str(&format!("cannot recolour the point: {e}")))?;
+        self.upload_occupancy();
+        Ok(())
+    }
+
+    /// The index of the control point nearest to `(position, opacity)` within
+    /// `radius` (Euclidean distance in the unit square), or `null` when none
+    /// is that close — the editor's drag hit test, the domain's own.
+    pub fn tf_hit_test(&self, position: f32, opacity: f32, radius: f32) -> Option<usize> {
+        self.transfer_function.hit_test(position, opacity, radius)
     }
 
     /// The renderer's description, for a status line.

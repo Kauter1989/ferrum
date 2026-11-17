@@ -60,7 +60,10 @@ window.__ModuleLoader__.load({
 			labels: { position: "absolute", inset: 0, pointerEvents: "none", font: "12px/1.2 ui-monospace, monospace", color: "#c8ccd4" },
 			label: { position: "absolute", padding: "2px 4px", background: "rgba(13,14,17,.55)", borderRadius: "4px" },
 			note: { fontSize: "12px", opacity: 0.7 },
-			error: { fontSize: "12px", color: "#d92d20", whiteSpace: "pre-wrap" }
+			error: { fontSize: "12px", color: "#d92d20", whiteSpace: "pre-wrap" },
+			tfRow: { display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" },
+			tfCanvas: { width: "280px", height: "130px", borderRadius: "8px", border: "1px solid var(--dsh-border, #d0d5dd)", cursor: "crosshair", touchAction: "none" },
+			tfSide: { display: "flex", flexDirection: "column", gap: "6px", alignItems: "flex-start" }
 		};
 
 		function storage() {
@@ -121,6 +124,189 @@ window.__ModuleLoader__.load({
 				{ width: size, height: size, viewBox: "0 0 16 16", fill: "none", "aria-hidden": "true" },
 				h("circle", { cx: 8, cy: 8, r: 6.2, stroke: "currentColor", strokeWidth: 1.3 }),
 				h("circle", { cx: 8, cy: 8, r: 2.1, fill: "currentColor" })
+			);
+		}
+
+		/** The plot area of the transfer-function editor canvas (pixels). */
+		function tfPlot(w, h) {
+			return { x: 6, y: 6, w: w - 12, h: h - 30 };
+		}
+
+		/** A control point's colour as a CSS rgba string. */
+		function tfCssColor(p, alpha) {
+			const u = (v) => Math.round(Math.max(0, Math.min(1, v)) * 255);
+			return "rgba(" + u(p.r) + "," + u(p.g) + "," + u(p.b) + "," + alpha + ")";
+		}
+
+		/** A control point's colour as a #rrggbb string for the colour input. */
+		function tfHexColor(p) {
+			const u = (v) => Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, "0");
+			return "#" + u(p.r) + u(p.g) + u(p.b);
+		}
+
+		/**
+		 * Paints the editor: the histogram background, the colour strip, the
+		 * opacity curve and the handles. This is UI chrome on a 2D canvas —
+		 * the volume itself is still drawn by the module's existing shaders.
+		 */
+		function drawTfEditor(ctx, w, h, points, hist, selected) {
+			const plot = tfPlot(w, h);
+			ctx.fillStyle = "#0d0e11";
+			ctx.fillRect(0, 0, w, h);
+			if (hist.length > 0) {
+				ctx.fillStyle = "#2c3e5c";
+				const bw = plot.w / hist.length;
+				for (let i = 0; i < hist.length; i++) {
+					const bh = Math.max(0, Math.min(1, hist[i])) * plot.h;
+					ctx.fillRect(plot.x + i * bw, plot.y + plot.h - bh, Math.max(bw, 1), bh);
+				}
+			}
+			// The colour strip: the browser interpolates between the point
+			// colours, so no sampling of the function is copied here.
+			const stripY = plot.y + plot.h + 4;
+			const grad = ctx.createLinearGradient(plot.x, 0, plot.x + plot.w, 0);
+			for (const p of points) grad.addColorStop(Math.max(0, Math.min(1, p.x)), tfCssColor(p, 1));
+			ctx.fillStyle = grad;
+			ctx.fillRect(plot.x, stripY, plot.w, h - stripY - 4);
+			ctx.strokeStyle = "#4fb3d9";
+			ctx.lineWidth = 1.5;
+			ctx.beginPath();
+			points.forEach((p, i) => {
+				const x = plot.x + p.x * plot.w;
+				const y = plot.y + (1 - p.a) * plot.h;
+				if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+			});
+			ctx.stroke();
+			points.forEach((p, i) => {
+				const x = plot.x + p.x * plot.w;
+				const y = plot.y + (1 - p.a) * plot.h;
+				ctx.beginPath();
+				ctx.arc(x, y, 5, 0, Math.PI * 2);
+				ctx.fillStyle = tfCssColor(p, 1);
+				ctx.fill();
+				ctx.lineWidth = i === selected ? 2.5 : 1;
+				ctx.strokeStyle = i === selected ? "#4fb3d9" : "#ffffff";
+				ctx.stroke();
+			});
+		}
+
+		/**
+		 * The transfer-function editor (29.2-b): draggable control points over
+		 * the volume's histogram, with a colour picker for the selected point.
+		 * Every edit goes through the module's `tf_*` bindings, which re-bake
+		 * the lookup table the existing volume shader draws with, so the 3D
+		 * view follows on its next frame. Double-click adds a point,
+		 * right-click removes an interior one; the endpoints stay at 0 and 1.
+		 */
+		function TfEditor({ view }) {
+			const canvasRef = React.useRef(null);
+			const dragRef = React.useRef(null);
+			const [points, setPoints] = React.useState([]);
+			const [hist, setHist] = React.useState([]);
+			const [selected, setSelected] = React.useState(null);
+
+			const reload = React.useCallback(() => {
+				try {
+					const flat = view.tf_points();
+					const pts = [];
+					for (let i = 0; i + 4 < flat.length; i += 5) {
+						pts.push({ x: flat[i], a: flat[i + 1], r: flat[i + 2], g: flat[i + 3], b: flat[i + 4] });
+					}
+					setPoints(pts);
+					setHist(Array.from(view.tf_histogram()));
+				} catch (e) {
+					/* the view is not ready yet */
+				}
+			}, [view]);
+			React.useEffect(() => { reload(); }, [reload]);
+
+			React.useEffect(() => {
+				const canvas = canvasRef.current;
+				if (!canvas) return;
+				drawTfEditor(canvas.getContext("2d"), canvas.width, canvas.height, points, hist, selected);
+			}, [points, hist, selected]);
+
+			/** The pointer in the editor's unit square (x intensity, a opacity). */
+			const unitAt = (e) => {
+				const canvas = canvasRef.current;
+				const rect = canvas.getBoundingClientRect();
+				const plot = tfPlot(canvas.width, canvas.height);
+				const px = (e.clientX - rect.left) * (canvas.width / rect.width);
+				const py = (e.clientY - rect.top) * (canvas.height / rect.height);
+				return {
+					x: Math.max(0, Math.min(1, (px - plot.x) / plot.w)),
+					a: Math.max(0, Math.min(1, (plot.y + plot.h - py) / plot.h))
+				};
+			};
+
+			const edit = (fn) => {
+				try {
+					fn();
+					reload();
+				} catch (e) {
+					/* the module refuses an invalid edit and keeps the curve */
+				}
+			};
+
+			const onDown = (e) => {
+				if (e.button !== 0) return;
+				const u = unitAt(e);
+				const hit = view.tf_hit_test(u.x, u.a, 0.06);
+				if (hit == null) return;
+				dragRef.current = hit;
+				setSelected(hit);
+				canvasRef.current.setPointerCapture(e.pointerId);
+			};
+			const onMove = (e) => {
+				if (dragRef.current == null) return;
+				const u = unitAt(e);
+				const index = dragRef.current;
+				edit(() => view.tf_move_point(index, u.x, u.a));
+			};
+			const onUp = () => { dragRef.current = null; };
+			const onDblClick = (e) => {
+				const u = unitAt(e);
+				if (view.tf_hit_test(u.x, u.a, 0.06) != null) return;
+				edit(() => {
+					const index = view.tf_insert_point(u.x);
+					view.tf_move_point(index, u.x, u.a);
+					setSelected(index);
+				});
+			};
+			const onContextMenu = (e) => {
+				e.preventDefault();
+				const u = unitAt(e);
+				const hit = view.tf_hit_test(u.x, u.a, 0.06);
+				if (hit == null || hit === 0 || hit === points.length - 1) return;
+				edit(() => view.tf_remove_point(hit));
+				setSelected(null);
+			};
+
+			const selectedPoint = selected != null && selected < points.length ? points[selected] : null;
+			const onColor = (e) => {
+				if (selected == null) return;
+				const hex = e.target.value;
+				const channel = (i) => parseInt(hex.slice(1 + i * 2, 3 + i * 2), 16) / 255;
+				edit(() => view.tf_set_color(selected, channel(0), channel(1), channel(2)));
+			};
+
+			return h(
+				"div", { style: styles.tfRow },
+				h("canvas", {
+					ref: canvasRef, width: 280, height: 130, style: styles.tfCanvas,
+					"aria-label": "Transfer function editor",
+					onPointerDown: onDown, onPointerMove: onMove, onPointerUp: onUp,
+					onDoubleClick: onDblClick, onContextMenu: onContextMenu
+				}),
+				h(
+					"div", { style: styles.tfSide },
+					h("input", {
+						type: "color", value: selectedPoint ? tfHexColor(selectedPoint) : "#ffffff",
+						onChange: onColor, disabled: selectedPoint === null,
+						"aria-label": "Point colour", title: "Colour of the selected point"
+					}),
+					h("span", { style: styles.note }, "drag points · double-click adds · right-click removes")
+				)
 			);
 		}
 
@@ -469,6 +655,10 @@ window.__ModuleLoader__.load({
 							)
 						: null
 				),
+				// The TF editor is a render setting of the transfer_function mode
+				// (panel-local, Stage 29 design §5): it appears once a view is
+				// loaded and that mode is chosen.
+				renderMode === "transfer_function" && viewRef.current ? h(TfEditor, { view: viewRef.current }) : null,
 				error === null ? h("div", { style: styles.note }, status) : h("div", { style: styles.error }, error)
 			);
 		}
