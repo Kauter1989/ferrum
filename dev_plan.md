@@ -1164,9 +1164,11 @@ patient data — the dashboard holds only plan and code metadata.
 
 ---
 
-## Stage 31 — DICOM de-identification: PS3.15 Basic Profile and Clean Pixel Data (#75) 📋 (stage, gated)
+## Stage 31 — DICOM de-identification: PS3.15 Basic Profile and Clean Pixel Data (#75) 🚧 (stage, gated; G1 approved 2026-11-17)
 
-([#75](https://github.com/Kauter1989/ferrum/issues/75); P2). Medical Harness
+([#75](https://github.com/Kauter1989/ferrum/issues/75); P2). **Design:**
+[docs/deidentification.md](docs/deidentification.md),
+[ADR 0020](docs/decisions/0020-deidentification-profile.md). Medical Harness
 needs identifier-free inputs for remote vision models and for exports to
 research or another site. FERRUM already pseudonymises its agent outputs and
 its DICOM export UIDs (`dicom/export.rs`); this stage adds a *standard*
