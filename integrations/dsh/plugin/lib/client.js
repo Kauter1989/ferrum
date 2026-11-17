@@ -279,13 +279,18 @@ window.__ModuleLoader__.load({
 						view.set_labels(new Uint32Array(header.dims), new Uint8Array(labBytes));
 						const items = (st.segments && st.segments.items) || [];
 						for (const seg of items) {
-							view.set_segment(
-								seg.label,
-								seg.name || "Segment " + seg.label,
-								new Uint8Array(seg.color || [230, 85, 75]),
-								seg.visible !== false,
-								seg.opacity != null ? seg.opacity : 0.5
-							);
+							try {
+								view.set_segment(
+									seg.label,
+									seg.name || "Segment " + seg.label,
+									new Uint8Array(seg.color || [230, 85, 75]),
+									seg.visible !== false,
+									seg.opacity != null ? seg.opacity : 0.5
+								);
+							} catch (segErr) {
+								/* an empty segment (its label is absent from the grid) is
+								   skipped, so one bad segment cannot disable the overlay */
+							}
 						}
 						const ov = st.overlays || {};
 						const shown = ov.segments_shown !== false && items.length > 0;
