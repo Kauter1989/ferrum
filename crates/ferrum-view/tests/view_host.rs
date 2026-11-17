@@ -672,27 +672,7 @@ fn the_state_carries_the_full_view_state() {
     assert!(state["selected_segment"].is_null());
     assert!(state["camera"].is_null(), "a slice state has no camera");
     assert!(state.get("unhonoured").is_none());
-
-    let (status, state) =
-        post(&token_url(&server, "/api/input"), r#"{"overlays":{"fill_opacity":0.3,"style":"outline"}}"#);
-    assert_eq!(status, 200, "{state}");
-    assert!((state["overlays"]["fill_opacity"].as_f64().unwrap() - 0.3).abs() < 1e-6);
-    assert_eq!(state["overlays"]["style"].as_str(), Some("outline"));
-    assert_eq!(state["overlays"]["segments_shown"].as_bool(), Some(true), "untouched fields stay");
-
-    let (_, state) = post(&token_url(&server, "/api/input"), r#"{"selected_segment":1}"#);
-    assert_eq!(state["selected_segment"].as_u64(), Some(1));
-    let (_, state) = post(&token_url(&server, "/api/input"), r#"{"selected_segment":null}"#);
-    assert!(state["selected_segment"].is_null());
-    let (_, state) = post(&token_url(&server, "/api/input"), r#"{"tool":"probe"}"#);
-    assert_eq!(state["tool"].as_str(), Some("probe"));
-
-    let (_, state) = post(&token_url(&server, "/api/input"), r#"{"segment":{"label":1,"visible":false}}"#);
-    assert_eq!(state["segments"]["items"][0]["visible"].as_bool(), Some(false));
-    let (_, state) = post(&token_url(&server, "/api/input"), r#"{"segment":{"label":1,"opacity":0.2}}"#);
-    assert!((state["segments"]["items"][0]["opacity"].as_f64().unwrap() - 0.2).abs() < 1e-6);
-    let (status, _) = post(&token_url(&server, "/api/input"), r#"{"segment":{"label":9,"visible":true}}"#);
-    assert_eq!(status, 400, "an unknown label is refused");
+    assert_state_inputs(&server);
 
     let (_, state) = post(&token_url(&server, "/api/input"), r#"{"component":"mpr"}"#);
     assert_eq!(state["component"].as_str(), Some("mpr"));
@@ -703,6 +683,32 @@ fn the_state_carries_the_full_view_state() {
     assert!(camera["fov_y"].as_f64().unwrap() > 0.0);
     let (status, _) = post(&token_url(&server, "/api/input"), r#"{"component":"3d"}"#);
     assert_eq!(status, 400);
+}
+
+/// The overlay, selection, tool and per-segment inputs set their fields and
+/// leave the rest alone; the answer is the new state.
+fn assert_state_inputs(server: &ViewServer) {
+    let (status, state) =
+        post(&token_url(server, "/api/input"), r#"{"overlays":{"fill_opacity":0.3,"style":"outline"}}"#);
+    assert_eq!(status, 200, "{state}");
+    assert!((state["overlays"]["fill_opacity"].as_f64().unwrap() - 0.3).abs() < 1e-6);
+    assert_eq!(state["overlays"]["style"].as_str(), Some("outline"));
+    assert_eq!(state["overlays"]["segments_shown"].as_bool(), Some(true), "untouched fields stay");
+
+    let (_, state) = post(&token_url(server, "/api/input"), r#"{"selected_segment":1}"#);
+    assert_eq!(state["selected_segment"].as_u64(), Some(1));
+    let (_, state) = post(&token_url(server, "/api/input"), r#"{"selected_segment":null}"#);
+    assert!(state["selected_segment"].is_null());
+    let (_, state) = post(&token_url(server, "/api/input"), r#"{"tool":"probe"}"#);
+    assert_eq!(state["tool"].as_str(), Some("probe"));
+
+    assert_eq!(state["segments"]["items"][0]["color"], serde_json::json!([230, 85, 75]));
+    let (_, state) = post(&token_url(server, "/api/input"), r#"{"segment":{"label":1,"visible":false}}"#);
+    assert_eq!(state["segments"]["items"][0]["visible"].as_bool(), Some(false));
+    let (_, state) = post(&token_url(server, "/api/input"), r#"{"segment":{"label":1,"opacity":0.2}}"#);
+    assert!((state["segments"]["items"][0]["opacity"].as_f64().unwrap() - 0.2).abs() < 1e-6);
+    let (status, _) = post(&token_url(server, "/api/input"), r#"{"segment":{"label":9,"visible":true}}"#);
+    assert_eq!(status, 400, "an unknown label is refused");
 }
 
 // covers 29.1-a — camera_changed and roi_drawn reach /api/events and the
@@ -736,7 +742,7 @@ fn camera_and_roi_events_reach_the_event_log() {
     let (_, doc) = get_json(&token_url(&server, "/api/events?since=0"));
     let roi = doc["events"].as_array().unwrap().last().unwrap();
     assert_eq!(roi["item"]["kind"].as_str(), Some("annotation"));
-    assert!(roi["item"]["id"].as_u64().unwrap() >= 1);
+    assert!(roi["item"]["id"].as_u64().is_some(), "the event names the annotation's id");
     let cam = doc["events"].as_array().unwrap().iter().find(|e| e["kind"] == "camera_changed").unwrap();
     assert_eq!(cam["camera"]["orientation"].as_array().unwrap().len(), 4);
 
@@ -778,7 +784,10 @@ fn a_draw_commits_an_annotation_through_the_tool_machine() {
     let ferrum_domain::Annotation::Distance { a, b } = annotation else { panic!("{annotation:?}") };
     assert!((a.x - 5.5).abs() < 1e-4 && (a.y - 4.5).abs() < 1e-4, "{a:?}");
     assert!((b.x - 6.5).abs() < 1e-4 && (b.y - 5.5).abs() < 1e-4, "{b:?}");
-    assert!(id >= 1);
+    // the event names exactly the annotation that was saved
+    let (_, doc) = get_json(&token_url(&server, "/api/events?since=0"));
+    let roi_id = doc["events"][0]["item"]["id"].as_u64().unwrap();
+    assert_eq!(id, roi_id);
 
     // rect, angle and area commit through the same machine
     for body in [

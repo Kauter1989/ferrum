@@ -486,6 +486,7 @@ fn segment_items(viewer: &Viewer) -> Vec<Value> {
                     json!({
                         "label": g.label,
                         "name": g.name,
+                        "color": g.color,
                         "visible": g.visible,
                         "opacity": g.opacity,
                         "voxels": s.voxel_count(g.label),
