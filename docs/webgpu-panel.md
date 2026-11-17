@@ -142,3 +142,29 @@ image-formation code:
   agent-written reload). The browser render of the edited TF and the drawn
   measurements is a field check (PR 7's headed-browser path), **not verified
   locally** — a WebGPU run needs a headed browser.
+
+## As built (Stage 29 PR 7, criterion 29.5-b)
+
+The WebGPU path now has an automated headed-browser test:
+
+- `integrations/dsh/tests/webgpu.mjs` (Playwright, `playwright-core`) serves the
+  `panel/` directory, launches the machine's **Edge headed**
+  (`channel: "msedge"`, `headless: false`, `--enable-unsafe-webgpu
+  --ignore-gpu-blocklist`), loads `stand.html`, and checks that the renderer
+  draws the phantom: the status names an adapter, and a **screenshot** of the
+  canvas (a WebGPU canvas does not preserve its drawing buffer, so `drawImage`
+  would read black) has many non-black pixels in every view mode (3D/slice/MPR)
+  and every render technique (tissue/isosurface/MIP/transfer function). It
+  writes screenshots to the scratchpad for a person to look at (L1).
+- `test_webgpu.py` runs it from the repository's test command and **skips
+  gracefully** when no Node ≥ 18, no `playwright-core`, no headed browser or no
+  WebGPU adapter is present (set `FERRUM_NODE` to a newer node) — CI without a
+  headed GPU browser stays green, the same skip as `test_panel.py` without node.
+- **Verified locally** in headed Edge: adapter `BrowserWebGpu` at ~128 fps, the
+  chest phantom renders in 3D (≈18 % non-black pixels), slice, MPR and all four
+  techniques; no page error. The earlier "no adapter" reading came from forcing
+  `--use-angle=vulkan`; the plain `--enable-unsafe-webgpu` flag works. A machine
+  whose headed browser still exposes no adapter skips (field test, L30).
+- Run it: `npm install` in `integrations/dsh/tests` (uses the system Edge, no
+  browser download), build the panel module (`panel/build.cmd`), then
+  `node webgpu.mjs` with Node ≥ 18, or `pytest integrations/dsh/tests/test_webgpu.py`.

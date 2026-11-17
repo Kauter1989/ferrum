@@ -1,0 +1,14 @@
+{
+  "name": "ferrum-dsh-webgpu-test",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Headed-browser test of FERRUM's WebGPU path (Stage 29, criterion 29.5-b). Uses the machine's Edge/Chrome (channel msedge); no browser is downloaded. Run with Node >= 18.",
+  "type": "module",
+  "scripts": {
+    "webgpu": "node webgpu.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.49.0",
+    "pngjs": "^7.0.0"
+  }
+}

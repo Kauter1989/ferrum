@@ -132,6 +132,12 @@ node integrations\dsh\smoke.js http://127.0.0.1:41234 <token>    # the host over
   `f32`; Stage 29 PR 3), reconstructed from `value_range`; `?storage=f32` keeps
   the original form.
 - The panel does not start the host; the operator runs one command.
-- No automated test of the WebGPU path yet: it needs a headed browser (PR 7).
-  The TF editor's and the measurement tools' browser render is therefore not
-  verified locally — a field check on the GPU machine.
+- The WebGPU path has an automated headed-browser test (Stage 29 PR 7):
+  `tests/webgpu.mjs` (Playwright) loads `panel/stand.html` in headed Edge and
+  checks the phantom renders in every mode and technique; `test_webgpu.py`
+  skips gracefully without a headed GPU browser. Run it: `npm install` in
+  `tests/`, build the panel module (`panel/build.cmd`), then `node webgpu.mjs`
+  (Node ≥ 18) or `pytest tests/test_webgpu.py`. On a machine whose headed
+  browser exposes no WebGPU adapter it skips — a field check on the GPU machine
+  (the TF editor's and the measurement tools' interactive render is verified
+  there).
