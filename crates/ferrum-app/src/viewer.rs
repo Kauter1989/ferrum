@@ -12,7 +12,7 @@ use ferrum_domain::{
 use ferrum_processing::AmbientOcclusion;
 use ferrum_render::cpu::{CpuRaycaster, CpuScene, SegmentLayer};
 use ferrum_render::{FrameParams, SliceParams};
-use glam::{UVec3, Vec2, Vec3};
+use glam::{UVec2, UVec3, Vec2, Vec3};
 
 use crate::dataset::{Dataset, BRICK_SIZE};
 use crate::jobs::{FilterKind, JobEvent, JobQueue};
@@ -763,6 +763,41 @@ impl Viewer {
             )
             .with_segments(self.segments.overlay_active()),
         )
+    }
+
+    /// Renders the 3D view with the CPU reference ray caster (the oracle
+    /// `volume.wgsl` mirrors) at `size` pixels, top row first. `None` without
+    /// a dataset. The scene is the one the GPU holds after [`Viewer::sync_gpu`]
+    /// — transfer function, eraser mask, ambient occlusion, brick occupancy
+    /// and segments — and jitter is off, so the image is deterministic and
+    /// the two backends can be compared pixel by pixel (the view host's
+    /// CPU fallback and its GPU/CPU parity, Stage 29).
+    pub fn render_volume_cpu(&self, size: UVec2) -> Option<Vec<Rgba8>> {
+        let d = self.dataset.as_ref()?;
+        let mut params = self.frame_params(size.as_vec2())?;
+        params.jitter = false;
+        let settings = self.volume.settings;
+        let tf = &self.volume.tf;
+        let occupancy =
+            (params.brick_size > 0).then(|| d.bricks.occupancy(|mn, mx| settings.range_visible(mn, mx, tf)));
+        let ao = self
+            .volume
+            .ao
+            .as_ref()
+            .filter(|(r, _, _)| *r == d.revision && self.volume.settings.ambient_occlusion)
+            .map(|(_, _, a)| a.as_ref());
+        let seg_lut = self.segments.set().map(|s| s.lut());
+        let segments =
+            self.segments.set().zip(seg_lut.as_ref()).map(|(s, lut)| SegmentLayer { labels: s.labels(), lut });
+        let scene = CpuScene {
+            volume: &d.volume,
+            mask: self.volume.mask.as_ref(),
+            ao,
+            lut: &self.volume.tf_lut,
+            occupancy: occupancy.as_deref(),
+            segments,
+        };
+        Some(CpuRaycaster::new(scene, &params).render(size.x.max(1), size.y.max(1)))
     }
 
     /// Eraser mask, if the eraser has been used.

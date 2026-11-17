@@ -604,34 +604,43 @@ fn the_gpu_backend_draws_the_same_slice_as_the_cpu() {
     }
 }
 
-// covers 28.2-a/b — the host applies a written view artifact within a refresh;
-// the events are persisted for the agent; the person takes over and is not
-// reverted by a later refresh.
+// covers 28.2-a/b, 29.1-a — the host applies a written view artifact in full
+// within a refresh (no unhonoured fields remain); the events are persisted
+// for the agent; the person takes over and is not reverted by a later refresh.
 #[test]
 fn the_host_applies_a_view_artifact_and_the_person_takes_over() {
     let f = fixture(false);
     let mut session = Session::open(&f.workspace, BackendPreference::Cpu).unwrap();
     let ws = Workspace::open(&f.workspace).unwrap();
+    let camera = ferrum_domain::OrbitCamera { distance: 1.2, ..Default::default() };
     let state = ferrum_domain::ViewState {
+        component: ferrum_domain::ViewComponent::Volume,
         plane: SliceAxis::Coronal,
         slice_index: 5,
         window: WindowLevel::new(-600.0, 1500.0),
-        camera: Some(Default::default()),
+        camera: Some(camera),
+        tool: ferrum_domain::ViewTool::Probe,
+        selected_segment: Some(2),
         ..Default::default()
     };
     ws.save_view_state(&state, 1, "hash").unwrap();
 
     assert!(session.refresh(), "the artifact change is applied");
     let doc = session.state_json().unwrap();
+    assert_eq!(doc["component"], "volume");
     assert_eq!(doc["plane"], "coronal");
     assert_eq!(doc["slice_index"], 5);
     assert_eq!(doc["window"]["center"], -600.0);
-    assert!(doc["unhonoured"].as_array().unwrap().contains(&Value::from("camera")), "{doc}");
+    assert_eq!(doc["tool"], "probe");
+    assert_eq!(doc["selected_segment"], 2);
+    assert!((doc["camera"]["distance"].as_f64().unwrap() - 1.2).abs() < 1e-6, "{doc}");
+    assert!(doc.get("unhonoured").is_none(), "the host honours everything: {doc}");
 
     // the events were persisted, so an agent reads the same sequence
     let (events, next, _) = ws.load_view_events().unwrap();
     assert!(next >= 1);
     assert!(events.iter().any(|(_, e)| matches!(e, ferrum_domain::ViewEvent::PlaneChanged { .. })));
+    assert!(events.iter().any(|(_, e)| matches!(e, ferrum_domain::ViewEvent::CameraChanged { .. })));
 
     // the person takes over: a slice input wins, and a later refresh (no new
     // artifact revision) does not revert it

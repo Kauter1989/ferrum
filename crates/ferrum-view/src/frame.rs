@@ -7,8 +7,8 @@
 //! ([`docs/view-host.md`](../../../docs/view-host.md)).
 
 use ferrum_app::Viewer;
-use ferrum_domain::{SliceAxis, WindowLevel};
-use glam::{UVec2, Vec2};
+use ferrum_domain::{SliceAxis, ViewProbe, WindowLevel};
+use glam::{UVec2, UVec3, Vec2, Vec3};
 use serde_json::{json, Value};
 
 use crate::session::ViewError;
@@ -138,6 +138,61 @@ pub(crate) fn mapping_of(viewer: &Viewer, axis: SliceAxis, size: UVec2) -> Resul
         "pixel_to_patient_mm": round_affine(to_patient),
         "orientation": { "left": left, "right": right, "top": top, "bottom": bottom },
     }))
+}
+
+/// Fixed output side of the 3D frame: the CPU reference's time grows with
+/// the pixel count, so the host draws the 3D view at one agreed size (the
+/// agent's `view volume` default), not at the volume's resolution.
+pub(crate) const VOLUME_SIZE: u32 = 512;
+
+/// Fixed output side of the MPR composite: four quarters of half that side.
+pub(crate) const MPR_SIZE: u32 = 512;
+
+/// One quarter of the MPR grid: a slice of one plane, or the 3D view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Quarter {
+    /// The slice of this plane at the viewer's current index.
+    Slice(SliceAxis),
+    /// The 3D view with the viewer's camera.
+    Volume,
+}
+
+/// The four quarters of the MPR frame as `(kind, rect)` in composite pixels,
+/// mirroring the desktop's grid (the `ferrum-ui` widget): axial top-left,
+/// 3D top-right, coronal bottom-left, sagittal bottom-right. The rects tile
+/// the frame exactly.
+pub(crate) fn mpr_quarters() -> [(Quarter, (UVec2, UVec2)); 4] {
+    let h = MPR_SIZE / 2;
+    [
+        (Quarter::Slice(SliceAxis::Axial), (UVec2::ZERO, UVec2::new(h, h))),
+        (Quarter::Volume, (UVec2::new(h, 0), UVec2::new(MPR_SIZE, h))),
+        (Quarter::Slice(SliceAxis::Coronal), (UVec2::new(0, h), UVec2::new(h, MPR_SIZE))),
+        (Quarter::Slice(SliceAxis::Sagittal), (UVec2::new(h, h), UVec2::splat(MPR_SIZE))),
+    ]
+}
+
+/// The largest box inside `rect`, centred, with the pixel shape of a plane
+/// `plane` wide and high, at an integer scale (the composite blits nearest,
+/// so a voxel stays a whole number of pixels). A plane larger than the rect
+/// takes scale 1 and is cropped by the blit, never stretched.
+pub(crate) fn fit_rect(rect: (UVec2, UVec2), plane: (u32, u32)) -> (UVec2, UVec2) {
+    let (bw, bh) = (rect.1.x - rect.0.x, rect.1.y - rect.0.y);
+    let (pw, ph) = (plane.0.max(1), plane.1.max(1));
+    let scale = (bw / pw).min(bh / ph).max(1);
+    let (w, h) = (pw * scale, ph * scale);
+    let origin = rect.0 + UVec2::new((bw.saturating_sub(w)) / 2, (bh.saturating_sub(h)) / 2);
+    (origin, origin + UVec2::new(w.min(bw), h.min(bh)))
+}
+
+/// The probe of a 3D pick: `hit` is the texture coordinate [`Viewer::pick`]
+/// returns; the voxel is the grid cell that holds it.
+pub(crate) fn probe_at_hit(viewer: &Viewer, hit: Vec3) -> Result<ViewProbe, ViewError> {
+    let dataset = viewer.dataset().ok_or(ViewError::NoStudy)?;
+    let dims = dataset.volume.dims();
+    let v = (hit * dims.as_vec3()).floor();
+    let axis = |c: f32, n: u32| (c as i64).clamp(0, i64::from(n) - 1) as u32;
+    let voxel = UVec3::new(axis(v.x, dims.x), axis(v.y, dims.y), axis(v.z, dims.z));
+    crate::state::probe_of_voxel(viewer, voxel)
 }
 
 /// Rows of the affine map `(x, y, 1) -> origin + x·ex + y·ey`.
