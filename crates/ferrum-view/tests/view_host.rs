@@ -294,8 +294,20 @@ fn events_are_orderly_and_hold_no_identifiers() {
     for key in ["study", "series", "uid", "path", "source", "description", "patient", "name"] {
         assert!(state.get(key).is_none(), "the state has a {key:?} field");
     }
+    // The frame sidecars (2D mapping, 3D projection, MPR quarters) too.
+    post(&token_url(&server, "/api/input"), r#"{"component":"volume"}"#);
+    let (_, vol_state) = get_json(&token_url(&server, "/api/state"));
+    post(&token_url(&server, "/api/input"), r#"{"component":"mpr"}"#);
+    let (_, mpr_state) = get_json(&token_url(&server, "/api/state"));
     let workspace_path = f.workspace.to_string_lossy().into_owned();
-    for text in [state.to_string(), events.to_string(), String::from_utf8(page).unwrap()] {
+    let texts = [
+        state.to_string(),
+        events.to_string(),
+        String::from_utf8(page).unwrap(),
+        vol_state["frame"]["mapping"].to_string(),
+        mpr_state["frame"]["mapping"].to_string(),
+    ];
+    for text in texts {
         for needle in ["Jane", "Doe", "1234", ".nii", ".nii.gz", workspace_path.as_str()] {
             assert!(!text.contains(needle), "{needle:?} must not appear in {text}");
         }

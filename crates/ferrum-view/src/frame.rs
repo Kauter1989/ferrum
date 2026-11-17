@@ -161,10 +161,11 @@ pub(crate) enum Quarter {
     Volume,
 }
 
-/// The four quarters of the MPR frame as `(kind, rect)` in composite pixels,
-/// mirroring the desktop's grid (the `ferrum-ui` widget): axial top-left,
-/// 3D top-right, coronal bottom-left, sagittal bottom-right. The rects tile
-/// the frame exactly.
+/// The four quarters of the MPR frame as `(kind, rect)` in composite pixels:
+/// axial top-left, 3D top-right, coronal bottom-left, sagittal bottom-right.
+/// (The browser panel puts 3D bottom-right; the host's grid is its own
+/// convention, drawn identically by both backends.) The rects tile the frame
+/// exactly.
 pub(crate) fn mpr_quarters() -> [(Quarter, (UVec2, UVec2)); 4] {
     let h = MPR_SIZE / 2;
     [
@@ -243,7 +244,7 @@ fn probe_json(probe: &ViewProbe) -> Value {
 
 /// Draws the MPR grid: each quarter through `draw` (the backend's own slice
 /// or 3D render), tiled into one composite frame by the one blit below. The
-/// layout mirrors the desktop's grid; a slice keeps its plane's aspect
+/// layout is the host's grid convention; a slice keeps its plane's aspect
 /// (letterboxed, never stretched) and the 3D quarter fills its rect.
 pub(crate) fn composite_mpr(
     viewer: &Viewer,

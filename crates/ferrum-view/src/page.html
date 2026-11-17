@@ -185,6 +185,27 @@
     return path + (s ? "?" + s : "");
   }
 
+  // The host's token is short-lived and rotates (ADR 0019). Refresh it
+  // proactively (~80% of the TTL) so a page open longer than the TTL keeps
+  // working; the boot token only starts the session.
+  var tokenTimer = null;
+  function refreshToken() {
+    if (!token) return;
+    fetch(url("/api/token/refresh"), { method: "POST", credentials: "same-origin" })
+      .then(function (r) {
+        if (!r.ok) throw new Error("token: HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (v) {
+        if (v && v.token) {
+          token = v.token;
+          var ttlMs = (v.expires_in || 900) * 1000;
+          tokenTimer = setTimeout(refreshToken, Math.max(ttlMs * 0.8, 5000));
+        }
+      })
+      .catch(function () { /* expired or host gone: a reload needs a fresh boot token */ });
+  }
+
   function fail(message) {
     elError.hidden = false;
     elError.textContent = String(message);
@@ -501,6 +522,7 @@
 
   refresh();
   setInterval(refresh, 700);
+  tokenTimer = setTimeout(refreshToken, 5000);
 })();
 </script>
 </body>
