@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FERRUM · PR #129 — финальный отчёт: TF-редактор + измерения в панели (Stage 29 PR 6)</title>
+<style>
+  :root { --bg:#fbfbfd; --fg:#1d1f26; --muted:#5b6070; --line:#e2e5ec; --accent:#1f6feb; --ok:#1a7f37; --warn:#9a6700; --bad:#b42318; --card:#fff; --code:#f3f4f7; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#12141a; --fg:#e6e7ea; --muted:#a2a8b6; --line:#2a2e38; --accent:#6ba6ff; --ok:#4ac26b; --warn:#d4a72c; --bad:#ff7b72; --card:#191c23; --code:#1f232c; } }
+  * { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.6 -apple-system,"Segoe UI",Roboto,Arial,sans-serif; }
+  main { max-width:1080px; margin:0 auto; padding:40px 24px 80px; }
+  h1 { font-size:29px; line-height:1.25; margin:0 0 8px; letter-spacing:-0.02em; }
+  h2 { font-size:21px; margin:44px 0 14px; padding-bottom:8px; border-bottom:1px solid var(--line); }
+  .sub { color:var(--muted); margin:0 0 24px; }
+  .meta { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:28px; }
+  .pill { font-size:13px; padding:3px 10px; border-radius:999px; border:1px solid var(--line); background:var(--card); color:var(--muted); }
+  .pill.ok { color:var(--ok); border-color:color-mix(in srgb,var(--ok) 40%,transparent); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px 20px; margin:14px 0; }
+  code,.mono { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:13px; }
+  code { background:var(--code); padding:1px 5px; border-radius:4px; }
+  table { width:100%; border-collapse:collapse; margin:14px 0; font-size:14px; }
+  th,td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; font-size:13px; text-transform:uppercase; letter-spacing:.04em; }
+  .tag { font-size:12px; font-weight:600; padding:2px 7px; border-radius:5px; white-space:nowrap; }
+  .t-fixed { background:color-mix(in srgb,var(--ok) 16%,transparent); color:var(--ok); }
+  .grid { display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); }
+  .stat { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px; }
+  .stat b { display:block; font-size:26px; line-height:1.2; } .stat span { color:var(--muted); font-size:13px; }
+  ul { padding-left:22px; } li { margin:4px 0; }
+  .note { border-left:3px solid var(--accent); padding-left:14px; color:var(--muted); margin:14px 0; }
+  footer { margin-top:56px; padding-top:18px; border-top:1px solid var(--line); color:var(--muted); font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+<h1>PR #129 — TF-редактор и измерения в WebGPU-панели</h1>
+<p class="sub">Финальный отчёт: Stage 29 PR 6 (критерий 29.2-b/c). FERRUM, ноябрь 2026. Описывает head SHA <code>c6b147e2bb02c93b6f6fb061791ad5fc11b25b7a</code>. Отчёт живёт в самом PR и правится по итогам ревью; при мердже остаётся в последней версии (правило пользователя).</p>
+<div class="meta">
+  <span class="pill">Stage 29 PR 6 · 29.2-b/c</span>
+  <span class="pill">size L</span>
+  <span class="pill ok">G1+G2 утверждены</span>
+  <span class="pill ok">preflight: all checks passed</span>
+  <span class="pill ok">rendering rule: существующий шейдер</span>
+</div>
+<div class="grid">
+  <div class="stat"><b>15</b><span>файлов (+1039/−40)</span></div>
+  <div class="stat"><b>26</b><span>view_host тестов (24+2)</span></div>
+  <div class="stat"><b>13</b><span>wasm host-тестов (+tf 4)</span></div>
+  <div class="stat"><b>0</b><span>новых копий image-formation</span></div>
+</div>
+
+<h2>1. Что и зачем</h2>
+<p>Панель получает <strong>TF-редактор</strong> (29.2-b) и <strong>измерения</strong> (29.2-c). TF-редактор — canvas с draggable points (гистограмма, insert/remove/color), влияет на 3D <code>transfer_function</code> рендер. Измерения — tool selector (distance/rect/angle/area) + drag-to-draw; <strong>хост считает</strong> (tool machine PR 2), панель отображает значения через новый <code>GET /api/annotations</code>.</p>
+<div class="note">Rendering rule: TF рисует существующий <code>volume.wgsl</code> (биндинги → bake → set_transfer_function); цветовая полоска — градиент браузера, не копия sampling. Измерения — host-side fallback, который дизайн §5 прямо называет (панель без ferrum-app-зависимости). Отступление зафиксировано в view-streaming.md «As built (PR 6)».</div>
+
+<h2>2. Код-карта</h2>
+<p class="sub">Pinned к head SHA <code>c6b147e2bb02c93b6f6fb061791ad5fc11b25b7a</code>.</p>
+<table>
+  <tr><th>Утверждение</th><th>Реализация</th></tr>
+  <tr><td>TF wire-форма (points 5 f32, histogram 256) — host-тестируема</td><td class="mono">crates/ferrum-wasm/src/tf.rs</td></tr>
+  <tr><td>TF-биндинги: move/insert/remove/set_color/hit_test → upload_occupancy</td><td class="mono">crates/ferrum-wasm/src/lib.rs:412</td></tr>
+  <tr><td>TF-редактор в панели (canvas, draggable points, color)</td><td class="mono">integrations/dsh/plugin/lib/client.js:153</td></tr>
+  <tr><td>annotations_json: id/name/kind/plane/slice/value/unit/label/points_mm (домен)</td><td class="mono">crates/ferrum-view/src/state.rs:514</td></tr>
+  <tr><td>GET /api/annotations (refresh, token-gate) + 405</td><td class="mono">crates/ferrum-view/src/server.rs:187</td></tr>
+  <tr><td>reload adopts аннотации (агентские измерения доходят до панели)</td><td class="mono">crates/ferrum-view/src/session.rs:273,310</td></tr>
+  <tr><td>commitDraw: plane→slice→draw, fetchAnnotations</td><td class="mono">integrations/dsh/plugin/lib/client.js:687</td></tr>
+  <tr><td>tool selector + drag-to-draw + значения mm/deg/mm² overlay</td><td class="mono">integrations/dsh/plugin/lib/client.js:895,711,435</td></tr>
+  <tr><td>Тесты: точные значения √2мм/90°/9мм²/70мм², privacy, reload; TF round-trip</td><td class="mono">crates/ferrum-view/tests/view_host.rs; crates/ferrum-wasm/src/tf.rs</td></tr>
+</table>
+
+<h2>3. Покрытие критериев</h2>
+<table>
+  <tr><th>Критерий</th><th>Тест</th><th>Статус</th></tr>
+  <tr><td>29.2-b TF-редактор в панели</td><td class="mono">wasm tf_editor 4 (round-trip, edits, histogram); wasm build; браузерный рендер — field/PR 7</td><td><span class="tag t-fixed">✅</span></td></tr>
+  <tr><td>29.2-c измерения в панели</td><td class="mono">view_host 2 новых (точные значения, token 401, method 405, privacy, agent reload); host-side вычисление</td><td><span class="tag t-fixed">✅</span></td></tr>
+</table>
+
+<h2>4. Верификация</h2>
+<ul>
+  <li>Полный preflight (WSL Ubuntu-24.04, CI-порядок + GPU parity + analyze.py): <code>all checks passed</code> на head <code>c6b147e2bb02c93b6f6fb061791ad5fc11b25b7a</code>.</li>
+  <li>wasm build (wasm32) OK; clippy wasm-target -D warnings OK; ferrum-wasm host 13 (layout 6 + mode 3 + tf 4); view_host 26 (24 не сломаны + 2 новых).</li>
+  <li>node --check client.js OK; smoke-load ok (5 слотов); pytest 13 (Windows) / 12+1skip (WSL); ruff 0.16.9 OK; analyze.py 29.2-b/c покрыты.</li>
+  <li>Браузерный рендер TF/измерений локально не проверен — field/PR 7 (headed WebGPU; headless адаптера нет, L30); отмечено в docs.</li>
+</ul>
+
+<h2>5. История ревью</h2>
+<div class="card">
+  <p><strong>Раунд 1</strong> (code + security, агент <code>review-pr6</code>, выполнение + мутации): вердикт <span class="tag t-fixed">approve</span> — 0 blocking, 0 should-fix, 3 nits (документированный дизайн / PR 7 field).</p>
+  <ul>
+    <li><strong>Rendering rule сохранён</strong> (mutation + структурный тест test_one_renderer.py): TF-биндинги зовут доменный edit-API, 4 re-bake LUT, существующие шейдеры; mutation swap r/g → tf-тесты RED.</li>
+    <li><strong>Измерения host-side</strong> (дизайн §5 fallback): панель не измеряет сама, шлёт пиксели + читает /api/annotations; ferrum-wasm без ferrum-app (слоистость, rayon/wasm риск обойдён).</li>
+    <li><strong>Безопасность</strong>: token-gate /api/annotations, privacy scan (нет идентификаторов), crafted TF-правки отвергаются доменом, CORS только 2xx; mutation unit mm→cm → тест RED.</li>
+    <li>view_host 26/26 (точные √2мм/90°/9мм²/70мм²); tf_editor 4/4; wasm build Finished; preflight all checks passed.</li>
+  </ul>
+  <p>Nits (не блокируют): TF panel-local (дизайн §5, contract change отложен); браузерный рендер — field/PR 7; measurement overlay рисует axial-аннотации (консистентно — хост меряет на axial).</p>
+</div>
+
+<h2>6. Out of scope / notes</h2>
+<ul>
+  <li>Браузерный рендер TF-редактора и инструментов — PR 7 (headed-browser автотест).</li>
+  <li>Сборка panel-модуля (build.cmd + wasm-bindgen) и прогон в живой harness-панели — операторский шаг README §1–4.</li>
+  <li>29.5-b (WebGPU automation) — PR 7.</li>
+</ul>
+
+<footer>FERRUM · Stage 29 PR 6 · head SHA <code>c6b147e2bb02c93b6f6fb061791ad5fc11b25b7a</code> · отчёт коммичен в PR и правится по итогам ревью пользователя.</footer>
+</main>
+</body>
+</html>
