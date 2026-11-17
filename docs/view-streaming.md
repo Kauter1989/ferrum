@@ -63,6 +63,24 @@ everything). Concretely:
 The page (`page.html`) gains the component switch, the camera drag in 3D, the
 overlay controls and the tool selector; it stays self-contained.
 
+**As built (PR 2):** the state is read live from `Viewer::view_state()`
+through `ferrum_io::state_to_json` (no second copy in the host); every input
+is a partial state applied by `Viewer::apply_view_state`, and the events are
+the domain `ViewEvent`s, persisted without a JSON round trip. The 3D and MPR
+frames are 512×512; the MPR grid mirrors the desktop's quarters (axial
+top-left, 3D top-right, coronal bottom-left, sagittal bottom-right), each
+slice quarter aspect-fit at an integer scale and blitted nearest by one
+shared compositor. The GPU backend uploads through the `GpuSink` port
+(`Viewer::sync_gpu`), the CPU 3D frame through the new
+`Viewer::render_volume_cpu` use case (the one raycaster oracle, jitter off).
+`roi_drawn` comes from a `draw` input that drives `Viewer::slice_input`
+(distance/rect/angle/area) and saves the committed annotation with
+`Viewer::save_workspace`. A 3D probe names the voxel one step behind the
+pick along the ray (the trilinear surface sits between voxels). Host-level
+CPU-vs-GPU parity for the volume and MPR frames lives in `view_host.rs`
+(mean deviation + exact quarter geometry); `gpu_parity.rs` already pins the
+underlying 3D modes and the slice overlay.
+
 ## 3. A practical wire (29.3)
 
 A 512×512×252 study crosses as ~264 MB of `f32` today. Two changes:

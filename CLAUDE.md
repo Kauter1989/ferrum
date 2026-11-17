@@ -27,7 +27,7 @@ segmentation engines, and an agent skill (planned). Read
 ferrum (desktop shell) → ferrum-ui (views, panels) → ferrum-app (application) → ferrum-domain ← ferrum-io (data)
                                        ↘ ferrum-processing, ferrum-render (infrastructure)
                                        ↘ ferrum-radiomics → ferrum-domain (segment metrics)
-ferrum-cli → ferrum-view (local view host) → ferrum-app, ferrum-render (gpu), ferrum-io
+ferrum-cli → ferrum-view (local view host) → ferrum-app, ferrum-render (gpu), ferrum-processing, ferrum-io
 ferrum-wasm (browser) → ferrum-render (gpu), ferrum-app, ferrum-processing — builds for wasm32 only
 ```
 
@@ -68,10 +68,11 @@ ferrum-wasm (browser) → ferrum-render (gpu), ferrum-app, ferrum-processing —
   decision, and engine proposals are not events.
 - `ferrum-view` implements the local view host `ferrum-view/1`
   ([design](docs/view-host.md), [ADR 0017](docs/decisions/0017-view-host-crate.md)):
-  one workspace kept open, slice frames on the GPU or the CPU reference,
-  loopback HTTP with a token. Only `ferrum-cli` depends on it (`view serve`,
-  a CLI-only command). It adds no image-formation code and no business
-  logic; protocol changes update `docs/view-host.md` and its tests.
+  one workspace kept open, the full ViewState and slice/MPR/3D frames on the
+  GPU or the CPU reference, loopback HTTP with a token. Only `ferrum-cli`
+  depends on it (`view serve`, a CLI-only command). It adds no
+  image-formation code and no business logic; protocol changes update
+  `docs/view-host.md` and its tests.
 - `ferrum-wasm` is the same renderer in a browser
   ([design](docs/webgpu-panel.md)): it binds `ferrum-render` to a `<canvas>`
   through WebGPU and adds only the MPR layout and the CT presets. It builds

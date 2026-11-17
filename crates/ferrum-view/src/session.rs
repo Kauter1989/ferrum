@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use ferrum_app::Viewer;
-use ferrum_domain::{ResultStore, SliceAxis, WindowLevel};
+use ferrum_domain::{ResultStore, ViewEvent, WindowLevel};
 use ferrum_io::workspace::changes::{WorkspaceChange, WorkspaceWatcher};
 use ferrum_io::{CompositeRepository, WorkspaceStore};
 use serde_json::{json, Value};
@@ -18,7 +18,7 @@ use sha2::{Digest, Sha256};
 use crate::cpu::CpuFrameSource;
 use crate::frame::{Backend, BackendPreference, FrameSource};
 use crate::gpu::GpuFrameSource;
-use crate::state::{state_json, Event, Input, ViewState, FORMAT};
+use crate::state::{events_json, state_json, Input};
 
 /// The lower-case hex SHA-256 of `bytes`, as the workspace format writes it.
 fn hex_sha256(bytes: &[u8]) -> String {
@@ -83,20 +83,23 @@ pub enum VolumeStorage {
 }
 
 /// A view host for one workspace.
+///
+/// The view state is the [`Viewer`]'s own (Stage 29): the session keeps no
+/// second copy to drift — it reads `viewer.view_state()` for the document
+/// and applies every input and every written artifact through
+/// `Viewer::apply_view_state`. Only the revision counter, the event ring and
+/// the frame cache are the host's.
 pub struct Session {
     workspace: PathBuf,
     store: Arc<dyn ResultStore>,
     viewer: Viewer,
     source: Box<dyn FrameSource>,
-    state: ViewState,
-    events: Vec<Event>,
+    rev: u64,
+    events: Vec<(u64, ViewEvent)>,
     seq: u64,
     dropped: u64,
     frame: Option<Frame>,
     watcher: WorkspaceWatcher,
-    /// Fields of the last applied view state the 2D host cannot honour yet
-    /// (Stage 28; Stage 29 streams them).
-    unhonoured: Vec<&'static str>,
 }
 
 impl Session {
@@ -113,15 +116,6 @@ impl Session {
         if viewer.dataset().is_none() {
             return Err(ViewError::Workspace("the workspace's study could not be loaded".into()));
         }
-        let axis = SliceAxis::Axial;
-        let state = ViewState {
-            axis,
-            index: viewer.slice_index(axis),
-            window: viewer.window(),
-            segments: viewer.segmentation().overlay_active(),
-            rev: 0,
-            probe: None,
-        };
         let source = build_source(preference)?;
         let watcher = WorkspaceWatcher::new(workspace);
         Ok(Self {
@@ -129,13 +123,12 @@ impl Session {
             store,
             viewer,
             source,
-            state,
+            rev: 0,
             events: Vec::new(),
             seq: 0,
             dropped: 0,
             frame: None,
             watcher,
-            unhonoured: Vec::new(),
         })
     }
 
@@ -149,13 +142,10 @@ impl Session {
         self.source.backend()
     }
 
-    /// The state document (`ferrum-view/1`), with the mapping of the last
-    /// frame when there is one.
+    /// The state document (`ferrum-view/1`): the full domain view state,
+    /// with the mapping of the last frame when there is one.
     pub fn state_json(&self) -> Result<Value, ViewError> {
-        let mut state = state_json(&self.viewer, &self.state)?;
-        if !self.unhonoured.is_empty() {
-            state["unhonoured"] = json!(self.unhonoured);
-        }
+        let mut state = state_json(&self.viewer, self.rev)?;
         if let Some(frame) = &self.frame {
             state["frame"] = json!({
                 "rev": frame.rev,
@@ -239,11 +229,13 @@ impl Session {
         Ok((header, values))
     }
 
-    /// The current frame, drawn again only when the state changed.
+    /// The current frame of the state's component, drawn again only when
+    /// the state changed.
     pub fn frame(&mut self) -> Result<&Frame, ViewError> {
-        let fresh = self.frame.as_ref().is_some_and(|f| f.rev == self.state.rev);
+        let fresh = self.frame.as_ref().is_some_and(|f| f.rev == self.rev);
         if !fresh {
-            let raw = self.source.render(&self.viewer, self.state.axis)?;
+            let component = self.viewer.view_state().component;
+            let raw = self.source.render(&mut self.viewer, component)?;
             let png = raw.png()?;
             self.frame = Some(Frame {
                 png,
@@ -251,36 +243,34 @@ impl Session {
                 height: raw.height,
                 window: raw.window,
                 mapping: raw.mapping,
-                rev: self.state.rev,
+                rev: self.rev,
             });
         }
         self.frame.as_ref().ok_or_else(|| ViewError::Internal("no frame was drawn".into()))
     }
 
-    /// Applies one input object (see [`Input`]) and records its event.
+    /// Applies one input object (see [`Input`]) through the viewer's use
+    /// cases and records the events it produced.
     pub fn input(&mut self, body: &[u8]) -> Result<(), ViewError> {
         let input = Input::parse(body)?;
-        let (kind, data) = input.apply(&mut self.viewer, &mut self.state)?;
-        self.record(kind, data);
+        let events = input.apply(&mut self.viewer)?;
+        for event in events {
+            self.record(event);
+        }
+        self.rev += 1;
         self.persist_events();
         Ok(())
     }
 
     /// The events after `since` (all of them for `None`), as JSON.
     pub fn events_json(&self, since: Option<u64>) -> Value {
-        let since = since.unwrap_or(0);
-        let events: Vec<Value> = self.events.iter().filter(|e| e.seq > since).map(Event::to_json).collect();
-        json!({
-            "format": FORMAT,
-            "events": events,
-            "next": self.seq,
-            "dropped": self.dropped,
-        })
+        events_json(&self.events, self.seq, self.dropped, since)
     }
 
     /// Reloads the workspace when another process changed it: a view state
-    /// written by an agent is applied for its 2D subset (Stage 28), and
-    /// segments are reloaded. Returns `true` when the next frame differs.
+    /// written by an agent is applied in full (Stage 29 — the host honours
+    /// every field of the contract), and segments are reloaded. Returns
+    /// `true` when the next frame differs.
     pub fn refresh(&mut self) -> bool {
         let changes = self.watcher.poll();
         if changes.is_empty() {
@@ -293,12 +283,10 @@ impl Session {
         if view_changed {
             if let Ok(ws) = ferrum_io::Workspace::open(&self.workspace) {
                 if let Ok(Some((view, _revision, _hash))) = ws.load_view_state() {
-                    let (events, unhonoured) = crate::state::apply_view_2d(&mut self.viewer, &mut self.state, &view);
-                    self.unhonoured = unhonoured;
-                    for (kind, data) in events {
-                        self.record(kind, data);
+                    for event in self.viewer.apply_view_state(&view) {
+                        self.record(event);
                     }
-                    self.state.rev += 1;
+                    self.rev += 1;
                     changed = true;
                 }
             }
@@ -309,8 +297,7 @@ impl Session {
                 match self.store.load(&dataset.volume) {
                     Ok((_annotations, segments)) => {
                         self.viewer.adopt_segments(segments);
-                        self.state.segments = self.viewer.segmentation().overlay_active();
-                        self.state.rev += 1;
+                        self.rev += 1;
                         changed = true;
                     }
                     Err(e) => {
@@ -326,21 +313,20 @@ impl Session {
     }
 
     /// Writes the event ring to the workspace's `view-events.json`, so an
-    /// agent's `view events` reads the same sequence the host serves.
+    /// agent's `view events` reads the same sequence the host serves. The
+    /// events are the domain's own, so they persist without a round trip.
     fn persist_events(&self) {
         let Ok(ws) = ferrum_io::Workspace::open(&self.workspace) else {
             return;
         };
-        let events: Vec<(u64, ferrum_domain::ViewEvent)> =
-            self.events.iter().filter_map(|e| ferrum_io::event_from_json(&e.to_json()).ok()).collect();
-        if let Err(e) = ws.save_view_events(&events, self.seq, self.dropped) {
+        if let Err(e) = ws.save_view_events(&self.events, self.seq, self.dropped) {
             log::warn!("ferrum-view: could not persist the view events: {e}");
         }
     }
 
-    fn record(&mut self, kind: &'static str, data: Value) {
+    fn record(&mut self, event: ViewEvent) {
         self.seq += 1;
-        self.events.push(Event { seq: self.seq, kind, data });
+        self.events.push((self.seq, event));
         while self.events.len() > MAX_EVENTS {
             self.events.remove(0);
             self.dropped += 1;

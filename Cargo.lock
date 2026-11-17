@@ -1664,6 +1664,7 @@ dependencies = [
  "ferrum-app",
  "ferrum-domain",
  "ferrum-io",
+ "ferrum-processing",
  "ferrum-render",
  "getrandom 0.3.4",
  "glam",
