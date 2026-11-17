@@ -143,6 +143,13 @@ window.__ModuleLoader__.load({
 
 			modeRef.current = mode;
 
+			// The segment overlay display state, mirrored from the host and sent
+			// back when the person changes it.
+			const [overlayShown, setOverlayShown] = React.useState(false);
+			const [overlayStyle, setOverlayStyle] = React.useState("fill_outline");
+			const [overlayFill, setOverlayFill] = React.useState(0.5);
+			const overlayRef = React.useRef({ shown: false, fill: 0.5, style: "fill_outline" });
+
 			/** One frame of the loop: sizes the drawing buffer and draws. */
 			const draw = React.useCallback(() => {
 				const view = viewRef.current;
@@ -263,6 +270,40 @@ window.__ModuleLoader__.load({
 					// single 2D slice without saying so (F1).
 					view.set_mode(modeRef.current);
 					view.set_render_mode(renderMode);
+					// Segments and their overlay come from the host: the label grid
+					// (/api/labels) and the segment metadata + display state
+					// (/api/state). The existing shaders draw the overlay.
+					try {
+						const st = await take("/api/state", "json");
+						const labBytes = await take("/api/labels", "bytes");
+						view.set_labels(new Uint32Array(header.dims), new Uint8Array(labBytes));
+						const items = (st.segments && st.segments.items) || [];
+						for (const seg of items) {
+							try {
+								view.set_segment(
+									seg.label,
+									seg.name || "Segment " + seg.label,
+									new Uint8Array(seg.color || [230, 85, 75]),
+									seg.visible !== false,
+									seg.opacity != null ? seg.opacity : 0.5
+								);
+							} catch (segErr) {
+								/* an empty segment (its label is absent from the grid) is
+								   skipped, so one bad segment cannot disable the overlay */
+							}
+						}
+						const ov = st.overlays || {};
+						const shown = ov.segments_shown !== false && items.length > 0;
+						const fillOpacity = ov.fill_opacity != null ? ov.fill_opacity : 0.5;
+						const style = ov.style || "fill_outline";
+						view.set_overlay(shown, fillOpacity, style);
+						overlayRef.current = { shown, fill: fillOpacity, style };
+						setOverlayShown(shown);
+						setOverlayStyle(style);
+						setOverlayFill(fillOpacity);
+					} catch (labErr) {
+						/* no segmentation or host state: the overlay stays off */
+					}
 					setStatus(view.adapter_info() + " · " + header.dims.join("×") + " · " + header.value_unit);
 					draw();
 					// start keeping the token alive (the first refresh learns the TTL)
@@ -349,6 +390,36 @@ window.__ModuleLoader__.load({
 				}
 			}, [renderMode]);
 
+			// Send a view input to the host (the person's change). The host is the
+			// source of truth; the local renderer is kept in step optimistically.
+			const pushInput = React.useCallback((body) => {
+				const clean = originRef.current.trim().replace(/\/+$/, "");
+				const secret = tokenRef.current.trim();
+				if (!isLoopback(clean) || !tokenLooksValid(secret)) return;
+				fetch(clean + "/api/input?token=" + encodeURIComponent(secret), {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify(body)
+				}).catch(() => {});
+			}, []);
+
+			const changeOverlay = (patch) => {
+				const next = Object.assign({}, overlayRef.current, patch);
+				overlayRef.current = next;
+				setOverlayShown(next.shown);
+				setOverlayStyle(next.style);
+				setOverlayFill(next.fill);
+				const view = viewRef.current;
+				if (view) {
+					try {
+						view.set_overlay(next.shown, next.fill, next.style);
+					} catch (e) {
+						/* the view may not be ready */
+					}
+				}
+				pushInput({ overlays: { segments_shown: next.shown, fill_opacity: next.fill, style: next.style } });
+			};
+
 			const button = (label, on, onClick) =>
 				h("button", { type: "button", style: on ? Object.assign({}, styles.button, styles.buttonOn) : styles.button, onClick }, label);
 
@@ -361,16 +432,27 @@ window.__ModuleLoader__.load({
 					h("input", { style: styles.input, value: origin, spellCheck: false, "aria-label": "View host address", onChange: (e) => setOrigin(e.target.value) }),
 					h("input", { style: Object.assign({}, styles.input, styles.token), value: token, spellCheck: false, type: "password", "aria-label": "View host token", placeholder: "token", onChange: (e) => setToken(e.target.value) }),
 					h("button", { type: "button", style: styles.button, onClick: connect }, "Connect"),
-					button("MPR", mode === "mpr", () => setMode("mpr")),
-					button("3D", mode === "volume", () => setMode("volume")),
-					button("2D", mode === "slice", () => setMode("slice")),
+					button("MPR", mode === "mpr", () => { setMode("mpr"); pushInput({ component: "mpr" }); }),
+					button("3D", mode === "volume", () => { setMode("volume"); pushInput({ component: "volume" }); }),
+					button("2D", mode === "slice", () => { setMode("slice"); pushInput({ component: "slice" }); }),
 					h(
 						"select",
 						{ style: styles.select, value: renderMode, onChange: (e) => setRenderMode(e.target.value), "aria-label": "3D mode" },
 						["tissue", "isosurface", "mip", "transfer_function"].map((m) =>
 							h("option", { key: m, value: m, style: styles.option }, m)
 						)
-					)
+					),
+					button("Overlay", overlayShown, () => changeOverlay({ shown: !overlayRef.current.shown })),
+					h(
+						"select",
+						{ style: styles.select, value: overlayStyle, onChange: (e) => changeOverlay({ style: e.target.value }), "aria-label": "Overlay style" },
+						["outline", "fill", "fill_outline"].map((s) => h("option", { key: s, value: s, style: styles.option }, s))
+					),
+					h("input", {
+						type: "range", min: 0, max: 1, step: 0.05, value: overlayFill,
+						"aria-label": "Overlay fill opacity", title: "Overlay fill opacity",
+						onChange: (e) => changeOverlay({ fill: parseFloat(e.target.value) })
+					})
 				),
 				h(
 					"div",
