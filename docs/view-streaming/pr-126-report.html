@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FERRUM · PR #126 — финальный отчёт: полный ViewState + MPR/3D (Stage 29 PR 2)</title>
+<style>
+  :root { --bg:#fbfbfd; --fg:#1d1f26; --muted:#5b6070; --line:#e2e5ec; --accent:#1f6feb; --ok:#1a7f37; --warn:#9a6700; --bad:#b42318; --card:#fff; --code:#f3f4f7; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#12141a; --fg:#e6e7ea; --muted:#a2a8b6; --line:#2a2e38; --accent:#6ba6ff; --ok:#4ac26b; --warn:#d4a72c; --bad:#ff7b72; --card:#191c23; --code:#1f232c; } }
+  * { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.6 -apple-system,"Segoe UI",Roboto,Arial,sans-serif; }
+  main { max-width:1080px; margin:0 auto; padding:40px 24px 80px; }
+  h1 { font-size:29px; line-height:1.25; margin:0 0 8px; letter-spacing:-0.02em; }
+  h2 { font-size:21px; margin:44px 0 14px; padding-bottom:8px; border-bottom:1px solid var(--line); }
+  h3 { font-size:16px; margin:24px 0 8px; }
+  .sub { color:var(--muted); margin:0 0 24px; }
+  .meta { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:28px; }
+  .pill { font-size:13px; padding:3px 10px; border-radius:999px; border:1px solid var(--line); background:var(--card); color:var(--muted); }
+  .pill.ok { color:var(--ok); border-color:color-mix(in srgb,var(--ok) 40%,transparent); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px 20px; margin:14px 0; }
+  code,.mono { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:13px; }
+  code { background:var(--code); padding:1px 5px; border-radius:4px; }
+  table { width:100%; border-collapse:collapse; margin:14px 0; font-size:14px; }
+  th,td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; font-size:13px; text-transform:uppercase; letter-spacing:.04em; }
+  .tag { font-size:12px; font-weight:600; padding:2px 7px; border-radius:5px; white-space:nowrap; }
+  .t-fixed { background:color-mix(in srgb,var(--ok) 16%,transparent); color:var(--ok); }
+  .t-should { background:color-mix(in srgb,var(--warn) 18%,transparent); color:var(--warn); }
+  .t-nit { background:color-mix(in srgb,var(--muted) 16%,transparent); color:var(--muted); }
+  .grid { display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); }
+  .stat { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px; }
+  .stat b { display:block; font-size:26px; line-height:1.2; } .stat span { color:var(--muted); font-size:13px; }
+  ul { padding-left:22px; } li { margin:4px 0; }
+  .note { border-left:3px solid var(--accent); padding-left:14px; color:var(--muted); margin:14px 0; }
+  footer { margin-top:56px; padding-top:18px; border-top:1px solid var(--line); color:var(--muted); font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+<h1>PR #126 — полный ViewState хоста + MPR/3D кадры</h1>
+<p class="sub">Финальный отчёт: Stage 29 PR 2 (критерий 29.1-a/b). FERRUM, ноябрь 2026. Описывает head SHA <code>1e307a737442e8f99f830d0d4c028ebe78d89951</code>. Отчёт живёт в самом PR и правится по итогам ревью; при мердже остаётся в последней версии (правило пользователя).</p>
+<div class="meta">
+  <span class="pill">Stage 29 PR 2 · 29.1-a/b</span>
+  <span class="pill">size L</span>
+  <span class="pill ok">G1+G2 утверждены</span>
+  <span class="pill ok">preflight: all checks passed</span>
+  <span class="pill ok">rendering rule: mutation-proven</span>
+</div>
+<div class="grid">
+  <div class="stat"><b>16</b><span>файлов (+1834/−432)</span></div>
+  <div class="stat"><b>24/24</b><span>view_host тестов (7 новых)</span></div>
+  <div class="stat"><b>3</b><span>компонента: slice / mpr / volume</span></div>
+  <div class="stat"><b>0</b><span>третьих копий image-formation</span></div>
+</div>
+
+<h2>1. Что и зачем</h2>
+<p>Хост отдавал только 2D-срез. Теперь он стримит <strong>полный ViewState</strong> (component slice/mpr/volume, camera, overlays, selected_segment, tool) и рисует <strong>MPR-сетку и 3D-вид</strong> на GPU или CPU; <code>POST /api/input</code> ставит camera/overlays/tool/segment и рисует инструменты (<code>draw</code> → commit → <code>roi_drawn</code>); события <code>camera_changed</code>/<code>roi_drawn</code> достигают <code>/api/events</code> и <code>view-events.json</code>. Это закрывает MPR/3D-отсрочку Stage 25.</p>
+<div class="note">Rendering rule сохранён: CPU volume — единый <code>CpuRaycaster</code> (oracle <code>volume.wgsl</code>, новый use case <code>render_volume_cpu</code>); MPR — display-blit четвертей, нарисованных общими slice/volume рендерерами (один композитор на оба бэкенда). Третьей копии image-formation нет; GPU↔CPU parity mutation-proven.</div>
+
+<h2>2. Код-карта</h2>
+<p class="sub">Pinned к head SHA <code>1e307a7</code>.</p>
+<table>
+  <tr><th>Утверждение</th><th>Реализация</th></tr>
+  <tr><td>Полный state через Viewer::view_state + io::state_to_json (один контракт)</td><td class="mono">crates/ferrum-view/src/state.rs:457</td></tr>
+  <tr><td>Input::apply → частичный ViewState → apply_view_state</td><td class="mono">crates/ferrum-view/src/state.rs:131,196</td></tr>
+  <tr><td>draw: tool machine через Viewer::slice_input, commit → roi_drawn + save</td><td class="mono">crates/ferrum-view/src/state.rs:593</td></tr>
+  <tr><td>probe per-component (affine / pick / per-quarter)</td><td class="mono">crates/ferrum-view/src/state.rs:510</td></tr>
+  <tr><td>refresh применяет артефакт через apply_view_state (apply_view_2d удалён)</td><td class="mono">crates/ferrum-view/src/session.rs:274</td></tr>
+  <tr><td>События — доменные ViewEvent, persist без JSON round-trip</td><td class="mono">crates/ferrum-view/src/session.rs:317</td></tr>
+  <tr><td>FrameSource::render(&mut Viewer, ViewComponent)</td><td class="mono">crates/ferrum-view/src/frame.rs:88</td></tr>
+  <tr><td>CPU volume — единый raycaster oracle (use case в app)</td><td class="mono">crates/ferrum-app/src/viewer.rs:775</td></tr>
+  <tr><td>MPR композитор + blit (один на оба бэкенда); quarters</td><td class="mono">crates/ferrum-view/src/frame.rs:248,298,168</td></tr>
+  <tr><td>3D sidecar = проекция (camera + pick-ray); probe за surface-hit</td><td class="mono">crates/ferrum-view/src/frame.rs:221,197</td></tr>
+  <tr><td>GPU upload через GpuSink port (glue как ferrum-ui)</td><td class="mono">crates/ferrum-view/src/gpu.rs:114</td></tr>
+  <tr><td>page.html: component/orbit/tool/overlay controls + token refresh</td><td class="mono">crates/ferrum-view/src/page.html:188</td></tr>
+  <tr><td>Тесты: full-state round trip, camera/roi events, draw, parity volume/MPR</td><td class="mono">crates/ferrum-view/tests/view_host.rs:663,717,759,967,992</td></tr>
+</table>
+
+<h2>3. Покрытие критериев</h2>
+<table>
+  <tr><th>Критерий</th><th>Тест</th><th>Статус</th></tr>
+  <tr><td>29.1-a полный ViewState over HTTP (component/camera/overlays/selected/tool; input; camera_changed/roi_drawn)</td><td class="mono">full-state round trips; camera_and_roi_events (events + persisted log); draw commits; probe per-component</td><td><span class="tag t-fixed">✅</span></td></tr>
+  <tr><td>29.1-b GPU/CPU parity новых видов</td><td class="mono">the_gpu_backend_draws_the_same_volume_as_the_cpu + MPR parity (mean-deviation); mutation CPU volume +60 → RED</td><td><span class="tag t-fixed">✅</span></td></tr>
+</table>
+
+<h2>4. Верификация</h2>
+<ul>
+  <li>Полный preflight (WSL Ubuntu-24.04, CI-порядок + GPU parity + analyze.py): <code>all checks passed</code> на head <code>1e307a7</code>.</li>
+  <li>view_host 24/24 (7 новых); lib unit 8/8 (crafted camera/overlays/draw refusals); полный workspace suite в CI-mode зелёный.</li>
+  <li>fmt/clippy <code>--workspace --all-targets -D warnings</code> чисто; node --check inline JS page.html: exit 0.</li>
+  <li>Visual check (L1): 8 PNG (CPU/GPU × slice/mpr/volume/orbit) — MPR четверти с замкнутыми контурами, 3D корректно освещён, GPU MPR идентичен CPU.</li>
+  <li>Слоистость: ferrum-view + ferrum-processing обоснован (GpuSink::upload_ambient_occlusion); бизнес-логика только в Viewer use cases; CLAUDE.md/architecture.md обновлены.</li>
+</ul>
+
+<h2>5. История ревью</h2>
+<div class="card">
+  <p><strong>Раунд 1</strong> (code + security, агент <code>review-pr2</code>, выполнение + мутации): вердикт <em>changes requested</em> — 0 blocking, 1 should-fix, 3 nits. <strong>Rendering rule, слоистость, безопасность подтверждены</strong> (третьей копии нет; parity mutation-proven; crafted refusals; token-gate; draw — human annotation, не decision; идентификаторов нет).</p>
+  <table>
+    <tr><th>Находка</th><th>Исправление</th><th>Статус</th></tr>
+    <tr><td><span class="tag t-should">should</span> page.html не обновлял rotating token → 401 после TTL (регрессия PR2+PR4)</td><td>проактивный POST /api/token/refresh (~80% TTL, как панель)</td><td><span class="tag t-fixed">fixed</span></td></tr>
+    <tr><td><span class="tag t-nit">nit</span> MPR layout комментарий «mirrors desktop» неточен</td><td>комментарий исправлен (host grid — своя конвенция; layout не менялся, parity не страдает)</td><td><span class="tag t-fixed">fixed</span></td></tr>
+    <tr><td><span class="tag t-nit">nit</span> privacy-тест не сканировал frame-sidecars</td><td>scan volume/MPR frame mapping добавлен</td><td><span class="tag t-fixed">fixed</span></td></tr>
+    <tr><td><span class="tag t-nit">nit</span> input() rev+=1 даже для no-op</td><td>не дефект (лишний redraw); оставлено</td><td><span class="tag t-nit">noted</span></td></tr>
+  </table>
+</div>
+
+<h2>6. Out of scope / notes</h2>
+<ul>
+  <li>MPR crosshair navigation (<code>navigate_to</code>) не exposed как input — документировано в view-host.md §9; TF остаётся panel-local; tool selector предлагает usable subset (AI/region/move/delete ставятся через input, но нужен engine/annotation UI — PR 6).</li>
+  <li>API дельты (документированы): <code>FrameSource::render</code> signature (только Session consumes); <code>Probe</code> export удалён (доменный <code>ViewProbe</code>); <code>segments.items</code> +color; <code>draw</code> input добавлен.</li>
+</ul>
+
+<footer>FERRUM · Stage 29 PR 2 · head SHA <code>1e307a737442e8f99f830d0d4c028ebe78d89951</code> · отчёт коммичен в PR и правится по итогам ревью пользователя.</footer>
+</main>
+</body>
+</html>
