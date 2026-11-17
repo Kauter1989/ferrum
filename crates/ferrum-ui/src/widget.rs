@@ -152,6 +152,11 @@ impl ViewerWidget {
     ) -> Vec<ViewerEvent> {
         self.begin_frame(&ui.ctx().clone(), viewer, render_state);
         if viewer.dataset().is_none() {
+            // No study: forget the last frame so closing and reopening a study
+            // starts clean — a stale snapshot would diff against the new state
+            // and emit spurious events (review of #69).
+            self.last_snapshot = None;
+            self.drag_baseline = None;
             return Vec::new();
         }
         if self.toolbar {

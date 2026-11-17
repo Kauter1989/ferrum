@@ -389,6 +389,28 @@ fn no_event_is_a_decision() {
     );
 }
 
+#[test]
+fn closing_and_reopening_a_study_does_not_emit_spurious_events() {
+    // review of #69: the widget must forget its snapshot when the study closes,
+    // or reopening diffs against the stale state and emits a spurious event
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(Host::new(dir.path(), ViewerWidget::new(), false));
+    h.run();
+    h.state_mut().viewer.set_slice_index(ferrum_domain::SliceAxis::Axial, 5);
+    h.run();
+    h.state_mut().events.clear();
+    // close the study: a fresh viewer with no dataset
+    h.state_mut().viewer = Viewer::new(Arc::new(ferrum_io::CompositeRepository::default()));
+    h.run();
+    assert!(h.state().events.is_empty(), "closing a study emits nothing");
+    // reopen the same study: a first frame, no diff against the stale snapshot
+    h.state_mut().viewer.open_paths(vec![phantom_file(dir.path())]);
+    h.state_mut().viewer.wait_idle();
+    h.state_mut().viewer.declare_modality("CT").unwrap();
+    h.run();
+    assert!(h.state().events.is_empty(), "reopening does not diff against the stale snapshot: {:?}", h.state().events);
+}
+
 // ------------------------------------------------------------------ the example host (24.4)
 
 #[path = "../examples/embed_host.rs"]
