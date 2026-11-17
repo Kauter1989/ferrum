@@ -1084,7 +1084,7 @@ orbit / volume view over HTTP → 29.1.
 | 29.T2 host full ViewState + MPR/3D frames + camera/roi events + parity | 29.1-a/b | 2 | ✅ |
 | 29.T3 16-bit volume transfer (u16 default, f32 opt-in) + `/api/labels` | 29.3-a | 3 | 🚧 |
 | 29.T4 rotating token (ADR 0019) | 29.4-a | 4 | 🚧 |
-| 29.T5 panel segments/overlay + host sync (verify wasm build of app) | 29.2-a | 5 | |
+| 29.T5 panel segments/overlay + host sync (verify wasm build of app) | 29.2-a | 5 | 🚧 |
 | 29.T6 panel TF editor + measurements | 29.2-b/c | 6 | |
 | 29.T7 headed-browser WebGPU automation | 29.5-b | 7 | |
 

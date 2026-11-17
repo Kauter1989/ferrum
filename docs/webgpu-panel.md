@@ -79,3 +79,25 @@ transfer-function editor, no `ferrum-view/1` state, no events, no tests. The
 binding has no automated test, because a WebGPU run needs a headed browser;
 the measurement above is a field observation, recorded here so the design
 quotes a measured number rather than an estimate (lesson L13).
+
+## As built (Stage 29 PR 5, criterion 29.2-a)
+
+The panel now draws the segment overlay and follows the host's view state:
+
+- `ferrum-wasm` gains `set_labels(dims, bytes)` (the host's `/api/labels` grid →
+  `LabelMap` → `SegmentationSet`), `set_segment(label, name, color, visible,
+  opacity)` (the metadata of `/api/state` `segments.items`) and
+  `set_overlay(shown, fill_opacity, style)`. They upload the labels and the
+  domain's one colour table (`SegmentationSet::lut`) through the renderer's
+  existing `update_labels`/`set_segment_colors`; the overlay is drawn by the
+  **existing** `slice.wgsl`/`volume.wgsl` shaders (`slice_params.segments`,
+  `frame_params.with_segments`) — no new image-formation code (rendering rule).
+- The panel (`integrations/dsh/plugin/lib/client.js`) takes `/api/state` and
+  `/api/labels` after the volume, applies the overlay, and offers an overlay
+  toggle, a style select and a fill-opacity slider; a person's overlay and
+  component changes go back through `POST /api/input`. The rotating token is
+  refreshed (PR 4).
+- Still ahead: the transfer-function editor and measurements (PR 6), and a
+  headed-browser automated test of the binding (PR 7). The overlay rendering
+  itself is verified by the host's GPU↔CPU parity suite and a field browser
+  check, not by a native test (a WebGPU run needs a headed browser).
