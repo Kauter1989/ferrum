@@ -1164,6 +1164,57 @@ patient data — the dashboard holds only plan and code metadata.
 
 ---
 
+## Stage 31 — DICOM de-identification: PS3.15 Basic Profile and Clean Pixel Data (#75) 🚧 (stage, gated; G1 approved 2026-11-17)
+
+([#75](https://github.com/Kauter1989/ferrum/issues/75); P2). **Design:**
+[docs/deidentification.md](docs/deidentification.md),
+[ADR 0020](docs/decisions/0020-deidentification-profile.md). Medical Harness
+needs identifier-free inputs for remote vision models and for exports to
+research or another site. FERRUM already pseudonymises its agent outputs and
+its DICOM export UIDs (`dicom/export.rs`); this stage adds a *standard*
+de-identification: the PS3.15 Annex E **Basic Application Level Confidentiality
+Profile** with its options, **Clean Pixel Data** (burned-in text), and test
+oracles against established anonymisers. Privacy-sensitive: G1 before any code.
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 31.1 | As a **harness developer**, I want every attribute of Table E.1-1 handled by the Basic Profile's action so that de-identification follows the standard, not a hand-written list. | [31.1-a] The profile's attribute rules are **generated from a committed Table E.1-1 data file** (tag, keyword, action), not written by hand; a test fails when the table and the generator disagree. [31.1-b] On synthetic DICOM carrying every attribute of Table E.1-1, the output matches the profile's action for each: `D` replace with a non-empty consistent value, `Z` replace with zero-length, `X` remove, `U` replace with a consistent pseudonymous UID, `C` clean (descriptors), `K` keep, `R` replace per the option, `Z/D` per the option; a pinned fixture fixes the action of each row. [31.1-c] UIDs are replaced consistently within one de-identification run (study/series/SOP/frame-of-reference map stably), reusing the export's salted UID derivation; `retain UIDs` keeps them. [31.1-d] The de-identified object keeps the attributes the profile keeps (e.g. patient age/sex under the *Retain Patient Characteristics* option; the Basic Profile default removes age and zeroes sex) and the pixel data; a test reads it back through FERRUM's own reader. |
+| 31.2 | As a **harness developer**, I want the Basic Profile's options so that a site can retain what its protocol allows. | [31.2-a] Options: *retain longitudinal dates modified* (dates shifted by a consistent per-patient offset, time kept), *retain UIDs*, *clean descriptors* (free-text fields searched for identifiers and cleaned), *retain device identity*, *retain institution identity*, *retain patient characteristics*; each option changes exactly the rows Table E.1-1 marks option-dependent, pinned by a fixture per option. [31.2-b] An unknown option is refused; the default is the Basic Profile with no options (the most conservative). |
+| 31.3 | As a **harness developer**, I want Clean Pixel Data so that renders sent to a vision model carry no burned-in text. | [31.3-a] Known burned-in regions (the DICOM `BurnedInAnnotation` flag and a configured region mask) are masked in the pixel data; a test with burned-in text in a known region shows the region replaced and the rest of the image unchanged. [31.3-b] An optional OCR check runs **behind a bridge** (`ferrum-engine/1`-style, out of process; no OCR in Rust, no weights bundled); without a bridge the step is skipped and reported, never silently passed. [31.3-c] Renders can be requested "masked": `view slice --masked` (and the host's frame route) applies the region mask; a visual test fixes a masked render of a phantom with burned-in text. |
+| 31.4 | As a **maintainer**, I want test oracles against established anonymisers so that the profile is checked, not asserted. | [31.4-a] A diff test compares FERRUM's output against **pydicom/deid** (MIT) and the **RSNA/CTP** anonymizer profile on the same synthetic study; differences are named and justified (the test pins the expected agreement, not a vague "close"). [31.4-b] The oracles run in the Python test layer (CI `python-lint`/pytest), generate their DICOM at run time, and commit no patient or volume data. |
+| 31.5 | As a **harness developer**, I want de-identification wired into exports and the agent so that it is usable, not a library only. | [31.5-a] `export bundle --deidentify basic [--option …]` writes a de-identified DICOM export; the agent command set gains the option with a JSON Schema, `commands.json`, docs and contract tests (CLI = MCP); the privacy scan passes. [31.5-b] The de-identification is a use case in `ferrum-app` over a `ferrum-io` DICOM transform; no business logic in the CLI/agent; the rendering rule is untouched (masking is a pixel transform, not image formation). |
+
+**Success metrics:** every Table E.1-1 row's action pinned by a fixture; the
+pydicom/deid + CTP diff test green; a masked render of burned-in text verified
+visually; the privacy scan over every output passes.
+
+**Out of scope:** a full DICOM router (DIMSE C-MOVE is #76); OCR weights or
+inference in Rust; de-identification of non-DICOM formats (NIfTI has no standard
+profile — pseudonymisation of its sidecar is separate); any change to the
+`ferrum-view/1` contract beyond the masked-render flag.
+
+**Clarifications (assumed, for G1):**
+- assumed: the Table E.1-1 data file is committed as a structured table
+  (CSV/JSON) under `crates/ferrum-io/src/dicom/`, generated/verified against the
+  standard once; the Rust generator reads it (no hand-written attribute list).
+- assumed: Clean Pixel Data masking uses `BurnedInAnnotation` + a rectangular
+  region mask first; OCR is an optional bridge follow-up within the stage.
+- assumed: this is a **gated stage** (privacy hard stop): G1 spec → G2 design
+  (a new ADR for the de-identification profile + the OCR bridge) → per-PR G3.
+- assumed: PR split (size L/XL, to be confirmed at G2): (1) the profile engine
+  + Table E.1-1 generator + options (31.1–31.2); (2) Clean Pixel Data + masked
+  renders (31.3); (3) oracles + export/agent integration (31.4–31.5).
+
+### Implementation
+
+| Task | What | Criteria | PR | State |
+|---|---|---|---|---|
+| 31.T1 | Basic Profile engine + Table E.1-1 generator + options | 31.1-a…d, 31.2-a…b | 1 | |
+| 31.T2 | Clean Pixel Data masking + masked renders (+ OCR bridge) | 31.3-a…c | 2 | |
+| 31.T3 | pydicom/deid + CTP oracles; export/agent integration | 31.4-a…b, 31.5-a…b | 3 | |
+
+---
+
 ## Roadmap
 
 Updated 2026-11-16, after the 0.4.0 release (v0.4.0, 2026-11-14). Order is
