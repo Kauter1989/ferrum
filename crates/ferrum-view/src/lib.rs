@@ -49,5 +49,5 @@ pub use cpu::CpuFrameSource;
 pub use frame::{Backend, BackendPreference, FrameSource, RawFrame};
 pub use gpu::GpuFrameSource;
 pub use server::{ServeOptions, ViewServer, COOKIE, MAX_BODY};
-pub use session::{Frame, Session, ViewError};
+pub use session::{Frame, Session, ViewError, VolumeStorage};
 pub use state::{plane_name, Input, Probe, ViewState, FORMAT};

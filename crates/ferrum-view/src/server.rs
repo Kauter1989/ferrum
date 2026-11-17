@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
 use crate::page::PAGE;
-use crate::session::{Session, ViewError};
+use crate::session::{Session, ViewError, VolumeStorage};
 use crate::token::{RotatingToken, TOKEN_GRACE, TOKEN_TTL};
 
 /// The name of the cookie that carries the token after the page loads.
@@ -181,19 +181,37 @@ impl Host {
                 let since = query_value(url, "since").and_then(|v| v.parse::<u64>().ok());
                 Reply::json(StatusCode(200), self.session.events_json(since))
             }
-            // A client that draws the study itself takes the voxels once.
-            "/api/volume" if get => match self.session.volume() {
+            // A client that draws the study itself takes the voxels once. The
+            // default u16 form halves the wire; ?storage=f32 keeps the old form.
+            "/api/volume" if get => {
+                let storage = volume_storage(url);
+                match self.session.volume(storage) {
+                    Ok((header, values)) => Reply {
+                        status: StatusCode(200),
+                        content_type: "application/octet-stream",
+                        headers: vec![("X-Ferrum-Volume".into(), header.to_string())],
+                        body: values,
+                    },
+                    Err(e) => internal(e),
+                }
+            }
+            // The header alone, so a client can size the download and check a
+            // cached copy without fetching the voxels again.
+            "/api/volume.json" if get => match self.session.volume(volume_storage(url)) {
+                Ok((header, _)) => Reply::json(StatusCode(200), header),
+                Err(e) => internal(e),
+            },
+            // The segment label map for a client that draws the overlay itself.
+            "/api/labels" if get => match self.session.labels() {
                 Ok((header, values)) => Reply {
                     status: StatusCode(200),
                     content_type: "application/octet-stream",
-                    headers: vec![("X-Ferrum-Volume".into(), header.to_string())],
+                    headers: vec![("X-Ferrum-Labels".into(), header.to_string())],
                     body: values,
                 },
                 Err(e) => internal(e),
             },
-            // The header alone, so a client can size the download and check a
-            // cached copy without fetching the voxels again.
-            "/api/volume.json" if get => match self.session.volume() {
+            "/api/labels.json" if get => match self.session.labels() {
                 Ok((header, _)) => Reply::json(StatusCode(200), header),
                 Err(e) => internal(e),
             },
@@ -247,8 +265,8 @@ impl Host {
                 },
                 None => Reply::json(StatusCode(404), json!({ "error": "no such panel file" })),
             },
-            "/api/state" | "/api/events" | "/api/frame.png" | "/api/volume" | "/api/volume.json" | "/api/input"
-            | "/api/token/refresh" | "/" | "/index.html" => {
+            "/api/state" | "/api/events" | "/api/frame.png" | "/api/volume" | "/api/volume.json" | "/api/labels"
+            | "/api/labels.json" | "/api/input" | "/api/token/refresh" | "/" | "/index.html" => {
                 Reply::json(StatusCode(405), json!({"error": "wrong method"}))
             }
             _ => Reply::json(StatusCode(404), json!({"error": "no such route"})),
@@ -345,6 +363,16 @@ fn query_value(url: &str, name: &str) -> Option<String> {
         let (key, value) = pair.split_once('=')?;
         (key == name).then(|| value.to_owned())
     })
+}
+
+/// The volume storage form a request asks for: `?storage=f32` keeps the original
+/// physical form; anything else (the default) is the half-size `u16` form.
+fn volume_storage(url: &str) -> VolumeStorage {
+    if query_value(url, "storage").as_deref() == Some("f32") {
+        VolumeStorage::F32
+    } else {
+        VolumeStorage::U16
+    }
 }
 
 /// The value of cookie `name` in a `Cookie` header.

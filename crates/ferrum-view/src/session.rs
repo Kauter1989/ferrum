@@ -70,6 +70,18 @@ pub struct Frame {
 /// How many events a session keeps (oldest dropped first).
 const MAX_EVENTS: usize = 512;
 
+/// The wire form of the volume voxels (Stage 29, criterion 29.3-a).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VolumeStorage {
+    /// The volume's `u16` storage, little-endian; the client reconstructs the
+    /// physical value as `min + stored × (max − min) / 65535` from `value_range`.
+    /// Half the bytes of `f32`, and lossless (the storage is the source of truth).
+    #[default]
+    U16,
+    /// Physical `f32` values, little-endian (the original form).
+    F32,
+}
+
 /// A view host for one workspace.
 pub struct Session {
     workspace: PathBuf,
@@ -155,29 +167,37 @@ impl Session {
     }
 
     /// The study's voxels for a client that renders them itself: the header
-    /// (dims, spacing, value range) as JSON and `count` f32 values, `i`
-    /// fastest, in the volume's own units.
+    /// (dims, spacing, value range, storage form) as JSON and the voxels, `i`
+    /// fastest, in the chosen [`VolumeStorage`] form.
     ///
     /// A browser panel takes this once and draws with the GPU of the person's
     /// machine, so nothing but the volume crosses the wire (ADR 0014
-    /// decision 4, the local backend).
-    pub fn volume(&self) -> Result<(Value, Vec<u8>), ViewError> {
+    /// decision 4, the local backend). The default `u16` form halves the wire;
+    /// `f32` stays available for a client that asks for it.
+    pub fn volume(&self, storage: VolumeStorage) -> Result<(Value, Vec<u8>), ViewError> {
         let dataset = self.viewer.dataset().ok_or(ViewError::NoStudy)?;
         let volume = &dataset.volume;
         let dims = volume.dims();
         let spacing = volume.spacing();
         let range = volume.range();
-        let mut values = Vec::with_capacity(volume.data().len());
-        for k in 0..dims.z {
-            for j in 0..dims.y {
-                for i in 0..dims.x {
-                    let value = volume.physical(i, j, k).unwrap_or(0.0);
-                    values.extend_from_slice(&value.to_le_bytes());
+        let values: Vec<u8> = match storage {
+            VolumeStorage::U16 => volume.data().iter().flat_map(|s| s.to_le_bytes()).collect(),
+            VolumeStorage::F32 => {
+                let mut out = Vec::with_capacity(volume.data().len() * 4);
+                for k in 0..dims.z {
+                    for j in 0..dims.y {
+                        for i in 0..dims.x {
+                            let value = volume.physical(i, j, k).unwrap_or(0.0);
+                            out.extend_from_slice(&value.to_le_bytes());
+                        }
+                    }
                 }
+                out
             }
-        }
+        };
         let header = json!({
             "format": "ferrum-volume/1",
+            "storage": match storage { VolumeStorage::U16 => "u16", VolumeStorage::F32 => "f32" },
             "dims": [dims.x, dims.y, dims.z],
             "spacing_mm": [spacing.x, spacing.y, spacing.z],
             "value_range": [range.min, range.max],
@@ -185,6 +205,36 @@ impl Session {
             "frame": "LPS: voxel i, j, k are the stored order of the canonical grid",
             "bytes": values.len(),
             "sha256": hex_sha256(&values),
+        });
+        Ok((header, values))
+    }
+
+    /// The segment label map for a client that draws the overlay itself: one
+    /// `u8` label per voxel (`i` fastest, the volume's grid) and the segment
+    /// metadata. A study with no segmentation gives a zero grid (Stage 29,
+    /// criterion 29.2-a's wire).
+    pub fn labels(&self) -> Result<(Value, Vec<u8>), ViewError> {
+        let dataset = self.viewer.dataset().ok_or(ViewError::NoStudy)?;
+        let dims = dataset.volume.dims();
+        let set = self.viewer.segmentation().set();
+        let values: Vec<u8> = match set {
+            Some(set) => set.labels().data().to_vec(),
+            None => vec![0u8; dims.voxel_count()],
+        };
+        let items: Vec<Value> = set
+            .map(|s| {
+                s.segments()
+                    .iter()
+                    .map(|g| json!({ "label": g.label, "name": g.name, "visible": g.visible, "opacity": g.opacity }))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let header = json!({
+            "format": "ferrum-labels/1",
+            "dims": [dims.x, dims.y, dims.z],
+            "bytes": values.len(),
+            "sha256": hex_sha256(&values),
+            "segments": items,
         });
         Ok((header, values))
     }

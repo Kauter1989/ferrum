@@ -235,7 +235,18 @@ window.__ModuleLoader__.load({
 					};
 					const header = await take("/api/volume.json", "json");
 					const bytes = await take("/api/volume", "bytes");
-					view.set_volume(new Uint32Array(header.dims), new Float32Array(header.spacing_mm), new Float32Array(bytes));
+					// The default wire form is u16 storage (half the bytes); reconstruct
+					// the physical values from value_range. f32 stays supported.
+					let voxels;
+					if (header.storage === "f32") {
+						voxels = new Float32Array(bytes);
+					} else {
+						const stored = new Uint16Array(bytes);
+						const min = header.value_range[0], span = header.value_range[1] - min;
+						voxels = new Float32Array(stored.length);
+						for (let i = 0; i < stored.length; i++) voxels[i] = min + stored[i] * span / 65535;
+					}
+					view.set_volume(new Uint32Array(header.dims), new Float32Array(header.spacing_mm), voxels);
 					view.set_window(header.value_range[0], header.value_range[1]);
 					// A CT is shown with the desktop's own preset: `tissue` has its
 					// own palette, so the transfer-function mode is the one that
