@@ -5,10 +5,11 @@
 use std::path::PathBuf;
 
 use ferrum_domain::{
-    LabelMap, NoProgress, Segment, SegmentationSet, SliceAxis, SliceImage, Volume, VolumeRepository, WindowLevel,
+    LabelMap, NoProgress, ResultStore, Segment, SegmentStyle, SegmentationSet, SliceAxis, SliceImage, Volume,
+    VolumeRepository, WindowLevel,
 };
 use ferrum_io::workspace::Workspace;
-use ferrum_io::{write_nifti, CompositeRepository};
+use ferrum_io::{write_nifti, CompositeRepository, WorkspaceStore};
 use ferrum_view::{BackendPreference, ServeOptions, Session, ViewServer};
 use glam::Vec3;
 use serde_json::Value;
@@ -648,4 +649,361 @@ fn the_host_applies_a_view_artifact_and_the_person_takes_over() {
     assert_eq!(session.state_json().unwrap()["slice_index"], 2);
     session.refresh();
     assert_eq!(session.state_json().unwrap()["slice_index"], 2, "the person's input is not reverted");
+}
+
+/// The kinds of the events after `since`, in order.
+fn kinds_since(server: &ViewServer, since: u64) -> Vec<String> {
+    let (_, doc) = get_json(&token_url(server, &format!("/api/events?since={since}")));
+    doc["events"].as_array().unwrap().iter().map(|e| e["kind"].as_str().unwrap().to_owned()).collect()
+}
+
+// covers 29.1-a — the state document carries the full ViewState and every
+// new input sets its field; the answer is the new state.
+#[test]
+fn the_state_carries_the_full_view_state() {
+    let f = fixture(true);
+    let server = open(&f);
+    let (_, state) = get_json(&token_url(&server, "/api/state"));
+    assert_eq!(state["component"].as_str(), Some("slice"));
+    assert_eq!(state["tool"].as_str(), Some("pan"));
+    assert_eq!(state["overlays"]["segments_shown"].as_bool(), Some(true));
+    assert!(state["overlays"]["fill_opacity"].as_f64().is_some());
+    assert_eq!(state["overlays"]["style"].as_str(), Some("fill_outline"));
+    assert!(state["selected_segment"].is_null());
+    assert!(state["camera"].is_null(), "a slice state has no camera");
+    assert!(state.get("unhonoured").is_none());
+
+    let (status, state) =
+        post(&token_url(&server, "/api/input"), r#"{"overlays":{"fill_opacity":0.3,"style":"outline"}}"#);
+    assert_eq!(status, 200, "{state}");
+    assert!((state["overlays"]["fill_opacity"].as_f64().unwrap() - 0.3).abs() < 1e-6);
+    assert_eq!(state["overlays"]["style"].as_str(), Some("outline"));
+    assert_eq!(state["overlays"]["segments_shown"].as_bool(), Some(true), "untouched fields stay");
+
+    let (_, state) = post(&token_url(&server, "/api/input"), r#"{"selected_segment":1}"#);
+    assert_eq!(state["selected_segment"].as_u64(), Some(1));
+    let (_, state) = post(&token_url(&server, "/api/input"), r#"{"selected_segment":null}"#);
+    assert!(state["selected_segment"].is_null());
+    let (_, state) = post(&token_url(&server, "/api/input"), r#"{"tool":"probe"}"#);
+    assert_eq!(state["tool"].as_str(), Some("probe"));
+
+    let (_, state) = post(&token_url(&server, "/api/input"), r#"{"segment":{"label":1,"visible":false}}"#);
+    assert_eq!(state["segments"]["items"][0]["visible"].as_bool(), Some(false));
+    let (_, state) = post(&token_url(&server, "/api/input"), r#"{"segment":{"label":1,"opacity":0.2}}"#);
+    assert!((state["segments"]["items"][0]["opacity"].as_f64().unwrap() - 0.2).abs() < 1e-6);
+    let (status, _) = post(&token_url(&server, "/api/input"), r#"{"segment":{"label":9,"visible":true}}"#);
+    assert_eq!(status, 400, "an unknown label is refused");
+
+    let (_, state) = post(&token_url(&server, "/api/input"), r#"{"component":"mpr"}"#);
+    assert_eq!(state["component"].as_str(), Some("mpr"));
+    let camera = &state["camera"];
+    assert_eq!(camera["orientation"].as_array().unwrap().len(), 4);
+    assert!(camera["distance"].as_f64().unwrap() > 0.0);
+    assert_eq!(camera["target"].as_array().unwrap().len(), 3);
+    assert!(camera["fov_y"].as_f64().unwrap() > 0.0);
+    let (status, _) = post(&token_url(&server, "/api/input"), r#"{"component":"3d"}"#);
+    assert_eq!(status, 400);
+}
+
+// covers 29.1-a — camera_changed and roi_drawn reach /api/events and the
+// persisted log; the existing kinds stay.
+#[test]
+fn camera_and_roi_events_reach_the_event_log() {
+    let f = fixture(false);
+    let server = open(&f);
+    post(&token_url(&server, "/api/input"), r#"{"step":1}"#);
+    post(&token_url(&server, "/api/input"), r#"{"component":"volume"}"#);
+    let (_, before) = get_json(&token_url(&server, "/api/state"));
+    let (status, after) = post(&token_url(&server, "/api/input"), r#"{"camera":{"orbit":[0.4,0.2]}}"#);
+    assert_eq!(status, 200, "{after}");
+    assert_ne!(after["camera"]["orientation"], before["camera"]["orientation"], "the orbit moved the camera");
+    let (_, zoomed) = post(&token_url(&server, "/api/input"), r#"{"camera":{"zoom":1.0}}"#);
+    assert!(
+        zoomed["camera"]["distance"].as_f64().unwrap() < after["camera"]["distance"].as_f64().unwrap(),
+        "a positive zoom moves the eye closer"
+    );
+    let (_, targeted) = post(&token_url(&server, "/api/input"), r#"{"camera":{"target":[0.1,0.0,0.0]}}"#);
+    assert!((targeted["camera"]["target"][0].as_f64().unwrap() - 0.1).abs() < 1e-6);
+
+    post(&token_url(&server, "/api/input"), r#"{"component":"slice"}"#);
+    let (status, _) = post(&token_url(&server, "/api/input"), r#"{"draw":{"tool":"distance","points":[[5,4],[6,5]]}}"#);
+    assert_eq!(status, 200);
+
+    let kinds = kinds_since(&server, 0);
+    assert_eq!(kinds[0], "slice_changed", "the existing kinds stay: {kinds:?}");
+    assert_eq!(kinds.iter().filter(|k| *k == "camera_changed").count(), 3, "{kinds:?}");
+    assert_eq!(kinds.last().unwrap(), "roi_drawn", "{kinds:?}");
+    let (_, doc) = get_json(&token_url(&server, "/api/events?since=0"));
+    let roi = doc["events"].as_array().unwrap().last().unwrap();
+    assert_eq!(roi["item"]["kind"].as_str(), Some("annotation"));
+    assert!(roi["item"]["id"].as_u64().unwrap() >= 1);
+    let cam = doc["events"].as_array().unwrap().iter().find(|e| e["kind"] == "camera_changed").unwrap();
+    assert_eq!(cam["camera"]["orientation"].as_array().unwrap().len(), 4);
+
+    // the agent reads the same sequence from the workspace
+    let ws = Workspace::open(&f.workspace).unwrap();
+    let (events, _, _) = ws.load_view_events().unwrap();
+    assert!(events.iter().any(|(_, e)| matches!(e, ferrum_domain::ViewEvent::CameraChanged { .. })));
+    assert!(events.iter().any(|(_, e)| matches!(e, ferrum_domain::ViewEvent::RoiDrawn { .. })));
+}
+
+// covers 29.1-a — a draw input drives the real tool machine: the annotation
+// is committed, saved to the workspace and reported; a degenerate draw is not.
+#[test]
+fn a_draw_commits_an_annotation_through_the_tool_machine() {
+    let f = fixture(false);
+    let server = open(&f);
+    let (_, state) = get_json(&token_url(&server, "/api/state"));
+    let index = slice_index(&state);
+    assert!(
+        index >= u64::from(BLOCK.2) && index < u64::from(BLOCK.2 + BLOCK_SIZE.2),
+        "the middle slice holds the block"
+    );
+
+    let (status, state) =
+        post(&token_url(&server, "/api/input"), r#"{"draw":{"tool":"distance","points":[[5,4],[6,5]]}}"#);
+    assert_eq!(status, 200, "{state}");
+    assert_eq!(state["tool"].as_str(), Some("distance"));
+    let kinds = kinds_since(&server, 0);
+    assert_eq!(kinds, vec!["roi_drawn"], "{kinds:?}");
+
+    // the annotation is in the workspace, on this slice, with the clicked mm
+    let store = WorkspaceStore::open(&f.workspace, "FERRUM test").unwrap();
+    let (annotations, _) = store.load(&f.volume).unwrap();
+    let annotations = annotations.expect("the draw was saved");
+    let drawn: Vec<_> = annotations.iter().collect();
+    assert_eq!(drawn.len(), 1);
+    let (id, key, annotation, _) = drawn[0];
+    assert_eq!(key.index, index as u32);
+    let ferrum_domain::Annotation::Distance { a, b } = annotation else { panic!("{annotation:?}") };
+    assert!((a.x - 5.5).abs() < 1e-4 && (a.y - 4.5).abs() < 1e-4, "{a:?}");
+    assert!((b.x - 6.5).abs() < 1e-4 && (b.y - 5.5).abs() < 1e-4, "{b:?}");
+    assert!(id >= 1);
+
+    // rect, angle and area commit through the same machine
+    for body in [
+        r#"{"draw":{"tool":"rect","points":[[4,3],[7,6]]}}"#,
+        r#"{"draw":{"tool":"angle","points":[[4,4],[6,4],[6,6]]}}"#,
+        r#"{"draw":{"tool":"area","points":[[4,4],[7,4],[7,6],[4,6]]}}"#,
+    ] {
+        let (status, _) = post(&token_url(&server, "/api/input"), body);
+        assert_eq!(status, 200, "{body}");
+    }
+    assert_eq!(kinds_since(&server, 1), vec!["roi_drawn", "roi_drawn", "roi_drawn"]);
+
+    // a degenerate distance (below the tool's minimum) commits nothing
+    let (_, doc) = get_json(&token_url(&server, "/api/events?since=0"));
+    let seq = doc["next"].as_u64().unwrap();
+    let (status, _) = post(&token_url(&server, "/api/input"), r#"{"draw":{"tool":"distance","points":[[5,4],[5,4]]}}"#);
+    assert_eq!(status, 200);
+    assert!(kinds_since(&server, seq).is_empty(), "a zero-length distance is not an annotation");
+    // bad draws are refused without a state change
+    let (status, _) = post(&token_url(&server, "/api/input"), r#"{"draw":{"tool":"pan","points":[[0,0],[1,1]]}}"#);
+    assert_eq!(status, 400);
+    let (status, _) =
+        post(&token_url(&server, "/api/input"), r#"{"draw":{"tool":"distance","points":[[99,99],[100,100]]}}"#);
+    assert_eq!(status, 400, "a pixel outside the slice is refused");
+}
+
+// covers 29.1-a — the volume frame is the 3D view at the fixed size, its
+// sidecar a projection (camera + pick-ray), and a probe resolves through it.
+#[test]
+fn the_volume_frame_is_a_projection_of_the_camera() {
+    let f = fixture(false);
+    let server = open(&f);
+    post(&token_url(&server, "/api/input"), r#"{"component":"volume"}"#);
+    let (status, png) = get(&token_url(&server, "/api/frame.png"));
+    assert_eq!(status, 200);
+    let (w, h, pixels) = decode(&png);
+    assert_eq!((w, h), (512, 512), "the 3D frame has the fixed size");
+    let lit = pixels.chunks(4).filter(|p| p[0] > 10 || p[1] > 10 || p[2] > 10).count();
+    assert!(lit > 1000, "the block is drawn ({lit} lit pixels)");
+    assert!(lit < (w * h / 2) as usize, "the block is not the whole frame");
+    assert!(pixels.chunks(4).all(|p| p[3] == 255), "the frame is opaque");
+
+    let (_, state) = get_json(&token_url(&server, "/api/state"));
+    let mapping = &state["frame"]["mapping"];
+    assert_eq!(mapping["kind"].as_str(), Some("projection"));
+    assert_eq!(mapping["size"], serde_json::json!([512, 512]));
+    assert_eq!(mapping["camera"]["distance"], state["camera"]["distance"]);
+    let ray = &mapping["pick_ray"];
+    assert_eq!(ray["origin"].as_array().unwrap().len(), 3);
+    assert!(ray["origin"][2].as_f64().unwrap() < -1.0, "the default eye sits at -z: {ray}");
+    assert_eq!(ray["direction"].as_array().unwrap().len(), 3);
+    assert!(mapping.get("pick").is_some(), "the sidecar names the centre pick (or null)");
+    assert!(mapping.get("pixel_to_voxel").is_none(), "a 3D frame has no 2D affine");
+
+    // a pixel on the block resolves through the camera to the block's value
+    let (status, state) = post(&token_url(&server, "/api/input"), r#"{"probe":{"x":240,"y":240}}"#);
+    assert_eq!(status, 200, "{state}");
+    let probe = &state["probe"];
+    assert!((probe["value"].as_f64().unwrap() - 400.0).abs() < 1e-3, "{probe}");
+    let voxel: Vec<u64> = probe["voxel"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap()).collect();
+    assert!((4..8).contains(&voxel[0]) && (3..7).contains(&voxel[1]) && (2..6).contains(&voxel[2]), "{voxel:?}");
+    // a ray that misses the volume is refused
+    let (status, _) = post(&token_url(&server, "/api/input"), r#"{"probe":{"x":5,"y":5}}"#);
+    assert_eq!(status, 400);
+
+    // an orbit redraws the frame with the new camera
+    let (_, before) = get(&token_url(&server, "/api/frame.png"));
+    post(&token_url(&server, "/api/input"), r#"{"camera":{"orbit":[0.6,0.3]}}"#);
+    let (_, after) = get(&token_url(&server, "/api/frame.png"));
+    assert_ne!(before, after, "a new camera is a new frame");
+}
+
+// covers 29.1-a — the MPR frame tiles the four quarters like the desktop
+// grid; the slice quarters keep the oracle's pixels at exact positions, the
+// 3D quarter is drawn, and the sidecar names every quarter's mapping.
+#[test]
+fn the_mpr_frame_tiles_the_four_quarters() {
+    let f = fixture(true);
+    let server = open(&f);
+    // A window that lifts the background off black, so the letterbox is
+    // distinguishable from the image background (a check that can fail).
+    post(&token_url(&server, "/api/input"), r#"{"window":{"center":-600,"width":1500}}"#);
+    post(&token_url(&server, "/api/input"), r#"{"component":"mpr"}"#);
+    let (_, state) = get_json(&token_url(&server, "/api/state"));
+    let window = window_of(&state);
+    let (status, png) = get(&token_url(&server, "/api/frame.png"));
+    assert_eq!(status, 200);
+    let (w, h, pixels) = decode(&png);
+    assert_eq!((w, h), (512, 512));
+    let at = |x: u32, y: u32| -> [u8; 4] {
+        let i = ((y * w + x) * 4) as usize;
+        [pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]]
+    };
+    let grey = |v: f32| ferrum_domain::color::unit_to_u8(window.apply(v));
+    assert!(grey(-1000.0) > 0, "the background is not black under this window");
+    assert_mpr_quarter_pixels(&at, &grey);
+
+    // The sidecar names the quarters and their mappings.
+    let (_, state) = get_json(&token_url(&server, "/api/state"));
+    assert_mpr_mapping(&state["frame"]["mapping"]);
+
+    // A probe resolves per quarter: axial block, sagittal background, 3D block.
+    let (_, state) = post(&token_url(&server, "/api/input"), r#"{"probe":{"x":88,"y":104}}"#);
+    assert!((state["probe"]["value"].as_f64().unwrap() - 400.0).abs() < 1e-3, "{state}");
+    let (_, state) = post(&token_url(&server, "/api/input"), r#"{"probe":{"x":373,"y":394}}"#);
+    assert!((state["probe"]["value"].as_f64().unwrap() + 1000.0).abs() < 1e-3, "{state}");
+    let (_, state) = post(&token_url(&server, "/api/input"), r#"{"probe":{"x":370,"y":120}}"#);
+    assert!((state["probe"]["value"].as_f64().unwrap() - 400.0).abs() < 1e-3, "{state}");
+    let (status, _) = post(&token_url(&server, "/api/input"), r#"{"probe":{"x":8,"y":8}}"#);
+    assert_eq!(status, 400, "the letterbox holds no voxel");
+}
+
+/// The exact geometry of the MPR quarters on the block phantom (lesson L1:
+/// outlines on every side, at known pixels, not "some outline exists").
+fn assert_mpr_quarter_pixels(at: &dyn Fn(u32, u32) -> [u8; 4], grey: &dyn Fn(f32) -> u8) {
+    // Axial top-left: the 16x12 plane fits at scale 16 into [0,32]-[256,224].
+    // The block (x 4..8, y 3..7) lands at x 64..128, y 80..144: outline in
+    // full colour on every side, fill blended inside.
+    let colour = [230u8, 85, 75];
+    for (x, y) in [(64, 104), (127, 104), (88, 80), (88, 143)] {
+        assert_eq!(&at(x, y)[..3], &colour, "axial outline at ({x}, {y})");
+    }
+    let g = grey(400.0);
+    let expected = SegmentStyle::FillAndOutline.blend([g; 3], colour, 0.5, false);
+    assert_eq!(&at(88, 104)[..3], &expected, "axial fill blends the segment colour");
+    assert_eq!(at(8, 8), [0, 0, 0, 255], "the letterbox above the image is opaque black");
+
+    // Coronal bottom-left: the 16x8 plane at scale 16 into [0,320]-[256,448];
+    // the block (x 4..8, z 2..6) at y 6 is cut by this plane: outline at x 64.
+    assert_eq!(&at(64, 392)[..3], &colour, "coronal outline");
+    // Sagittal bottom-right: the 12x8 plane at scale 21 into [258,300]-[510,468];
+    // the active sagittal index is x=8, outside the block: pure background.
+    assert_eq!(at(373, 394)[0], grey(-1000.0), "sagittal at x=8 shows no block");
+    // 3D top-right: the block is drawn somewhere in the quarter.
+    let lit = (256..512)
+        .flat_map(|x| (0..256).map(move |y| (x, y)))
+        .filter(|&(x, y)| at(x, y)[0] > 10 || at(x, y)[1] > 10 || at(x, y)[2] > 10)
+        .count();
+    assert!(lit > 200, "the 3D quarter draws the block ({lit} lit pixels)");
+}
+
+/// The MPR sidecar: four quarters, each with its rect and its own mapping.
+fn assert_mpr_mapping(mapping: &Value) {
+    assert_eq!(mapping["kind"].as_str(), Some("mpr"));
+    let quarters = mapping["quarters"].as_array().unwrap();
+    assert_eq!(quarters.len(), 4);
+    assert_eq!(quarters[0]["component"], "slice");
+    assert_eq!(quarters[0]["plane"], "axial");
+    assert_eq!(quarters[0]["rect"], serde_json::json!([0, 0, 256, 256]));
+    assert_eq!(quarters[0]["image_rect"], serde_json::json!([0, 32, 256, 224]));
+    assert_eq!(quarters[0]["mapping"]["pixel_to_voxel"][2][2], 4.0, "the axial mapping names the slice");
+    assert_eq!(quarters[1]["component"], "volume");
+    assert_eq!(quarters[1]["rect"], serde_json::json!([256, 0, 512, 256]));
+    assert_eq!(quarters[1]["mapping"]["kind"], "projection");
+    assert_eq!(quarters[2]["plane"], "coronal");
+    assert_eq!(quarters[3]["plane"], "sagittal");
+}
+
+/// Mean deviation and outlier fraction of two same-size frames, the pattern
+/// of the slice parity case above.
+fn deviation(a: &[u8], b: &[u8]) -> (f64, usize) {
+    let mut total = 0i64;
+    let mut outliers = 0usize;
+    for (x, y) in a.chunks(4).zip(b.chunks(4)) {
+        let d = (0..3).map(|c| (i32::from(x[c]) - i32::from(y[c])).abs()).max().unwrap();
+        total += i64::from(d);
+        if d > 2 {
+            outliers += 1;
+        }
+    }
+    (total as f64 / (a.len() / 4) as f64, outliers)
+}
+
+// covers 29.1-b — the GPU and CPU draw the same 3D frame (the rendering rule:
+// volume.wgsl <-> cpu/raycast.rs, one FrameParams, jitter off on both sides).
+#[test]
+fn the_gpu_backend_draws_the_same_volume_as_the_cpu() {
+    let f = fixture(false);
+    let mut cpu = Session::open(&f.workspace, BackendPreference::Cpu).unwrap();
+    let mut gpu = match Session::open(&f.workspace, BackendPreference::Gpu) {
+        Ok(session) => session,
+        Err(_) => return, // no adapter on this machine: the CPU cases above cover the image
+    };
+    cpu.input(br#"{"component":"volume"}"#).unwrap();
+    gpu.input(br#"{"component":"volume"}"#).unwrap();
+    let (cw, ch, cpu_px) = decode(&cpu.frame().unwrap().png);
+    let (gw, gh, gpu_px) = decode(&gpu.frame().unwrap().png);
+    assert_eq!((cw, ch), (gw, gh));
+    assert_eq!((cw, ch), (512, 512));
+    let (mean, outliers) = deviation(&cpu_px, &gpu_px);
+    assert!(mean < 2.5, "mean deviation {mean}");
+    assert!(outliers * 100 <= (cw * ch) as usize * 2, "{outliers} pixels differ by more than 2");
+    for px in [&cpu_px, &gpu_px] {
+        let lit = px.chunks(4).filter(|p| p[0] > 10 || p[1] > 10 || p[2] > 10).count();
+        assert!(lit > 1000, "both backends draw the block ({lit} lit pixels)");
+    }
+}
+
+// covers 29.1-b — the GPU and CPU draw the same MPR composite: every quarter
+// through the shared renderers, tiled by the one compositor.
+#[test]
+fn the_gpu_backend_draws_the_same_mpr_as_the_cpu() {
+    let f = fixture(true);
+    let mut cpu = Session::open(&f.workspace, BackendPreference::Cpu).unwrap();
+    let mut gpu = match Session::open(&f.workspace, BackendPreference::Gpu) {
+        Ok(session) => session,
+        Err(_) => return, // no adapter on this machine: the CPU case above covers the image
+    };
+    cpu.input(br#"{"component":"mpr"}"#).unwrap();
+    gpu.input(br#"{"component":"mpr"}"#).unwrap();
+    let (cw, ch, cpu_px) = decode(&cpu.frame().unwrap().png);
+    let (gw, gh, gpu_px) = decode(&gpu.frame().unwrap().png);
+    assert_eq!((cw, ch), (gw, gh));
+    assert_eq!((cw, ch), (512, 512));
+    let (mean, outliers) = deviation(&cpu_px, &gpu_px);
+    assert!(mean < 2.5, "mean deviation {mean}");
+    assert!(outliers * 100 <= (cw * ch) as usize * 2, "{outliers} pixels differ by more than 2");
+
+    // The axial quarter's outline is exact on both backends, on every side.
+    let at = |px: &[u8], x: u32, y: u32| -> [u8; 3] {
+        let i = ((y * cw + x) * 4) as usize;
+        [px[i], px[i + 1], px[i + 2]]
+    };
+    for (x, y) in [(64, 104), (127, 104), (88, 80), (88, 143)] {
+        assert_eq!(at(&gpu_px, x, y), [230, 85, 75], "GPU axial outline at ({x}, {y})");
+        assert_eq!(at(&cpu_px, x, y), [230, 85, 75], "CPU axial outline at ({x}, {y})");
+    }
 }

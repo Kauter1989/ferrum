@@ -19,7 +19,7 @@ use ferrum_io::{event_to_json, state_to_json};
 use glam::{UVec3, Vec2, Vec3};
 use serde_json::{json, Value};
 
-use crate::frame::{fit_rect, mpr_quarters, probe_at_hit, Quarter, MPR_SIZE, VOLUME_SIZE};
+use crate::frame::{fit_rect, mpr_quarters, probe_on_volume, Quarter, MPR_SIZE, VOLUME_SIZE};
 use crate::session::ViewError;
 
 /// The full view state the host serves and applies (Stage 29): the domain
@@ -510,7 +510,7 @@ fn probe_input(viewer: &Viewer, x: u32, y: u32) -> Result<ViewProbe, ViewError> 
     let view = viewer.view_state();
     match view.component {
         ViewComponent::Slice => probe_on_slice(viewer, view.plane, view.slice_index, x, y),
-        ViewComponent::Volume => probe_on_volume(viewer, x, y, VOLUME_SIZE),
+        ViewComponent::Volume => probe_pixel_3d(viewer, x, y, VOLUME_SIZE),
         ViewComponent::Mpr => {
             let size = MPR_SIZE;
             if x >= size || y >= size {
@@ -523,7 +523,7 @@ fn probe_input(viewer: &Viewer, x: u32, y: u32) -> Result<ViewProbe, ViewError> 
                 let local = (x - rect.0.x, y - rect.0.y);
                 let half = rect.1 - rect.0;
                 return match quarter {
-                    Quarter::Volume => probe_on_volume(viewer, local.0, local.1, half.x),
+                    Quarter::Volume => probe_pixel_3d(viewer, local.0, local.1, half.x),
                     Quarter::Slice(axis) => {
                         let dataset = viewer.dataset().ok_or(ViewError::NoStudy)?;
                         let plane = axis.plane_dims(&dataset.volume);
@@ -557,12 +557,9 @@ fn probe_on_slice(viewer: &Viewer, axis: SliceAxis, index: u32, x: u32, y: u32) 
 
 /// The probe of a 3D frame pixel: the camera ray through it, resolved by
 /// [`Viewer::pick`] (the same visibility model the frame was drawn with).
-fn probe_on_volume(viewer: &Viewer, x: u32, y: u32, size: u32) -> Result<ViewProbe, ViewError> {
-    let ndc = ndc_of(x, y, size, size);
-    let hit = viewer
-        .pick(ndc, 1.0)
-        .ok_or_else(|| ViewError::BadRequest(format!("probe {x},{y} hits nothing in the 3D view")))?;
-    probe_at_hit(viewer, hit)
+fn probe_pixel_3d(viewer: &Viewer, x: u32, y: u32, size: u32) -> Result<ViewProbe, ViewError> {
+    probe_on_volume(viewer, ndc_of(x, y, size, size), 1.0)
+        .map_err(|_| ViewError::BadRequest(format!("probe {x},{y} hits nothing in the 3D view")))
 }
 
 /// Normalised device coordinates of a frame pixel (`+y` up, pixel centres).

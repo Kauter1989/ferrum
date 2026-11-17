@@ -11,7 +11,7 @@
 
 use ferrum_app::Viewer;
 use ferrum_domain::{SliceAxis, ViewComponent, ViewProbe, WindowLevel};
-use glam::{UVec2, UVec3, Vec2, Vec3};
+use glam::{UVec2, UVec3, Vec2};
 use serde_json::{json, Value};
 
 use crate::session::ViewError;
@@ -188,14 +188,27 @@ pub(crate) fn fit_rect(rect: (UVec2, UVec2), plane: (u32, u32)) -> (UVec2, UVec2
     (origin, origin + UVec2::new(w.min(bw), h.min(bh)))
 }
 
-/// The probe of a 3D pick: `hit` is the texture coordinate [`Viewer::pick`]
-/// returns; the voxel is the grid cell that holds it.
-pub(crate) fn probe_at_hit(viewer: &Viewer, hit: Vec3) -> Result<ViewProbe, ViewError> {
+/// The probe of a 3D frame pixel: [`Viewer::pick`] resolves it with the same
+/// visibility model the frame was drawn with. The pick lands on the rendered
+/// surface, which trilinear sampling places between voxels (often in the
+/// empty cell in front of the material); the probe names the voxel one step
+/// behind it along the ray, so a click on a structure reads that structure's
+/// value. `None`-hit is a [`ViewError::BadRequest`].
+pub(crate) fn probe_on_volume(viewer: &Viewer, ndc: Vec2, aspect: f32) -> Result<ViewProbe, ViewError> {
     let dataset = viewer.dataset().ok_or(ViewError::NoStudy)?;
-    let dims = dataset.volume.dims();
-    let v = (hit * dims.as_vec3()).floor();
+    let hit = viewer
+        .pick(ndc, aspect)
+        .ok_or_else(|| ViewError::BadRequest("the probe hits nothing in the 3D view".into()))?;
+    let dims = dataset.volume.dims().as_vec3();
+    let dir_tex = (viewer.volume.camera.view_dir() / dataset.volume.model_extent() * dims).normalize_or_zero();
+    let t = hit + dir_tex / dims;
+    let v = (t * dims).floor();
     let axis = |c: f32, n: u32| (c as i64).clamp(0, i64::from(n) - 1) as u32;
-    let voxel = UVec3::new(axis(v.x, dims.x), axis(v.y, dims.y), axis(v.z, dims.z));
+    let voxel = UVec3::new(
+        axis(v.x, dataset.volume.dims().x),
+        axis(v.y, dataset.volume.dims().y),
+        axis(v.z, dataset.volume.dims().z),
+    );
     crate::state::probe_of_voxel(viewer, voxel)
 }
 
@@ -209,10 +222,7 @@ pub(crate) fn projection_mapping(viewer: &Viewer, size: UVec2) -> Result<Value, 
     let camera = viewer.volume.camera;
     let aspect = size.x as f32 / size.y.max(1) as f32;
     let ray = camera.ray(Vec2::ZERO, aspect);
-    let pick = match viewer.pick(Vec2::ZERO, aspect) {
-        Some(hit) => Some(probe_json(&probe_at_hit(viewer, hit)?)),
-        None => None,
-    };
+    let pick = probe_on_volume(viewer, Vec2::ZERO, aspect).ok().map(|p| probe_json(&p));
     Ok(json!({
         "kind": "projection",
         "size": [size.x, size.y],
