@@ -91,8 +91,10 @@ TTL.
 | `GET` | `/api/events?since=<seq>` | events with `seq` greater than `since` |
 | `POST` | `/api/input` | one input object; answers with the new state |
 | `POST` | `/api/token/refresh` | a fresh token `{"token","expires_in"}`; re-sets the cookie (4.1) |
-| `GET` | `/api/volume` | the voxels as little-endian `f32`, `application/octet-stream`; the grid, spacing and range travel in `X-Ferrum-Volume` as JSON (26.3-a) |
+| `GET` | `/api/volume` | the voxels as little-endian `u16` storage by default (`?storage=f32` for physical `f32`), `application/octet-stream`; the grid, spacing, range and storage form travel in `X-Ferrum-Volume` as JSON (26.3-a, 29.3-a). The client reconstructs `min + stored × (max − min) / 65535` |
 | `GET` | `/api/volume.json` | the same description as `application/json`, with `sha256` of the voxels |
+| `GET` | `/api/labels` | the segment label map as `u8` (one per voxel), `application/octet-stream`; grid and segment metadata in `X-Ferrum-Labels` (29.2-a). A study without segmentation gives a zero grid |
+| `GET` | `/api/labels.json` | the same description as `application/json`, with `sha256` |
 | `GET` | `/panel/<file>` | the browser renderer module (`ferrum_wasm.js`, `ferrum_wasm_bg.wasm`); **no token** (26.3-b) |
 
 Every `GET` answer other than `/panel/<file>` needs the token. `/panel/<file>`

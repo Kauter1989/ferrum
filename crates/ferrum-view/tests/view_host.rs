@@ -441,19 +441,60 @@ fn the_volume_crosses_the_wire_once_for_a_client_that_renders_it() {
         vec![u64::from(dims.x), u64::from(dims.y), u64::from(dims.z)]
     );
     let count = u64::from(dims.x) * u64::from(dims.y) * u64::from(dims.z);
-    assert_eq!(header["bytes"].as_u64(), Some(count * 4), "f32 per voxel");
+    assert_eq!(header["storage"].as_str(), Some("u16"));
+    assert_eq!(header["bytes"].as_u64(), Some(count * 2), "u16 per voxel");
     assert_eq!(header["value_unit"].as_str(), Some("HU"));
 
     let (status, body) = get(&token_url(&server, "/api/volume"));
     assert_eq!(status, 200);
-    assert_eq!(body.len() as u64, count * 4, "the body is the voxels the header describes");
-    // The values are the volume's own, i fastest.
-    let first = f32::from_le_bytes([body[0], body[1], body[2], body[3]]);
+    assert_eq!(body.len() as u64, count * 2, "the body is the voxels the header describes");
+    // The u16 storage reconstructs the volume's physical value, i fastest.
+    let range = f.volume.range();
+    let stored = u16::from_le_bytes([body[0], body[1]]);
+    let first = range.min + f32::from(stored) * (range.max - range.min) / 65535.0;
     assert!((first - f.volume.physical(0, 0, 0).unwrap()).abs() < 1e-3, "first voxel {first}");
     assert_eq!(header["sha256"].as_str().map(str::len), Some(64), "the header names a SHA-256");
 
+    // The original f32 form stays available for a client that asks for it.
+    let (status, header) = get_json(&token_url(&server, "/api/volume.json?storage=f32"));
+    assert_eq!(status, 200);
+    assert_eq!(header["storage"].as_str(), Some("f32"));
+    assert_eq!(header["bytes"].as_u64(), Some(count * 4));
+    let (status, body) = get(&token_url(&server, "/api/volume?storage=f32"));
+    assert_eq!(status, 200);
+    assert_eq!(body.len() as u64, count * 4);
+    let first = f32::from_le_bytes([body[0], body[1], body[2], body[3]]);
+    assert!((first - f.volume.physical(0, 0, 0).unwrap()).abs() < 1e-3, "f32 first voxel {first}");
+
     // The voxels need the token like every other data route.
     let (status, _) = get(&format!("{}/api/volume", server.url()));
+    assert_eq!(status, 401);
+}
+
+// covers 29.3-a / 29.2-a — the label map crosses as u8 with the segment metadata.
+#[test]
+fn the_label_map_crosses_the_wire_for_the_overlay() {
+    let f = fixture(true);
+    let server = open(&f);
+    let dims = f.volume.dims();
+    let count = u64::from(dims.x) * u64::from(dims.y) * u64::from(dims.z);
+    let (status, header) = get_json(&token_url(&server, "/api/labels.json"));
+    assert_eq!(status, 200, "{header}");
+    assert_eq!(header["format"].as_str(), Some("ferrum-labels/1"));
+    assert_eq!(header["bytes"].as_u64(), Some(count), "u8 per voxel");
+    assert!(!header["segments"].as_array().unwrap().is_empty(), "the fixture has a segment");
+    let (status, body) = get(&token_url(&server, "/api/labels"));
+    assert_eq!(status, 200);
+    assert_eq!(body.len() as u64, count);
+    let idx = (BLOCK.0 + BLOCK.1 * dims.x + BLOCK.2 * dims.x * dims.y) as usize;
+    assert_eq!(body[idx], 1, "the block voxel is labelled");
+    // a study without segmentation gives a zero grid
+    let empty = fixture(false);
+    let server = open(&empty);
+    let (status, header) = get_json(&token_url(&server, "/api/labels.json"));
+    assert_eq!(status, 200);
+    assert!(header["segments"].as_array().unwrap().is_empty());
+    let (status, _) = get(&format!("{}/api/labels", server.url()));
     assert_eq!(status, 401);
 }
 

@@ -77,6 +77,9 @@ A 512×512×252 study crosses as ~264 MB of `f32` today. Two changes:
 - **Compression**: gzip the body (`flate2`, already in the workspace) when the
   client sends `Accept-Encoding: gzip`; the header describes the uncompressed
   grid. A CT compresses well; the panel decompresses in the fetch layer.
+  **As built (PR 3):** the `u16` form alone halves the wire and satisfies
+  29.3-a ("compressed *or* 16-bit"); gzip on top is deferred as a follow-up
+  (it needs the test HTTP client's decompression handled).
 - **Labels**: a new `GET /api/labels` serves the segment label map (`u8`, one
   byte per voxel, same grid) with the segment metadata, so the panel can draw
   the overlay (§5). It is cached per segmentation revision like the volume.
