@@ -324,4 +324,48 @@ mod tests {
             E::CameraChanged { camera: viewer.volume.camera }
         );
     }
+
+    #[test]
+    fn a_camera_drag_gives_one_camera_event_when_it_ends() {
+        let mut base = DragBaseline { window: WindowLevel::new(40.0, 400.0), camera: OrbitCamera::default() };
+        let mut turned = OrbitCamera::default();
+        turned.distance += 0.5;
+        assert!(base.events(WindowLevel::new(40.0, 400.0), turned, true).is_empty(), "during the drag");
+        let events = base.events(WindowLevel::new(40.0, 400.0), turned, false);
+        assert_eq!(events, vec![ViewerEvent::CameraChanged], "the drag end gives one camera event");
+        assert!(base.events(WindowLevel::new(40.0, 400.0), turned, false).is_empty(), "given once");
+        let mut fresh = DragBaseline { window: WindowLevel::new(40.0, 400.0), camera: OrbitCamera::default() };
+        assert!(
+            fresh.events(WindowLevel::new(40.0, 400.0), OrbitCamera::default(), false).is_empty(),
+            "an unchanged camera is not an event"
+        );
+    }
+
+    #[test]
+    fn a_new_human_annotation_is_roidrawn() {
+        let a = snap(None, [0; 3], Vec::new());
+        let mut b = snap(None, [0; 3], Vec::new());
+        b.annotations = vec![7];
+        assert_eq!(
+            a.diff(&b, None),
+            vec![ViewerEvent::RoiDrawn { item: RoiItem::Annotation(7) }],
+            "a new annotation is a drawn ROI"
+        );
+        assert!(b.diff(&b, None).is_empty(), "an annotation already present is not drawn again");
+    }
+
+    #[test]
+    fn a_reset_frame_establishes_the_baseline_without_events() {
+        // After the widget forgets its snapshot (a study was closed), the next
+        // frame is a first frame: it establishes the baseline and emits nothing,
+        // so reopening a study cannot diff against a stale state (review of #69).
+        let viewer = Viewer::new(std::sync::Arc::new(ferrum_io::CompositeRepository::default()));
+        let after = snap(Some(UVec3::new(1, 2, 3)), [4; 3], vec![(1, 100)]);
+        let mut baseline = None;
+        let events = frame_events(None, &after, &viewer, &mut baseline, false);
+        assert!(events.is_empty(), "a reset frame emits no events");
+        assert!(baseline.is_some(), "the baseline is established");
+        let again = frame_events(Some(&after), &after, &viewer, &mut baseline, false);
+        assert!(again.is_empty(), "the same state afterwards is quiet");
+    }
 }
