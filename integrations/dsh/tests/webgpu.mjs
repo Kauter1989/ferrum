@@ -45,7 +45,8 @@ const server = http.createServer((req, res) => {
 	const url = decodeURIComponent(req.url.split("?")[0]);
 	const rel = url === "/" ? "stand.html" : url.replace(/^\/+/, "");
 	const file = path.resolve(panelDir, rel);
-	if (!file.startsWith(panelDir) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
+	// Stay inside panelDir (the sep boundary stops a sibling like "panel-x").
+	if ((file !== panelDir && !file.startsWith(panelDir + path.sep)) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
 		res.writeHead(404);
 		res.end("not found");
 		return;
