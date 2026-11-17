@@ -108,9 +108,12 @@ node integrations\dsh\smoke.js http://127.0.0.1:41234 <token>    # the host over
 
 ## Limits
 
-- The panel shows the study, not the segments yet: overlays in the browser
-  are a follow-up (Stage 26 shipped without them).
-- The whole volume crosses the wire once as f32 (264 MB for 512×512×252):
-  fine on loopback, and compression or a 16-bit transfer is a later task.
+- The panel draws the segment overlay (Stage 29 PR 5): it takes `/api/labels`
+  and the segment metadata from `/api/state`, and offers an overlay toggle,
+  style and fill-opacity controls that go back through `POST /api/input`. The
+  transfer-function editor and measurements are a follow-up (PR 6).
+- The whole volume crosses the wire once as `u16` storage (half the bytes of
+  `f32`; Stage 29 PR 3), reconstructed from `value_range`; `?storage=f32` keeps
+  the original form.
 - The panel does not start the host; the operator runs one command.
-- No automated test of the WebGPU path: it needs a headed browser.
+- No automated test of the WebGPU path yet: it needs a headed browser (PR 7).
