@@ -334,8 +334,9 @@ mod tests {
         let events = base.events(WindowLevel::new(40.0, 400.0), turned, false);
         assert_eq!(events, vec![ViewerEvent::CameraChanged], "the drag end gives one camera event");
         assert!(base.events(WindowLevel::new(40.0, 400.0), turned, false).is_empty(), "given once");
+        let mut fresh = DragBaseline { window: WindowLevel::new(40.0, 400.0), camera: OrbitCamera::default() };
         assert!(
-            base.events(WindowLevel::new(40.0, 400.0), OrbitCamera::default(), false).is_empty(),
+            fresh.events(WindowLevel::new(40.0, 400.0), OrbitCamera::default(), false).is_empty(),
             "an unchanged camera is not an event"
         );
     }
