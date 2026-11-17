@@ -474,7 +474,12 @@ fn the_volume_crosses_the_wire_once_for_a_client_that_renders_it() {
     let first = f32::from_le_bytes([body[0], body[1], body[2], body[3]]);
     assert!((first - f.volume.physical(0, 0, 0).unwrap()).abs() < 1e-3, "f32 first voxel {first}");
     let block_idx = (BLOCK.0 + BLOCK.1 * dims.x + BLOCK.2 * dims.x * dims.y) as usize;
-    let block = f32::from_le_bytes([body[block_idx * 4], body[block_idx * 4 + 1], body[block_idx * 4 + 2], body[block_idx * 4 + 3]]);
+    let block = f32::from_le_bytes([
+        body[block_idx * 4],
+        body[block_idx * 4 + 1],
+        body[block_idx * 4 + 2],
+        body[block_idx * 4 + 3],
+    ]);
     let want = f.volume.physical(BLOCK.0, BLOCK.1, BLOCK.2).unwrap();
     assert!((block - want).abs() < 1e-3, "f32 block voxel {block} != {want}");
 
