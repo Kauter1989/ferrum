@@ -1,6 +1,7 @@
 //! DICOM data source.
 
 pub mod assemble;
+pub mod clean_pixel;
 pub mod deid;
 pub mod export;
 pub mod frames;
