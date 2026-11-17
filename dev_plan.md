@@ -1209,8 +1209,8 @@ profile — pseudonymisation of its sidecar is separate); any change to the
 
 | Task | What | Criteria | PR | State |
 |---|---|---|---|---|
-| 31.T1 | Basic Profile engine + Table E.1-1 generator + options | 31.1-a…d, 31.2-a…b | 1 | |
-| 31.T2 | Clean Pixel Data masking + masked renders (+ OCR bridge) | 31.3-a…c | 2 | |
+| 31.T1 | Basic Profile engine + Table E.1-1 generator + options | 31.1-a…d, 31.2-a…b | 1 | ✅ merged (#132) |
+| 31.T2 | Clean Pixel Data masking + masked renders (+ OCR bridge) | 31.3-a…c | 2 | 🚧 code complete on `feat/31-clean-pixel` (31.3-a…c tested; OCR interface + skip, production bridge a follow-up); pending G3/merge |
 | 31.T3 | pydicom/deid + CTP oracles; export/agent integration | 31.4-a…b, 31.5-a…b | 3 | |
 
 ---
