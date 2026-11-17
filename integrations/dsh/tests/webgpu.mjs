@@ -110,7 +110,9 @@ try {
 	// Read the presented frame back from a screenshot of the canvas: a WebGPU
 	// canvas does not preserve its drawing buffer, so drawImage would read black;
 	// the compositor's screenshot carries the rendered frame. A rendered phantom
-	// has many non-black pixels; a black canvas means nothing was drawn.
+	// has many bright pixels; a canvas that drew nothing shows the page
+	// background (#0d0e11, RGB sum 44), so the cutoff sits above it (60) — a
+	// non-rendering canvas then counts ~0 and the check fails (lesson L5).
 	async function canvasStats() {
 		const buf = await page.locator("#view").screenshot();
 		const png = PNG.sync.read(buf);
@@ -120,7 +122,7 @@ try {
 		for (let i = 0; i < png.data.length; i += 4) {
 			const v = png.data[i] + png.data[i + 1] + png.data[i + 2];
 			sum += v;
-			if (v > 30) nonBlack++;
+			if (v > 60) nonBlack++;
 		}
 		return { nonBlack, total: n, mean: sum / n };
 	}
