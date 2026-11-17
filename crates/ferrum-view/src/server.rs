@@ -181,6 +181,13 @@ impl Host {
                 let since = query_value(url, "since").and_then(|v| v.parse::<u64>().ok());
                 Reply::json(StatusCode(200), self.session.events_json(since))
             }
+            // The measurements the tool machine committed, for a panel that
+            // displays their values (29.2-c). Refresh first so annotations an
+            // agent wrote into the workspace are adopted, as /api/state does.
+            "/api/annotations" if get => {
+                self.session.refresh();
+                Reply::json(StatusCode(200), self.session.annotations_json())
+            }
             // A client that draws the study itself takes the voxels once. The
             // default u16 form halves the wire; ?storage=f32 keeps the old form.
             "/api/volume" if get => {
@@ -265,10 +272,9 @@ impl Host {
                 },
                 None => Reply::json(StatusCode(404), json!({ "error": "no such panel file" })),
             },
-            "/api/state" | "/api/events" | "/api/frame.png" | "/api/volume" | "/api/volume.json" | "/api/labels"
-            | "/api/labels.json" | "/api/input" | "/api/token/refresh" | "/" | "/index.html" => {
-                Reply::json(StatusCode(405), json!({"error": "wrong method"}))
-            }
+            "/api/state" | "/api/events" | "/api/annotations" | "/api/frame.png" | "/api/volume"
+            | "/api/volume.json" | "/api/labels" | "/api/labels.json" | "/api/input" | "/api/token/refresh" | "/"
+            | "/index.html" => Reply::json(StatusCode(405), json!({"error": "wrong method"})),
             _ => Reply::json(StatusCode(404), json!({"error": "no such route"})),
         }
     }
