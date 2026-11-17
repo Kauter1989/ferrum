@@ -1042,7 +1042,7 @@ maps its frame events to the contract form (`ferrum_ui::to_view_event`); the
 host that embeds it watches the artifact through `ferrum-io` (the widget and
 app do not depend on io).
 
-## Stage 29 — The view everywhere: full streaming, the browser panel, hardening 🚧 (stage, gated)
+## Stage 29 — The view everywhere: full streaming, the browser panel, hardening ✅ (stage, gated; PRs #123, #126, #125, #124, #127, #129, #130 merged)
 
 **Track:** stage. **Mode:** gated (G1 spec, G2 design, G3 merge). Closes the
 out-of-scope of Stages 25–26 and the follow-ups of #91.
@@ -1066,7 +1066,7 @@ track.
 **Size:** XL, seven PRs; G2 plans the split. **Design:**
 [docs/view-streaming.md](docs/view-streaming.md),
 [ADR 0019](docs/decisions/0019-view-host-rotating-token.md) (rotating token;
-G2 design written, pending approval). Two consumers share the ViewState: the
+approved and merged). Two consumers share the ViewState: the
 host-rendered page/`frame.png` (full state + MPR/3D frames) and the
 browser-rendered WebGPU panel (segments/overlay, TF editor, measurements).
 
@@ -1086,7 +1086,7 @@ orbit / volume view over HTTP → 29.1.
 | 29.T4 rotating token (ADR 0019) | 29.4-a | 4 | ✅ |
 | 29.T5 panel segments/overlay + host sync (verify wasm build of app) | 29.2-a | 5 | ✅ |
 | 29.T6 panel TF editor + measurements | 29.2-b/c | 6 | ✅ |
-| 29.T7 headed-browser WebGPU automation | 29.5-b | 7 | 🚧 |
+| 29.T7 headed-browser WebGPU automation | 29.5-b | 7 | ✅ |
 
 PR 1 is foundational (the rendering rule); PRs 3 and 4 are independent and can
 land while PR 2 is in review; PRs 5–7 build the panel on the full state + wire.
@@ -1184,7 +1184,7 @@ a proposal; each stage starts with its spec at gate G1. Sizes follow
 | 8 | Stage 23 — GPU sharing with an external model server ([#68](https://github.com/Kauter1989/ferrum/issues/68)) — code complete, PRs 1–3 merged | ✅ field run 2026-11-14: 20/20 with holder, recipe §5 | — |
 | 9 | Stage 24 PR 2 — widget events and the example host (24.T4–T7, [design](docs/embeddable-viewer.md)) | ✅ done (#109) | — |
 | 10 | Stage 28 — drive the view: `ferrum-view/1` ViewState and agent commands ([#70](https://github.com/Kauter1989/ferrum/issues/70)) | 🚧 in develop (#116 merged); gated | ViewState + agent commands delivered (#116); the gated stage's remainder is in progress |
-| 11 | Stage 29 — the view everywhere: full streaming, the browser panel, hardening | stage, XL, G1 again | closes the out-of-scope of Stages 25–26 and the #91 follow-ups |
+| 11 | Stage 29 — the view everywhere: full streaming, the browser panel, hardening | ✅ done (PRs #123, #126, #125, #124, #127, #129, #130) | closes the out-of-scope of Stages 25–26 and the #91 follow-ups |
 
 ### Backlog (feature or small, any time)
 
