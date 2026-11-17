@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use ferrum_app::Viewer;
-use ferrum_domain::{ResultStore, ViewEvent, WindowLevel};
+use ferrum_domain::{ResultStore, ViewEvent, VoxelBox, WindowLevel, MASK_FILL};
 use ferrum_io::workspace::changes::{WorkspaceChange, WorkspaceWatcher};
 use ferrum_io::{CompositeRepository, WorkspaceStore};
 use serde_json::{json, Value};
@@ -70,6 +70,13 @@ pub struct Frame {
 /// How many events a session keeps (oldest dropped first).
 const MAX_EVENTS: usize = 512;
 
+/// A masked frame cached with the revision and the mask it was drawn for.
+struct MaskedFrame {
+    rev: u64,
+    boxes: Vec<VoxelBox>,
+    frame: Frame,
+}
+
 /// The wire form of the volume voxels (Stage 29, criterion 29.3-a).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum VolumeStorage {
@@ -99,6 +106,7 @@ pub struct Session {
     seq: u64,
     dropped: u64,
     frame: Option<Frame>,
+    masked_frame: Option<MaskedFrame>,
     watcher: WorkspaceWatcher,
 }
 
@@ -128,6 +136,7 @@ impl Session {
             seq: 0,
             dropped: 0,
             frame: None,
+            masked_frame: None,
             watcher,
         })
     }
@@ -247,6 +256,62 @@ impl Session {
             });
         }
         self.frame.as_ref().ok_or_else(|| ViewError::Internal("no frame was drawn".into()))
+    }
+
+    /// The current frame drawn over a **masked copy** of the data (Clean
+    /// Pixel Data, Stage 31, criterion 31.3-c): the voxels of `boxes` are
+    /// replaced by [`MASK_FILL`] before drawing; the view state, window and
+    /// overlay are unchanged. Masking is a pixel transform on the data
+    /// ([`ferrum_app::Viewer::render_masked`]) — both backends draw exactly
+    /// as before, so the rendering rule is untouched. Cached per revision
+    /// and mask, separately from the unmasked frame. Returns the frame and
+    /// the effective boxes (clipped to the grid, empty ones dropped), so
+    /// the caller reports exactly what was masked.
+    pub fn frame_masked(&mut self, boxes: Vec<VoxelBox>) -> Result<(&Frame, Vec<VoxelBox>), ViewError> {
+        let dims = self.viewer.dataset().ok_or(ViewError::NoStudy)?.volume.dims().as_uvec3();
+        let boxes: Vec<VoxelBox> = boxes
+            .into_iter()
+            .map(|b| VoxelBox::new(b.min.min(dims), b.max.min(dims)))
+            .filter(|b| !b.is_empty())
+            .collect();
+        let fresh = self.masked_frame.as_ref().is_some_and(|m| m.rev == self.rev && m.boxes == boxes);
+        if !fresh {
+            let component = self.viewer.view_state().component;
+            let Self { viewer, source, .. } = self;
+            let raw = viewer
+                .render_masked(&boxes, MASK_FILL, |v| source.render(v, component))
+                .ok_or(ViewError::NoStudy)??;
+            let png = raw.png()?;
+            self.masked_frame = Some(MaskedFrame {
+                rev: self.rev,
+                boxes,
+                frame: Frame {
+                    png,
+                    width: raw.width,
+                    height: raw.height,
+                    window: raw.window,
+                    mapping: raw.mapping,
+                    rev: self.rev,
+                },
+            });
+        }
+        let cached =
+            self.masked_frame.as_ref().ok_or_else(|| ViewError::Internal("no masked frame was drawn".into()))?;
+        Ok((&cached.frame, cached.boxes.clone()))
+    }
+
+    /// The mask a `?masked=1` frame request applies when it names no region:
+    /// the whole volume when any DICOM source carries `BurnedInAnnotation =
+    /// YES` (the conservative default — the text's location is unknown),
+    /// else nothing. The caller reports which case held.
+    pub fn default_mask_boxes(&self) -> Result<Vec<VoxelBox>, ViewError> {
+        let dataset = self.viewer.dataset().ok_or(ViewError::NoStudy)?;
+        let ws = ferrum_io::Workspace::open(&self.workspace).map_err(|e| ViewError::Workspace(e.to_string()))?;
+        let sources = ws.manifest().source.file_paths();
+        if ferrum_io::dicom::clean_pixel::sources_burned_in(&sources) {
+            return Ok(vec![VoxelBox::full(dataset.volume.dims())]);
+        }
+        Ok(Vec::new())
     }
 
     /// Applies one input object (see [`Input`]) through the viewer's use

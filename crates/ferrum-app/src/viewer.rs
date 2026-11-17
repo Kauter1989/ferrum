@@ -805,6 +805,25 @@ impl Viewer {
         self.volume.mask.as_ref()
     }
 
+    /// Draws the current view over a **masked copy** of the data (Clean
+    /// Pixel Data, Stage 31, criterion 31.3-c): the voxels of `boxes` are
+    /// replaced by the stored value `fill` before drawing, and the view
+    /// state, window and overlay are unchanged. Masking is a pixel transform
+    /// on the data ([`Volume::masked_copy`]) — the renderers draw exactly as
+    /// before, so the rendering rule is untouched. The masked dataset is
+    /// installed only for the duration of `draw` (its fresh revision makes
+    /// the GPU sink upload it); afterwards the original dataset is restored.
+    /// `None` without a dataset.
+    pub fn render_masked<R>(&mut self, boxes: &[VoxelBox], fill: u16, draw: impl FnOnce(&mut Self) -> R) -> Option<R> {
+        let original = self.dataset.take()?;
+        let masked = original.volume.masked_copy(boxes, fill);
+        let revision = self.bump_revision();
+        self.dataset = Some(Dataset::new(masked, original.metadata.clone(), revision));
+        let out = draw(self);
+        self.dataset = Some(original);
+        Some(out)
+    }
+
     /// Number of undoable eraser strokes.
     pub fn erase_history_len(&self) -> usize {
         self.volume.history.len()

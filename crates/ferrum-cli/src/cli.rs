@@ -309,6 +309,12 @@ pub enum View {
         /// Overlays (segments).
         #[arg(long = "overlay")]
         overlays: Vec<String>,
+        /// Mask burned-in regions before drawing (Clean Pixel Data).
+        #[arg(long)]
+        masked: bool,
+        /// Mask region: two corner points (as --box); repeatable; implies --masked.
+        #[arg(long = "mask", num_args = 2, value_names = ["MIN", "MAX"])]
+        masks: Vec<String>,
         #[command(flatten)]
         display: SegmentDisplay,
     },
@@ -844,21 +850,34 @@ fn view_call(v: &View) -> Result<(String, Value), String> {
     let call = |name: &str, fields: Vec<(&str, Option<Value>)>| (name.to_owned(), object(fields));
     Ok(match v {
         View::Serve { .. } => return Err("view serve is run by main, not by the agent".into()),
-        View::Slice { ws: w, plane, slice_number, at, window, size, overlays, display } => call(
-            "view slice",
-            [
-                ws(w),
-                ("plane", Some(json!(plane))),
-                ("slice_number", some(*slice_number)),
-                ("at", at.as_deref().map(parse_point).transpose()?),
-                ("window", window.as_deref().map(parse_window).transpose()?),
-                ("size", some(*size)),
-                ("overlays", (!overlays.is_empty()).then(|| json!(overlays))),
-            ]
-            .into_iter()
-            .chain(display.fields())
-            .collect(),
-        ),
+        View::Slice { ws: w, plane, slice_number, at, window, size, overlays, display, masked, masks } => {
+            // num_args = 2: every --mask occurrence contributes one pair.
+            let boxes = masks
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|pair| -> Result<Value, String> {
+                    Ok(json!({ "min": parse_point(&pair[0])?, "max": parse_point(&pair[1])? }))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            call(
+                "view slice",
+                [
+                    ws(w),
+                    ("plane", Some(json!(plane))),
+                    ("slice_number", some(*slice_number)),
+                    ("at", at.as_deref().map(parse_point).transpose()?),
+                    ("window", window.as_deref().map(parse_window).transpose()?),
+                    ("size", some(*size)),
+                    ("overlays", (!overlays.is_empty()).then(|| json!(overlays))),
+                    ("masked", (*masked || !boxes.is_empty()).then(|| json!(true))),
+                    ("masks", (!boxes.is_empty()).then(|| json!(boxes))),
+                ]
+                .into_iter()
+                .chain(display.fields())
+                .collect(),
+            )
+        }
         View::Montage { ws: w, plane, from, to, step, columns, window, size, overlays, display } => call(
             "view montage",
             [
@@ -1159,6 +1178,30 @@ mod tests {
         assert_eq!(p["solid_min"], -300.0);
         let (name, p) = call(&["ferrum-cli", "segment", "distance", "-w", "ws", "3", "--to", "5"]);
         assert_eq!((name.as_str(), p["segment"].as_u64(), p["to"].as_u64()), ("segment distance", Some(3), Some(5)));
+    }
+
+    #[test]
+    // covers 31.3-c
+    fn view_slice_masked_flags_become_calls() {
+        let call = |args: &[&str]| Cli::try_parse_from(args).unwrap().command.to_call().unwrap();
+        let base = ["ferrum-cli", "view", "slice", "-w", "ws", "--plane", "axial", "--slice-number", "3"];
+        let (name, p) = call(&[base.as_slice(), &["--masked"]].concat());
+        assert_eq!(name, "view slice");
+        assert_eq!(p["masked"], json!(true));
+        assert!(p.get("masks").is_none());
+        // --mask implies --masked; the corners become the box JSON
+        let (_, p) =
+            call(&[base.as_slice(), &["--mask", "v:5,3,0", "v:16,8,0", "--mask", "mm:0,0,0", "mm:10,10,0"]].concat());
+        assert_eq!(p["masked"], json!(true));
+        assert_eq!(p["masks"][0], json!({ "min": { "voxel": [5.0, 3.0, 0.0] }, "max": { "voxel": [16.0, 8.0, 0.0] } }));
+        assert_eq!(p["masks"][1]["min"], json!({ "patient_mm": [0.0, 0.0, 0.0] }));
+        // no flags: neither parameter is present
+        let (_, p) = call(&base);
+        assert!(p.get("masked").is_none());
+        assert!(p.get("masks").is_none());
+        // a malformed corner point is refused
+        let bad = Cli::try_parse_from([base.as_slice(), &["--mask", "v:5,3", "v:16,8,0"]].concat()).unwrap();
+        assert!(bad.command.to_call().is_err());
     }
 
     #[test]

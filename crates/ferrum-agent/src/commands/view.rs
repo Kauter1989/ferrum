@@ -7,7 +7,9 @@
 
 use std::path::Path;
 
-use ferrum_domain::{storage_histogram, SegmentStyle, SliceAxis, Volume, WindowLevel, WindowPreset, AUTO_WINDOW_BINS};
+use ferrum_domain::{
+    storage_histogram, SegmentStyle, SliceAxis, Volume, VoxelBox, WindowLevel, WindowPreset, AUTO_WINDOW_BINS,
+};
 use glam::{DVec2, DVec3};
 use serde_json::{json, Value};
 
@@ -191,9 +193,17 @@ fn on_edge(lbl: &[u8], wd: usize, ht: usize, i: usize, t: usize) -> bool {
 /// Grey values with an optional segment overlay. A pixel is on a segment's
 /// outline when another label (or the image border) lies within the
 /// outline width along its row or column, so outlines are closed on every
-/// side.
-pub(super) fn render_pixels(study: &Study, l: &Layout, w: WindowLevel, overlay: Option<SegmentOverlay>) -> Vec<u8> {
-    let v = &study.volume;
+/// side. `volume` is the data drawn — the study's own, or a masked copy
+/// (Clean Pixel Data): masking is a pixel transform on the data, so the
+/// sampling and the overlay rule are exactly the same.
+pub(super) fn render_pixels(
+    study: &Study,
+    volume: &Volume,
+    l: &Layout,
+    w: WindowLevel,
+    overlay: Option<SegmentOverlay>,
+) -> Vec<u8> {
+    let v = volume;
     let (wd, ht) = (l.width as usize, l.height as usize);
     let mut voxels = Vec::with_capacity(wd * ht);
     for y in 0..l.height {
@@ -222,7 +232,60 @@ pub(super) fn render_pixels(study: &Study, l: &Layout, w: WindowLevel, overlay: 
     rgb
 }
 
-/// `view slice`: plane, slice_number or at, window, size, overlays.
+/// The solid fill a masked render writes into the masked voxels (stored
+/// value `0` = the range minimum: black/neutral under a typical window).
+pub(super) const MASK_FILL: u16 = 0;
+
+/// The mask one render call applies (Clean Pixel Data, criterion 31.3-c):
+/// explicit `masks` boxes, else the `BurnedInAnnotation` flag of the DICOM
+/// sources (the conservative whole-volume default), else none. A requested
+/// mask is always reported in the sidecar — never silently passed.
+pub(super) struct MaskPlan {
+    /// The call asked for masking (`masked`, or a `masks` region).
+    pub(super) requested: bool,
+    /// The voxel boxes to mask (empty: nothing to mask).
+    pub(super) boxes: Vec<VoxelBox>,
+    /// Where the boxes came from: `regions`, `burned_in` or `none`.
+    pub(super) source: &'static str,
+}
+
+impl MaskPlan {
+    /// The sidecar block: what was requested and what was applied.
+    fn json(&self) -> Value {
+        json!({
+            "requested": self.requested,
+            "applied": !self.boxes.is_empty(),
+            "source": self.source,
+            "fill": MASK_FILL,
+            "boxes": self.boxes.iter().map(|b| json!({ "min": b.min.to_array(), "max": b.max.to_array() })).collect::<Vec<_>>(),
+        })
+    }
+}
+
+/// Resolves the mask of a render call: the `masks` boxes (the same corner
+/// points as `stats`/`segment` boxes), else the flag default.
+pub(super) fn mask_plan(study: &Study, p: &Params) -> Result<MaskPlan, AgentError> {
+    let requested = p.bool("masked")?.unwrap_or(false) || p.list("masks")?.is_some_and(|l| !l.is_empty());
+    if !requested {
+        return Ok(MaskPlan { requested: false, boxes: Vec::new(), source: "none" });
+    }
+    let mut boxes = Vec::new();
+    for b in p.list("masks")?.into_iter().flatten() {
+        boxes.push(super::masks::box_param(study, b)?);
+    }
+    if !boxes.is_empty() {
+        return Ok(MaskPlan { requested: true, boxes, source: "regions" });
+    }
+    // No configured region: a flagged study masks the whole volume (the
+    // text's location is unknown); an unflagged one has nothing to mask.
+    let sources = study.workspace.manifest().source.file_paths();
+    if ferrum_io::dicom::clean_pixel::sources_burned_in(&sources) {
+        return Ok(MaskPlan { requested: true, boxes: vec![VoxelBox::full(study.volume.dims())], source: "burned_in" });
+    }
+    Ok(MaskPlan { requested: true, boxes: Vec::new(), source: "none" })
+}
+
+/// `view slice`: plane, slice_number or at, window, size, overlays, masked.
 pub fn slice(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     let max = ctx.config.max_render_px;
     let study = ctx.study(p)?;
@@ -232,8 +295,16 @@ pub fn slice(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     let size = size_param(p, max, DEFAULT_SIZE)?;
     let overlay = segment_overlay(p)?;
     let layout = Layout::new(&study.volume, plane, index, size);
-    let rgb = render_pixels(study, &layout, w, overlay);
-    save_render(study, layout.width, layout.height, rgb, |id| sidecar(study, &layout, id, w, overlay))
+    let mask = mask_plan(study, p)?;
+    let masked;
+    let volume: &Volume = if mask.boxes.is_empty() {
+        &study.volume
+    } else {
+        masked = study.volume.masked_copy(&mask.boxes, MASK_FILL);
+        &masked
+    };
+    let rgb = render_pixels(study, volume, &layout, w, overlay);
+    save_render(study, layout.width, layout.height, rgb, |id| sidecar(study, &layout, id, w, overlay, &mask))
 }
 
 /// Size parameter: largest side in pixels, capped by the operator.
@@ -301,7 +372,14 @@ pub(super) fn slice_json(v: &Volume, l: &Layout) -> Value {
     })
 }
 
-fn sidecar(study: &Study, l: &Layout, id: &str, w: WindowLevel, overlay: Option<SegmentOverlay>) -> Value {
+fn sidecar(
+    study: &Study,
+    l: &Layout,
+    id: &str,
+    w: WindowLevel,
+    overlay: Option<SegmentOverlay>,
+    mask: &MaskPlan,
+) -> Value {
     let mut s = json!({ "render": id, "kind": "slice" });
     if let (Some(o), Value::Object(m)) = (s.as_object_mut(), slice_json(&study.volume, l)) {
         o.extend(m);
@@ -311,6 +389,9 @@ fn sidecar(study: &Study, l: &Layout, id: &str, w: WindowLevel, overlay: Option<
     if let Some(o) = overlay {
         s["segment_style"] = json!(o.style.as_str());
         s["segment_opacity"] = json!(o.opacity);
+    }
+    if mask.requested {
+        s["mask"] = mask.json();
     }
     s["note"] = json!(NOTE);
     s

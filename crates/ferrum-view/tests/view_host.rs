@@ -1111,3 +1111,224 @@ fn the_gpu_backend_draws_the_same_mpr_as_the_cpu() {
         assert_eq!(at(&cpu_px, x, y), [230, 85, 75], "CPU axial outline at ({x}, {y})");
     }
 }
+
+// ---------------------------------------------------------------------
+// Clean Pixel Data: masked frames (Stage 31, criterion 31.3-c). Masking is
+// a pixel transform on the data before drawing — both backends draw the
+// masked copy with the same renderers (the rendering rule is untouched).
+
+use dicom_core::{DataElement, PrimitiveValue, VR};
+use dicom_dictionary_std::{tags, uids};
+use dicom_object::{FileMetaTableBuilder, InMemDicomObject};
+use serde_json::json;
+
+/// The NIfTI phantom as an axial DICOM series (16x12x8, 1 mm, stored =
+/// HU + 1024), with an optional BurnedInAnnotation flag. The bright block
+/// stands in for burned-in text.
+fn dicom_fixture(flag: Option<&str>) -> Fixture {
+    let dir = tempfile::tempdir().unwrap();
+    let study_dir = dir.path().join("study");
+    std::fs::create_dir_all(&study_dir).unwrap();
+    let dims = ferrum_domain::Dims3::new(16, 12, 8);
+    for k in 0..dims.z {
+        let pixels: Vec<u16> = (0..dims.x * dims.y)
+            .map(|p| {
+                let (i, j) = (p % dims.x, p / dims.x);
+                let inside = i >= BLOCK.0
+                    && i < BLOCK.0 + BLOCK_SIZE.0
+                    && j >= BLOCK.1
+                    && j < BLOCK.1 + BLOCK_SIZE.1
+                    && k >= BLOCK.2
+                    && k < BLOCK.2 + BLOCK_SIZE.2;
+                if inside {
+                    1424
+                } else {
+                    24
+                }
+            })
+            .collect();
+        let text = |t, vr, v: &str| DataElement::new(t, vr, PrimitiveValue::from(v));
+        let mut elements = vec![
+            text(tags::SOP_CLASS_UID, VR::UI, uids::CT_IMAGE_STORAGE),
+            text(tags::SOP_INSTANCE_UID, VR::UI, &format!("1.2.826.0.1.3680043.8.498.99.{}", k + 1)),
+            text(tags::MODALITY, VR::CS, "CT"),
+            text(tags::STUDY_INSTANCE_UID, VR::UI, "1.2.826.0.1.3680043.8.498.99"),
+            text(tags::SERIES_INSTANCE_UID, VR::UI, "1.2.826.0.1.3680043.8.498.99.1"),
+            text(tags::INSTANCE_NUMBER, VR::IS, &(k + 1).to_string()),
+            text(tags::IMAGE_POSITION_PATIENT, VR::DS, &format!("0\\0\\{k}")),
+            text(tags::IMAGE_ORIENTATION_PATIENT, VR::DS, "1\\0\\0\\0\\1\\0"),
+            text(tags::PIXEL_SPACING, VR::DS, "1\\1"),
+            text(tags::SLICE_THICKNESS, VR::DS, "1"),
+            text(tags::PHOTOMETRIC_INTERPRETATION, VR::CS, "MONOCHROME2"),
+            text(tags::RESCALE_SLOPE, VR::DS, "1"),
+            text(tags::RESCALE_INTERCEPT, VR::DS, "-1024"),
+            DataElement::new(tags::SAMPLES_PER_PIXEL, VR::US, PrimitiveValue::from(1u16)),
+            DataElement::new(tags::ROWS, VR::US, PrimitiveValue::from(dims.y as u16)),
+            DataElement::new(tags::COLUMNS, VR::US, PrimitiveValue::from(dims.x as u16)),
+            DataElement::new(tags::BITS_ALLOCATED, VR::US, PrimitiveValue::from(16u16)),
+            DataElement::new(tags::BITS_STORED, VR::US, PrimitiveValue::from(16u16)),
+            DataElement::new(tags::HIGH_BIT, VR::US, PrimitiveValue::from(15u16)),
+            DataElement::new(tags::PIXEL_REPRESENTATION, VR::US, PrimitiveValue::from(0u16)),
+            DataElement::new(tags::PIXEL_DATA, VR::OW, PrimitiveValue::U16(pixels.into())),
+        ];
+        if let Some(f) = flag {
+            elements.push(text(tags::BURNED_IN_ANNOTATION, VR::CS, f));
+        }
+        InMemDicomObject::from_element_iter(elements)
+            .with_meta(FileMetaTableBuilder::new().transfer_syntax(uids::EXPLICIT_VR_LITTLE_ENDIAN))
+            .unwrap()
+            .write_to_file(study_dir.join(format!("img_{k:03}.dcm")))
+            .unwrap();
+    }
+    let repo = CompositeRepository::default();
+    let series = repo.scan(std::slice::from_ref(&study_dir), &NoProgress).unwrap();
+    let descriptor = series.first().expect("the phantom is one series").clone();
+    let root = dir.path().join("ws");
+    Workspace::create(&root, &study_dir, &descriptor, "FERRUM test").unwrap();
+    Fixture { _dir: dir, workspace: root, volume: phantom() }
+}
+
+/// A GET that also reads the `X-Ferrum-Mask` report header.
+fn get_masked(url: &str) -> (u16, Vec<u8>, Option<Value>) {
+    let mut response = agent().get(url).call().unwrap();
+    let status = response.status().as_u16();
+    let mask = response
+        .headers()
+        .get("x-ferrum-mask")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| serde_json::from_str(s).expect("the mask header is JSON"));
+    (status, response.body_mut().read_to_vec().unwrap(), mask)
+}
+
+/// The grey the frame's window gives the fill (stored 0 = the range min).
+fn fill_grey(f: &Fixture, window: WindowLevel) -> u8 {
+    ferrum_domain::color::unit_to_u8(window.apply(f.volume.range().from_storage(0)))
+}
+
+#[test]
+fn a_masked_frame_replaces_the_region_and_keeps_every_other_pixel() {
+    // covers 31.3-c
+    let f = dicom_fixture(Some("YES"));
+    let server = open(&f);
+    let (_, state) = get_json(&token_url(&server, "/api/state"));
+    let window = window_of(&state);
+    let index = slice_index(&state) as u32;
+    assert!(index >= BLOCK.2 && index < BLOCK.2 + BLOCK_SIZE.2, "the default slice cuts the block");
+    let (status, plain) = get(&token_url(&server, "/api/frame.png"));
+    assert_eq!(status, 200);
+    // inclusive corners of the block on this slice -> half-open box
+    let url = token_url(&server, &format!("/api/frame.png?masked=1&box=4,3,{index},7,6,{index}"));
+    let (status, masked, report) = get_masked(&url);
+    assert_eq!(status, 200);
+    let report = report.expect("a masked frame reports its mask");
+    assert_eq!(report["applied"], true);
+    assert_eq!(report["source"], "regions");
+    assert_eq!(report["boxes"], json!([{ "min": [4, 3, index], "max": [8, 7, index + 1] }]));
+    let (w, h, ppx) = decode(&plain);
+    let (mw, mh, mpx) = decode(&masked);
+    assert_eq!((w, h), (mw, mh));
+    let fill = fill_grey(&f, window);
+    let block_grey = ferrum_domain::color::unit_to_u8(window.apply(400.0));
+    assert!(block_grey > fill + 50, "the block is bright against the fill");
+    for y in 0..h {
+        for x in 0..w {
+            let i = ((y * w + x) * 4) as usize;
+            let in_block = x >= BLOCK.0 && x < BLOCK.0 + BLOCK_SIZE.0 && y >= BLOCK.1 && y < BLOCK.1 + BLOCK_SIZE.1;
+            if in_block {
+                assert_eq!(ppx[i], block_grey, "the unmasked frame shows the block at ({x}, {y})");
+                assert_eq!(mpx[i], fill, "the masked frame fills ({x}, {y})");
+            } else {
+                assert_eq!(mpx[i..i + 4], ppx[i..i + 4], "pixel ({x}, {y}) outside the region is unchanged");
+            }
+        }
+    }
+    // the unmasked frame is still served untouched afterwards
+    let (_, again) = get(&token_url(&server, "/api/frame.png"));
+    assert_eq!(again, plain);
+}
+
+#[test]
+fn the_flag_masks_the_whole_frame_by_default() {
+    // covers 31.3-c: no region given -> the conservative whole-volume default.
+    let f = dicom_fixture(Some("YES"));
+    let server = open(&f);
+    let (_, state) = get_json(&token_url(&server, "/api/state"));
+    let window = window_of(&state);
+    let (status, masked, report) = get_masked(&token_url(&server, "/api/frame.png?masked=1"));
+    assert_eq!(status, 200);
+    let report = report.expect("a masked frame reports its mask");
+    assert_eq!(report["applied"], true);
+    assert_eq!(report["source"], "burned_in");
+    let (w, h, px) = decode(&masked);
+    assert_eq!((w, h), (16, 12));
+    let fill = fill_grey(&f, window);
+    assert!(px.chunks(4).all(|p| p[0] == fill), "every pixel holds the fill");
+}
+
+#[test]
+fn an_unflagged_study_reports_nothing_to_mask() {
+    // covers 31.3-c: skipped is reported, never silently passed.
+    let f = fixture(false); // NIfTI: no flag exists
+    let server = open(&f);
+    let (_, plain) = get(&token_url(&server, "/api/frame.png"));
+    let (status, masked, report) = get_masked(&token_url(&server, "/api/frame.png?masked=1"));
+    assert_eq!(status, 200);
+    let report = report.expect("a masked frame reports its mask");
+    assert_eq!(report["applied"], false);
+    assert_eq!(report["source"], "none");
+    assert_eq!(masked, plain, "nothing to mask: the frame is unchanged");
+}
+
+#[test]
+fn a_malformed_mask_box_is_refused() {
+    // covers 31.3-c
+    let f = dicom_fixture(Some("YES"));
+    let server = open(&f);
+    for bad in ["box=1,2,3", "box=1,2,3,4,5,x"] {
+        let url = token_url(&server, &format!("/api/frame.png?masked=1&{bad}"));
+        let (status, _) = get(&url);
+        assert_eq!(status, 400, "{bad}");
+    }
+    // corners in any order are normalised (the agent's box convention)
+    let url = token_url(&server, "/api/frame.png?masked=1&box=9,9,9,1,1,1");
+    let (status, _, report) = get_masked(&url);
+    assert_eq!(status, 200);
+    let report = report.unwrap();
+    assert_eq!(report["applied"], true);
+    assert_eq!(report["boxes"], json!([{ "min": [1, 1, 1], "max": [10, 10, 8] }]));
+    // a box entirely outside the grid masks nothing, and says so
+    let url = token_url(&server, "/api/frame.png?masked=1&box=20,20,20,25,25,25");
+    let (status, _, report) = get_masked(&url);
+    assert_eq!(status, 200);
+    assert_eq!(report.unwrap()["applied"], false);
+    // a crafted corner at u32::MAX must not overflow the +1 (saturating);
+    // the box clips to the grid and masks nothing, reported.
+    let max = u32::MAX;
+    let url = token_url(&server, &format!("/api/frame.png?masked=1&box={max},{max},{max},{max},{max},{max}"));
+    let (status, _, report) = get_masked(&url);
+    assert_eq!(status, 200);
+    assert_eq!(report.unwrap()["applied"], false);
+}
+
+#[test]
+fn the_gpu_backend_draws_the_same_masked_frame_as_the_cpu() {
+    // covers 31.3-c: masking changes the data, not the image formation.
+    let f = dicom_fixture(Some("YES"));
+    let mut cpu = Session::open(&f.workspace, BackendPreference::Cpu).unwrap();
+    let mut gpu = match Session::open(&f.workspace, BackendPreference::Gpu) {
+        Ok(session) => session,
+        Err(_) => return, // no adapter on this machine: the CPU cases above cover the image
+    };
+    let boxes = vec![ferrum_domain::VoxelBox::new(glam::UVec3::new(4, 3, 2), glam::UVec3::new(8, 7, 6))];
+    let (cw, ch, cpu_px) = decode(&cpu.frame_masked(boxes.clone()).unwrap().0.png);
+    let (gw, gh, gpu_px) = decode(&gpu.frame_masked(boxes).unwrap().0.png);
+    assert_eq!((cw, ch), (gw, gh));
+    let (mean, outliers) = deviation(&cpu_px, &gpu_px);
+    assert!(mean < 2.5, "mean deviation {mean}");
+    assert!(outliers * 100 <= (cw * ch) as usize * 2, "{outliers} pixels differ by more than 2");
+    // the masked block is dark on both backends (the default slice cuts it)
+    for px in [&cpu_px, &gpu_px] {
+        let i = ((5 * cw + 5) * 4) as usize;
+        assert!(px[i] < 20, "the masked block is filled on both backends");
+    }
+}
