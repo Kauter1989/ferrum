@@ -11,13 +11,17 @@
 
 use ferrum_app::Viewer;
 use ferrum_domain::color::unit_to_u8;
-use ferrum_domain::{SegmentStyle, SegmentationSet, SliceAxis, SliceImage, Volume};
+use ferrum_domain::{SegmentStyle, SegmentationSet, SliceAxis, SliceImage, ViewComponent, Volume};
 use glam::UVec2;
 
-use crate::frame::{mapping_of, slice_setup, Backend, FrameSource, RawFrame};
+use crate::frame::{
+    composite_mpr, mapping_of, projection_mapping, slice_setup, Backend, FrameSource, Quarter, RawFrame, VOLUME_SIZE,
+};
 use crate::session::ViewError;
 
-/// Draws slices on the CPU.
+/// Draws the view components on the CPU: slices with the slice oracle and
+/// the one overlay rule, the 3D view with the reference ray caster
+/// ([`Viewer::render_volume_cpu`], the oracle `volume.wgsl` mirrors).
 #[derive(Debug, Default, Clone, Copy)]
 pub struct CpuFrameSource;
 
@@ -26,14 +30,10 @@ impl CpuFrameSource {
     pub fn new() -> Self {
         Self
     }
-}
 
-impl FrameSource for CpuFrameSource {
-    fn backend(&self) -> Backend {
-        Backend::Cpu
-    }
-
-    fn render(&mut self, viewer: &Viewer, axis: SliceAxis) -> Result<RawFrame, ViewError> {
+    /// One slice at native resolution: the oracle's grey plus the one CPU
+    /// overlay rule.
+    fn render_slice(&self, viewer: &Viewer, axis: SliceAxis) -> Result<RawFrame, ViewError> {
         let dataset = viewer.dataset().ok_or(ViewError::NoStudy)?;
         let volume = &dataset.volume;
         let index = viewer.slice_index(axis);
@@ -66,6 +66,36 @@ impl FrameSource for CpuFrameSource {
             window,
             mapping: mapping_of(viewer, axis, size)?,
         })
+    }
+
+    /// The 3D view at a fixed size, through the reference ray caster.
+    fn render_volume(&self, viewer: &Viewer, size: UVec2) -> Result<RawFrame, ViewError> {
+        let pixels = viewer.render_volume_cpu(size).ok_or(ViewError::NoStudy)?;
+        let rgba: Vec<u8> = pixels.iter().flat_map(|p| *p).collect();
+        Ok(RawFrame {
+            width: size.x,
+            height: size.y,
+            rgba,
+            window: viewer.window(),
+            mapping: projection_mapping(viewer, size)?,
+        })
+    }
+}
+
+impl FrameSource for CpuFrameSource {
+    fn backend(&self) -> Backend {
+        Backend::Cpu
+    }
+
+    fn render(&mut self, viewer: &mut Viewer, component: ViewComponent) -> Result<RawFrame, ViewError> {
+        match component {
+            ViewComponent::Slice => self.render_slice(viewer, viewer.slices.axis),
+            ViewComponent::Volume => self.render_volume(viewer, UVec2::splat(VOLUME_SIZE)),
+            ViewComponent::Mpr => composite_mpr(viewer, |quarter, size| match quarter {
+                Quarter::Slice(axis) => self.render_slice(viewer, axis),
+                Quarter::Volume => self.render_volume(viewer, size),
+            }),
+        }
     }
 }
 

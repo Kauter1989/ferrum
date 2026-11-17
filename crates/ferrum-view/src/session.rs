@@ -229,11 +229,13 @@ impl Session {
         Ok((header, values))
     }
 
-    /// The current frame, drawn again only when the state changed.
+    /// The current frame of the state's component, drawn again only when
+    /// the state changed.
     pub fn frame(&mut self) -> Result<&Frame, ViewError> {
         let fresh = self.frame.as_ref().is_some_and(|f| f.rev == self.rev);
         if !fresh {
-            let raw = self.source.render(&self.viewer, self.viewer.slices.axis)?;
+            let component = self.viewer.view_state().component;
+            let raw = self.source.render(&mut self.viewer, component)?;
             let png = raw.png()?;
             self.frame = Some(Frame {
                 png,
