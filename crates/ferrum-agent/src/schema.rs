@@ -454,11 +454,13 @@ pub fn command_schema(command: &str) -> Option<(&'static str, Value)> {
             ),
         ),
         "export bundle" => (
-            "Writes export/ in the workspace, with SHA-256 of every file: report.json (study, measurements, segments with volumes; unconfirmed items marked) and, by format, annotations.json + segments.nii.gz + segments.json (ferrum) or a DICOM SEG + Comprehensive 3D SR measurement report (dicom). Rejected items are left out of DICOM; proposed ones are marked.",
+            "Writes export/ in the workspace, with SHA-256 of every file: report.json (study, measurements, segments with volumes; unconfirmed items marked) and, by format, annotations.json + segments.nii.gz + segments.json (ferrum) or a DICOM SEG + Comprehensive 3D SR measurement report (dicom). Rejected items are left out of DICOM; proposed ones are marked. With deidentify=basic the DICOM objects are de-identified under the PS3.15 Basic Application Level Confidentiality Profile (the sole privacy gate for them), with the selected deid_options; the File Meta Information is replaced consistently.",
             obj(
                 json!({
                     "workspace": workspace(),
                     "formats": { "type": "array", "items": { "type": "string", "enum": ["ferrum", "dicom"] }, "minItems": 1, "description": "formats besides report.json (default [\"ferrum\"])" },
+                    "deidentify": { "type": "string", "enum": ["basic"], "description": "de-identify the DICOM objects (SEG/SR) under the PS3.15 Basic Profile (Stage 31); applies to the dicom format" },
+                    "deid_options": { "type": "array", "items": { "type": "string", "enum": ["retain_uids", "retain_dates_modified", "clean_descriptors", "retain_device_identity", "retain_institution_identity", "retain_patient_characteristics"] }, "description": "Basic Profile options on top of the default conservative profile; requires deidentify" },
                 }),
                 &["workspace"],
             ),

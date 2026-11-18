@@ -382,6 +382,17 @@ pub enum Export {
         /// `dicom` (SEG + SR); repeat for several.
         #[arg(long = "format", value_parser = ["ferrum", "dicom"])]
         formats: Vec<String>,
+        /// De-identify the DICOM objects (SEG/SR) under the PS3.15 Basic
+        /// Application Level Confidentiality Profile (Stage 31). The profile
+        /// is the sole privacy gate for the DICOM objects.
+        #[arg(long = "deidentify", value_parser = ["basic"])]
+        deidentify: Option<String>,
+        /// A Basic Profile option (repeatable): `retain_uids`,
+        /// `retain_dates_modified`, `clean_descriptors`,
+        /// `retain_device_identity`, `retain_institution_identity`,
+        /// `retain_patient_characteristics`. Requires `--deidentify`.
+        #[arg(long = "deid-option", requires = "deidentify")]
+        deid_options: Vec<String>,
     },
 }
 
@@ -777,9 +788,15 @@ impl Command {
                     ("samples", some(*samples)),
                 ],
             ),
-            Command::Export(Export::Bundle { ws: w, formats }) => {
-                call("export bundle", vec![ws(w), ("formats", (!formats.is_empty()).then(|| json!(formats)))])
-            }
+            Command::Export(Export::Bundle { ws: w, formats, deidentify, deid_options }) => call(
+                "export bundle",
+                vec![
+                    ws(w),
+                    ("formats", (!formats.is_empty()).then(|| json!(formats))),
+                    ("deidentify", deidentify.as_ref().map(|d| json!(d))),
+                    ("deid_options", (!deid_options.is_empty()).then(|| json!(deid_options))),
+                ],
+            ),
             Command::Engine(EngineCmd::Info { engine }) => call("engine info", vec![("engine", some(engine.clone()))]),
             Command::Engine(EngineCmd::List) => call("engine list", vec![]),
             Command::Engine(EngineCmd::Unload { engine, group }) => {
