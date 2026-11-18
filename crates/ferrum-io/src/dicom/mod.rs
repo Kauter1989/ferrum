@@ -8,6 +8,7 @@ pub mod frames;
 pub mod header;
 pub mod series;
 pub mod volumes;
+pub mod web;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};

@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FERRUM · PR #136 — финальный отчёт: DICOMweb QIDO/WADO client (Stage 32 PR 1, #76)</title>
+<style>
+  :root { --bg:#fbfbfd; --fg:#1d1f26; --muted:#5b6070; --line:#e2e5ec; --accent:#1f6feb; --ok:#1a7f37; --warn:#9a6700; --bad:#b42318; --card:#fff; --code:#f3f4f7; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#12141a; --fg:#e6e7ea; --muted:#a2a8b6; --line:#2a2e38; --accent:#6ba6ff; --ok:#4ac26b; --warn:#d4a72c; --bad:#ff7b72; --card:#191c23; --code:#1f232c; } }
+  * { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.6 -apple-system,"Segoe UI",Roboto,Arial,sans-serif; }
+  main { max-width:1080px; margin:0 auto; padding:40px 24px 80px; }
+  h1 { font-size:29px; line-height:1.25; margin:0 0 8px; letter-spacing:-0.02em; }
+  h2 { font-size:21px; margin:44px 0 14px; padding-bottom:8px; border-bottom:1px solid var(--line); }
+  .sub { color:var(--muted); margin:0 0 24px; }
+  .meta { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:28px; }
+  .pill { font-size:13px; padding:3px 10px; border-radius:999px; border:1px solid var(--line); background:var(--card); color:var(--muted); }
+  .pill.ok { color:var(--ok); border-color:color-mix(in srgb,var(--ok) 40%,transparent); }
+  .pill.warn { color:var(--warn); border-color:color-mix(in srgb,var(--warn) 40%,transparent); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px 20px; margin:14px 0; }
+  code,.mono { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:13px; }
+  code { background:var(--code); padding:1px 5px; border-radius:4px; }
+  table { width:100%; border-collapse:collapse; margin:14px 0; font-size:14px; }
+  th,td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; font-size:13px; text-transform:uppercase; letter-spacing:.04em; }
+  .tag { font-size:12px; font-weight:600; padding:2px 7px; border-radius:5px; white-space:nowrap; }
+  .t-fixed { background:color-mix(in srgb,var(--ok) 16%,transparent); color:var(--ok); }
+  .grid { display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); }
+  .stat { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px; }
+  .stat b { display:block; font-size:26px; line-height:1.2; } .stat span { color:var(--muted); font-size:13px; }
+  ul { padding-left:22px; } li { margin:4px 0; }
+  .note { border-left:3px solid var(--accent); padding-left:14px; color:var(--muted); margin:14px 0; }
+  .warnnote { border-left:3px solid var(--warn); padding-left:14px; color:var(--muted); margin:14px 0; }
+  footer { margin-top:56px; padding-top:18px; border-top:1px solid var(--line); color:var(--muted); font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+<h1>PR #136 — DICOMweb QIDO/WADO VolumeRepository</h1>
+<p class="sub">Финальный отчёт: Stage 32 G2 design + PR 1 (issue #76 P2, критерий 32.1). FERRUM, ноябрь 2026. Описывает head SHA <code>2424662d1f0002b9dc55cf9904c375385268cc11</code>. Отчёт живёт в самом PR и правится по итогам ревью; при мердже остаётся в последней версии (правило пользователя).</p>
+<div class="meta">
+  <span class="pill">Stage 32 PR 1 · #76 · 32.1</span>
+  <span class="pill">size L</span>
+  <span class="pill ok">G1+G2 утверждены</span>
+  <span class="pill ok">preflight: 872 passed</span>
+  <span class="pill ok">licences ok</span>
+  <span class="pill warn">Windows aws-lc caveat</span>
+</div>
+<div class="grid">
+  <div class="stat"><b>14</b><span>файлов (+2547/−19)</span></div>
+  <div class="stat"><b>14+9</b><span>mock-PACS + unit тестов</span></div>
+  <div class="stat"><b>0</b><span>изменений VolumeRepository trait</span></div>
+  <div class="stat"><b>voxel</b><span>pixel-match == file reader</span></div>
+</div>
+
+<h2>1. Что и зачем</h2>
+<p>FERRUM получает PACS-клиент: <code>DicomWebRepository</code> over <strong>QIDO-RS</strong> (query) + <strong>WADO-RS</strong> (retrieve) в ferrum-io на dicom-web 0.6. <strong>Repository fit без изменения trait</strong>: path-based <code>VolumeRepository.scan</code> читает <code>PathBuf</code> как PACS URL (<code>dicomweb://host/root?PatientID=…</code>, <code>dicomwebs://</code>=HTTPS); non-URL → <code>NothingFound</code> (компонуется с file readers). <code>load</code> retrieves WADO Part 10 объекты → тот же <code>SliceHeader/group/order/assemble_with/LPS</code> pipeline что files (in memory, не spooling на диск).</p>
+<div class="note">G2 design: ADR 0021 (PACS client + send-off boundary: STOW/C-MOVE/C-STORE host-only, не agent; Orthanc AGPL отдельный сервис, не линкуется) + docs/dicomweb.md. dicom-web MIT OR Apache-2.0; cargo deny licences ok.</div>
+<div class="warnnote"><strong>Windows build caveat</strong>: dicom-web reqwest использует rustls-with-aws-lc-rs → aws-lc-sys компилирует AWS-LC из C. На этой Windows машине build падает под cargo (MSVC D8050, Касперский вмешивается в child processes, L39 family); Linux/WSL/CI собирают чисто. Environmental, не дефект клиента; задокументировано в docs/dicomweb.md + L52. Windows desktop build может потребовать Kaspersky exclusions или newer MSVC (не верифицировано); ureq/ring transport — возможная альтернатива later.</div>
+
+<h2>2. Код-карта</h2>
+<p class="sub">Pinned к head SHA <code>2424662</code>.</p>
+<table>
+  <tr><th>Утверждение</th><th>Реализация</th></tr>
+  <tr><td>G2 design: PACS client + send-off boundary ADR</td><td class="mono">docs/decisions/0021-pacs-client.md; docs/dicomweb.md</td></tr>
+  <tr><td>DicomWebRepository + VolumeRepository impl (scan/load)</td><td class="mono">crates/ferrum-io/src/dicom/web.rs:62,189,194,220</td></tr>
+  <tr><td>QIDO query_series + WADO retrieve + deadline bridge</td><td class="mono">crates/ferrum-io/src/dicom/web.rs:135,162,112</td></tr>
+  <tr><td>URL parse + credential/query redaction (safe_url) + error map</td><td class="mono">crates/ferrum-io/src/dicom/web.rs:369,484,356,505</td></tr>
+  <tr><td>decoder-parameterised assembly (shared files + PACS)</td><td class="mono">crates/ferrum-io/src/dicom/assemble.rs:28,52,70</td></tr>
+  <tr><td>export + CompositeRepository::default</td><td class="mono">crates/ferrum-io/src/lib.rs:30,53</td></tr>
+  <tr><td>14 mock-PACS integration tests + 9 unit</td><td class="mono">crates/ferrum-io/tests/dicomweb.rs; web.rs:542</td></tr>
+</table>
+
+<h2>3. Покрытие критериев</h2>
+<table>
+  <tr><th>Критерий</th><th>Тест</th><th>Статус</th></tr>
+  <tr><td>32.1-a QIDO/WADO VolumeRepository (scan/load)</td><td class="mono">scan filters/includefield/limit server-side; study-scoped endpoint; descriptor id/sources/dims; load retrieves+reorients</td><td><span class="tag t-fixed">✅</span></td></tr>
+  <tr><td>32.1-b retrieved study opens, pixels match source</td><td class="mono">load_matches_the_file_reader_voxel_for_voxel (== file reader + absolute phantom via Modality LUT); a_sagittal_series_is_stored_in_lps (L23). Orthanc real-phantom clause — PR 4</td><td><span class="tag t-fixed">✅ mock</span></td></tr>
+  <tr><td>32.1-c errors reported, never panic</td><td class="mono">empty→NothingFound; conn-refused/500/401→Io; HTML/non-DICOM→Corrupt; slow→timeout; cancel→Cancelled; credentials never leak</td><td><span class="tag t-fixed">✅</span></td></tr>
+</table>
+
+<h2>4. Верификация</h2>
+<ul>
+  <li>Полный preflight (WSL Ubuntu-24.04, CI-порядок + GPU parity + analyze.py): <code>all checks passed</code>, <strong>872 passed / 0 failed</strong> на head <code>2424662</code>.</li>
+  <li>ferrum-io 174 tests green (95 lib incl 9 web unit, 14 dicomweb, 23 dicom_integration, 17 clean_pixel, 15 deid, 6 export, 4 view_state).</li>
+  <li>cargo deny check licenses ok (dicom-web MIT OR Apache-2.0; Orthanc AGPL не линкуется). fmt/clippy -D warnings чисто.</li>
+  <li>analyze.py --stage 32: 32.1-a…c покрыты; 32.2–32.5 — later PRs.</li>
+  <li>L52 lesson: WSL idle-shutdown kills detached builds (held-open session); reused target dir ICE'd rustc (clear debug/incremental).</li>
+</ul>
+
+<h2>5. История ревью</h2>
+<div class="card">
+  <p><strong>Раунд 1</strong> (code + security, агент <code>review-dicomweb1</code>, выполнение + мутации): вердикт <span class="tag t-fixed">approve</span> — 0 blocking, 1 should-fix (aws-lc-rs Windows build), 4 nits. <strong>Privacy + repository fit + тесты SOUND и mutation-proven</strong>: M1 (safe_url→full text) → redaction тест RED; M3 (decode +1.0) → pixel absolute-check RED. Repository fit без изменения trait, LPS shared pipeline, licences ok, Orthanc AGPL не линкуется.</p>
+  <table>
+    <tr><th>Находка</th><th>Исправление</th><th>Статус</th></tr>
+    <tr><td><span class="tag t-fixed">should</span> S1: aws-lc-rs Windows build регресс (ferrum-io core → workspace не собирается на Windows под Касперским, MSVC D8050)</td><td><strong>Решение пользователя (2026-11-18): принять WSL-only constraint</strong> (консистентно L39); задокументировано в dicomweb.md §6; ring transport — возможный follow-up. Linux/WSL/CI clean.</td><td><span class="tag t-fixed">accepted</span></td></tr>
+    <tr><td><span class="tag t-fixed">nit</span> parse_retrieval_url не валидирует study.contains('/')</td><td>добавлена validation study + series</td><td><span class="tag t-fixed">fixed</span></td></tr>
+    <tr><td><span class="tag t-fixed">nit</span> map_web_error аппендит {e}/{message} (defensive no-leak)</td><td>убраны {e}/{message} — статичные host+kind messages (guaranteed no leak даже если dicom-web Display изменится)</td><td><span class="tag t-fixed">fixed</span></td></tr>
+    <tr><td><span class="tag t-fixed">nit</span> SSRF (agent command surface должен restrict hosts)</td><td>отмечено для PR 3 (repository API operator-configured)</td><td><span class="tag t-fixed">PR 3</span></td></tr>
+  </table>
+  <p><strong>Раунд 2</strong> (lead, выполнение): nit-фиксы верифицированы в WSL (Windows cargo check теперь падает на aws-lc-sys — принятый constraint); full preflight зелёный.</p>
+</div>
+
+<h2>6. Out of scope / notes</h2>
+<ul>
+  <li>PR 2: DIMSE C-FIND/C-MOVE/C-ECHO (dicom-ul) + C-STORE SCP.</li>
+  <li>PR 3: STOW + agent query/retrieve commands + privacy.</li>
+  <li>PR 4: Orthanc-in-Docker CI + highdicom + real pinned-phantom pixel match (closes 32.1-b Orthanc clause).</li>
+  <li>Windows aws-lc-sys build caveat — environmental (Kaspersky/MSVC), mitigation possible later (ureq/ring).</li>
+</ul>
+
+<footer>FERRUM · Stage 32 PR 1 · #76 · head SHA <code>2424662d1f0002b9dc55cf9904c375385268cc11</code> · отчёт коммичен в PR и правится по итогам ревью пользователя.</footer>
+</main>
+</body>
+</html>

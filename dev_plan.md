@@ -1215,13 +1215,17 @@ profile — pseudonymisation of its sidecar is separate); any change to the
 
 ---
 
-## Stage 32 — DICOMweb and DIMSE: QIDO/WADO/STOW client and C-FIND/C-MOVE/C-ECHO (#76) 📋 (stage, gated)
+## Stage 32 — DICOMweb and DIMSE: QIDO/WADO/STOW client and C-FIND/C-MOVE/C-ECHO (#76) 🚧 (stage, gated)
 
 ([#76](https://github.com/Kauter1989/ferrum/issues/76); P2, for the harness's
 Demo 8 hand-off). Real sites keep studies in a PACS; Medical Harness needs to
 open studies from a PACS and hand SEG/SR results back. The Rust ecosystem has no
 mature DICOMweb client (`dicom-web` 0.6, `dicomweb-client` 0.1). Network- and
 privacy-sensitive: G1 before any code.
+
+**G2 design:** [ADR 0021](docs/decisions/0021-pacs-client.md) (PACS client +
+send-off boundary) and [dicomweb.md](docs/dicomweb.md) (repository fit,
+QIDO/WADO flow, errors, auth, privacy, PR split).
 
 | # | User story | Acceptance criteria |
 |---|---|---|
@@ -1260,7 +1264,7 @@ change to the rendering rule (the client feeds the existing reader/viewer).
 
 | Task | What | Criteria | PR | State |
 |---|---|---|---|---|
-| 32.T1 | QIDO/WADO VolumeRepository + open | 32.1-a…c | 1 | |
+| 32.T1 | QIDO/WADO VolumeRepository + open | 32.1-a…c | 1 | 🚧 code complete (feat/32-dicomweb-client), preflight green; G3 pending |
 | 32.T2 | DIMSE C-FIND/C-MOVE/C-ECHO | 32.3-a…b | 2 | |
 | 32.T3 | STOW + agent query/retrieve + privacy | 32.2-a…b, 32.4-a…b | 3 | |
 | 32.T4 | Orthanc CI integration + highdicom | 32.5-a…b | 4 | |
