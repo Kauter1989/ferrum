@@ -60,6 +60,8 @@ dicom-object = "0.10"
 dicom-pixeldata = { version = "0.10", features = ["openjp2"] }
 dicom-dictionary-std = "0.10"
 dicom-core = "0.10"
+dicom-encoding = "0.10"
+dicom-transfer-syntax-registry = "0.10"
 dicom-web = "0.6"
 # DIMSE (C-FIND/C-MOVE/C-ECHO/C-STORE) on dicom-rs 0.10. Default features are
 # the sync TCP API: no rustls, so no aws-lc-rs (docs/dicomdimse.md). DIMSE TLS

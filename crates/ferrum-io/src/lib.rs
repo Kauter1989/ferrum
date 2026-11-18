@@ -2,8 +2,10 @@
 //!
 //! Data layer of the viewer. Implements the domain port
 //! [`ferrum_domain::VolumeRepository`] for DICOM (via `dicom-rs`, all common
-//! transfer syntaxes including JPEG, JPEG 2000 and RLE), NIfTI-1 and
-//! DICOMweb (QIDO-RS/WADO-RS via `dicom-web`, [design](../../docs/dicomweb.md)).
+//! transfer syntaxes including JPEG, JPEG 2000 and RLE), NIfTI-1,
+//! DICOMweb (QIDO-RS/WADO-RS via `dicom-web`, [design](../../docs/dicomweb.md))
+//! and classic DIMSE (C-FIND/C-MOVE/C-ECHO via `dicom-ul`,
+//! [design](../../docs/dicomdimse.md)).
 //!
 //! Loading is parallel end to end: headers are parsed concurrently (stopping
 //! before pixel data), slices are grouped into series and ordered by their
@@ -27,6 +29,7 @@ use std::path::PathBuf;
 use ferrum_domain::{LoadedSeries, ProgressSink, RepositoryError, SeriesDescriptor, VolumeRepository};
 
 pub use annotations::{annotation_report_json, annotations_from_json, read_annotations, write_annotation_report};
+pub use dicom::dimse::{DicomDimseRepository, ScpHandle, StoreScp};
 pub use dicom::web::DicomWebRepository;
 pub use dicom::DicomRepository;
 pub use engine_inputs::EngineInput;
@@ -51,6 +54,7 @@ impl Default for CompositeRepository {
                 Box::new(DicomRepository),
                 Box::new(NiftiRepository),
                 Box::new(DicomWebRepository::new()),
+                Box::new(DicomDimseRepository::new()),
             ],
         }
     }

@@ -3,6 +3,7 @@
 pub mod assemble;
 pub mod clean_pixel;
 pub mod deid;
+pub mod dimse;
 pub mod export;
 pub mod frames;
 pub mod header;
