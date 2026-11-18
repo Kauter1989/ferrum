@@ -279,19 +279,23 @@ fn handle_association(stream: TcpStream, plan: &Plan, seen: &Mutex<Vec<String>>)
     if !plan.delay.is_zero() {
         std::thread::sleep(plan.delay);
     }
-    let mut options = ServerAssociationOptions::new()
-        .ae_title(if plan.reject { "OTHER-SCP" } else { CALLED_AE })
-        .promiscuous(true)
-        .max_pdu_length(16384)
-        .read_timeout(Duration::from_secs(10))
-        .write_timeout(Duration::from_secs(10))
-        .with_abstract_syntax(uids::VERIFICATION)
-        .with_abstract_syntax(uids::STUDY_ROOT_QUERY_RETRIEVE_INFORMATION_MODEL_FIND)
-        .with_abstract_syntax(uids::STUDY_ROOT_QUERY_RETRIEVE_INFORMATION_MODEL_MOVE)
-        .with_transfer_syntax(uids::EXPLICIT_VR_LITTLE_ENDIAN)
-        .with_transfer_syntax(uids::IMPLICIT_VR_LITTLE_ENDIAN);
-    options = if plan.reject { options.accept_called_ae_title() } else { options.accept_any() };
-    let mut assoc = match options.establish(stream) {
+    let base = || {
+        ServerAssociationOptions::new()
+            .ae_title(if plan.reject { "OTHER-SCP" } else { CALLED_AE })
+            .promiscuous(true)
+            .max_pdu_length(16384)
+            .read_timeout(Duration::from_secs(10))
+            .write_timeout(Duration::from_secs(10))
+            .with_abstract_syntax(uids::VERIFICATION)
+            .with_abstract_syntax(uids::STUDY_ROOT_QUERY_RETRIEVE_INFORMATION_MODEL_FIND)
+            .with_abstract_syntax(uids::STUDY_ROOT_QUERY_RETRIEVE_INFORMATION_MODEL_MOVE)
+            .with_transfer_syntax(uids::EXPLICIT_VR_LITTLE_ENDIAN)
+            .with_transfer_syntax(uids::IMPLICIT_VR_LITTLE_ENDIAN)
+    };
+    // accept_called_ae_title / accept_any are type-state builders; branch to
+    // establish so both yield the same ServerAssociation type.
+    let established = if plan.reject { base().accept_called_ae_title().establish(stream) } else { base().accept_any().establish(stream) };
+    let mut assoc = match established {
         Ok(a) => a,
         Err(_) => return, // rejected
     };
@@ -327,8 +331,8 @@ fn do_find(assoc: &mut dicom_ul::ServerAssociation<TcpStream>, pc: u8, ts: &dico
     let level = query
         .and_then(|q| q.get(tags::QUERY_RETRIEVE_LEVEL))
         .and_then(|e| e.to_str().ok())
-        .unwrap_or("STUDY")
-        .to_string();
+        .map(|c| c.into_owned())
+        .unwrap_or_else(|| "STUDY".to_string());
     let matches = if level.trim_end_matches('\0') == "SERIES" { &plan.find_series } else { &plan.find_studies };
     if plan.find_status == 0 {
         for m in matches {
