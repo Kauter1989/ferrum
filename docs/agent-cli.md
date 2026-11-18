@@ -67,7 +67,7 @@ workspace paths are placed under the operator's `data.workspace_root`.
 | `study scan <paths…>` | Lists series: pseudonymised id, format, modality, dims, description. A series of several volumes (echoes, b-values, phases, PET frames; [design](multi-volume.md)) gives one entry per volume: its own `series` id, `group` (the pseudonymised id of the series) and `volume` (`number` from 1, `count`, `label` such as `b = 1000` or `echo 2, TE = 40 ms`, `complete`, and `b_value`, `echo_time_ms`, `echo_number`, `temporal_position`, `frame_time_s` when known) |
 | `study open -w W <path> [--series S] [--modality M]` | Creates or reuses the workspace W for a series (SHA-256 of every source file) and describes it. `--series` takes a series or a volume id from `study scan`; a series of several volumes, named or the only one in the source, opens volume 1 and warns how to choose. A workspace belongs to the series: opening another volume of it in W switches the volume and keeps segments and annotations (an incomplete volume needs a workspace of its own); another series is refused; `--modality` declares the modality of a source that carries none (NIfTI), e.g. `CT` for values in HU, and is kept in the workspace. What the reader could not show as stored is in `warnings` (several images per slice position: one volume shown; a 4D NIfTI: volume 1 shown; irregular gaps, spacing taken from the header, no pixel spacing) |
 | `study info -w W` | Dims, spacing, LPS origin and direction, value unit, `value_range` (the range the voxels are stored over: for whole-unit CT data up to twice as wide as the data, [ADR 0012](decisions/0012-lossless-grid-storage.md); values are read back exactly), slice counts, window presets, annotation and segment counts; for a series of several volumes, `volume` (the open one) and `volumes` (`series`, `number`, `label`, `complete` of each) |
-| `view slice -w W --plane P (--slice-number N \| --at POINT) [--window lung\|C,W] [--size PX] [--overlay segments [--segment-style outline\|fill\|fill_outline] [--segment-opacity A]]` | Renders a slice to `renders/r-NNNN.png` with a sidecar JSON. Without `--window`, the window stored in the series is used, else 0.5–99.5 % of the voxel values (as in the desktop app; MR and PET store none) |
+| `view slice -w W --plane P (--slice-number N \| --at POINT) [--window lung\|C,W] [--size PX] [--overlay segments [--segment-style outline\|fill\|fill_outline] [--segment-opacity A]] [--masked] [--mask MIN MAX]… [--ocr]` | Renders a slice to `renders/r-NNNN.png` with a sidecar JSON. Without `--window`, the window stored in the series is used, else 0.5–99.5 % of the voxel values (as in the desktop app; MR and PET store none). `--masked` replaces burned-in regions by a solid fill before drawing (Clean Pixel Data); `--ocr` runs the optional OCR bridge check |
 | `view montage -w W --plane P [--from N] [--to N] [--step N] [--columns N] [--window …] [--size PX]` | Several slices of one plane as a grid; every tile labelled with its slice number (default: at most 16 tiles) |
 | `view mpr -w W POINT [--window …] [--size PX]` | Axial, coronal and sagittal slices through a point, with a crosshair |
 | `view volume -w W [--mode mip\|isosurface\|transfer_function] [--threshold V] [--preset soft_tissue_bone\|lung_vessels\|bone] [--view anterior\|…\|inferior] [--size PX]` | 3D render on the CPU from a standard viewpoint |
@@ -137,6 +137,36 @@ point`.
   `fill_outline` (both);
 - `segment_opacity` (0–1): the fill opacity for every segment; default
   each segment's own opacity.
+
+**Masking (Clean Pixel Data, Stage 31).** `--masked` replaces burned-in
+regions by a solid fill before drawing — a pixel transform on the data,
+not a change to the rendering:
+- `--mask MIN MAX` (repeatable) names a region as two corner points, as
+  `stats --box` (`v:i,j,k` or `mm:x,y,z`; inclusive corners). A `--mask`
+  implies `--masked`.
+- With no `--mask`, a DICOM series whose `BurnedInAnnotation` flag is
+  `YES` masks the whole volume (the text's location is unknown — the
+  conservative default); an unflagged series has nothing to mask.
+- The sidecar's `mask` block reports what happened, never silently
+  passed: `{ "requested": true, "applied": true|false, "source":
+  "regions"|"burned_in"|"ocr"|"none", "fill": 0, "boxes": [{"min": [i,j,k],
+  "max": [i,j,k]}] }` (half-open voxel boxes of the canonical grid).
+
+**OCR check (Clean Pixel Data, Stage 31).** `--ocr` runs the optional OCR
+bridge check on the unmasked render (`ferrum-engine/1` with the `ocr`
+capability, [engine-protocol.md](engine-protocol.md) §7):
+- The bridge is configured by the operator (`[network] ocr_bridge`); no
+  OCR runs in Rust and no weights are bundled.
+- Without a bridge the step is **skipped and reported**; a bridge that
+  cannot be reached or answers wrongly is **failed and reported** — never
+  silently passed.
+- The sidecar's `ocr` block: `{ "status": "skipped", "reason": … }`,
+  `{ "status": "detected", "regions": [{"x","y","w","h"}] }` (image pixel
+  coordinates) or `{ "status": "failed", "error": … }`.
+- With `--masked`, detected regions extend the mask (each region's
+  bounding box, mapped through the render's pixel-to-voxel affine and
+  rounded outwards — conservative); the mask's `source` is then `ocr`
+  when no other region applied.
 
 `view montage` and `view mpr` take the same options; the sidecar records
 them.

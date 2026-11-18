@@ -152,7 +152,7 @@ pub fn montage(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
         .collect();
     let mut canvas = Canvas::new(columns * (tw + GAP) - GAP, rows * (th + GAP) - GAP);
     for t in &tiles {
-        let rgb = render_pixels(study, &t.layout, w, overlay);
+        let rgb = render_pixels(study, &study.volume, &t.layout, w, overlay);
         canvas.blit(t.origin[0], t.origin[1], tw, th, &rgb);
         canvas.label(t.origin[0] + 2, t.origin[1] + 2, &(t.layout.index + 1).to_string());
     }
@@ -218,7 +218,7 @@ pub fn mpr(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     let height = tiles.iter().map(|t| t.layout.height).max().unwrap_or(16);
     let mut canvas = Canvas::new(x - GAP, height);
     for (t, letter) in tiles.iter().zip(["A", "C", "S"]) {
-        let rgb = render_pixels(study, &t.layout, w, overlay);
+        let rgb = render_pixels(study, &study.volume, &t.layout, w, overlay);
         canvas.blit(t.origin[0], t.origin[1], t.layout.width, t.layout.height, &rgb);
         crosshair(&mut canvas, v, t, at);
         canvas.label(t.origin[0] + 2, t.origin[1] + 2, &format!("{letter}{}", t.layout.index + 1));

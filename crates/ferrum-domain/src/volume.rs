@@ -161,6 +161,11 @@ impl Geometry {
     }
 }
 
+/// The default fill of a masked copy ([`Volume::masked_copy`]): stored `0`,
+/// the range minimum — black/neutral under a typical window (Clean Pixel
+/// Data, Stage 31).
+pub const MASK_FILL: u16 = 0;
+
 /// A regular scalar volume with physical spacing.
 ///
 /// This is the central entity of the viewer. Voxel data is immutable once
@@ -283,6 +288,32 @@ impl Volume {
     /// Stored value at `(i, j, k)`; `None` if out of bounds.
     pub fn voxel(&self, i: u32, j: u32, k: u32) -> Option<u16> {
         (i < self.dims.x && j < self.dims.y && k < self.dims.z).then(|| self.data[self.dims.index(i, j, k)])
+    }
+
+    /// A copy with the voxels of `boxes` replaced by the stored value `fill`
+    /// (Clean Pixel Data, Stage 31, criterion 31.3-c): a **pixel transform on
+    /// the data**, not image formation — a renderer draws the copy exactly as
+    /// it draws the original. Boxes are half-open voxel ranges of this grid,
+    /// clipped to it; geometry, spacing and range are kept, so the fill's
+    /// physical value is `range.from_storage(fill)` (fill `0` is the range
+    /// minimum: black/neutral under a typical window). The original is
+    /// unchanged.
+    #[must_use]
+    pub fn masked_copy(&self, boxes: &[crate::segmentation::VoxelBox], fill: u16) -> Volume {
+        let mut out = self.clone();
+        let dims = self.dims.as_uvec3();
+        for bx in boxes {
+            let min = bx.min.min(dims);
+            let max = bx.max.min(dims);
+            for k in min.z..max.z {
+                for j in min.y..max.y {
+                    let start = self.dims.index(min.x, j, k);
+                    let end = self.dims.index(max.x, j, k);
+                    out.data[start..end].fill(fill);
+                }
+            }
+        }
+        out
     }
 
     /// Normalised value at `(i, j, k)` with coordinates clamped to the grid.
@@ -555,5 +586,46 @@ mod tests {
         assert_eq!(v.tex_to_voxel(Vec3::splat(0.99)), Some(UVec3::splat(3)));
         assert_eq!(v.tex_to_voxel(Vec3::splat(1.0)), None);
         assert_eq!(v.tex_to_voxel(Vec3::splat(-0.01)), None);
+    }
+
+    #[test]
+    fn masked_copy_replaces_the_boxes_and_keeps_the_rest() {
+        // covers 31.3-c: a pixel transform on the data — every voxel of the
+        // boxes holds the fill, every other voxel is unchanged, and the
+        // original, geometry and range stay as they were.
+        use crate::segmentation::VoxelBox;
+        let v = ramp(8).with_geometry(Geometry { origin: Vec3::new(-4.0, 2.0, 10.0), direction: Mat3::IDENTITY });
+        let boxes = [
+            VoxelBox::new(UVec3::new(1, 2, 3), UVec3::new(4, 5, 6)),
+            VoxelBox::new(UVec3::new(6, 0, 0), UVec3::new(20, 2, 20)), // clipped to the grid
+            VoxelBox::new(UVec3::new(2, 2, 2), UVec3::new(2, 2, 2)),   // empty: no effect
+        ];
+        let m = v.masked_copy(&boxes, 0);
+        assert_eq!(m.dims(), v.dims());
+        assert_eq!(m.spacing(), v.spacing());
+        assert_eq!(m.range(), v.range());
+        assert_eq!(m.geometry(), v.geometry());
+        let in_box = |i: u32, j: u32, k: u32| {
+            boxes.iter().any(|b| {
+                i >= b.min.x
+                    && i < b.max.x.min(8)
+                    && j >= b.min.y
+                    && j < b.max.y.min(8)
+                    && k >= b.min.z
+                    && k < b.max.z.min(8)
+            })
+        };
+        for k in 0..8 {
+            for j in 0..8 {
+                for i in 0..8 {
+                    let want = if in_box(i, j, k) { 0 } else { v.voxel(i, j, k).unwrap() };
+                    assert_eq!(m.voxel(i, j, k), Some(want), "voxel ({i}, {j}, {k})");
+                }
+            }
+        }
+        // the original is untouched
+        assert_eq!(v.voxel(2, 3, 4), Some(v.range().to_storage(2.0)));
+        // no boxes: an identical copy
+        assert_eq!(v.masked_copy(&[], 0), v);
     }
 }

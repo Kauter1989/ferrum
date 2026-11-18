@@ -9,6 +9,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
+use ferrum_domain::VoxelBox;
+use glam::UVec3;
 use serde_json::{json, Value};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
@@ -222,15 +224,21 @@ impl Host {
                 Ok((header, _)) => Reply::json(StatusCode(200), header),
                 Err(e) => internal(e),
             },
-            "/api/frame.png" if get => match self.session.frame() {
-                Ok(frame) => Reply {
-                    status: StatusCode(200),
-                    content_type: "image/png",
-                    headers: vec![("X-Ferrum-Rev".into(), frame.rev.to_string())],
-                    body: frame.png.clone(),
-                },
-                Err(e) => internal(e),
-            },
+            "/api/frame.png" if get => {
+                if query_value(url, "masked").as_deref() == Some("1") {
+                    self.masked_frame(url)
+                } else {
+                    match self.session.frame() {
+                        Ok(frame) => Reply {
+                            status: StatusCode(200),
+                            content_type: "image/png",
+                            headers: vec![("X-Ferrum-Rev".into(), frame.rev.to_string())],
+                            body: frame.png.clone(),
+                        },
+                        Err(e) => internal(e),
+                    }
+                }
+            }
             "/api/input" if post => match self.session.input(body) {
                 Ok(()) => match self.session.state_json() {
                     Ok(state) => Reply::json(StatusCode(200), state),
@@ -276,6 +284,38 @@ impl Host {
             | "/api/volume.json" | "/api/labels" | "/api/labels.json" | "/api/input" | "/api/token/refresh" | "/"
             | "/index.html" => Reply::json(StatusCode(405), json!({"error": "wrong method"})),
             _ => Reply::json(StatusCode(404), json!({"error": "no such route"})),
+        }
+    }
+
+    /// A masked frame (`/api/frame.png?masked=1`, Clean Pixel Data, Stage
+    /// 31): the `box` query regions (repeatable, inclusive voxel corners
+    /// `i0,j0,k0,i1,j1,k1`), else the flag's whole-volume default. The
+    /// `X-Ferrum-Mask` header reports what was applied — never silently
+    /// passed.
+    fn masked_frame(&mut self, url: &str) -> Reply {
+        let explicit = match query_boxes(url) {
+            Ok(boxes) => boxes,
+            Err(e) => return Reply::json(StatusCode(400), json!({ "error": e })),
+        };
+        let (boxes, source) = match explicit {
+            Some(boxes) => (boxes, "regions"),
+            None => match self.session.default_mask_boxes() {
+                Ok(boxes) if boxes.is_empty() => (boxes, "none"),
+                Ok(boxes) => (boxes, "burned_in"),
+                Err(e) => return internal(e),
+            },
+        };
+        match self.session.frame_masked(boxes) {
+            Ok((frame, effective)) => Reply {
+                status: StatusCode(200),
+                content_type: "image/png",
+                headers: vec![
+                    ("X-Ferrum-Rev".into(), frame.rev.to_string()),
+                    ("X-Ferrum-Mask".into(), mask_report(&effective, source).to_string()),
+                ],
+                body: frame.png.clone(),
+            },
+            Err(e) => internal(e),
         }
     }
 
@@ -368,6 +408,55 @@ fn query_value(url: &str, name: &str) -> Option<String> {
     query.split('&').find_map(|pair| {
         let (key, value) = pair.split_once('=')?;
         (key == name).then(|| value.to_owned())
+    })
+}
+
+/// Every value of `name` in a query string (a repeatable parameter).
+fn query_values(url: &str, name: &str) -> Vec<String> {
+    let Some(query) = url.split_once('?').map(|(_, q)| q) else { return Vec::new() };
+    query
+        .split('&')
+        .filter_map(|pair| {
+            let (key, value) = pair.split_once('=')?;
+            (key == name).then(|| value.to_owned())
+        })
+        .collect()
+}
+
+/// The `box` regions of a masked frame request: two corner points
+/// `i0,j0,k0,i1,j1,k1` (inclusive, in any order — the agent's box
+/// convention) as half-open boxes. `None` when the request names no region;
+/// a malformed box is an error.
+fn query_boxes(url: &str) -> Result<Option<Vec<VoxelBox>>, String> {
+    let values = query_values(url, "box");
+    if values.is_empty() {
+        return Ok(None);
+    }
+    let mut boxes = Vec::with_capacity(values.len());
+    for v in values {
+        let nums: Vec<u32> = v
+            .split(',')
+            .map(|x| {
+                x.trim().parse::<u32>().map_err(|_| format!("box {v:?}: expected i0,j0,k0,i1,j1,k1 voxel indices"))
+            })
+            .collect::<Result<_, _>>()?;
+        if nums.len() != 6 {
+            return Err(format!("box {v:?}: expected i0,j0,k0,i1,j1,k1 voxel indices"));
+        }
+        let (a, b) = (UVec3::new(nums[0], nums[1], nums[2]), UVec3::new(nums[3], nums[4], nums[5]));
+        // saturating: a crafted corner at u32::MAX must not overflow (+1);
+        // frame_masked clips the box to the grid anyway.
+        boxes.push(VoxelBox::new(a.min(b), a.max(b).saturating_add(UVec3::ONE)));
+    }
+    Ok(Some(boxes))
+}
+
+/// The `X-Ferrum-Mask` report: what a masked frame request applied.
+fn mask_report(boxes: &[VoxelBox], source: &str) -> Value {
+    json!({
+        "applied": !boxes.is_empty(),
+        "source": source,
+        "boxes": boxes.iter().map(|b| json!({ "min": b.min.to_array(), "max": b.max.to_array() })).collect::<Vec<_>>(),
     })
 }
 

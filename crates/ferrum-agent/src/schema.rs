@@ -73,7 +73,7 @@ fn ws_only() -> Value {
 
 fn view_slice() -> (&'static str, Value) {
     (
-            "Renders one slice to a PNG with a sidecar mapping pixels to voxels and patient mm. Look with images; take numbers from probe, stats and measure.",
+            "Renders one slice to a PNG with a sidecar mapping pixels to voxels and patient mm. Look with images; take numbers from probe, stats and measure. With masked, burned-in regions are replaced by a solid fill before drawing (Clean Pixel Data); the sidecar's mask block reports what was applied.",
             obj(
                 json!({
                     "workspace": workspace(),
@@ -91,6 +91,9 @@ fn view_slice() -> (&'static str, Value) {
                     "overlays": overlays_param(),
                     "segment_style": segment_style_param(),
                     "segment_opacity": segment_opacity_param(),
+                    "masked": { "type": "boolean", "description": "mask burned-in regions before drawing (Clean Pixel Data): the masks boxes, else the whole volume when the DICOM BurnedInAnnotation flag is YES, else the OCR-detected regions (with ocr), else nothing (reported in the sidecar's mask block)" },
+                    "masks": { "type": "array", "items": corners(), "description": "mask regions as voxel boxes (two inclusive corners, as stats boxes); implies masked" },
+                    "ocr": { "type": "boolean", "description": "run the optional OCR bridge check on the render (Clean Pixel Data); detected regions extend the mask when masked. Without a configured bridge ([network] ocr_bridge) the step is skipped and reported in the sidecar's ocr block, never silently passed" },
                 }),
                 &["workspace", "plane"],
             ),

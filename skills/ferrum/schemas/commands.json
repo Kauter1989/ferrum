@@ -65,7 +65,7 @@
     }
   },
   "view slice": {
-    "description": "Renders one slice to a PNG with a sidecar mapping pixels to voxels and patient mm. Look with images; take numbers from probe, stats and measure.",
+    "description": "Renders one slice to a PNG with a sidecar mapping pixels to voxels and patient mm. Look with images; take numbers from probe, stats and measure. With masked, burned-in regions are replaced by a solid fill before drawing (Clean Pixel Data); the sidecar's mask block reports what was applied.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -214,6 +214,158 @@
           "minimum": 0,
           "maximum": 1,
           "description": "fill opacity for every segment (default: each segment's own opacity)"
+        },
+        "masked": {
+          "type": "boolean",
+          "description": "mask burned-in regions before drawing (Clean Pixel Data): the masks boxes, else the whole volume when the DICOM BurnedInAnnotation flag is YES, else the OCR-detected regions (with ocr), else nothing (reported in the sidecar's mask block)"
+        },
+        "masks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "min": {
+                "description": "one corner",
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "voxel": {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        },
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "description": "0-based voxel (i, j, k) of the canonical LPS grid; integers are voxel centres"
+                      }
+                    },
+                    "required": [
+                      "voxel"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "patient_mm": {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        },
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "description": "LPS patient millimetres"
+                      }
+                    },
+                    "required": [
+                      "patient_mm"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "render": {
+                        "type": "string",
+                        "pattern": "^r-[0-9]+$",
+                        "description": "id of an earlier render"
+                      },
+                      "pixel": {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        },
+                        "minItems": 2,
+                        "maxItems": 2,
+                        "description": "pixel (x, y) of that render; pixel centres lie at +0.5"
+                      }
+                    },
+                    "required": [
+                      "render",
+                      "pixel"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "max": {
+                "description": "the opposite corner",
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "voxel": {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        },
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "description": "0-based voxel (i, j, k) of the canonical LPS grid; integers are voxel centres"
+                      }
+                    },
+                    "required": [
+                      "voxel"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "patient_mm": {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        },
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "description": "LPS patient millimetres"
+                      }
+                    },
+                    "required": [
+                      "patient_mm"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "render": {
+                        "type": "string",
+                        "pattern": "^r-[0-9]+$",
+                        "description": "id of an earlier render"
+                      },
+                      "pixel": {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        },
+                        "minItems": 2,
+                        "maxItems": 2,
+                        "description": "pixel (x, y) of that render; pixel centres lie at +0.5"
+                      }
+                    },
+                    "required": [
+                      "render",
+                      "pixel"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            },
+            "required": [
+              "min",
+              "max"
+            ],
+            "additionalProperties": false
+          },
+          "description": "mask regions as voxel boxes (two inclusive corners, as stats boxes); implies masked"
+        },
+        "ocr": {
+          "type": "boolean",
+          "description": "run the optional OCR bridge check on the render (Clean Pixel Data); detected regions extend the mask when masked. Without a configured bridge ([network] ocr_bridge) the step is skipped and reported in the sidecar's ocr block, never silently passed"
         }
       },
       "required": [
