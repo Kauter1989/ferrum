@@ -1144,6 +1144,30 @@ mod tests {
         assert!(parse_window("a,b").is_err());
     }
 
+    // covers 31.5-a — CLI = MCP: the deidentify flags become the same JSON params
+    #[test]
+    fn export_deidentify_flags_become_parameters() {
+        let call = |args: &[&str]| Cli::try_parse_from(args).unwrap().command.to_call().unwrap();
+        let (name, params) = call(&[
+            "ferrum-cli", "export", "bundle", "-w", "ws", "--format", "dicom", "--deidentify", "basic",
+            "--deid-option", "retain_uids", "--deid-option", "clean_descriptors",
+        ]);
+        assert_eq!(name, "export bundle");
+        assert_eq!(params["deidentify"].as_str(), Some("basic"));
+        assert_eq!(params["deid_options"], json!(["retain_uids", "clean_descriptors"]));
+        let (_, plain) = call(&["ferrum-cli", "export", "bundle", "-w", "ws", "--format", "dicom"]);
+        assert!(plain.get("deidentify").is_none(), "no deid unless asked");
+        assert!(plain.get("deid_options").is_none());
+        assert!(
+            Cli::try_parse_from(["ferrum-cli", "export", "bundle", "-w", "ws", "--deidentify", "advanced"]).is_err(),
+            "an unknown profile is refused"
+        );
+        assert!(
+            Cli::try_parse_from(["ferrum-cli", "export", "bundle", "-w", "ws", "--deid-option", "retain_uids"]).is_err(),
+            "--deid-option requires --deidentify"
+        );
+    }
+
     // covers 18.4-b, 18.12-b
     #[test]
     fn segment_metrics_flags_become_parameters() {
