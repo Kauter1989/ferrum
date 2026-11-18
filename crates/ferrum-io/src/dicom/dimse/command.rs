@@ -43,11 +43,11 @@ pub(crate) const NO_DATA_SET: u16 = 0x0101;
 #[derive(Debug)]
 pub(crate) enum DimseError {
     /// The association layer failed (connect, reject, abort, timeout, …).
-    Association(dicom_ul::association::Error),
+    Association(Box<dicom_ul::association::Error>),
     /// A command or data set could not be parsed.
-    Read(ReadError),
+    Read(Box<ReadError>),
     /// A command or data set could not be encoded.
-    Write(WriteError),
+    Write(Box<WriteError>),
     /// A socket I/O error.
     Io(std::io::Error),
     /// The peer answered a failure status to an operation.
@@ -69,19 +69,19 @@ pub(crate) enum DimseError {
 
 impl From<dicom_ul::association::Error> for DimseError {
     fn from(e: dicom_ul::association::Error) -> Self {
-        Self::Association(e)
+        Self::Association(Box::new(e))
     }
 }
 
 impl From<ReadError> for DimseError {
     fn from(e: ReadError) -> Self {
-        Self::Read(e)
+        Self::Read(Box::new(e))
     }
 }
 
 impl From<WriteError> for DimseError {
     fn from(e: WriteError) -> Self {
-        Self::Write(e)
+        Self::Write(Box::new(e))
     }
 }
 
@@ -97,7 +97,7 @@ impl From<std::io::Error> for DimseError {
 pub(crate) fn map_dimse_error(e: DimseError, host: &str) -> RepositoryError {
     use dicom_ul::association::Error as A;
     match e {
-        DimseError::Association(a) => match a {
+        DimseError::Association(a) => match *a {
             A::Connect { .. } | A::ToAddress { .. } => RepositoryError::Io(format!("{host}: DIMSE connection failed")),
             A::Rejected { .. } => RepositoryError::Io(format!("{host}: DIMSE association rejected")),
             A::Aborted { .. } => RepositoryError::Io(format!("{host}: DIMSE association aborted")),
