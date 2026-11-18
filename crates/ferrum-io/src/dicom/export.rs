@@ -5,7 +5,10 @@
 //! Both objects lie in the study of the source series and on its frame of
 //! reference, so a PACS or viewer shows them with the images. What leaves
 //! FERRUM is decided by [`DicomExportOptions`]: patient identifiers, dates
-//! and original UIDs are copied only when the operator allows it.
+//! and original UIDs are copied only when the operator allows it. With
+//! `DicomExportOptions::deid` set, the PS3.15 Basic Profile is the sole gate:
+//! the objects are de-identified (and their File Meta Information replaced)
+//! before writing — Stage 31, [design](../../../../docs/deidentification.md).
 //!
 //! Unconfirmed items (status `proposed`) are exported and marked as such;
 //! rejected items are left out. The format is described in
@@ -14,6 +17,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
 use dicom_core::value::DataSetSequence;
 use dicom_core::{DataElement, PrimitiveValue, Tag, VR};
@@ -25,6 +29,7 @@ use ferrum_domain::{
 use glam::{DVec3, Vec3};
 use sha2::{Digest, Sha256};
 
+use super::deid::{deidentify_file, Profile, ProfileOptions, UidMap};
 use super::header::{f64s_of, str_of};
 use crate::error::IoError;
 
@@ -52,6 +57,16 @@ pub struct DicomExportOptions {
     /// Identifier of the source series; seeds UIDs when the source is not
     /// DICOM.
     pub series_id: String,
+    /// When set, every exported object is de-identified under the PS3.15
+    /// Basic Application Level Confidentiality Profile with these options
+    /// (Stage 31, criterion 31.5-a; [design](../../../../docs/deidentification.md)).
+    /// The profile is the sole privacy gate: the objects are built with the
+    /// source's own identifiers, dates and UIDs (the copy flags above are
+    /// overridden) and de-identified before writing, so e.g. `retain_uids`
+    /// keeps the *original* UIDs. The File Meta Information is replaced
+    /// consistently (E.1.1 item 7). `uid_salt` of the options seeds the
+    /// replacement UIDs and per-patient pseudonyms.
+    pub deid: Option<ProfileOptions>,
 }
 
 /// One image of the source series.
@@ -298,10 +313,21 @@ fn ds_list(values: &[f64]) -> String {
     values.iter().map(|v| ds(*v)).collect::<Vec<_>>().join("\\")
 }
 
-fn write_file(path: &Path, elements: Vec<Elem>) -> Result<(), IoError> {
-    let file = item(elements)
+/// Writes one exported object, de-identified when the exporter carries a
+/// profile (`DicomExportOptions::deid`); the File Meta Information is
+/// replaced consistently with the de-identified data set (E.1.1 item 7).
+fn write_object(
+    path: &Path,
+    elements: Vec<Elem>,
+    deid: Option<&(Profile, Mutex<UidMap>)>,
+) -> Result<(), IoError> {
+    let mut file = item(elements)
         .with_meta(FileMetaTableBuilder::new().transfer_syntax(uids::EXPLICIT_VR_LITTLE_ENDIAN))
         .map_err(|e| IoError::invalid(path, e.to_string()))?;
+    if let Some((profile, uids)) = deid {
+        let mut uids = uids.lock().unwrap_or_else(|e| e.into_inner());
+        deidentify_file(&mut file, profile, &mut uids);
+    }
     file.write_to_file(path).map_err(|e| IoError::invalid(path, e.to_string()))
 }
 
@@ -362,6 +388,9 @@ pub struct SegExport {
 #[derive(Debug)]
 pub struct DicomExporter {
     ctx: Context,
+    /// The de-identification profile and the run's UID map, when the export
+    /// is de-identified (`DicomExportOptions::deid`).
+    deid: Option<(Profile, Mutex<UidMap>)>,
 }
 
 /// What [`DicomExporter`] wrote.
@@ -377,9 +406,20 @@ pub struct DicomExport {
 
 impl DicomExporter {
     /// An exporter for a series read from `source` (`None` when the source
-    /// is not DICOM).
+    /// is not DICOM). With `opts.deid` set, the profile is the sole privacy
+    /// gate: the objects are built with the source's own identifiers, dates
+    /// and UIDs, then de-identified (and their File Meta Information
+    /// replaced) before writing.
     pub fn new(source: Option<&DicomSource>, opts: &DicomExportOptions) -> Self {
-        Self { ctx: Context::new(source, opts) }
+        let mut opts = opts.clone();
+        let deid = opts.deid.take().map(|options| {
+            opts.copy_identifiers = true;
+            opts.copy_dates = true;
+            opts.keep_uids = true;
+            let uids = Mutex::new(UidMap::new(options.uid_salt.clone()));
+            (Profile { options }, uids)
+        });
+        Self { ctx: Context::new(source, &opts), deid }
     }
 
     /// Study Instance UID of the exported objects.
@@ -520,7 +560,7 @@ impl DicomExporter {
             // source, without a per-frame derivation.
             e.push(referenced_series(ctx, src.instances.iter()));
         }
-        write_file(path, e)?;
+        write_object(path, e, self.deid.as_ref())?;
         Ok(Some(SegExport {
             sop_instance_uid: sop_instance,
             series_instance_uid: series,
@@ -641,7 +681,7 @@ impl DicomExporter {
             ]);
             e.push(seq(tags::CURRENT_REQUESTED_PROCEDURE_EVIDENCE_SEQUENCE, vec![study_item]));
         }
-        write_file(path, e)?;
+        write_object(path, e, self.deid.as_ref())?;
         Ok((Some(measurements), skipped))
     }
 }
