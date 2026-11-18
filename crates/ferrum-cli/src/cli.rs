@@ -382,6 +382,17 @@ pub enum Export {
         /// `dicom` (SEG + SR); repeat for several.
         #[arg(long = "format", value_parser = ["ferrum", "dicom"])]
         formats: Vec<String>,
+        /// De-identify the DICOM objects (SEG/SR) under the PS3.15 Basic
+        /// Application Level Confidentiality Profile (Stage 31). The profile
+        /// is the sole privacy gate for the DICOM objects.
+        #[arg(long = "deidentify", value_parser = ["basic"])]
+        deidentify: Option<String>,
+        /// A Basic Profile option (repeatable): `retain_uids`,
+        /// `retain_dates_modified`, `clean_descriptors`,
+        /// `retain_device_identity`, `retain_institution_identity`,
+        /// `retain_patient_characteristics`. Requires `--deidentify`.
+        #[arg(long = "deid-option", requires = "deidentify")]
+        deid_options: Vec<String>,
     },
 }
 
@@ -777,9 +788,15 @@ impl Command {
                     ("samples", some(*samples)),
                 ],
             ),
-            Command::Export(Export::Bundle { ws: w, formats }) => {
-                call("export bundle", vec![ws(w), ("formats", (!formats.is_empty()).then(|| json!(formats)))])
-            }
+            Command::Export(Export::Bundle { ws: w, formats, deidentify, deid_options }) => call(
+                "export bundle",
+                vec![
+                    ws(w),
+                    ("formats", (!formats.is_empty()).then(|| json!(formats))),
+                    ("deidentify", deidentify.as_ref().map(|d| json!(d))),
+                    ("deid_options", (!deid_options.is_empty()).then(|| json!(deid_options))),
+                ],
+            ),
             Command::Engine(EngineCmd::Info { engine }) => call("engine info", vec![("engine", some(engine.clone()))]),
             Command::Engine(EngineCmd::List) => call("engine list", vec![]),
             Command::Engine(EngineCmd::Unload { engine, group }) => {
@@ -1125,6 +1142,42 @@ mod tests {
         assert_eq!(parse_window("lung").unwrap(), json!("lung"));
         assert_eq!(parse_window("-600,1500").unwrap(), json!({ "center": -600.0, "width": 1500.0 }));
         assert!(parse_window("a,b").is_err());
+    }
+
+    // covers 31.5-a — CLI = MCP: the deidentify flags become the same JSON params
+    #[test]
+    fn export_deidentify_flags_become_parameters() {
+        let call = |args: &[&str]| Cli::try_parse_from(args).unwrap().command.to_call().unwrap();
+        let (name, params) = call(&[
+            "ferrum-cli",
+            "export",
+            "bundle",
+            "-w",
+            "ws",
+            "--format",
+            "dicom",
+            "--deidentify",
+            "basic",
+            "--deid-option",
+            "retain_uids",
+            "--deid-option",
+            "clean_descriptors",
+        ]);
+        assert_eq!(name, "export bundle");
+        assert_eq!(params["deidentify"].as_str(), Some("basic"));
+        assert_eq!(params["deid_options"], json!(["retain_uids", "clean_descriptors"]));
+        let (_, plain) = call(&["ferrum-cli", "export", "bundle", "-w", "ws", "--format", "dicom"]);
+        assert!(plain.get("deidentify").is_none(), "no deid unless asked");
+        assert!(plain.get("deid_options").is_none());
+        assert!(
+            Cli::try_parse_from(["ferrum-cli", "export", "bundle", "-w", "ws", "--deidentify", "advanced"]).is_err(),
+            "an unknown profile is refused"
+        );
+        assert!(
+            Cli::try_parse_from(["ferrum-cli", "export", "bundle", "-w", "ws", "--deid-option", "retain_uids"])
+                .is_err(),
+            "--deid-option requires --deidentify"
+        );
     }
 
     // covers 18.4-b, 18.12-b

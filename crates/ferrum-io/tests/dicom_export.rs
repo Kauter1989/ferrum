@@ -8,12 +8,14 @@ mod common;
 
 use std::path::{Path, PathBuf};
 
+use dicom_core::{DataElement, PrimitiveValue, VR};
 use dicom_dictionary_std::tags;
 use dicom_object::{open_file, InMemDicomObject};
 use ferrum_domain::{
     Annotation, AnnotationReport, AnnotationSet, LabelMap, NoProgress, Provenance, ReviewStatus, Segment,
     SegmentationSet, SliceAxis, SliceKey, Timestamp, Volume, VolumeRepository,
 };
+use ferrum_io::dicom::deid::ProfileOptions;
 use ferrum_io::dicom::export::{read_source, uid_from, DicomExportOptions, DicomExporter, PRIVATE_SCHEME};
 use ferrum_io::DicomRepository;
 use glam::Vec2;
@@ -198,6 +200,7 @@ fn segmentation_and_report_with_source_references() {
         uid_salt: "s".into(),
         software_version: "0.2.0".into(),
         series_id: SERIES_UID.into(),
+        deid: None,
     };
     let exporter = DicomExporter::new(Some(&source), &opts);
     assert_eq!(exporter.study_uid(), STUDY_UID);
@@ -303,4 +306,97 @@ fn a_segmentation_of_a_sagittal_series_lies_on_the_lps_grid() {
     let referenced = items(&first(&obj, &[tags::REFERENCED_SERIES_SEQUENCE]), tags::REFERENCED_INSTANCE_SEQUENCE);
     assert_eq!(referenced.len(), 5, "the whole source series is referenced");
     keep_samples(&[&path], "sagittal");
+}
+
+/// Adds patient identifiers to every source file so the de-identification has
+/// something to remove.
+fn identify_sources(files: &[PathBuf]) {
+    for f in files {
+        let mut obj = open_file(f).unwrap();
+        obj.put(DataElement::new(tags::PATIENT_NAME, VR::PN, PrimitiveValue::from("DOE^JOHN")));
+        obj.put(DataElement::new(tags::PATIENT_ID, VR::LO, PrimitiveValue::from("123456")));
+        obj.put(DataElement::new(tags::PATIENT_BIRTH_DATE, VR::DA, PrimitiveValue::from("19800101")));
+        obj.put(DataElement::new(tags::ACCESSION_NUMBER, VR::SH, PrimitiveValue::from("ACC-999")));
+        obj.put(DataElement::new(tags::INSTITUTION_NAME, VR::LO, PrimitiveValue::from("Secret Hospital")));
+        obj.put(DataElement::new(tags::REFERRING_PHYSICIAN_NAME, VR::PN, PrimitiveValue::from("DR^SECRET")));
+        obj.write_to_file(f).unwrap();
+    }
+}
+
+fn absent_or_zero(obj: &InMemDicomObject, tag: dicom_object::Tag) -> bool {
+    match obj.element_opt(tag).unwrap() {
+        None => true,
+        Some(e) => e.to_str().map(|s| s.trim_end_matches(['\0', ' ']).is_empty()).unwrap_or(true),
+    }
+}
+
+// covers 31.5-a/b — export with the Basic Profile de-identifies the SEG/SR (the
+// sole privacy gate), replaces the File Meta Information, and preserves the SR
+// ContentSequence (the D-on-sequence fix).
+#[test]
+fn export_deidentify_basic_profile() {
+    let src_dir = tempfile::tempdir().unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let (volume, files) = ct(src_dir.path());
+    identify_sources(&files);
+    let source = read_source(&files).unwrap();
+    let opts = DicomExportOptions {
+        uid_salt: "salt".into(),
+        series_id: SERIES_UID.into(),
+        deid: Some(ProfileOptions { uid_salt: "salt".into(), ..Default::default() }),
+        ..Default::default()
+    };
+    let exporter = DicomExporter::new(Some(&source), &opts);
+    let (seg_path, sr_path) = (out.path().join("segmentation.dcm"), out.path().join("measurements.dcm"));
+    exporter.export(&volume, &segments(&volume), &annotations(&volume), &seg_path, &sr_path).unwrap();
+    keep_samples(&[&seg_path, &sr_path], "deidentified");
+    for path in [&seg_path, &sr_path] {
+        let obj = open_file(path).unwrap();
+        assert_eq!(str_at(&obj, tags::PATIENT_IDENTITY_REMOVED), "YES");
+        assert_eq!(str_at(&obj, tags::PATIENT_NAME), "ANONYMOUS");
+        assert!(!str_at(&obj, tags::PATIENT_ID).is_empty(), "PatientID is a pseudonym");
+        assert_ne!(str_at(&obj, tags::PATIENT_ID), "123456");
+        assert!(absent_or_zero(&obj, tags::PATIENT_BIRTH_DATE), "birth date zeroed");
+        assert!(absent_or_zero(&obj, tags::ACCESSION_NUMBER), "accession zeroed");
+        assert!(absent_or_zero(&obj, tags::INSTITUTION_NAME), "institution removed");
+        assert!(absent_or_zero(&obj, tags::REFERRING_PHYSICIAN_NAME), "referring physician removed");
+        assert!(absent_or_zero(&obj, tags::STUDY_DATE), "study date zeroed (default profile)");
+        // File Meta Information replaced consistently (E.1.1 item 7).
+        let version = obj.meta().implementation_version_name.clone().unwrap_or_default();
+        assert!(version.starts_with("FERRUM"), "implementation identity is FERRUM's: {version}");
+        // No source identifier leaks into the bytes.
+        let bytes = std::fs::read(path).unwrap();
+        let text = String::from_utf8_lossy(&bytes);
+        for secret in ["DOE^JOHN", "123456", "19800101", "ACC-999", "Secret Hospital", "DR^SECRET", "20240428"] {
+            assert!(!text.contains(secret), "{secret} in {}", path.display());
+        }
+    }
+    // The SR ContentSequence (a D-action sequence) survives with its structure.
+    let sr = open_file(&sr_path).unwrap();
+    assert!(!items(&sr, tags::CONTENT_SEQUENCE).is_empty(), "the SR ContentSequence is preserved");
+}
+
+// covers 31.5-a / 31.2-a — the Retain UIDs option keeps the original study UID.
+#[test]
+fn export_deidentify_retain_uids_keeps_the_study_uid() {
+    let src_dir = tempfile::tempdir().unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let (volume, files) = ct(src_dir.path());
+    identify_sources(&files);
+    let source = read_source(&files).unwrap();
+    let mut options = ProfileOptions { uid_salt: "salt".into(), ..Default::default() };
+    options.enable("retain_uids").unwrap();
+    let opts = DicomExportOptions {
+        uid_salt: "salt".into(),
+        series_id: SERIES_UID.into(),
+        deid: Some(options),
+        ..Default::default()
+    };
+    let exporter = DicomExporter::new(Some(&source), &opts);
+    assert_eq!(exporter.study_uid(), STUDY_UID, "retain_uids keeps the original study UID");
+    let (seg_path, sr_path) = (out.path().join("segmentation.dcm"), out.path().join("measurements.dcm"));
+    exporter.export(&volume, &segments(&volume), &annotations(&volume), &seg_path, &sr_path).unwrap();
+    let seg = open_file(&seg_path).unwrap();
+    assert_eq!(str_at(&seg, tags::STUDY_INSTANCE_UID), STUDY_UID);
+    assert_eq!(str_at(&seg, tags::PATIENT_NAME), "ANONYMOUS", "identifiers still removed under retain_uids");
 }

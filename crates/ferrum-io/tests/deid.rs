@@ -19,7 +19,7 @@ use dicom_core::{DataElement, PrimitiveValue, Tag, VR};
 use dicom_dictionary_std::{tags, uids, StandardDataDictionary};
 use dicom_object::{FileMetaTableBuilder, InMemDicomObject};
 use ferrum_domain::{NoProgress, VolumeRepository};
-use ferrum_io::dicom::deid::{deidentify, rules, DeidError, Opt, Profile, ProfileOptions, UidMap};
+use ferrum_io::dicom::deid::{deidentify, deidentify_file, rules, DeidError, Opt, Profile, ProfileOptions, UidMap};
 use ferrum_io::dicom::export::uid_from;
 use ferrum_io::DicomRepository;
 
@@ -284,6 +284,27 @@ fn nested_attributes_inside_sequences_are_protected() {
     assert_ne!(str_at(&items[0], tags::PATIENT_ID), "NESTED-ID-999");
 }
 
+// covers 31.1-b / 31.5-a — a D-action sequence (e.g. the SR ContentSequence,
+// (0040,A730)=D) keeps every item and de-identifies its contents recursively
+// (PS3.15 Note 2.1); it is never collapsed to one empty item, which would
+// destroy an exported SR ContentSequence.
+#[test]
+fn a_d_sequence_keeps_its_items_and_deidentifies_contents() {
+    let mut obj = InMemDicomObject::from_element_iter([DataElement::new(
+        tags::CONTENT_SEQUENCE,
+        VR::SQ,
+        DataSetSequence::from(vec![nested_item(), nested_item()]),
+    )]);
+    deidentify(&mut obj, &Profile::default(), &mut UidMap::new(SALT));
+    let items = obj.element(tags::CONTENT_SEQUENCE).unwrap().items().unwrap();
+    assert_eq!(items.len(), 2, "a D sequence keeps every item, never one empty item");
+    for it in items {
+        assert!(it.iter().next().is_some(), "the item keeps its de-identified contents");
+        assert_eq!(str_at(it, tags::PATIENT_NAME), "ANONYMOUS");
+        assert_ne!(str_at(it, tags::PATIENT_ID), "NESTED-ID-999");
+    }
+}
+
 // covers 31.1-c — UIDs map stably within a run and reuse the export derivation.
 #[test]
 fn uids_are_consistent_within_a_run() {
@@ -368,6 +389,50 @@ fn kept_attributes_and_pixels_read_back() {
     assert!(is_zero(&back, tags::ACCESSION_NUMBER));
     assert!(!present(&back, tags::PATIENT_AGE), "age removed by the Basic Profile");
     assert_eq!(str_at(&back, tags::PATIENT_IDENTITY_REMOVED), "YES");
+}
+
+// covers 31.5-b — File Meta replacement (PS3.15 E.1.1 item 7): the meta describes
+// the de-identifying application, the media storage UIDs follow the dataset, and
+// the source AE titles / private meta are removed (kept under Retain Device
+// Identity). A privacy-relevant transform, pinned so a skip cannot pass silently.
+#[test]
+fn file_meta_is_replaced_and_device_identity_removed() {
+    let default = || Profile { options: ProfileOptions { uid_salt: SALT.to_string(), ..Default::default() } };
+    let build = || {
+        let mut obj = full_object();
+        obj.put(DataElement::new(tags::SOP_CLASS_UID, VR::UI, PrimitiveValue::from("1.2.840.10008.5.1.4.1.1.2")));
+        obj.put(DataElement::new(tags::SOP_INSTANCE_UID, VR::UI, PrimitiveValue::from("1.2.3.4.5")));
+        let meta = FileMetaTableBuilder::new()
+            .transfer_syntax(uids::EXPLICIT_VR_LITTLE_ENDIAN)
+            .media_storage_sop_class_uid("1.2.840.10008.5.1.4.1.1.2")
+            .media_storage_sop_instance_uid("1.2.3.4.5")
+            .implementation_class_uid("1.2.3.999")
+            .implementation_version_name("SOURCE_WRITER")
+            .source_application_entity_title("SECRET_AE")
+            .sending_application_entity_title("SECRET_SEND")
+            .receiving_application_entity_title("SECRET_RECV");
+        obj.with_meta(meta).unwrap()
+    };
+
+    let mut file = build();
+    deidentify_file(&mut file, &default(), &mut UidMap::new(SALT));
+    let m = file.meta();
+    // the media storage UIDs follow the (de-identified) dataset, not the source
+    assert_eq!(m.media_storage_sop_instance_uid, str_at(&file, tags::SOP_INSTANCE_UID));
+    assert_eq!(m.media_storage_sop_class_uid, str_at(&file, tags::SOP_CLASS_UID));
+    // the implementation identity is FERRUM's, not the source writer's
+    assert_ne!(m.implementation_class_uid, "1.2.3.999");
+    assert!(m.implementation_version_name.as_deref().unwrap_or("").starts_with("FERRUM"));
+    // source AE titles and private meta are removed
+    assert!(m.source_application_entity_title.is_none(), "source AE title removed");
+    assert!(m.sending_application_entity_title.is_none());
+    assert!(m.receiving_application_entity_title.is_none());
+    assert!(m.private_information.is_none());
+
+    // Retain Device Identity keeps the AE titles (the builder pads to even length)
+    let mut kept = build();
+    deidentify_file(&mut kept, &profile_with("retain_device_identity"), &mut UidMap::new(SALT));
+    assert_eq!(kept.meta().source_application_entity_title.as_deref().map(str::trim_end), Some("SECRET_AE"));
 }
 
 /// A small loadable CT object with identifiers, for the read-back test.

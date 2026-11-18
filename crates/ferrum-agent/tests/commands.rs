@@ -568,6 +568,31 @@ fn export_bundle_in_dicom() {
 }
 
 #[test]
+fn export_bundle_deidentify_basic_profile() {
+    // covers 31.5-a — the deidentify option de-identifies the DICOM objects;
+    // an unknown profile or option is refused (CLI = MCP, same JSON params).
+    let f = fixture(AgentConfig::default());
+    f.open();
+    f.ok("segment threshold", json!({ "seed": { "voxel": [14, 20, 15] }, "min": 50, "max": 150, "name": "Sphere" }));
+    f.ok("annotate add", json!({ "kind": "distance", "plane": "axial", "points": [{ "voxel": [6, 20, 15] }, { "voxel": [22, 20, 15] }] }));
+    f.ok("export bundle", json!({ "formats": ["dicom"], "deidentify": "basic" }));
+    let seg = dicom_object::open_file(Path::new(&f.ws).join("export/segmentation.dcm")).unwrap();
+    let removed = seg.element(dicom_dictionary_std::tags::PATIENT_IDENTITY_REMOVED).unwrap().to_str().unwrap();
+    assert_eq!(removed, "YES", "the SEG is marked de-identified");
+    // the SR ContentSequence (a D-action sequence) survives de-identification
+    let sr = dicom_object::open_file(Path::new(&f.ws).join("export/measurements.dcm")).unwrap();
+    assert!(sr.element(dicom_dictionary_std::tags::CONTENT_SEQUENCE).is_ok(), "SR ContentSequence preserved");
+    // unknown profile and option are refused
+    assert_eq!(f.err("export bundle", json!({ "formats": ["dicom"], "deidentify": "advanced" })), "bad_request");
+    assert_eq!(
+        f.err("export bundle", json!({ "formats": ["dicom"], "deidentify": "basic", "deid_options": ["bogus"] })),
+        "bad_request"
+    );
+    // a valid option is accepted
+    f.ok("export bundle", json!({ "formats": ["dicom"], "deidentify": "basic", "deid_options": ["retain_uids"] }));
+}
+
+#[test]
 fn volume_renders_from_standard_views() {
     let f = fixture(AgentConfig::default());
     f.open();

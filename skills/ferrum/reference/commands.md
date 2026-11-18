@@ -75,7 +75,7 @@ use only" when the engine is marked so. Workflows: `segmentation.md`.
 |---|---|---|
 | `review list` | — | proposed annotations and segments |
 | `review confirm`, `review reject` | `annotation` or `segment`, `by` | only if the operator allows harness review |
-| `export bundle` | `formats`: `ferrum` (default), `dicom` | `export/`: report.json; annotations.json, segments.nii.gz + .json (ferrum); segmentation.dcm + measurements.dcm (dicom); SHA-256 each |
+| `export bundle` | `formats`: `ferrum` (default), `dicom`; `deidentify`: `basic` (PS3.15 Basic Profile, DICOM objects); `deid_options`: `retain_uids`, `retain_dates_modified`, `clean_descriptors`, `retain_device_identity`, `retain_institution_identity`, `retain_patient_characteristics` | `export/`: report.json; annotations.json, segments.nii.gz + .json (ferrum); segmentation.dcm + measurements.dcm (dicom); SHA-256 each; with `deidentify` the DICOM objects are de-identified (File Meta replaced) |
 
 ## Examples
 ```bash

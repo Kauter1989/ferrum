@@ -44,8 +44,10 @@
 //!   attributes are protected too; pixel data and non-table attributes are kept.
 //!
 //! File Meta Information replacement (E.1.1 item 7) is the file writer's
-//! responsibility (export integration, PR 3); this transform operates on the
-//! data set.
+//! responsibility: [`deidentify_file`] de-identifies the data set and then
+//! replaces the File Meta Information consistently (the export writer and the
+//! oracle harness both go through it). [`deidentify`] alone operates on the
+//! data set only.
 
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
@@ -54,7 +56,7 @@ use dicom_core::header::Header;
 use dicom_core::value::DataSetSequence;
 use dicom_core::{DataElement, PrimitiveValue, Tag, VR};
 use dicom_dictionary_std::tags;
-use dicom_object::InMemDicomObject;
+use dicom_object::{FileDicomObject, InMemDicomObject};
 use sha2::{Digest, Sha256};
 
 use super::export::uid_from;
@@ -458,6 +460,41 @@ pub fn deidentify(obj: &mut InMemDicomObject, profile: &Profile, uids: &mut UidM
     add_method_attributes(obj, &profile.options);
 }
 
+/// De-identifies a whole file object: the data set under `profile` and the
+/// File Meta Information replaced consistently (E.1.1 item 7, the writer's
+/// responsibility). The media storage SOP class/instance UIDs follow the
+/// de-identified data set, the implementation identity becomes FERRUM's, and
+/// the source's device identity in the meta group (application entity titles)
+/// and private meta information are removed — the titles kept only under the
+/// Retain Device Identity option. The transfer syntax and the meta information
+/// version are kept; the group length is recomputed.
+pub fn deidentify_file(file: &mut FileDicomObject<InMemDicomObject>, profile: &Profile, uids: &mut UidMap) {
+    deidentify(file, profile, uids);
+    let sop_class = str_of(file, tags::SOP_CLASS_UID).unwrap_or_default();
+    let sop_instance = str_of(file, tags::SOP_INSTANCE_UID).unwrap_or_default();
+    let keep_device = profile.options.retain_device_identity;
+    file.update_meta(|meta| {
+        meta.media_storage_sop_class_uid = sop_class;
+        meta.media_storage_sop_instance_uid = sop_instance;
+        meta.implementation_class_uid = implementation_class_uid().to_owned();
+        meta.implementation_version_name = Some(format!("FERRUM {}", env!("CARGO_PKG_VERSION")));
+        if !keep_device {
+            meta.source_application_entity_title = None;
+            meta.sending_application_entity_title = None;
+            meta.receiving_application_entity_title = None;
+        }
+        meta.private_information_creator_uid = None;
+        meta.private_information = None;
+    });
+}
+
+/// FERRUM's implementation class UID for de-identified files: a stable UUID
+/// derivation (the export's `2.25` root), not the source writer's identity.
+fn implementation_class_uid() -> &'static str {
+    static UID: OnceLock<String> = OnceLock::new();
+    UID.get_or_init(|| uid_from(&["ferrum-implementation-class"]))
+}
+
 fn deidentify_object(obj: &mut InMemDicomObject, ctx: &mut Ctx<'_>, depth: usize) {
     let tags: Vec<Tag> = obj.iter().map(|e| e.tag()).collect();
     for tag in tags {
@@ -504,14 +541,10 @@ fn apply_sequence(
             obj.put(Elem::empty(tag, VR::SQ));
             return;
         }
-        Effective::D => {
-            obj.put(DataElement::new(
-                tag,
-                VR::SQ,
-                DataSetSequence::from(vec![InMemDicomObject::from_element_iter(std::iter::empty())]),
-            ));
-            return;
-        }
+        // D (and K/C/U) on a sequence applies to the sequence and all of its
+        // contents (PS3.15 Note 2.1): keep the structure and de-identify the
+        // contents recursively below — never collapse a D sequence to one empty
+        // item, which would destroy e.g. an exported SR ContentSequence.
         _ => {}
     }
     if depth >= MAX_DEPTH {

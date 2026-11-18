@@ -416,9 +416,32 @@ fn view_state_object() -> Value {
     })
 }
 
+/// The `export bundle` schema (Stage 31 de-identification options).
+fn export_schema(command: &str) -> Option<(&'static str, Value)> {
+    match command {
+        "export bundle" => Some((
+            "Writes export/ in the workspace, with SHA-256 of every file: report.json (study, measurements, segments with volumes; unconfirmed items marked) and, by format, annotations.json + segments.nii.gz + segments.json (ferrum) or a DICOM SEG + Comprehensive 3D SR measurement report (dicom). Rejected items are left out of DICOM; proposed ones are marked. With deidentify=basic the DICOM objects are de-identified under the PS3.15 Basic Application Level Confidentiality Profile (the sole privacy gate for them), with the selected deid_options; the File Meta Information is replaced consistently.",
+            obj(
+                json!({
+                    "workspace": workspace(),
+                    "formats": { "type": "array", "items": { "type": "string", "enum": ["ferrum", "dicom"] }, "minItems": 1, "description": "formats besides report.json (default [\"ferrum\"])" },
+                    "deidentify": { "type": "string", "enum": ["basic"], "description": "de-identify the DICOM objects (SEG/SR) under the PS3.15 Basic Profile (Stage 31); applies to the dicom format" },
+                    "deid_options": { "type": "array", "items": { "type": "string", "enum": ["retain_uids", "retain_dates_modified", "clean_descriptors", "retain_device_identity", "retain_institution_identity", "retain_patient_characteristics"] }, "description": "Basic Profile options on top of the default conservative profile; requires deidentify" },
+                }),
+                &["workspace"],
+            ),
+        )),
+        _ => None,
+    }
+}
+
 /// Description and parameter schema of `command`, or `None` if unknown.
 pub fn command_schema(command: &str) -> Option<(&'static str, Value)> {
-    if let Some(s) = engine_schema(command).or_else(|| mask_schema(command)).or_else(|| view_state_schema(command)) {
+    if let Some(s) = engine_schema(command)
+        .or_else(|| mask_schema(command))
+        .or_else(|| view_state_schema(command))
+        .or_else(|| export_schema(command))
+    {
         return Some(s);
     }
     let measure = |n: usize, what: &'static str| {
@@ -451,16 +474,6 @@ pub fn command_schema(command: &str) -> Option<(&'static str, Value)> {
                     "samples": { "type": "integer", "minimum": 2, "maximum": 2000, "description": "number of samples (default: one per smallest voxel spacing)" },
                 }),
                 &["workspace", "from", "to"],
-            ),
-        ),
-        "export bundle" => (
-            "Writes export/ in the workspace, with SHA-256 of every file: report.json (study, measurements, segments with volumes; unconfirmed items marked) and, by format, annotations.json + segments.nii.gz + segments.json (ferrum) or a DICOM SEG + Comprehensive 3D SR measurement report (dicom). Rejected items are left out of DICOM; proposed ones are marked.",
-            obj(
-                json!({
-                    "workspace": workspace(),
-                    "formats": { "type": "array", "items": { "type": "string", "enum": ["ferrum", "dicom"] }, "minItems": 1, "description": "formats besides report.json (default [\"ferrum\"])" },
-                }),
-                &["workspace"],
             ),
         ),
         "probe" => (
