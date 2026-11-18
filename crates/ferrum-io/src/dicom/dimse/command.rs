@@ -22,12 +22,8 @@ pub(crate) const C_ECHO_RQ: u16 = 0x0030;
 pub(crate) const C_ECHO_RSP: u16 = 0x8030;
 /// C-FIND-RQ command field.
 pub(crate) const C_FIND_RQ: u16 = 0x0020;
-/// C-FIND-RSP command field.
-pub(crate) const C_FIND_RSP: u16 = 0x8020;
 /// C-MOVE-RQ command field.
 pub(crate) const C_MOVE_RQ: u16 = 0x0021;
-/// C-MOVE-RSP command field.
-pub(crate) const C_MOVE_RSP: u16 = 0x8021;
 /// C-STORE-RQ command field.
 pub(crate) const C_STORE_RQ: u16 = 0x0001;
 /// C-STORE-RSP command field.
@@ -38,8 +34,6 @@ pub(crate) const STATUS_SUCCESS: u16 = 0x0000;
 pub(crate) const STATUS_PENDING: u16 = 0xFF00;
 /// DIMSE status: pending with warnings.
 pub(crate) const STATUS_PENDING_WARNING: u16 = 0xFF01;
-/// DIMSE status: cancel.
-pub(crate) const STATUS_CANCEL: u16 = 0xFE00;
 /// Command Data Set Type: no data set follows the command.
 pub(crate) const NO_DATA_SET: u16 = 0x0101;
 
@@ -65,6 +59,8 @@ pub(crate) enum DimseError {
     },
     /// An unexpected PDU arrived mid-message.
     UnexpectedPdu(&'static str),
+    /// The peer aborted the association mid-message.
+    Aborted,
     /// A required command attribute is missing.
     Missing(&'static str),
     /// The operation was cancelled through the progress sink.
@@ -121,15 +117,29 @@ pub(crate) fn map_dimse_error(e: DimseError, host: &str) -> RepositoryError {
             // and the failure kind are all a repository error names.
             _ => RepositoryError::Io(format!("{host}: DIMSE association failed")),
         },
-        DimseError::Read(_) => RepositoryError::Corrupt(format!("{host}: malformed DIMSE message")),
-        DimseError::Write(_) => RepositoryError::Io(format!("{host}: failed to encode DIMSE message")),
-        DimseError::Io(_) => RepositoryError::Io(format!("{host}: DIMSE I/O error")),
+        DimseError::Read(e) => {
+            log::debug!("DIMSE read error: {e}");
+            RepositoryError::Corrupt(format!("{host}: malformed DIMSE message"))
+        }
+        DimseError::Write(e) => {
+            log::debug!("DIMSE write error: {e}");
+            RepositoryError::Io(format!("{host}: failed to encode DIMSE message"))
+        }
+        DimseError::Io(e) => {
+            if matches!(e.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock) {
+                RepositoryError::Io(format!("{host}: DIMSE request timed out"))
+            } else {
+                log::debug!("DIMSE I/O error: {e}");
+                RepositoryError::Io(format!("{host}: DIMSE I/O error"))
+            }
+        }
         DimseError::Status { operation, code } => {
             RepositoryError::Io(format!("{host}: {operation} failed (status 0x{code:04X})"))
         }
         DimseError::UnexpectedPdu(what) => {
             RepositoryError::Corrupt(format!("{host}: unexpected DIMSE PDU ({what})"))
         }
+        DimseError::Aborted => RepositoryError::Io(format!("{host}: DIMSE association aborted")),
         DimseError::Missing(attr) => {
             RepositoryError::Corrupt(format!("{host}: DIMSE message missing {attr}"))
         }
@@ -245,7 +255,7 @@ where
                     }
                 }
             }
-            Pdu::AbortRQ { .. } => return Err(DimseError::UnexpectedPdu("abort")),
+            Pdu::AbortRQ { .. } => return Err(DimseError::Aborted),
             Pdu::ReleaseRQ => return Err(DimseError::UnexpectedPdu("release")),
             _ => return Err(DimseError::UnexpectedPdu("non-P-Data")),
         }
