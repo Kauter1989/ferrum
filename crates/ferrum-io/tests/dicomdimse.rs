@@ -572,17 +572,16 @@ fn move_writes_into_the_receive_dir_when_configured() {
 }
 
 #[test]
-fn move_default_writes_nothing_to_disk() {
-    // covers 32.3-b / ADR 0021 §2: in-memory by default, no patient data on disk
-    let (_dir, objects) = ct_phantom(5, 8, 4);
+fn move_default_retrieves_in_memory() {
+    // covers 32.3-b / ADR 0021 §2: with no receive dir the SCP keeps instances
+    // in memory (no patient data on disk) and still assembles the file volume.
+    let (dir, objects) = ct_phantom(5, 8, 4);
     let port = free_port();
     let pacs = MockPacs::start(store_plan(objects, port));
     let repo = DicomDimseRepository::new().with_store_scp_addr(&format!("127.0.0.1:{port}"));
     let series = repo.scan(&[pacs.url(&format!("?StudyInstanceUID={STUDY_UID}"))], &NoProgress).unwrap();
     let loaded = repo.load(&series[0], &NoProgress).unwrap();
-    assert_eq!(loaded.volume.dims(), Dims3::new(8, 5, 4));
-    // no receive dir configured: the SCP wrote no files anywhere we can see
-    // (the volume came from memory).
+    assert_eq!(loaded.volume, file_loaded(&dir).volume, "in-memory retrieve equals the file volume");
 }
 
 #[test]
