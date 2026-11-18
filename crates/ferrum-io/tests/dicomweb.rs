@@ -104,7 +104,7 @@ impl MockPacs {
         let (seen_t, stop_t) = (seen.clone(), stop.clone());
         let handle = std::thread::spawn(move || {
             while !stop_t.load(Ordering::Relaxed) {
-                let Ok(Some(mut req)) = server.recv_timeout(Duration::from_millis(50)) else { continue };
+                let Ok(Some(req)) = server.recv_timeout(Duration::from_millis(50)) else { continue };
                 let url = req.url().to_string();
                 let auth = req
                     .headers()
@@ -329,11 +329,11 @@ fn a_connection_refusal_is_an_io_error() {
         }
     };
     let repo = DicomWebRepository::new().with_timeout(Duration::from_secs(5));
-    let url = PathBuf::from(format!("dicomweb://127.0.0.1:{port}/dicom-web?PatientID=123"));
+    let url = PathBuf::from(format!("dicomweb://127.0.0.1:{port}/dicom-web?PatientID=PID-SECRET-987654"));
     let err = repo.scan(&[url], &NoProgress).unwrap_err();
     assert!(matches!(err, RepositoryError::Io(_)), "{err}");
     assert!(err.to_string().contains("connection"), "{err}");
-    assert!(!err.to_string().contains("123"), "the query never leaks: {err}");
+    assert!(!err.to_string().contains("PID-SECRET-987654"), "the query never leaks: {err}");
 }
 
 #[test]
@@ -448,5 +448,6 @@ fn the_composite_opens_files_and_pacs_urls() {
 }
 
 fn port_of(root: &str) -> u16 {
-    root.rsplit_once(':').unwrap().1.parse().unwrap()
+    let authority = root.strip_prefix("http://").unwrap().split('/').next().unwrap();
+    authority.rsplit_once(':').unwrap().1.parse().unwrap()
 }
