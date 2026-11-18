@@ -1149,8 +1149,19 @@ mod tests {
     fn export_deidentify_flags_become_parameters() {
         let call = |args: &[&str]| Cli::try_parse_from(args).unwrap().command.to_call().unwrap();
         let (name, params) = call(&[
-            "ferrum-cli", "export", "bundle", "-w", "ws", "--format", "dicom", "--deidentify", "basic",
-            "--deid-option", "retain_uids", "--deid-option", "clean_descriptors",
+            "ferrum-cli",
+            "export",
+            "bundle",
+            "-w",
+            "ws",
+            "--format",
+            "dicom",
+            "--deidentify",
+            "basic",
+            "--deid-option",
+            "retain_uids",
+            "--deid-option",
+            "clean_descriptors",
         ]);
         assert_eq!(name, "export bundle");
         assert_eq!(params["deidentify"].as_str(), Some("basic"));
@@ -1163,7 +1174,8 @@ mod tests {
             "an unknown profile is refused"
         );
         assert!(
-            Cli::try_parse_from(["ferrum-cli", "export", "bundle", "-w", "ws", "--deid-option", "retain_uids"]).is_err(),
+            Cli::try_parse_from(["ferrum-cli", "export", "bundle", "-w", "ws", "--deid-option", "retain_uids"])
+                .is_err(),
             "--deid-option requires --deidentify"
         );
     }

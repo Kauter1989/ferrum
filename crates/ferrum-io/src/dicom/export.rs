@@ -316,11 +316,7 @@ fn ds_list(values: &[f64]) -> String {
 /// Writes one exported object, de-identified when the exporter carries a
 /// profile (`DicomExportOptions::deid`); the File Meta Information is
 /// replaced consistently with the de-identified data set (E.1.1 item 7).
-fn write_object(
-    path: &Path,
-    elements: Vec<Elem>,
-    deid: Option<&(Profile, Mutex<UidMap>)>,
-) -> Result<(), IoError> {
+fn write_object(path: &Path, elements: Vec<Elem>, deid: Option<&(Profile, Mutex<UidMap>)>) -> Result<(), IoError> {
     let mut file = item(elements)
         .with_meta(FileMetaTableBuilder::new().transfer_syntax(uids::EXPLICIT_VR_LITTLE_ENDIAN))
         .map_err(|e| IoError::invalid(path, e.to_string()))?;
