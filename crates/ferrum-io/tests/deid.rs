@@ -429,10 +429,10 @@ fn file_meta_is_replaced_and_device_identity_removed() {
     assert!(m.receiving_application_entity_title.is_none());
     assert!(m.private_information.is_none());
 
-    // Retain Device Identity keeps the AE titles
+    // Retain Device Identity keeps the AE titles (the builder pads to even length)
     let mut kept = build();
     deidentify_file(&mut kept, &profile_with("retain_device_identity"), &mut UidMap::new(SALT));
-    assert_eq!(kept.meta().source_application_entity_title.as_deref(), Some("SECRET_AE"));
+    assert_eq!(kept.meta().source_application_entity_title.as_deref().map(str::trim_end), Some("SECRET_AE"));
 }
 
 /// A small loadable CT object with identifiers, for the read-back test.
