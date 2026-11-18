@@ -1087,6 +1087,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "dicom-ul"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b8093ce06f08bd44788300d03fdf03dcfbe06418034b0de6a6a53c56b555917"
+dependencies = [
+ "byteordered",
+ "bytes",
+ "cfg-if",
+ "dicom-encoding",
+ "dicom-transfer-syntax-registry",
+ "snafu",
+ "tracing",
+]
+
+[[package]]
 name = "dicom-web"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1680,8 +1695,11 @@ dependencies = [
  "criterion",
  "dicom-core",
  "dicom-dictionary-std",
+ "dicom-encoding",
  "dicom-object",
  "dicom-pixeldata",
+ "dicom-transfer-syntax-registry",
+ "dicom-ul",
  "dicom-web",
  "ferrum-domain",
  "flate2",

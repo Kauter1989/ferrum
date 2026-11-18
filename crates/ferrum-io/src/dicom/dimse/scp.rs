@@ -28,9 +28,7 @@ use dicom_ul::pdu::{PDataValue, PDataValueType, Pdu};
 use dicom_ul::ServerAssociation;
 use ferrum_domain::RepositoryError;
 
-use super::command::{
-    self, cmd_u16, decode_command, echo_response, store_response, DimseError, C_ECHO_RQ, C_STORE_RQ,
-};
+use super::command::{self, cmd_u16, decode_command, echo_response, store_response, DimseError, C_ECHO_RQ, C_STORE_RQ};
 
 /// Default maximum PDU length the SCP admits.
 const MAX_PDU: u32 = 16384;
@@ -60,9 +58,7 @@ impl StoreScp {
     ) -> Result<Self, RepositoryError> {
         let listener = TcpListener::bind(addr).map_err(|e| RepositoryError::Io(format!("C-STORE SCP bind: {e}")))?;
         let local_addr = listener.local_addr().map_err(|e| RepositoryError::Io(format!("C-STORE SCP addr: {e}")))?;
-        listener
-            .set_nonblocking(true)
-            .map_err(|e| RepositoryError::Io(format!("C-STORE SCP nonblocking: {e}")))?;
+        listener.set_nonblocking(true).map_err(|e| RepositoryError::Io(format!("C-STORE SCP nonblocking: {e}")))?;
         if let Some(dir) = &receive_dir {
             std::fs::create_dir_all(dir).map_err(|e| RepositoryError::Io(format!("C-STORE SCP receive dir: {e}")))?;
         }
@@ -282,10 +278,7 @@ fn on_instance(
 }
 
 /// Wraps a received data set with the Part 10 file meta information.
-fn build_file_object(
-    obj: InMemDicomObject,
-    ts_uid: &str,
-) -> Result<FileDicomObject<InMemDicomObject>, DimseError> {
+fn build_file_object(obj: InMemDicomObject, ts_uid: &str) -> Result<FileDicomObject<InMemDicomObject>, DimseError> {
     let sop_class = cmd_str(&obj, tags::SOP_CLASS_UID, "SOPClassUID")?;
     let sop_instance = cmd_str(&obj, tags::SOP_INSTANCE_UID, "SOPInstanceUID")?;
     let meta = FileMetaTableBuilder::new()

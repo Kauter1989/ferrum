@@ -251,7 +251,11 @@ impl DicomDimseRepository {
         let mut assoc = self.establish(url, uids::STUDY_ROOT_QUERY_RETRIEVE_INFORMATION_MODEL_MOVE)?;
         let pc = assoc.presentation_contexts().first().cloned().ok_or(DimseError::Missing("presentation context"))?;
         let ts = lookup_ts(&pc.transfer_syntax).ok_or(DimseError::Missing("transfer syntax"))?;
-        send_command(&mut assoc, pc.id, &move_request(uids::STUDY_ROOT_QUERY_RETRIEVE_INFORMATION_MODEL_MOVE, &self.move_ae(), 1))?;
+        send_command(
+            &mut assoc,
+            pc.id,
+            &move_request(uids::STUDY_ROOT_QUERY_RETRIEVE_INFORMATION_MODEL_MOVE, &self.move_ae(), 1),
+        )?;
         let query = series_identifier(study, series_uid);
         send_dataset(&mut assoc, pc.id, &query, ts)?;
         loop {
@@ -313,9 +317,16 @@ impl VolumeRepository for DicomDimseRepository {
             .first()
             .and_then(|p| p.to_str())
             .ok_or_else(|| RepositoryError::Corrupt("DIMSE series carries no retrieval URL".into()))?;
-        let url = parse_dimse_url(url_text).map_err(|_| RepositoryError::Corrupt(format!("{}: malformed DIMSE retrieval URL", safe_url(url_text))))?;
-        let study = url.study_uid.clone().ok_or_else(|| RepositoryError::Corrupt("DIMSE retrieval URL has no StudyInstanceUID".into()))?;
-        let series_uid = url.series_uid.clone().ok_or_else(|| RepositoryError::Corrupt("DIMSE retrieval URL has no SeriesInstanceUID".into()))?;
+        let url = parse_dimse_url(url_text)
+            .map_err(|_| RepositoryError::Corrupt(format!("{}: malformed DIMSE retrieval URL", safe_url(url_text))))?;
+        let study = url
+            .study_uid
+            .clone()
+            .ok_or_else(|| RepositoryError::Corrupt("DIMSE retrieval URL has no StudyInstanceUID".into()))?;
+        let series_uid = url
+            .series_uid
+            .clone()
+            .ok_or_else(|| RepositoryError::Corrupt("DIMSE retrieval URL has no SeriesInstanceUID".into()))?;
 
         // Receive the move sub-operations on a C-STORE SCP (host-only).
         let scp = StoreScp::bind(self.store_scp_addr.as_str(), &self.move_ae(), self.receive_dir.clone())?;
@@ -375,8 +386,16 @@ impl DicomDimseRepository {
 /// the series return keys (empty values).
 fn series_query(study: &str, filters: &[(Tag, String)]) -> InMemDicomObject {
     let mut obj = InMemDicomObject::new_empty();
-    obj.put(dicom_core::DataElement::new(tags::QUERY_RETRIEVE_LEVEL, dicom_core::VR::CS, dicom_core::PrimitiveValue::from("SERIES")));
-    obj.put(dicom_core::DataElement::new(tags::STUDY_INSTANCE_UID, dicom_core::VR::UI, dicom_core::PrimitiveValue::from(study)));
+    obj.put(dicom_core::DataElement::new(
+        tags::QUERY_RETRIEVE_LEVEL,
+        dicom_core::VR::CS,
+        dicom_core::PrimitiveValue::from("SERIES"),
+    ));
+    obj.put(dicom_core::DataElement::new(
+        tags::STUDY_INSTANCE_UID,
+        dicom_core::VR::UI,
+        dicom_core::PrimitiveValue::from(study),
+    ));
     for tag in SERIES_RETURN_KEYS {
         obj.put(dicom_core::DataElement::new(tag, dicom_core::VR::CS, dicom_core::PrimitiveValue::Empty));
     }
@@ -387,7 +406,11 @@ fn series_query(study: &str, filters: &[(Tag, String)]) -> InMemDicomObject {
 /// A study-level C-FIND identifier: matching filters plus study return keys.
 fn study_query(filters: &[(Tag, String)]) -> InMemDicomObject {
     let mut obj = InMemDicomObject::new_empty();
-    obj.put(dicom_core::DataElement::new(tags::QUERY_RETRIEVE_LEVEL, dicom_core::VR::CS, dicom_core::PrimitiveValue::from("STUDY")));
+    obj.put(dicom_core::DataElement::new(
+        tags::QUERY_RETRIEVE_LEVEL,
+        dicom_core::VR::CS,
+        dicom_core::PrimitiveValue::from("STUDY"),
+    ));
     for tag in STUDY_RETURN_KEYS {
         obj.put(dicom_core::DataElement::new(tag, dicom_core::VR::CS, dicom_core::PrimitiveValue::Empty));
     }
@@ -398,9 +421,21 @@ fn study_query(filters: &[(Tag, String)]) -> InMemDicomObject {
 /// A series-level C-MOVE identifier (the series to retrieve).
 fn series_identifier(study: &str, series_uid: &str) -> InMemDicomObject {
     let mut obj = InMemDicomObject::new_empty();
-    obj.put(dicom_core::DataElement::new(tags::QUERY_RETRIEVE_LEVEL, dicom_core::VR::CS, dicom_core::PrimitiveValue::from("SERIES")));
-    obj.put(dicom_core::DataElement::new(tags::STUDY_INSTANCE_UID, dicom_core::VR::UI, dicom_core::PrimitiveValue::from(study)));
-    obj.put(dicom_core::DataElement::new(tags::SERIES_INSTANCE_UID, dicom_core::VR::UI, dicom_core::PrimitiveValue::from(series_uid)));
+    obj.put(dicom_core::DataElement::new(
+        tags::QUERY_RETRIEVE_LEVEL,
+        dicom_core::VR::CS,
+        dicom_core::PrimitiveValue::from("SERIES"),
+    ));
+    obj.put(dicom_core::DataElement::new(
+        tags::STUDY_INSTANCE_UID,
+        dicom_core::VR::UI,
+        dicom_core::PrimitiveValue::from(study),
+    ));
+    obj.put(dicom_core::DataElement::new(
+        tags::SERIES_INSTANCE_UID,
+        dicom_core::VR::UI,
+        dicom_core::PrimitiveValue::from(series_uid),
+    ));
     obj
 }
 
@@ -497,7 +532,10 @@ fn describe(url: &DimseUrl, obj: &InMemDicomObject) -> Option<SeriesDescriptor> 
         description: format!("{label} — {instances} instances, {size}"),
         modality,
         dims: Dims3::new(cols, rows, instances),
-        sources: vec![PathBuf::from(format!("{}?StudyInstanceUID={study_uid}&SeriesInstanceUID={series_uid}", url.base))],
+        sources: vec![PathBuf::from(format!(
+            "{}?StudyInstanceUID={study_uid}&SeriesInstanceUID={series_uid}",
+            url.base
+        ))],
         volume: None,
     })
 }
@@ -548,8 +586,9 @@ fn parse_dimse_url(text: &str) -> Result<DimseUrl, RepositoryError> {
         let (keyword, value) = pair.split_once('=').unwrap_or((pair, ""));
         let keyword = percent_decode(keyword)?;
         let value = percent_decode(value)?;
-        let tag = keyword_tag(&keyword)
-            .ok_or_else(|| RepositoryError::Unsupported(format!("{}: unknown PACS query keyword {keyword:?}", url.host)))?;
+        let tag = keyword_tag(&keyword).ok_or_else(|| {
+            RepositoryError::Unsupported(format!("{}: unknown PACS query keyword {keyword:?}", url.host))
+        })?;
         if tag == tags::STUDY_INSTANCE_UID {
             url.study_uid = Some(value.clone());
         }

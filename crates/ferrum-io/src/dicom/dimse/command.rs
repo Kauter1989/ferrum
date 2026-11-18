@@ -98,18 +98,14 @@ pub(crate) fn map_dimse_error(e: DimseError, host: &str) -> RepositoryError {
     use dicom_ul::association::Error as A;
     match e {
         DimseError::Association(a) => match a {
-            A::Connect { .. } | A::ToAddress { .. } => {
-                RepositoryError::Io(format!("{host}: DIMSE connection failed"))
-            }
+            A::Connect { .. } | A::ToAddress { .. } => RepositoryError::Io(format!("{host}: DIMSE connection failed")),
             A::Rejected { .. } => RepositoryError::Io(format!("{host}: DIMSE association rejected")),
             A::Aborted { .. } => RepositoryError::Io(format!("{host}: DIMSE association aborted")),
             A::Timeout { .. } => RepositoryError::Io(format!("{host}: DIMSE request timed out")),
             A::NoAcceptedPresentationContexts { .. } => {
                 RepositoryError::Io(format!("{host}: DIMSE association has no accepted presentation context"))
             }
-            A::ConnectionClosed { .. } => {
-                RepositoryError::Io(format!("{host}: DIMSE connection closed by peer"))
-            }
+            A::ConnectionClosed { .. } => RepositoryError::Io(format!("{host}: DIMSE connection closed by peer")),
             A::UnexpectedPdu { .. } | A::UnknownPdu { .. } => {
                 RepositoryError::Corrupt(format!("{host}: unexpected DIMSE PDU from peer"))
             }
@@ -136,13 +132,9 @@ pub(crate) fn map_dimse_error(e: DimseError, host: &str) -> RepositoryError {
         DimseError::Status { operation, code } => {
             RepositoryError::Io(format!("{host}: {operation} failed (status 0x{code:04X})"))
         }
-        DimseError::UnexpectedPdu(what) => {
-            RepositoryError::Corrupt(format!("{host}: unexpected DIMSE PDU ({what})"))
-        }
+        DimseError::UnexpectedPdu(what) => RepositoryError::Corrupt(format!("{host}: unexpected DIMSE PDU ({what})")),
         DimseError::Aborted => RepositoryError::Io(format!("{host}: DIMSE association aborted")),
-        DimseError::Missing(attr) => {
-            RepositoryError::Corrupt(format!("{host}: DIMSE message missing {attr}"))
-        }
+        DimseError::Missing(attr) => RepositoryError::Corrupt(format!("{host}: DIMSE message missing {attr}")),
         DimseError::Cancelled => RepositoryError::Cancelled,
     }
 }
@@ -185,14 +177,26 @@ pub(crate) fn cmd_data_set_type(obj: &InMemDicomObject) -> u16 {
 }
 
 /// Sends one command set as a last Command P-Data value.
-pub(crate) fn send_command<S>(assoc: &mut impl SyncAssociation<S>, pc_id: u8, obj: &InMemDicomObject) -> Result<(), DimseError>
+pub(crate) fn send_command<S>(
+    assoc: &mut impl SyncAssociation<S>,
+    pc_id: u8,
+    obj: &InMemDicomObject,
+) -> Result<(), DimseError>
 where
     S: std::io::Read + std::io::Write + CloseSocket,
 {
     let data = encode_command(obj)?;
-    SyncAssociation::send(assoc, &Pdu::PData {
-        data: vec![PDataValue { presentation_context_id: pc_id, value_type: PDataValueType::Command, is_last: true, data }],
-    })?;
+    SyncAssociation::send(
+        assoc,
+        &Pdu::PData {
+            data: vec![PDataValue {
+                presentation_context_id: pc_id,
+                value_type: PDataValueType::Command,
+                is_last: true,
+                data,
+            }],
+        },
+    )?;
     Ok(())
 }
 
@@ -208,9 +212,17 @@ where
 {
     let mut data = Vec::with_capacity(256);
     obj.write_dataset_with_ts(&mut data, ts)?;
-    SyncAssociation::send(assoc, &Pdu::PData {
-        data: vec![PDataValue { presentation_context_id: pc_id, value_type: PDataValueType::Data, is_last: true, data }],
-    })?;
+    SyncAssociation::send(
+        assoc,
+        &Pdu::PData {
+            data: vec![PDataValue {
+                presentation_context_id: pc_id,
+                value_type: PDataValueType::Data,
+                is_last: true,
+                data,
+            }],
+        },
+    )?;
     Ok(())
 }
 
@@ -261,11 +273,8 @@ where
         }
     }
     let cmd = command.ok_or(DimseError::Missing("command"))?;
-    let data = if saw_data {
-        Some(InMemDicomObject::read_dataset_with_ts(data_buf.as_slice(), data_ts)?)
-    } else {
-        None
-    };
+    let data =
+        if saw_data { Some(InMemDicomObject::read_dataset_with_ts(data_buf.as_slice(), data_ts)?) } else { None };
     Ok((cmd, data))
 }
 

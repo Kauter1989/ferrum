@@ -51,14 +51,23 @@ where
     SyncAssociation::send(
         assoc,
         &Pdu::PData {
-            data: vec![PDataValue { presentation_context_id: pc, value_type: PDataValueType::Command, is_last: true, data }],
+            data: vec![PDataValue {
+                presentation_context_id: pc,
+                value_type: PDataValueType::Command,
+                is_last: true,
+                data,
+            }],
         },
     )
     .unwrap();
 }
 
-fn send_data<S>(assoc: &mut impl SyncAssociation<S>, pc: u8, obj: &InMemDicomObject, ts: &dicom_encoding::transfer_syntax::TransferSyntax)
-where
+fn send_data<S>(
+    assoc: &mut impl SyncAssociation<S>,
+    pc: u8,
+    obj: &InMemDicomObject,
+    ts: &dicom_encoding::transfer_syntax::TransferSyntax,
+) where
     S: std::io::Read + std::io::Write + dicom_ul::association::CloseSocket,
 {
     let mut data = Vec::new();
@@ -66,14 +75,22 @@ where
     SyncAssociation::send(
         assoc,
         &Pdu::PData {
-            data: vec![PDataValue { presentation_context_id: pc, value_type: PDataValueType::Data, is_last: true, data }],
+            data: vec![PDataValue {
+                presentation_context_id: pc,
+                value_type: PDataValueType::Data,
+                is_last: true,
+                data,
+            }],
         },
     )
     .unwrap();
 }
 
 /// Reads one DIMSE message (command + optional data set).
-fn recv_msg<S>(assoc: &mut impl SyncAssociation<S>, ts: &dicom_encoding::transfer_syntax::TransferSyntax) -> (InMemDicomObject, Option<InMemDicomObject>)
+fn recv_msg<S>(
+    assoc: &mut impl SyncAssociation<S>,
+    ts: &dicom_encoding::transfer_syntax::TransferSyntax,
+) -> (InMemDicomObject, Option<InMemDicomObject>)
 where
     S: std::io::Read + std::io::Write + dicom_ul::association::CloseSocket,
 {
@@ -84,7 +101,8 @@ where
     let mut saw_data = false;
     loop {
         if let Some(cmd) = &command {
-            let no_data = cmd.get(tags::COMMAND_DATA_SET_TYPE).and_then(|e| e.to_int::<u16>().ok()).unwrap_or(0x0101) == 0x0101;
+            let no_data =
+                cmd.get(tags::COMMAND_DATA_SET_TYPE).and_then(|e| e.to_int::<u16>().ok()).unwrap_or(0x0101) == 0x0101;
             if no_data || data_complete {
                 break;
             }
@@ -96,7 +114,8 @@ where
                         PDataValueType::Command => {
                             cmd_buf.extend_from_slice(&pdv.data);
                             if pdv.is_last {
-                                command = Some(InMemDicomObject::read_dataset_with_ts(&cmd_buf[..], &cmd_ts()).unwrap());
+                                command =
+                                    Some(InMemDicomObject::read_dataset_with_ts(&cmd_buf[..], &cmd_ts()).unwrap());
                             }
                         }
                         PDataValueType::Data => {
@@ -128,17 +147,29 @@ fn echo_rsp(msgid: u16, status: u16) -> InMemDicomObject {
 
 fn find_rsp(msgid: u16, status: u16, has_data: bool) -> InMemDicomObject {
     InMemDicomObject::command_from_element_iter([
-        DataElement::new(tags::AFFECTED_SOP_CLASS_UID, VR::UI, PrimitiveValue::from(uids::STUDY_ROOT_QUERY_RETRIEVE_INFORMATION_MODEL_FIND)),
+        DataElement::new(
+            tags::AFFECTED_SOP_CLASS_UID,
+            VR::UI,
+            PrimitiveValue::from(uids::STUDY_ROOT_QUERY_RETRIEVE_INFORMATION_MODEL_FIND),
+        ),
         DataElement::new(tags::COMMAND_FIELD, VR::US, dicom_value!(U16, [0x8020])),
         DataElement::new(tags::MESSAGE_ID_BEING_RESPONDED_TO, VR::US, dicom_value!(U16, [msgid])),
-        DataElement::new(tags::COMMAND_DATA_SET_TYPE, VR::US, dicom_value!(U16, [if has_data { 0x0001 } else { 0x0101 }])),
+        DataElement::new(
+            tags::COMMAND_DATA_SET_TYPE,
+            VR::US,
+            dicom_value!(U16, [if has_data { 0x0001 } else { 0x0101 }]),
+        ),
         DataElement::new(tags::STATUS, VR::US, dicom_value!(U16, [status])),
     ])
 }
 
 fn move_rsp(msgid: u16, status: u16, remaining: u16, completed: u16) -> InMemDicomObject {
     InMemDicomObject::command_from_element_iter([
-        DataElement::new(tags::AFFECTED_SOP_CLASS_UID, VR::UI, PrimitiveValue::from(uids::STUDY_ROOT_QUERY_RETRIEVE_INFORMATION_MODEL_MOVE)),
+        DataElement::new(
+            tags::AFFECTED_SOP_CLASS_UID,
+            VR::UI,
+            PrimitiveValue::from(uids::STUDY_ROOT_QUERY_RETRIEVE_INFORMATION_MODEL_MOVE),
+        ),
         DataElement::new(tags::COMMAND_FIELD, VR::US, dicom_value!(U16, [0x8021])),
         DataElement::new(tags::MESSAGE_ID_BEING_RESPONDED_TO, VR::US, dicom_value!(U16, [msgid])),
         DataElement::new(tags::COMMAND_DATA_SET_TYPE, VR::US, dicom_value!(U16, [0x0101])),
@@ -294,7 +325,11 @@ fn handle_association(stream: TcpStream, plan: &Plan, seen: &Mutex<Vec<String>>)
     };
     // accept_called_ae_title / accept_any are type-state builders; branch to
     // establish so both yield the same ServerAssociation type.
-    let established = if plan.reject { base().accept_called_ae_title().establish(stream) } else { base().accept_any().establish(stream) };
+    let established = if plan.reject {
+        base().accept_called_ae_title().establish(stream)
+    } else {
+        base().accept_any().establish(stream)
+    };
     let mut assoc = match established {
         Ok(a) => a,
         Err(_) => return, // rejected
@@ -327,7 +362,13 @@ fn handle_association(stream: TcpStream, plan: &Plan, seen: &Mutex<Vec<String>>)
     }
 }
 
-fn do_find(assoc: &mut dicom_ul::ServerAssociation<TcpStream>, pc: u8, ts: &dicom_encoding::transfer_syntax::TransferSyntax, query: Option<&InMemDicomObject>, plan: &Plan) {
+fn do_find(
+    assoc: &mut dicom_ul::ServerAssociation<TcpStream>,
+    pc: u8,
+    ts: &dicom_encoding::transfer_syntax::TransferSyntax,
+    query: Option<&InMemDicomObject>,
+    plan: &Plan,
+) {
     let level = query
         .and_then(|q| q.get(tags::QUERY_RETRIEVE_LEVEL))
         .and_then(|e| e.to_str().ok())
@@ -343,9 +384,18 @@ fn do_find(assoc: &mut dicom_ul::ServerAssociation<TcpStream>, pc: u8, ts: &dico
     send_cmd(assoc, pc, &find_rsp(1, plan.find_status, false));
 }
 
-fn do_move(assoc: &mut dicom_ul::ServerAssociation<TcpStream>, pc: u8, ts: &dicom_encoding::transfer_syntax::TransferSyntax, plan: &Plan) {
+fn do_move(
+    assoc: &mut dicom_ul::ServerAssociation<TcpStream>,
+    pc: u8,
+    ts: &dicom_encoding::transfer_syntax::TransferSyntax,
+    plan: &Plan,
+) {
     if plan.abort_after_rq {
-        let _ = assoc.send(&Pdu::AbortRQ { source: dicom_ul::pdu::AbortRQSource::ServiceProvider(dicom_ul::pdu::AbortRQServiceProviderReason::ReasonNotSpecified) });
+        let _ = assoc.send(&Pdu::AbortRQ {
+            source: dicom_ul::pdu::AbortRQSource::ServiceProvider(
+                dicom_ul::pdu::AbortRQServiceProviderReason::ReasonNotSpecified,
+            ),
+        });
         return;
     }
     if plan.move_status == 0 && !plan.no_store {
@@ -364,7 +414,10 @@ fn send_stores(addr: SocketAddr, objects: &[InMemDicomObject]) {
     let mut assoc = ClientAssociationOptions::new()
         .calling_ae_title(CALLED_AE)
         .called_ae_title("FERRUM-SCP")
-        .with_presentation_context(uids::CT_IMAGE_STORAGE, vec![uids::EXPLICIT_VR_LITTLE_ENDIAN, uids::IMPLICIT_VR_LITTLE_ENDIAN])
+        .with_presentation_context(
+            uids::CT_IMAGE_STORAGE,
+            vec![uids::EXPLICIT_VR_LITTLE_ENDIAN, uids::IMPLICIT_VR_LITTLE_ENDIAN],
+        )
         .read_timeout(Duration::from_secs(10))
         .write_timeout(Duration::from_secs(10))
         .establish(addr)
@@ -387,7 +440,12 @@ fn send_stores(addr: SocketAddr, objects: &[InMemDicomObject]) {
 
 /// Writes the phantom series and returns its dir plus the parsed data sets
 /// (what the mock sends over C-STORE).
-fn phantom(rows: u16, cols: u16, n: u32, configure: impl Fn(&mut SyntheticSlice)) -> (tempfile::TempDir, Vec<InMemDicomObject>) {
+fn phantom(
+    rows: u16,
+    cols: u16,
+    n: u32,
+    configure: impl Fn(&mut SyntheticSlice),
+) -> (tempfile::TempDir, Vec<InMemDicomObject>) {
     let dir = tempfile::tempdir().unwrap();
     common::write_series(dir.path(), rows, cols, n, 2.5, configure);
     let mut names: Vec<_> = std::fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().path()).collect();
@@ -417,11 +475,7 @@ fn free_port() -> u16 {
 }
 
 fn store_plan(objects: Vec<InMemDicomObject>, port: u16) -> Plan {
-    Plan {
-        move_objects: objects,
-        store_addr: Some(SocketAddr::from(([127, 0, 0, 1], port))),
-        ..Default::default()
-    }
+    Plan { move_objects: objects, store_addr: Some(SocketAddr::from(([127, 0, 0, 1], port))), ..Default::default() }
 }
 
 struct CancelSink(Arc<CancelFlag>);
@@ -588,7 +642,11 @@ fn move_default_retrieves_in_memory() {
 fn move_with_no_instances_is_nothing_found() {
     // covers 32.3-a: a move that retrieves nothing
     let port = free_port();
-    let pacs = MockPacs::start(Plan { no_store: true, store_addr: Some(SocketAddr::from(([127, 0, 0, 1], port))), ..Default::default() });
+    let pacs = MockPacs::start(Plan {
+        no_store: true,
+        store_addr: Some(SocketAddr::from(([127, 0, 0, 1], port))),
+        ..Default::default()
+    });
     let repo = DicomDimseRepository::new().with_store_scp_addr(&format!("127.0.0.1:{port}"));
     let series = repo.scan(&[pacs.url(&format!("?StudyInstanceUID={STUDY_UID}"))], &NoProgress).unwrap();
     let err = repo.load(&series[0], &NoProgress).unwrap_err();
@@ -645,7 +703,11 @@ fn a_slow_server_times_out_as_io() {
 fn a_move_abort_is_an_io_error() {
     // covers 32.3-a: association abort mid-operation
     let port = free_port();
-    let pacs = MockPacs::start(Plan { abort_after_rq: true, store_addr: Some(SocketAddr::from(([127, 0, 0, 1], port))), ..Default::default() });
+    let pacs = MockPacs::start(Plan {
+        abort_after_rq: true,
+        store_addr: Some(SocketAddr::from(([127, 0, 0, 1], port))),
+        ..Default::default()
+    });
     let repo = DicomDimseRepository::new().with_store_scp_addr(&format!("127.0.0.1:{port}"));
     let series = repo.scan(&[pacs.url(&format!("?StudyInstanceUID={STUDY_UID}"))], &NoProgress).unwrap();
     let err = repo.load(&series[0], &NoProgress).unwrap_err();
@@ -656,7 +718,12 @@ fn a_move_abort_is_an_io_error() {
 fn a_move_failure_status_is_an_io_error() {
     // covers 32.3-a: move destination unknown (0xA801)
     let port = free_port();
-    let pacs = MockPacs::start(Plan { move_status: 0xA801, no_store: true, store_addr: Some(SocketAddr::from(([127, 0, 0, 1], port))), ..Default::default() });
+    let pacs = MockPacs::start(Plan {
+        move_status: 0xA801,
+        no_store: true,
+        store_addr: Some(SocketAddr::from(([127, 0, 0, 1], port))),
+        ..Default::default()
+    });
     let repo = DicomDimseRepository::new().with_store_scp_addr(&format!("127.0.0.1:{port}"));
     let series = repo.scan(&[pacs.url(&format!("?StudyInstanceUID={STUDY_UID}"))], &NoProgress).unwrap();
     let err = repo.load(&series[0], &NoProgress).unwrap_err();
