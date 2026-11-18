@@ -142,9 +142,9 @@ pub(crate) fn command_ts() -> TransferSyntax {
     entries::IMPLICIT_VR_LITTLE_ENDIAN.erased()
 }
 
-/// Looks up a negotiated transfer syntax in the registry.
-pub(crate) fn lookup_ts(uid: &str) -> Option<TransferSyntax> {
-    TransferSyntaxRegistry.get(uid).cloned()
+/// Looks up a negotiated transfer syntax in the registry (a static reference).
+pub(crate) fn lookup_ts(uid: &str) -> Option<&'static TransferSyntax> {
+    TransferSyntaxRegistry.get(uid)
 }
 
 /// Serialises a command set into bytes (Implicit VR Little Endian).
@@ -180,7 +180,7 @@ where
     S: std::io::Read + std::io::Write + CloseSocket,
 {
     let data = encode_command(obj)?;
-    assoc.send(&Pdu::PData {
+    SyncAssociation::send(assoc, &Pdu::PData {
         data: vec![PDataValue { presentation_context_id: pc_id, value_type: PDataValueType::Command, is_last: true, data }],
     })?;
     Ok(())
@@ -198,7 +198,7 @@ where
 {
     let mut data = Vec::with_capacity(256);
     obj.write_dataset_with_ts(&mut data, ts)?;
-    assoc.send(&Pdu::PData {
+    SyncAssociation::send(assoc, &Pdu::PData {
         data: vec![PDataValue { presentation_context_id: pc_id, value_type: PDataValueType::Data, is_last: true, data }],
     })?;
     Ok(())
@@ -225,7 +225,7 @@ where
                 break;
             }
         }
-        match assoc.receive()? {
+        match SyncAssociation::receive(assoc)? {
             Pdu::PData { data } => {
                 for pdv in data {
                     match pdv.value_type {

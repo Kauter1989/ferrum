@@ -20,11 +20,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use dicom_dictionary_std::{tags, uids};
-use dicom_encoding::transfer_syntax::TransferSyntaxIndex;
 use dicom_object::mem::InMemDicomObject;
 use dicom_object::{FileDicomObject, FileMetaTableBuilder};
 use dicom_transfer_syntax_registry::TransferSyntaxRegistry;
-use dicom_ul::association::{Association, ServerAssociationOptions};
+use dicom_ul::association::ServerAssociationOptions;
 use dicom_ul::pdu::{PDataValue, PDataValueType, Pdu};
 use dicom_ul::ServerAssociation;
 use ferrum_domain::RepositoryError;
@@ -268,7 +267,7 @@ fn on_instance(
         .map(|pc| pc.transfer_syntax.clone())
         .ok_or(DimseError::Missing("presentation context"))?;
     let ts = command::lookup_ts(&ts_uid).ok_or(DimseError::Missing("transfer syntax"))?;
-    let obj = InMemDicomObject::read_dataset_with_ts(state.instance_buffer.as_slice(), &ts)?;
+    let obj = InMemDicomObject::read_dataset_with_ts(state.instance_buffer.as_slice(), ts)?;
     let file_obj = build_file_object(obj, &ts_uid)?;
     if let Some(dir) = receive_dir {
         let name = format!("{}.dcm", state.sop_instance.trim_end_matches('\0'));

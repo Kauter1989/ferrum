@@ -31,7 +31,6 @@ use dicom_dictionary_std::{tags, uids};
 use dicom_object::mem::InMemDicomObject;
 use dicom_object::FileDicomObject;
 use dicom_ul::association::client::ClientAssociationOptions;
-use dicom_ul::association::Association;
 use dicom_ul::ClientAssociation;
 use ferrum_domain::{
     Dims3, LoadedSeries, ProgressSink, RepositoryError, SeriesDescriptor, SeriesMetadata, VolumeRepository,
@@ -192,7 +191,7 @@ impl DicomDimseRepository {
             .called_ae_title(url.called_ae.clone())
             .with_presentation_context(
                 abstract_syntax,
-                vec![uids::EXPLICIT_VR_LITTLE_ENDIAN.to_string(), uids::IMPLICIT_VR_LITTLE_ENDIAN.to_string()],
+                vec![uids::EXPLICIT_VR_LITTLE_ENDIAN, uids::IMPLICIT_VR_LITTLE_ENDIAN],
             )
             .max_pdu_length(MAX_PDU)
             .read_timeout(self.timeout)
@@ -214,14 +213,14 @@ impl DicomDimseRepository {
         let pc = assoc.presentation_contexts().first().cloned().ok_or(DimseError::Missing("presentation context"))?;
         let ts = lookup_ts(&pc.transfer_syntax).ok_or(DimseError::Missing("transfer syntax"))?;
         send_command(&mut assoc, pc.id, &find_request(uids::STUDY_ROOT_QUERY_RETRIEVE_INFORMATION_MODEL_FIND, 1))?;
-        send_dataset(&mut assoc, pc.id, query, &ts)?;
+        send_dataset(&mut assoc, pc.id, query, ts)?;
         let mut results = Vec::new();
         loop {
             if progress.is_cancelled() {
                 let _ = assoc.abort();
                 return Err(DimseError::Cancelled);
             }
-            let (rsp, data) = receive_message(&mut assoc, &ts)?;
+            let (rsp, data) = receive_message(&mut assoc, ts)?;
             match cmd_status(&rsp) {
                 STATUS_SUCCESS => break,
                 STATUS_PENDING | STATUS_PENDING_WARNING => {
@@ -254,13 +253,13 @@ impl DicomDimseRepository {
         let ts = lookup_ts(&pc.transfer_syntax).ok_or(DimseError::Missing("transfer syntax"))?;
         send_command(&mut assoc, pc.id, &move_request(uids::STUDY_ROOT_QUERY_RETRIEVE_INFORMATION_MODEL_MOVE, &self.move_ae(), 1))?;
         let query = series_identifier(study, series_uid);
-        send_dataset(&mut assoc, pc.id, &query, &ts)?;
+        send_dataset(&mut assoc, pc.id, &query, ts)?;
         loop {
             if progress.is_cancelled() {
                 let _ = assoc.abort();
                 return Err(DimseError::Cancelled);
             }
-            let (rsp, _) = receive_message(&mut assoc, &ts)?;
+            let (rsp, _) = receive_message(&mut assoc, ts)?;
             match cmd_status(&rsp) {
                 STATUS_SUCCESS => break,
                 STATUS_PENDING | STATUS_PENDING_WARNING => {
@@ -421,8 +420,8 @@ fn apply_filters(obj: &mut InMemDicomObject, filters: &[(Tag, String)]) {
 
 /// C-MOVE progress from the sub-operation counts of a pending response.
 fn move_progress(rsp: &InMemDicomObject) -> f32 {
-    let completed = header::int_of(rsp, tags::NUMBER_OF_COMPLETED_SUB_OPERATIONS).unwrap_or(0).max(0) as f32;
-    let remaining = header::int_of(rsp, tags::NUMBER_OF_REMAINING_SUB_OPERATIONS).unwrap_or(0).max(0) as f32;
+    let completed = header::int_of(rsp, tags::NUMBER_OF_COMPLETED_SUBOPERATIONS).unwrap_or(0).max(0) as f32;
+    let remaining = header::int_of(rsp, tags::NUMBER_OF_REMAINING_SUBOPERATIONS).unwrap_or(0).max(0) as f32;
     let total = completed + remaining;
     if total > 0.0 {
         (completed / total).clamp(0.0, 0.95)
