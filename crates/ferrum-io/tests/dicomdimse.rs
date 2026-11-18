@@ -495,7 +495,7 @@ fn echo_verifies_the_association() {
     // covers 32.3-a: C-ECHO ok
     let pacs = MockPacs::start(Plan::default());
     let repo = DicomDimseRepository::new();
-    repo.echo(&pacs.url("").to_str().unwrap()).unwrap();
+    repo.echo(pacs.url("").to_str().unwrap()).unwrap();
     assert!(pacs.seen().iter().any(|s| s == "cmd=0x0030"), "{:?}", pacs.seen());
 }
 
@@ -504,7 +504,7 @@ fn echo_failure_status_is_an_io_error() {
     // covers 32.3-a: C-ECHO fail (non-success status)
     let pacs = MockPacs::start(Plan { echo_status: 0x0122, ..Default::default() });
     let repo = DicomDimseRepository::new();
-    let err = repo.echo(&pacs.url("").to_str().unwrap()).unwrap_err();
+    let err = repo.echo(pacs.url("").to_str().unwrap()).unwrap_err();
     assert!(matches!(err, RepositoryError::Io(_)), "{err}");
     assert!(err.to_string().contains("C-ECHO"), "{err}");
 }
@@ -684,7 +684,7 @@ fn association_rejection_is_an_io_error() {
     let err = repo.scan(&[pacs.url(&format!("?StudyInstanceUID={STUDY_UID}"))], &NoProgress).unwrap_err();
     assert!(matches!(err, RepositoryError::Io(_)), "{err}");
     assert!(err.to_string().contains("rejected"), "{err}");
-    let err = repo.echo(&pacs.url("").to_str().unwrap()).unwrap_err();
+    let err = repo.echo(pacs.url("").to_str().unwrap()).unwrap_err();
     assert!(matches!(err, RepositoryError::Io(_)), "{err}");
 }
 
@@ -694,7 +694,7 @@ fn a_slow_server_times_out_as_io() {
     let pacs = MockPacs::start(Plan { delay: Duration::from_millis(1500), ..Default::default() });
     let repo = DicomDimseRepository::new().with_timeout(Duration::from_millis(200));
     let start = std::time::Instant::now();
-    let err = repo.echo(&pacs.url("").to_str().unwrap()).unwrap_err();
+    let err = repo.echo(pacs.url("").to_str().unwrap()).unwrap_err();
     assert!(matches!(err, RepositoryError::Io(_)), "{err}");
     assert!(start.elapsed() < Duration::from_secs(5), "must not hang");
 }
