@@ -1003,6 +1003,32 @@ that says so instead of editing the old one.
   and admin-merge only on their word, noting the environmental block in the PR.
   A failed assertion remains a real defect (L33), not this flake.
 
+### L52 — WSL idle-shutdown killed three preflight runs; a reused target dir ICE'd (2026-11, Stage 32 PR 1)
+
+- **Symptom:** The full preflight in the WSL worktree died mid-build three
+  times: a background `wsl … | Tee` job stopped after ~11 min, a
+  `setsid nohup … &` child died instantly, and a `systemd-run` transient unit
+  was "Stopping … Deactivated successfully" 18 s after it started. Each time
+  `uptime` showed the distro freshly booted. Separately, reusing another
+  branch's `CARGO_TARGET_DIR` produced `internal compiler error: encountered
+  incremental compilation error with type_of(gpu_parity…)` on ferrum-render.
+- **Root cause:** (1) WSL2 idle-shuts-down the VM ~15 s after the **last
+  `wsl.exe` session ends**, and on this machine that stops even running
+  systemd units and detached children — a background build is only safe
+  while a Windows-side `wsl` session stays open. (2) Incremental artifacts
+  are keyed to the compiling crate's source path/branch; a target dir built
+  for another worktree can carry stale incremental state that panics rustc.
+- **Fix:** ran the preflight as `wsl -e bash <script>` inside a held-open
+  background job (the session keeps the VM alive); cleared
+  `target/debug/incremental` before reusing a foreign target dir. Both are
+  environmental, not FERRUM defects.
+- **Guard:** a long WSL build runs in a foreground-of-a-background-job `wsl`
+  session, never detached/systemd-only; when reusing a target dir across
+  branches, delete `debug/incremental` first. A build that dies with the
+  distro freshly booted (`uptime` ≈ 0) is the idle-shutdown, not the code.
+- **Rule:** Keep a WSL session open for the whole build; the VM does not
+  survive the last session closing, whatever the process tree looks like.
+
 ## What worked
 
 ### W1 — Field test on the user's GPU with a throw-away script (2026-10, Stage 17)
