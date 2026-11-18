@@ -194,6 +194,43 @@ Rust, no weights bundled (constitution).
 - **Agent integration:** the command gains the option with a JSON Schema,
   `commands.json`, docs and contract tests (CLI = MCP); the privacy scan passes.
 
+### As built (PR 3)
+
+- **Variant A — the orchestration lives in `ferrum-io`** (ADR 0018: the agent
+  does not link `ferrum-app`; the `Exporter` port is planned, today the DICOM
+  SEG/SR export is called directly, the existing pattern in
+  `ferrum-agent/commands/export.rs`). `DicomExportOptions.deid:
+  Option<ProfileOptions>` carries the profile; `DicomExporter::new` overrides
+  the copy flags (the objects are built with the source's own identifiers,
+  dates and UIDs) and `write_object` de-identifies each object before writing
+  (`deidentify_file`), the profile the **sole privacy gate**. The agent/CLI
+  stay thin: `export bundle --deidentify basic [--deid-option …]` parses the
+  options into `ProfileOptions` and passes them down; an unknown profile or
+  option is refused.
+- **File Meta Information replacement** (E.1.1 item 7) is `deidentify_file`'s
+  responsibility (deid.rs): the media storage SOP class/instance UIDs follow
+  the de-identified data set, the implementation identity becomes FERRUM's
+  (a stable `2.25` derivation), the source's application entity titles and
+  private meta information are removed (the titles kept only under *Retain
+  Device Identity*); the transfer syntax and meta version are kept.
+- **D-on-sequence fix:** the engine's `D` branch for a sequence used to collapse
+  it to one empty item, which destroyed an exported SR `ContentSequence`
+  (`(0040,A730)=D`). PS3.15 Note 2.1 — the action applies to the sequence *and
+  all of its contents* — so `D` now recurses, keeping the structure
+  (`apply_sequence`, deid.rs). Regression: a D sequence keeps every item and
+  de-identifies its contents; the export test checks the SR ContentSequence
+  survives.
+- **Oracle diff** (`scripts/test_deid_oracle.py`, `# covers 31.4-a/b`): a
+  synthetic DICOM series (run time, no patient data) is de-identified by FERRUM
+  (`export bundle --deidentify basic`) and by **pydicom/deid** with a recipe
+  expressing the Basic Profile core actions; the test pins the agreement on the
+  core identifiers (PatientName anonymised, PatientID/BirthDate/Accession/
+  Institution/ReferringPhysician removed) and names the documented difference
+  (FERRUM's default also zeroes StudyDate and removes PatientAge, which a
+  minimal deid recipe keeps). Skips without `deid` or a built `ferrum-cli`. The
+  **RSNA/CTP** anonymizer (Java) is a best-effort follow-up; the deid oracle
+  covers the core.
+
 ## PR split (size L/XL, confirmed at G2)
 
 | PR | What | Criteria |
