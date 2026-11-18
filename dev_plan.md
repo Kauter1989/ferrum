@@ -1164,7 +1164,7 @@ patient data — the dashboard holds only plan and code metadata.
 
 ---
 
-## Stage 31 — DICOM de-identification: PS3.15 Basic Profile and Clean Pixel Data (#75) 🚧 (stage, gated; G1 approved 2026-11-17)
+## Stage 31 — DICOM de-identification: PS3.15 Basic Profile and Clean Pixel Data (#75) ✅ (stage, gated; PRs #132, #133, #134 merged)
 
 ([#75](https://github.com/Kauter1989/ferrum/issues/75); P2). **Design:**
 [docs/deidentification.md](docs/deidentification.md),
@@ -1211,7 +1211,59 @@ profile — pseudonymisation of its sidecar is separate); any change to the
 |---|---|---|---|---|
 | 31.T1 | Basic Profile engine + Table E.1-1 generator + options | 31.1-a…d, 31.2-a…b | 1 | ✅ merged (#132) |
 | 31.T2 | Clean Pixel Data masking + masked renders (+ OCR bridge) | 31.3-a…c | 2 | ✅ merged (#133) |
-| 31.T3 | pydicom/deid + CTP oracles; export/agent integration | 31.4-a…b, 31.5-a…b | 3 | 🚧 |
+| 31.T3 | pydicom/deid + CTP oracles; export/agent integration | 31.4-a…b, 31.5-a…b | 3 | ✅ |
+
+---
+
+## Stage 32 — DICOMweb and DIMSE: QIDO/WADO/STOW client and C-FIND/C-MOVE/C-ECHO (#76) 📋 (stage, gated)
+
+([#76](https://github.com/Kauter1989/ferrum/issues/76); P2, for the harness's
+Demo 8 hand-off). Real sites keep studies in a PACS; Medical Harness needs to
+open studies from a PACS and hand SEG/SR results back. The Rust ecosystem has no
+mature DICOMweb client (`dicom-web` 0.6, `dicomweb-client` 0.1). Network- and
+privacy-sensitive: G1 before any code.
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 32.1 | As a **clinician**, I want to open a study from a PACS so that I can read studies the site keeps in its archive. | [32.1-a] A `VolumeRepository` over **QIDO-RS** (query studies/series) and **WADO-RS** (retrieve metadata + frames) in `ferrum-io` on dicom-rs: `scan` queries, `load` retrieves and reorients into the canonical LPS grid like the file readers. [32.1-b] A retrieved study opens and renders through the existing viewer; the pixel values match the source (a pinned phantom retrieved from Orthanc). [32.1-c] Connection errors, auth (basic/bearer), timeouts and a non-DICOM response are reported as `RepositoryError`, never a panic; a query that returns nothing is `NothingFound`. |
+| 32.2 | As a **clinician**, I want to hand a SEG/SR back to the PACS so that the result reaches the site's archive. | [32.2-a] **STOW-RS** stores a de-identified SEG/SR export (Stage 31) to the PACS; the response is checked (success/warning/failure per instance). [32.2-b] STOW is **host-only, never an agent command** (it sends data off the workstation); the host calls it from a person's explicit action. |
+| 32.3 | As a **harness developer**, I want DIMSE so that a classic PACS (no DICOMweb) is reachable. | [32.3-a] **C-FIND** (query), **C-MOVE** (retrieve) and **C-ECHO** (verify) through `dicom-ul`; a C-MOVE receives the study into the workspace via a C-STORE SCP. [32.3-b] C-MOVE/C-STORE send data off the workstation → **host-only, not agent commands**; C-ECHO/C-FIND (read-only) may be agent commands. |
+| 32.4 | As a **harness developer**, I want agent query/retrieve so that the harness can open a PACS study, without leaking identifiers. | [32.4-a] Agent commands for **query and retrieve only** (QIDO/WADO, C-FIND/C-ECHO); a JSON Schema, `commands.json`, docs and contract tests (CLI = MCP). [32.4-b] A query returns **pseudonymised ids** (no patient name/ID/birth date/accession in the output); the privacy scan passes. STOW/C-MOVE/C-STORE are absent from the command set. |
+| 32.5 | As a **maintainer**, I want integration tests against a real PACS so that the client is checked, not asserted. | [32.5-a] **Orthanc in Docker** as the test PACS (its DICOMweb plugin is **AGPL** → a separate service, never linked — constitution licences); CI integration tests: query, retrieve, open; STOW of a SEG; **highdicom** validates what comes back. [32.5-b] The tests generate their DICOM at run time (a phantom), commit no patient data, and skip gracefully when Docker/Orthanc is unavailable (local), running in CI where the service is up. |
+
+**Success metrics:** a phantom study queried → retrieved → opened from Orthanc
+with matching pixels; a STOW'd SEG validated by highdicom; the privacy scan over
+every query output passes; the agent command set excludes every send-off command.
+
+**Out of scope:** a PACS server implementation; TLS termination beyond the
+client's HTTPS support; WADO-URI (legacy) beyond a fallback if trivial; any
+change to the rendering rule (the client feeds the existing reader/viewer).
+
+**Clarifications (assumed, for G1):**
+- assumed: built on dicom-rs (`dicom-web` for QIDO/WADO/STOW, `dicom-ul` for
+  DIMSE, `dicom-object`); the client lives in `ferrum-io` (the only data crate),
+  a `VolumeRepository` impl beside the file readers.
+- assumed: **Orthanc's DICOMweb plugin is AGPL** and runs as a separate Docker
+  service in CI, never linked into FERRUM (licence constitution). highdicom
+  (MIT) validates the STOW result in the Python test layer.
+- assumed: **send-off operations (STOW, C-MOVE, C-STORE) are host-only**, called
+  from a person's action, never agent commands (privacy/safety hard stop);
+  query/retrieve (read-only) are agent commands with pseudonymised output.
+- assumed: this is a **gated stage** (network + privacy hard stop): G1 spec → G2
+  design (a new ADR for the PACS client + the send-off boundary) → per-PR G3.
+- assumed: PR split (size XL, confirmed at G2): (1) QIDO/WADO `VolumeRepository`
+  + open (32.1); (2) DIMSE C-FIND/C-MOVE/C-ECHO (32.3); (3) STOW + agent
+  query/retrieve commands + privacy (32.2, 32.4); (4) Orthanc CI integration +
+  highdicom validation (32.5).
+
+### Implementation
+
+| Task | What | Criteria | PR | State |
+|---|---|---|---|---|
+| 32.T1 | QIDO/WADO VolumeRepository + open | 32.1-a…c | 1 | |
+| 32.T2 | DIMSE C-FIND/C-MOVE/C-ECHO | 32.3-a…b | 2 | |
+| 32.T3 | STOW + agent query/retrieve + privacy | 32.2-a…b, 32.4-a…b | 3 | |
+| 32.T4 | Orthanc CI integration + highdicom | 32.5-a…b | 4 | |
 
 ---
 
