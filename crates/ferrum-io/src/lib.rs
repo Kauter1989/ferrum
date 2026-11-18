@@ -2,7 +2,8 @@
 //!
 //! Data layer of the viewer. Implements the domain port
 //! [`ferrum_domain::VolumeRepository`] for DICOM (via `dicom-rs`, all common
-//! transfer syntaxes including JPEG, JPEG 2000 and RLE) and NIfTI-1.
+//! transfer syntaxes including JPEG, JPEG 2000 and RLE), NIfTI-1 and
+//! DICOMweb (QIDO-RS/WADO-RS via `dicom-web`, [design](../../docs/dicomweb.md)).
 //!
 //! Loading is parallel end to end: headers are parsed concurrently (stopping
 //! before pixel data), slices are grouped into series and ordered by their
@@ -26,6 +27,7 @@ use std::path::PathBuf;
 use ferrum_domain::{LoadedSeries, ProgressSink, RepositoryError, SeriesDescriptor, VolumeRepository};
 
 pub use annotations::{annotation_report_json, annotations_from_json, read_annotations, write_annotation_report};
+pub use dicom::web::DicomWebRepository;
 pub use dicom::DicomRepository;
 pub use engine_inputs::EngineInput;
 pub use error::IoError;
@@ -44,7 +46,13 @@ pub struct CompositeRepository {
 
 impl Default for CompositeRepository {
     fn default() -> Self {
-        Self { repositories: vec![Box::new(DicomRepository), Box::new(NiftiRepository)] }
+        Self {
+            repositories: vec![
+                Box::new(DicomRepository),
+                Box::new(NiftiRepository),
+                Box::new(DicomWebRepository::new()),
+            ],
+        }
     }
 }
 

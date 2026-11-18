@@ -60,6 +60,12 @@ dicom-object = "0.10"
 dicom-pixeldata = { version = "0.10", features = ["openjp2"] }
 dicom-dictionary-std = "0.10"
 dicom-core = "0.10"
+dicom-web = "0.6"
+# dicom-web's reqwest uses rustls with the aws-lc-rs provider; prebuilt NASM
+# objects keep Windows builds working without a NASM install (docs/dicomweb.md).
+aws-lc-rs = { version = "1", default-features = false, features = ["prebuilt-nasm"] }
+tokio = { version = "1", default-features = false, features = ["rt", "net", "time"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 proptest = "1"
 criterion = { version = "0.5", default-features = false }
 approx = "0.5"

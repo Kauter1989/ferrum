@@ -18,6 +18,18 @@ use crate::nifti::Reorientation;
 /// (Modality LUT applied). Colour images are converted to luminance.
 pub fn decode_frames(path: &Path, frames: &[u32]) -> Result<Vec<Vec<f32>>, IoError> {
     let obj = dicom_object::open_file(path).map_err(|e| IoError::parse(path, e))?;
+    decode_object_frames(&obj, frames, path)
+}
+
+/// Decodes the requested `frames` of an already parsed object — a file just
+/// opened or an instance retrieved over DICOMweb — into physical values
+/// (Modality LUT applied). Colour images are converted to luminance.
+/// `path` names the source in errors only.
+pub fn decode_object_frames(
+    obj: &dicom_object::FileDicomObject<dicom_object::mem::InMemDicomObject>,
+    frames: &[u32],
+    path: &Path,
+) -> Result<Vec<Vec<f32>>, IoError> {
     let decoded = obj.decode_pixel_data().map_err(|e| IoError::decode(path, e))?;
     let spp = usize::from(decoded.samples_per_pixel().max(1));
     frames
@@ -35,14 +47,31 @@ pub fn decode_frames(path: &Path, frames: &[u32]) -> Result<Vec<Vec<f32>>, IoErr
         .collect()
 }
 
-/// Builds a volume from ordered planes.
-///
-/// Decoding runs in parallel over files. Progress is reported per decoded
-/// plane; cancellation is checked before each file.
+/// Builds a volume from ordered planes, decoding each file's frames from
+/// disk. See [`assemble_with`] for the shared pipeline.
 pub fn assemble(
     headers: &[SliceHeader],
     ordered: &OrderedSeries,
     progress: &dyn ProgressSink,
+) -> Result<Volume, IoError> {
+    assemble_with(headers, ordered, progress, |i, frames| decode_frames(&headers[i].path, frames))
+}
+
+/// Builds a volume from ordered planes.
+///
+/// `decode(header_index, frames)` produces the physical values of the
+/// requested frames of one source: from disk for the file reader, from the
+/// retrieved objects for the DICOMweb reader. Everything else — ordering,
+/// the lossless HU grid, the LPS reorientation — is one implementation for
+/// every source.
+///
+/// Decoding runs in parallel over sources. Progress is reported per decoded
+/// plane; cancellation is checked before each source.
+pub fn assemble_with(
+    headers: &[SliceHeader],
+    ordered: &OrderedSeries,
+    progress: &dyn ProgressSink,
+    decode: impl Fn(usize, &[u32]) -> Result<Vec<Vec<f32>>, IoError> + Sync,
 ) -> Result<Volume, IoError> {
     let first = headers.first().ok_or_else(|| IoError::Inconsistent("series has no slices".into()))?;
     let (w, h) = (first.columns, first.rows);
@@ -56,7 +85,7 @@ pub fn assemble(
         progress.report(d as f32 / n as f32, "Decoding pixel data");
     };
 
-    // Each file is decoded once, with all of its frames the series uses.
+    // Each source is decoded once, with all of its frames the series uses.
     let mut by_file: BTreeMap<usize, Vec<(usize, u32)>> = BTreeMap::new();
     for (slot, p) in ordered.planes.iter().enumerate() {
         by_file.entry(p.header).or_default().push((slot, p.frame));
@@ -69,7 +98,7 @@ pub fn assemble(
             }
             let path = &headers[header].path;
             let frames: Vec<u32> = wanted.iter().map(|&(_, f)| f).collect();
-            let out = decode_frames(path, &frames)?;
+            let out = decode(header, &frames)?;
             if out.len() != wanted.len() {
                 return Err(IoError::invalid(path, "not every frame decoded"));
             }
