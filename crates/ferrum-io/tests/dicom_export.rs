@@ -198,6 +198,7 @@ fn segmentation_and_report_with_source_references() {
         uid_salt: "s".into(),
         software_version: "0.2.0".into(),
         series_id: SERIES_UID.into(),
+        deid: None,
     };
     let exporter = DicomExporter::new(Some(&source), &opts);
     assert_eq!(exporter.study_uid(), STUDY_UID);

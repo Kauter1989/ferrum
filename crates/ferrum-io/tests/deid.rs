@@ -284,6 +284,27 @@ fn nested_attributes_inside_sequences_are_protected() {
     assert_ne!(str_at(&items[0], tags::PATIENT_ID), "NESTED-ID-999");
 }
 
+// covers 31.1-b / 31.5-a — a D-action sequence (e.g. the SR ContentSequence,
+// (0040,A730)=D) keeps every item and de-identifies its contents recursively
+// (PS3.15 Note 2.1); it is never collapsed to one empty item, which would
+// destroy an exported SR ContentSequence.
+#[test]
+fn a_d_sequence_keeps_its_items_and_deidentifies_contents() {
+    let mut obj = InMemDicomObject::from_element_iter([DataElement::new(
+        tags::CONTENT_SEQUENCE,
+        VR::SQ,
+        DataSetSequence::from(vec![nested_item(), nested_item()]),
+    )]);
+    deidentify(&mut obj, &Profile::default(), &mut UidMap::new(SALT));
+    let items = obj.element(tags::CONTENT_SEQUENCE).unwrap().items().unwrap();
+    assert_eq!(items.len(), 2, "a D sequence keeps every item, never one empty item");
+    for it in items {
+        assert!(it.iter().next().is_some(), "the item keeps its de-identified contents");
+        assert_eq!(str_at(it, tags::PATIENT_NAME), "ANONYMOUS");
+        assert_ne!(str_at(it, tags::PATIENT_ID), "NESTED-ID-999");
+    }
+}
+
 // covers 31.1-c — UIDs map stably within a run and reuse the export derivation.
 #[test]
 fn uids_are_consistent_within_a_run() {
