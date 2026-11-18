@@ -266,15 +266,31 @@ fn on_instance(
     let obj = InMemDicomObject::read_dataset_with_ts(state.instance_buffer.as_slice(), ts)?;
     let file_obj = build_file_object(obj, &ts_uid)?;
     if let Some(dir) = receive_dir {
-        let name = format!("{}.dcm", state.sop_instance.trim_end_matches('\0'));
-        if let Err(e) = file_obj.write_to_file(dir.join(name)) {
-            log::warn!("C-STORE SCP could not write received instance: {e}");
+        match safe_instance_name(&state.sop_instance) {
+            Some(name) => {
+                if let Err(e) = file_obj.write_to_file(dir.join(name)) {
+                    log::warn!("C-STORE SCP could not write received instance: {e}");
+                }
+            }
+            None => log::warn!("C-STORE SCP received a non-UID SOP Instance UID; kept in memory, not written to disk"),
         }
     }
     received.lock().unwrap_or_else(|e| e.into_inner()).push(file_obj);
     let rsp = store_response(state.msgid, &state.sop_class, &state.sop_instance);
     command::send_command(association, pc_id, &rsp)?;
     Ok(())
+}
+
+/// A received SOP Instance UID used as a file name must be UID-shaped (digits
+/// and dots): the move source controls it, so a crafted `../../evil` must not
+/// write patient data outside the receive directory (path traversal). A
+/// non-UID name yields `None` — the instance stays in memory, nothing is written.
+fn safe_instance_name(sop_instance: &str) -> Option<String> {
+    let uid = sop_instance.trim_end_matches('\0').trim();
+    if uid.is_empty() || uid.contains("..") || !uid.bytes().all(|b| b.is_ascii_digit() || b == b'.') {
+        return None;
+    }
+    Some(format!("{uid}.dcm"))
 }
 
 /// Wraps a received data set with the Part 10 file meta information.
@@ -293,4 +309,23 @@ fn build_file_object(obj: InMemDicomObject, ts_uid: &str) -> Result<FileDicomObj
 /// Reads a string command attribute, or a [`DimseError::Missing`].
 fn cmd_str(obj: &InMemDicomObject, tag: dicom_core::Tag, name: &'static str) -> Result<String, DimseError> {
     Ok(obj.get(tag).ok_or(DimseError::Missing(name))?.to_str().map_err(|_| DimseError::Missing(name))?.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // covers 32.3-a — a received SOP Instance UID is only used as a file name
+    // when UID-shaped; a crafted path-traversal UID writes nothing (review S1).
+    #[test]
+    fn a_crafted_sop_instance_uid_is_not_a_file_name() {
+        assert_eq!(safe_instance_name("1.2.840.113619.2.55.3.123"), Some("1.2.840.113619.2.55.3.123.dcm".to_string()));
+        assert_eq!(safe_instance_name("1.2.3\0"), Some("1.2.3.dcm".to_string()));
+        assert_eq!(safe_instance_name("../../evil"), None, "path traversal refused");
+        assert_eq!(safe_instance_name("1.2/3"), None);
+        assert_eq!(safe_instance_name("1.2\\3"), None);
+        assert_eq!(safe_instance_name(".."), None);
+        assert_eq!(safe_instance_name(""), None);
+        assert_eq!(safe_instance_name("abc"), None, "not UID-shaped");
+    }
 }
