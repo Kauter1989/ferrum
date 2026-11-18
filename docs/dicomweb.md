@@ -220,6 +220,21 @@ licence-checked by `cargo deny check licenses` in CI. `tiny_http` (already a
 workspace dependency) serves the mock PACS in tests — no new async test
 stack.
 
+**Native build.** `dicom-web`'s reqwest uses rustls with the **aws-lc-rs**
+provider, so `aws-lc-sys` compiles AWS-LC from C/assembly on every platform
+(the workspace's `ureq` uses rustls-with-ring; this adds a second, larger
+native crypto build). On Linux/WSL and CI it builds cleanly. On the dev
+Windows machine the `aws-lc-sys` C build fails under cargo with MSVC
+`D8050` while the *identical* `cl.exe` command succeeds from a `cmd` prompt
+— Kaspersky interfering with cargo's child processes (the L39 family, which
+already blocks `cargo test` there), on an old MSVC 14.33 toolchain. Build
+and test in WSL (as the rest of the project does); a Windows desktop build
+likely needs the build directories excluded from Kaspersky or a newer MSVC
+(neither verified here). The `prebuilt-nasm` feature removes the separate
+NASM requirement for the assembly step. This is an environment constraint,
+not a client defect; it is recorded here so the dependency's cost is
+visible.
+
 ## 7. PR split (Stage 32, size XL → four PRs)
 
 | PR | What | Criteria |
