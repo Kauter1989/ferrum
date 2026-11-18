@@ -233,7 +233,10 @@ likely needs the build directories excluded from Kaspersky or a newer MSVC
 (neither verified here). The `prebuilt-nasm` feature removes the separate
 NASM requirement for the assembly step. This is an environment constraint,
 not a client defect; it is recorded here so the dependency's cost is
-visible.
+visible. **Decision (2026-11-18, user):** accept the WSL-only build constraint
+(consistent with L39); a ring-based transport (fork `dicom-web` or a ureq-based
+client) to remove `aws-lc-rs` and restore the Windows build is a possible
+follow-up, not pursued now.
 
 ## 7. PR split (Stage 32, size XL → four PRs)
 

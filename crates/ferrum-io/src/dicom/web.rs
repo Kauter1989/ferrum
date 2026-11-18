@@ -487,7 +487,7 @@ fn parse_retrieval_url(text: &str) -> Result<RetrievalTarget, RepositoryError> {
     let (host, path) = split_authority(rest, text).map_err(|_| bad())?;
     let (root, tail) = path.split_once("/studies/").ok_or_else(bad)?;
     let (study, series) = tail.split_once("/series/").ok_or_else(bad)?;
-    if study.is_empty() || series.is_empty() || series.contains('/') {
+    if study.is_empty() || series.is_empty() || study.contains('/') || series.contains('/') {
         return Err(bad());
     }
     Ok(RetrievalTarget {
@@ -527,14 +527,16 @@ fn map_web_error(e: DicomWebError, host: &str) -> RepositoryError {
         | DicomWebError::UnexpectedContentType { .. }
         | DicomWebError::MissingContentTypeHeader
         | DicomWebError::ContentTypeParseFailed { .. } => {
-            RepositoryError::Corrupt(format!("{host}: PACS response is not DICOM JSON: {e}"))
+            RepositoryError::Corrupt(format!("{host}: PACS response is not DICOM JSON"))
         }
         DicomWebError::MultipartReaderFailed { .. }
         | DicomWebError::UnexpectedMultipartType { .. }
         | DicomWebError::DicomReaderFailed { .. } => {
-            RepositoryError::Corrupt(format!("{host}: PACS response is not DICOM: {e}"))
+            RepositoryError::Corrupt(format!("{host}: PACS response is not DICOM"))
         }
-        DicomWebError::Other { message } => RepositoryError::Io(format!("{host}: {message}")),
+        // The message is dropped: a future dicom-web Display could carry request
+        // detail; the host and the failure kind are all a repository error names.
+        DicomWebError::Other { .. } => RepositoryError::Io(format!("{host}: PACS request failed")),
     }
 }
 
