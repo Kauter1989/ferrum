@@ -1265,7 +1265,7 @@ change to the rendering rule (the client feeds the existing reader/viewer).
 | Task | What | Criteria | PR | State |
 |---|---|---|---|---|
 | 32.T1 | QIDO/WADO VolumeRepository + open | 32.1-a…c | 1 | 🚧 code complete (feat/32-dicomweb-client), preflight green; G3 pending |
-| 32.T2 | DIMSE C-FIND/C-MOVE/C-ECHO | 32.3-a…b | 2 | |
+| 32.T2 | DIMSE C-FIND/C-MOVE/C-ECHO | 32.3-a…b | 2 | 🚧 code complete (feat/32-dimse), preflight green (WSL); G3 pending |
 | 32.T3 | STOW + agent query/retrieve + privacy | 32.2-a…b, 32.4-a…b | 3 | |
 | 32.T4 | Orthanc CI integration + highdicom | 32.5-a…b | 4 | |
 

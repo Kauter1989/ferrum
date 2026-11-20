@@ -353,7 +353,7 @@ fn split_scheme(text: &str) -> Option<(&'static str, bool, &str)> {
 /// The URL quoted in errors: scheme, authority and path only — the query
 /// may hold identifiers (PatientID, accession) and userinfo may hold
 /// credentials; neither appears.
-fn safe_url(text: &str) -> String {
+pub(crate) fn safe_url(text: &str) -> String {
     let no_query = text.split('?').next().unwrap_or(text);
     if let Some((scheme, rest)) = no_query.split_once("://") {
         let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
@@ -403,7 +403,7 @@ fn parse_pacs_url(text: &str) -> Result<PacsUrl, RepositoryError> {
 
 /// `(authority, path)` of the URL body; refuses userinfo and a bad port.
 /// The path keeps its leading `/` (empty when the URL has no path).
-fn split_authority<'a>(base: &'a str, whole: &str) -> Result<(&'a str, &'a str), RepositoryError> {
+pub(crate) fn split_authority<'a>(base: &'a str, whole: &str) -> Result<(&'a str, &'a str), RepositoryError> {
     let authority = base.split('/').next().unwrap_or(base);
     let path = &base[authority.len()..];
     let bad = |reason: &str| RepositoryError::Unsupported(format!("{}: {reason}", safe_url(whole)));
@@ -431,7 +431,7 @@ fn parse_number(keyword: &str, value: &str) -> Result<u32, RepositoryError> {
 }
 
 /// The QIDO matching attribute a query keyword stands for.
-fn keyword_tag(keyword: &str) -> Option<Tag> {
+pub(crate) fn keyword_tag(keyword: &str) -> Option<Tag> {
     Some(match keyword {
         "PatientID" => tags::PATIENT_ID,
         "PatientName" => tags::PATIENT_NAME,
@@ -448,7 +448,7 @@ fn keyword_tag(keyword: &str) -> Option<Tag> {
 }
 
 /// Percent-decoding of one URL component (`%XX`; `+` stays literal).
-fn percent_decode(text: &str) -> Result<String, RepositoryError> {
+pub(crate) fn percent_decode(text: &str) -> Result<String, RepositoryError> {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;

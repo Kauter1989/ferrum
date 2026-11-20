@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FERRUM · PR #137 — финальный отчёт: DIMSE C-FIND/C-MOVE/C-ECHO (Stage 32 PR 2, #76)</title>
+<style>
+  :root { --bg:#fbfbfd; --fg:#1d1f26; --muted:#5b6070; --line:#e2e5ec; --accent:#1f6feb; --ok:#1a7f37; --warn:#9a6700; --bad:#b42318; --card:#fff; --code:#f3f4f7; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#12141a; --fg:#e6e7ea; --muted:#a2a8b6; --line:#2a2e38; --accent:#6ba6ff; --ok:#4ac26b; --warn:#d4a72c; --bad:#ff7b72; --card:#191c23; --code:#1f232c; } }
+  * { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.6 -apple-system,"Segoe UI",Roboto,Arial,sans-serif; }
+  main { max-width:1080px; margin:0 auto; padding:40px 24px 80px; }
+  h1 { font-size:29px; line-height:1.25; margin:0 0 8px; letter-spacing:-0.02em; }
+  h2 { font-size:21px; margin:44px 0 14px; padding-bottom:8px; border-bottom:1px solid var(--line); }
+  .sub { color:var(--muted); margin:0 0 24px; }
+  .meta { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:28px; }
+  .pill { font-size:13px; padding:3px 10px; border-radius:999px; border:1px solid var(--line); background:var(--card); color:var(--muted); }
+  .pill.ok { color:var(--ok); border-color:color-mix(in srgb,var(--ok) 40%,transparent); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px 20px; margin:14px 0; }
+  code,.mono { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:13px; }
+  code { background:var(--code); padding:1px 5px; border-radius:4px; }
+  table { width:100%; border-collapse:collapse; margin:14px 0; font-size:14px; }
+  th,td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; font-size:13px; text-transform:uppercase; letter-spacing:.04em; }
+  .tag { font-size:12px; font-weight:600; padding:2px 7px; border-radius:5px; white-space:nowrap; }
+  .t-fixed { background:color-mix(in srgb,var(--ok) 16%,transparent); color:var(--ok); }
+  .grid { display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); }
+  .stat { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px; }
+  .stat b { display:block; font-size:26px; line-height:1.2; } .stat span { color:var(--muted); font-size:13px; }
+  ul { padding-left:22px; } li { margin:4px 0; }
+  .note { border-left:3px solid var(--accent); padding-left:14px; color:var(--muted); margin:14px 0; }
+  footer { margin-top:56px; padding-top:18px; border-top:1px solid var(--line); color:var(--muted); font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+<h1>PR #137 — DIMSE C-FIND/C-MOVE/C-ECHO + C-STORE SCP</h1>
+<p class="sub">Финальный отчёт: Stage 32 PR 2 (issue #76 P2, критерий 32.3). FERRUM, ноябрь 2026. Описывает head SHA <code>8cb1195ddede34375fc015d9d94dd37bf78a244c</code>. Отчёт живёт в самом PR и правится по итогам ревью; при мердже остаётся в последней версии (правило пользователя).</p>
+<div class="meta">
+  <span class="pill">Stage 32 PR 2 · #76 · 32.3</span>
+  <span class="pill">size L</span>
+  <span class="pill ok">G1+G2 утверждены</span>
+  <span class="pill ok">preflight: all checks passed</span>
+  <span class="pill ok">licences ok</span>
+</div>
+<div class="grid">
+  <div class="stat"><b>13</b><span>файлов (+2295/−9)</span></div>
+  <div class="stat"><b>19</b><span>DIMSE тестов (mock PACS)</span></div>
+  <div class="stat"><b>0</b><span>aws-lc-rs (dicom-ul sync TCP)</span></div>
+  <div class="stat"><b>voxel</b><span>C-MOVE pixel-match == file</span></div>
+</div>
+
+<h2>1. Что и зачем</h2>
+<p>Classic PACS (без DICOMweb) достижим через <strong>DIMSE</strong>: <code>DicomDimseRepository</code> (impl VolumeRepository) на dicom-ul 0.10 — <strong>C-ECHO</strong> (verify), <strong>C-FIND</strong> (query), <strong>C-MOVE</strong> (retrieve через C-STORE SCP → assemble_with LPS). URL <code>dicom://host[:port]/CALLED-AE?filters</code>; namespace <code>{SeriesUID}#d:{host}</code>. Отдельный repository (sync binary транспорт vs async HTTP DICOMweb), добавлен в CompositeRepository — viewer/CLI открывают classic PACS без app-layer изменений.</p>
+<div class="note"><strong>Send-off boundary (ADR 0021 §5)</strong>: C-MOVE/C-STORE SCP — host-only (<code>load</code>); C-ECHO/C-FIND — read-only (<code>echo</code>/<code>scan</code>). Agent-команды НЕ добавлены (PR 3). C-STORE SCP по умолчанию <strong>in-memory</strong> (privacy); opt-in <code>with_receive_dir</code> пишет Part 10 в workspace receive area. dicom-ul sync TCP без TLS → <strong>не тянет aws-lc-rs</strong> (lock: только dicom-ul + dicom-encoding/transfer-syntax-registry).</div>
+
+<h2>2. Код-карта</h2>
+<p class="sub">Pinned к head SHA <code>8cb1195ddede34375fc015d9d94dd37bf78a244c</code>.</p>
+<table>
+  <tr><th>Утверждение</th><th>Реализация</th></tr>
+  <tr><td>DicomDimseRepository (VolumeRepository): echo/scan/load</td><td class="mono">crates/ferrum-io/src/dicom/dimse/mod.rs:96,167,288,314</td></tr>
+  <tr><td>c_find / c_move / parse_dimse_url</td><td class="mono">crates/ferrum-io/src/dicom/dimse/mod.rs:206,244,564</td></tr>
+  <tr><td>DIMSE commands (C-ECHO/FIND/MOVE/STORE RQ/RSP) + PDU exchange + error map</td><td class="mono">crates/ferrum-io/src/dicom/dimse/command.rs:97,232</td></tr>
+  <tr><td>StoreScp C-STORE SCP (bind/spawn/finish), in-memory default</td><td class="mono">crates/ferrum-io/src/dicom/dimse/scp.rs:42,54,75,105</td></tr>
+  <tr><td>export + CompositeRepository::default; URL helpers pub(crate)</td><td class="mono">crates/ferrum-io/src/lib.rs:30; dicom/web.rs</td></tr>
+  <tr><td>19 mock-DIMSE tests (C-ECHO/FIND/MOVE pixel-match/errors/redaction)</td><td class="mono">crates/ferrum-io/tests/dicomdimse.rs</td></tr>
+  <tr><td>G2 design DIMSE + send-off boundary</td><td class="mono">docs/dicomdimse.md; docs/architecture.md; dev_plan.md 32.T2</td></tr>
+</table>
+
+<h2>3. Покрытие критериев</h2>
+<table>
+  <tr><th>Критерий</th><th>Тест</th><th>Статус</th></tr>
+  <tr><td>32.3-a C-FIND/C-MOVE/C-ECHO через dicom-ul; C-MOVE receives via C-STORE SCP</td><td class="mono">C-ECHO ok/fail; C-FIND series/global study→descriptors; C-MOVE pixel-match voxel-for-voxel + absolute phantom + LPS sagittal; receive-dir (4 .dcm); in-memory==file</td><td><span class="tag t-fixed">✅</span></td></tr>
+  <tr><td>32.3-b C-MOVE/C-STORE host-only; C-ECHO/C-FIND read-only</td><td class="mono">send-off boundary задокументирован (mod.rs + dicomdimse.md §5); agent-команды отсутствуют (PR 3); errors association reject/timeout/abort→Io, empty→NothingFound, cancellation→Cancelled; redaction</td><td><span class="tag t-fixed">✅</span></td></tr>
+</table>
+
+<h2>4. Верификация</h2>
+<ul>
+  <li>Полный preflight (WSL Ubuntu-24.04, CI-порядок + GPU parity + analyze.py): <code>all checks passed</code> (без SIGSEGV-флейка).</li>
+  <li>19 DIMSE тестов green (mock dicom-ul server loopback; C-MOVE открывает C-STORE SCU обратно к SCP, шлёт runtime-phantom). dicomweb 14, gpu_parity 15, UI 19.</li>
+  <li>cargo deny check licenses ok (dicom-ul 0.10 sync TCP no TLS → не тянет aws-lc-rs). fmt/clippy -D warnings чисто.</li>
+  <li>Все cargo-операции в WSL (L52 Windows aws-lc constraint PR 1).</li>
+</ul>
+
+<h2>5. История ревью</h2>
+<div class="card">
+  <p><strong>Раунд 1</strong> (code + security, агент <code>review-dicomweb2</code>, выполнение + мутации): вердикт <em>changes requested</em> — 0 blocking, 1 should-fix (path traversal), 3 nits. <strong>Send-off boundary + privacy + DIMSE correctness SOUND и mutation-proven</strong>: diff без ferrum-agent (no agent commands); M1 redaction → errors_never_leak_query_values; decode +1.0 → pixel absolute-check RED. C-STORE SCP in-memory default + loopback ephemeral; licences ok (dicom-ul не добавил aws-lc).</p>
+  <table>
+    <tr><th>Находка</th><th>Исправление</th><th>Статус</th></tr>
+    <tr><td><span class="tag t-fixed">should</span> S1: path traversal в receive_dir filename (scp.rs:269 sop_instance из C-STORE-RQ controlled by PACS; crafted "../../evil" пишет patient data вне receive_dir)</td><td>safe_instance_name: UID-shaped validation (digits+dots, no ..//\\); non-UID → None (in-memory, не пишется); regression тест a_crafted_sop_instance_uid_is_not_a_file_name</td><td><span class="tag t-fixed">fixed</span></td></tr>
+    <tr><td><span class="tag t-fixed">nit</span> map_dimse_error логирует raw {e} на debug</td><td>публичный RepositoryError чист; debug-диагностика локальная; оставлено</td><td><span class="tag t-fixed">noted</span></td></tr>
+    <tr><td><span class="tag t-fixed">nit</span> move_default_retrieves_in_memory не ассертит no-files-written</td><td>код верен (if let Some(dir)); test gap — опционально</td><td><span class="tag t-fixed">noted</span></td></tr>
+  </table>
+  <p><strong>Раунд 2</strong> (lead, выполнение): S1 фикс верифицирован в WSL (regression тест + full preflight); Windows cargo падает на aws-lc-sys (PR 1 constraint L52, не регресс PR 2).</p>
+</div>
+
+<h2>6. Out of scope / notes</h2>
+<ul>
+  <li>PR 3: STOW-RS de-identified SEG/SR + agent query/retrieve команды (schemas/commands.json/contract/privacy/SSRF).</li>
+  <li>PR 4: Orthanc-in-Docker CI + highdicom + real pinned-phantom pixel-match.</li>
+  <li>Follow-up: DIMSE TLS (sync-tls feature добавит rustls/aws-lc), DIMSE user identity, per-frame/multi-volume PACS.</li>
+</ul>
+
+<footer>FERRUM · Stage 32 PR 2 · #76 · head SHA <code>8cb1195ddede34375fc015d9d94dd37bf78a244c</code> · отчёт коммичен в PR и правится по итогам ревью пользователя.</footer>
+</main>
+</body>
+</html>

@@ -60,7 +60,13 @@ dicom-object = "0.10"
 dicom-pixeldata = { version = "0.10", features = ["openjp2"] }
 dicom-dictionary-std = "0.10"
 dicom-core = "0.10"
+dicom-encoding = "0.10"
+dicom-transfer-syntax-registry = "0.10"
 dicom-web = "0.6"
+# DIMSE (C-FIND/C-MOVE/C-ECHO/C-STORE) on dicom-rs 0.10. Default features are
+# the sync TCP API: no rustls, so no aws-lc-rs (docs/dicomdimse.md). DIMSE TLS
+# (the `sync-tls` feature) is a follow-up.
+dicom-ul = "0.10"
 # dicom-web's reqwest uses rustls with the aws-lc-rs provider; prebuilt NASM
 # objects keep Windows builds working without a NASM install (docs/dicomweb.md).
 aws-lc-rs = { version = "1", default-features = false, features = ["prebuilt-nasm"] }
