@@ -1215,7 +1215,7 @@ profile — pseudonymisation of its sidecar is separate); any change to the
 
 ---
 
-## Stage 32 — DICOMweb and DIMSE: QIDO/WADO/STOW client and C-FIND/C-MOVE/C-ECHO (#76) 🚧 (stage, gated)
+## Stage 32 — DICOMweb and DIMSE: QIDO/WADO/STOW client and C-FIND/C-MOVE/C-ECHO (#76) ✅ (stage, gated; PRs #136, #137, #138 merged; PR 4 completes 32.5 and closes #76)
 
 ([#76](https://github.com/Kauter1989/ferrum/issues/76); P2, for the harness's
 Demo 8 hand-off). Real sites keep studies in a PACS; Medical Harness needs to
@@ -1264,10 +1264,10 @@ change to the rendering rule (the client feeds the existing reader/viewer).
 
 | Task | What | Criteria | PR | State |
 |---|---|---|---|---|
-| 32.T1 | QIDO/WADO VolumeRepository + open | 32.1-a…c | 1 | 🚧 code complete (feat/32-dicomweb-client), preflight green; G3 pending |
-| 32.T2 | DIMSE C-FIND/C-MOVE/C-ECHO | 32.3-a…b | 2 | 🚧 code complete (feat/32-dimse), preflight green (WSL); G3 pending |
-| 32.T3 | STOW + agent query/retrieve + privacy | 32.2-a…b, 32.4-a…b | 3 | 🚧 code complete (feat/32-stow-agent), preflight green (WSL pf32c): STOW host-only + pacs query/retrieve/echo + SSRF allowlist + privacy scan; G3 pending |
-| 32.T4 | Orthanc CI integration + highdicom | 32.5-a…b | 4 | |
+| 32.T1 | QIDO/WADO VolumeRepository + open | 32.1-a…c | 1 | ✅ merged (#136) |
+| 32.T2 | DIMSE C-FIND/C-MOVE/C-ECHO | 32.3-a…b | 2 | ✅ merged (#137) |
+| 32.T3 | STOW + agent query/retrieve + privacy | 32.2-a…b, 32.4-a…b | 3 | ✅ merged (#138): STOW host-only + pacs query/retrieve/echo + SSRF allowlist + privacy scan |
+| 32.T4 | Orthanc CI integration + highdicom | 32.5-a…b | 4 | 🚧 code complete (feat/32-orthanc-ci), preflight green (WSL pf32d): Orthanc service container (AGPL, separate) + Rust query/retrieve/open pixel-match & STOW (0008,1190) tag + Python highdicom round-trip; graceful skip verified local, integration verified by CI; G3 pending |
 
 ---
 
