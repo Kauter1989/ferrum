@@ -6,9 +6,8 @@ real Orthanc PACS over DICOMweb. FERRUM opens it, segments a blob and exports a
 de-identified SEG/SR (Stage 31). The export is STOW'd back to Orthanc; the
 objects that come back over WADO-RS are validated with highdicom (MIT) — the
 SEG structure (segments, frames, geometry, referenced images) and the SR
-measurement report. The STOW response is also checked for the success-sequence
-tag (0008,1190), confirming the PR 3 ``RETRIEVE_URL`` dictionary quirk against a
-real PACS.
+measurement report. The STOW response is also checked for the Referenced SOP
+Sequence (0008,1199) of stored instances, verified against a real PACS (PR 4).
 
 Orthanc's DICOMweb plugin is **AGPL**: Orthanc is a separate Docker service
 reached over HTTP, never linked into FERRUM (ADR 0021 §6). In CI the ``orthanc``
@@ -150,13 +149,13 @@ def stow(root: str, auth: tuple[str, str], paths: list[Path]) -> dict:
 
 
 def success_uids(response: dict) -> set[str]:
-    """SOP Instance UIDs in the STOW success sequence (0008,1190).
+    """SOP Instance UIDs in the STOW Referenced SOP Sequence (0008,1199).
 
-    The 0.10 DICOM dictionary names this tag RETRIEVE_URL; its value is the
-    Referenced SOP Sequence of stored instances (PS3.18 Annex I). Reading it
-    here confirms a real Orthanc reports success under (0008,1190).
+    PS3.18 Annex I: successfully stored instances are reported in the Referenced
+    SOP Sequence (0008,1199); (0008,1190) is the Retrieve URL (a single UR), not
+    an instance sequence. Verified against a real Orthanc (PR 4).
     """
-    seq = response.get("00081190", {}).get("Value", [])
+    seq = response.get("00081199", {}).get("Value", [])
     return {item["00081155"]["Value"][0] for item in seq}
 
 
@@ -223,8 +222,8 @@ def stowed_export() -> tuple[bytes, bytes]:
         # STOW the export back to Orthanc; confirm the success-sequence tag.
         response = stow(root, auth, [seg_path, sr_path])
         stored = success_uids(response)
-        assert str(seg_ds.SOPInstanceUID) in stored, "SEG in the (0008,1190) success sequence"
-        assert str(sr_ds.SOPInstanceUID) in stored, "SR in the (0008,1190) success sequence"
+        assert str(seg_ds.SOPInstanceUID) in stored, "SEG in the (0008,1199) Referenced SOP Sequence"
+        assert str(sr_ds.SOPInstanceUID) in stored, "SR in the (0008,1199) Referenced SOP Sequence"
 
         # Retrieve what comes back over WADO-RS — the objects highdicom checks.
         seg_bytes = wado_instance(

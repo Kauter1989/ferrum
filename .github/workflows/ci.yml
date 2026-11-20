@@ -139,10 +139,10 @@ jobs:
       - name: Wait for the Orthanc DICOMweb endpoint
         run: |
           for i in $(seq 1 60); do
-            curl -sf -u orthanc:orthanc http://localhost:8042/dicom-web/system && break
+            curl -sf -u orthanc:orthanc http://localhost:8042/dicom-web/studies && break
             sleep 2
           done
-          curl -sf -u orthanc:orthanc http://localhost:8042/dicom-web/system
+          curl -sf -u orthanc:orthanc http://localhost:8042/dicom-web/studies
       - name: Rust integration (query/retrieve/open pixel match, STOW success tag)
         run: cargo test -p ferrum-io --test orthanc -- --test-threads=1
       - uses: actions/setup-python@v5

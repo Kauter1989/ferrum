@@ -164,11 +164,11 @@ fn stow_of_a_deidentified_seg_reports_the_success_sequence() {
     // covers 32.5-a, 32.2-a: a de-identified SEG/SR export (Stage 31) is
     // STOW'd to a real Orthanc and the response is checked per instance.
     //
-    // STOW tag confirmation (PR 3 quirk): `parse_response` reads the success
-    // sequence only from tag (0008,1190), which the 0.10 dictionary names
-    // `RETRIEVE_URL`. A green `count(Success) == 2` against real Orthanc
-    // confirms Orthanc reports its stored instances under (0008,1190) — if it
-    // used another tag, the success count would be 0 and this test would fail.
+    // STOW tag confirmation (PR 4, real Orthanc): `parse_response` reads the
+    // stored instances from the Referenced SOP Sequence (0008,1199); (0008,1190)
+    // is the Retrieve URL (a single UR), not an instance sequence. A green
+    // `count(Success) == 2` against real Orthanc confirms the mapping — the PR 3
+    // assumption of (0008,1190) gave a success count of 0 and was corrected here.
     let Some(pacs) = Orthanc::detect() else { return };
     let dir = tempfile::tempdir().unwrap();
     let (paths, ids) = deidentified_export(dir.path());
@@ -177,7 +177,7 @@ fn stow_of_a_deidentified_seg_reports_the_success_sequence() {
     let report = pacs.stow().store_files(&pacs.target(), &paths, &NoProgress).unwrap();
     assert!(report.all_stored(), "Orthanc accepted the export: {report:?}");
     assert_eq!(report.count(StowStatus::Failure), 0);
-    assert_eq!(report.count(StowStatus::Success), 2, "both instances in the (0008,1190) success sequence");
+    assert_eq!(report.count(StowStatus::Success), 2, "both instances in the (0008,1199) Referenced SOP Sequence");
     for (class, instance) in &ids {
         assert!(
             report.instances.iter().any(|i| &i.sop_class_uid == class
