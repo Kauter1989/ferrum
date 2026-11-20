@@ -268,6 +268,26 @@ fn pacs_echo_cli_equals_mcp_on_a_refusal() {
 }
 
 #[test]
+fn a_crafted_pacs_manifest_cannot_steer_a_reload() {
+    // covers 32.4-a (SSRF, L49 family): every reload re-checks the allowlist,
+    // so a planted manifest pointing at a disallowed host is refused.
+    let pacs = MockPacs::start();
+    let dir = tempfile::tempdir().unwrap();
+    let ws = dir.path().join("ws").to_string_lossy().into_owned();
+    let agent = Agent::default();
+    let env = agent.run("pacs retrieve", &json!({ "workspace": ws, "url": pacs.query_url() }));
+    assert_eq!(env["ok"], true, "{env:#}");
+    // tamper with the recorded source URL
+    let manifest_path = Path::new(&ws).join("workspace.json");
+    let mut manifest: Value = serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    manifest["source"]["path"] = json!("dicomweb://evil.example/dicom-web?StudyInstanceUID=1");
+    std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest).unwrap()).unwrap();
+    let env = agent.run("study info", &json!({ "workspace": ws }));
+    assert_eq!(env["error"]["code"], "forbidden", "a disallowed reload host is refused: {env:#}");
+    assert!(!env.to_string().contains("StudyInstanceUID=1"), "the query value never leaks");
+}
+
+#[test]
 fn retrieved_workspace_records_the_pacs_url() {
     // covers 32.4-a: the workspace source is the URL; no local patient files
     let pacs = MockPacs::start();

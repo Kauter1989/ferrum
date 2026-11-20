@@ -52,10 +52,12 @@ impl Default for Plan {
     }
 }
 
+/// `(Content-Type, body)` of each request the mock saw.
+type Bodies = Arc<Mutex<Vec<(String, Vec<u8>)>>>;
+
 struct MockPacs {
     root: String,
-    /// `(Content-Type, body)` of each request.
-    bodies: Arc<Mutex<Vec<(String, Vec<u8>)>>>,
+    bodies: Bodies,
     auths: Arc<Mutex<Vec<Option<String>>>>,
     stop: Arc<AtomicBool>,
     handle: Option<std::thread::JoinHandle<()>>,

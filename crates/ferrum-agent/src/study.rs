@@ -226,6 +226,7 @@ impl Study {
         series: Option<&str>,
         cache: Option<&mut VolumeCache>,
     ) -> Result<Self, AgentError> {
+        crate::commands::pacs::check_pacs_allowed(config, &source.to_string_lossy())?;
         let found = scan(&[source.to_path_buf()])?;
         let choice = choose(config, &found, series)?;
         if root.join(ferrum_io::workspace::files::MANIFEST).exists() {
@@ -314,6 +315,9 @@ impl Study {
     ) -> Result<Self, AgentError> {
         let src = workspace.manifest().source.clone();
         refuse_parent_components(&src.path)?;
+        // Re-check the allowlist on every reload: a crafted manifest must not
+        // steer a later command at a disallowed host (L49 family).
+        crate::commands::pacs::check_pacs_allowed(config, &src.path.to_string_lossy())?;
         if let Some(hit) = cache.as_deref().and_then(|c| c.get(root, &workspace)) {
             return Self::from_workspace(workspace, hit.volume, hit.metadata)?.with_volumes(hit.volumes, src.volume);
         }

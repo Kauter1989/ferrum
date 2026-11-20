@@ -85,8 +85,10 @@ fn scan_pacs(url: &str) -> Result<Vec<SeriesDescriptor>, AgentError> {
 /// configuration file only loopback hosts are allowed; link-local and cloud
 /// metadata addresses are always refused, even when allow-listed. The check
 /// judges the scheme + authority (`host[:port]`) — the network destination —
-/// before any request is made.
-fn check_pacs_allowed(config: &AgentConfig, url: &str) -> Result<(), AgentError> {
+/// before any request is made. Shared by the `pacs` commands and the reload
+/// of a PACS-sourced workspace ([`crate::study`]), so a crafted manifest
+/// cannot steer a later command at a disallowed host (L49 family).
+pub(crate) fn check_pacs_allowed(config: &AgentConfig, url: &str) -> Result<(), AgentError> {
     let (scheme, authority, host) = pacs_url_parts(url)?;
     if is_blocked_host(&host) {
         return Err(AgentError::new(
