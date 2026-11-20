@@ -435,12 +435,41 @@ fn export_schema(command: &str) -> Option<(&'static str, Value)> {
     }
 }
 
+/// Schemas of the PACS query/retrieve/verify commands (Stage 32, PR 3).
+/// Read-only only: send-off (STOW/C-MOVE/C-STORE) is host-only and has no
+/// command (ADR 0021 §5).
+fn pacs_schema(command: &str) -> Option<(&'static str, Value)> {
+    Some(match command {
+        "pacs query" => (
+            "Queries a PACS for series (read-only): QIDO-RS over DICOMweb (dicomweb://host[:port]/service-root?keyword=value, dicomwebs:// for HTTPS) or C-FIND over DIMSE (dicom://host[:port]/CALLED-AE?keyword=value). Returns pseudonymised series ids, format, modality, dims and a series-level description — no patient name, ID, birth date or accession number. Query keywords: PatientID, PatientName, AccessionNumber, StudyInstanceUID, SeriesInstanceUID, StudyDate, Modality, StudyDescription, SeriesDescription, SeriesNumber; limit and offset paginate. The operator allows the PACS in network.pacs; without a configuration only loopback hosts are allowed.",
+            obj(json!({ "url": text("PACS query URL (dicomweb://, dicomwebs:// or dicom://) with matching keywords") }), &["url"]),
+        ),
+        "pacs retrieve" => (
+            "Retrieves a series from a DICOMweb PACS over WADO-RS into a workspace and describes it (read-only). The pixels stay in memory and are re-retrieved on each call; the workspace records the PACS URL as its source. Give the query URL and, when it returns several series, the series id from pacs query. Retrieval over DIMSE (C-MOVE) is host-only and not an agent command.",
+            obj(
+                json!({
+                    "workspace": workspace(),
+                    "url": text("DICOMweb query URL (dicomweb:// or dicomwebs://)"),
+                    "series": text("series id from pacs query, when the query returns several"),
+                }),
+                &["workspace", "url"],
+            ),
+        ),
+        "pacs echo" => (
+            "Verifies a classic PACS node with C-ECHO (read-only): dicom://host[:port]/CALLED-AE. Returns reachable true when the node answers the verification.",
+            obj(json!({ "url": text("DIMSE node URL (dicom://host[:port]/CALLED-AE)") }), &["url"]),
+        ),
+        _ => return None,
+    })
+}
+
 /// Description and parameter schema of `command`, or `None` if unknown.
 pub fn command_schema(command: &str) -> Option<(&'static str, Value)> {
     if let Some(s) = engine_schema(command)
         .or_else(|| mask_schema(command))
         .or_else(|| view_state_schema(command))
         .or_else(|| export_schema(command))
+        .or_else(|| pacs_schema(command))
     {
         return Some(s);
     }

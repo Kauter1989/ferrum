@@ -110,6 +110,9 @@ pub enum Command {
     /// Report, annotations and segments for hand-off.
     #[command(subcommand)]
     Export(Export),
+    /// PACS query/retrieve/verify (read-only; send-off is host-only).
+    #[command(subcommand)]
+    Pacs(Pacs),
     /// Named annotations.
     #[command(subcommand)]
     Annotate(Annotate),
@@ -393,6 +396,33 @@ pub enum Export {
         /// `retain_patient_characteristics`. Requires `--deidentify`.
         #[arg(long = "deid-option", requires = "deidentify")]
         deid_options: Vec<String>,
+    },
+}
+
+/// `pacs …` — read-only query/retrieve/verify (Stage 32, PR 3). Send-off
+/// (STOW/C-MOVE/C-STORE) is host-only and has no command (ADR 0021 §5).
+#[derive(Debug, Subcommand)]
+pub enum Pacs {
+    /// Queries a PACS for series (QIDO-RS or C-FIND); pseudonymised output.
+    Query {
+        /// PACS query URL: dicomweb://host[:port]/root?Keyword=value,
+        /// dicomwebs:// (HTTPS) or dicom://host[:port]/CALLED-AE?Keyword=value.
+        url: String,
+    },
+    /// Retrieves a series from a DICOMweb PACS (WADO-RS) into a workspace.
+    Retrieve {
+        #[command(flatten)]
+        ws: Ws,
+        /// DICOMweb query URL (dicomweb:// or dicomwebs://).
+        url: String,
+        /// Series id (from pacs query) when the query returns several.
+        #[arg(long)]
+        series: Option<String>,
+    },
+    /// Verifies a classic PACS node with C-ECHO (dicom://host[:port]/AE).
+    Echo {
+        /// DIMSE node URL (dicom://host[:port]/CALLED-AE).
+        url: String,
     },
 }
 
@@ -797,6 +827,13 @@ impl Command {
                     ("deid_options", (!deid_options.is_empty()).then(|| json!(deid_options))),
                 ],
             ),
+            Command::Pacs(p) => match p {
+                Pacs::Query { url } => call("pacs query", vec![("url", Some(json!(url)))]),
+                Pacs::Retrieve { ws: w, url, series } => {
+                    call("pacs retrieve", vec![ws(w), ("url", Some(json!(url))), ("series", some(series.clone()))])
+                }
+                Pacs::Echo { url } => call("pacs echo", vec![("url", Some(json!(url)))]),
+            },
             Command::Engine(EngineCmd::Info { engine }) => call("engine info", vec![("engine", some(engine.clone()))]),
             Command::Engine(EngineCmd::List) => call("engine list", vec![]),
             Command::Engine(EngineCmd::Unload { engine, group }) => {
@@ -1178,6 +1215,26 @@ mod tests {
                 .is_err(),
             "--deid-option requires --deidentify"
         );
+    }
+
+    // covers 32.4-a — CLI = MCP: the pacs subcommands become the same JSON params
+    #[test]
+    fn pacs_subcommands_become_parameters() {
+        let call = |args: &[&str]| Cli::try_parse_from(args).unwrap().command.to_call().unwrap();
+        let (name, params) = call(&["ferrum-cli", "pacs", "query", "dicomweb://127.0.0.1:8042/dicom-web?PatientID=1"]);
+        assert_eq!(name, "pacs query");
+        assert_eq!(params["url"], "dicomweb://127.0.0.1:8042/dicom-web?PatientID=1");
+        let (name, params) =
+            call(&["ferrum-cli", "pacs", "retrieve", "-w", "ws", "dicomweb://h/r", "--series", "anon-1"]);
+        assert_eq!(name, "pacs retrieve");
+        assert_eq!((params["workspace"].as_str(), params["series"].as_str()), (Some("ws"), Some("anon-1")));
+        let (_, plain) = call(&["ferrum-cli", "pacs", "retrieve", "-w", "ws", "dicomweb://h/r"]);
+        assert!(plain.get("series").is_none(), "no series unless asked");
+        let (name, params) = call(&["ferrum-cli", "pacs", "echo", "dicom://127.0.0.1:104/PACS"]);
+        assert_eq!(name, "pacs echo");
+        assert_eq!(params["url"], "dicom://127.0.0.1:104/PACS");
+        assert!(Cli::try_parse_from(["ferrum-cli", "pacs", "query"]).is_err(), "the url is required");
+        assert!(Cli::try_parse_from(["ferrum-cli", "pacs", "stow"]).is_err(), "send-off is not a command");
     }
 
     // covers 18.4-b, 18.12-b

@@ -15,6 +15,7 @@ pub mod inspect;
 pub mod interactive;
 pub mod masks;
 pub mod metrics;
+pub mod pacs;
 pub mod review;
 pub mod segment;
 pub mod study;
@@ -106,4 +107,7 @@ pub const COMMANDS: &[(&str, Command)] = &[
     ("review confirm", review::confirm),
     ("review reject", review::reject),
     ("export bundle", export::bundle),
+    ("pacs query", pacs::query),
+    ("pacs retrieve", pacs::retrieve),
+    ("pacs echo", pacs::echo),
 ];
