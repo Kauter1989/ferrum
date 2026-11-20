@@ -50,7 +50,7 @@ def orthanc() -> tuple[str, tuple[str, str]]:
     explicit = os.environ.get("FERRUM_ORTHANC_URL", "").strip()
     root = explicit.rstrip("/") if explicit else "http://127.0.0.1:8042/dicom-web"
     try:
-        resp = requests.get(f"{root}/system", auth=auth, timeout=3)
+        resp = requests.get(f"{root}/studies", auth=auth, timeout=3)
         resp.raise_for_status()
     except requests.RequestException:
         if explicit:
