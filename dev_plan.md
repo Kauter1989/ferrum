@@ -1266,7 +1266,7 @@ change to the rendering rule (the client feeds the existing reader/viewer).
 |---|---|---|---|---|
 | 32.T1 | QIDO/WADO VolumeRepository + open | 32.1-a…c | 1 | 🚧 code complete (feat/32-dicomweb-client), preflight green; G3 pending |
 | 32.T2 | DIMSE C-FIND/C-MOVE/C-ECHO | 32.3-a…b | 2 | 🚧 code complete (feat/32-dimse), preflight green (WSL); G3 pending |
-| 32.T3 | STOW + agent query/retrieve + privacy | 32.2-a…b, 32.4-a…b | 3 | 🚧 code complete (feat/32-stow-agent): STOW host-only + pacs query/retrieve/echo + SSRF allowlist + privacy scan; preflight pending |
+| 32.T3 | STOW + agent query/retrieve + privacy | 32.2-a…b, 32.4-a…b | 3 | 🚧 code complete (feat/32-stow-agent), preflight green (WSL pf32c): STOW host-only + pacs query/retrieve/echo + SSRF allowlist + privacy scan; G3 pending |
 | 32.T4 | Orthanc CI integration + highdicom | 32.5-a…b | 4 | |
 
 ---
