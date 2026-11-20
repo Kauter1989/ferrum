@@ -282,6 +282,42 @@ impl Workspace {
         Ok(Self { root: root_abs, manifest })
     }
 
+    /// Creates a workspace in `root` for a series retrieved from a PACS URL
+    /// (DICOMweb or DIMSE). The source is the URL itself: no local files are
+    /// hashed or written, because retrieved pixel data stays in memory
+    /// (ADR 0021 §2). Each load re-retrieves the series from the archive, so
+    /// the workspace records no content hash — the URL identifies the source.
+    /// Fails if `root` already holds a workspace.
+    pub fn create_remote(
+        root: &Path,
+        source: &Path,
+        series: &SeriesDescriptor,
+        generator: &str,
+    ) -> Result<Self, IoError> {
+        let manifest_path = root.join(files::MANIFEST);
+        if manifest_path.exists() {
+            return Err(IoError::invalid(root, "already a workspace; open it instead"));
+        }
+        let root_abs = std::path::absolute(root).map_err(|e| IoError::os(root, e))?;
+        std::fs::create_dir_all(root_abs.join(files::RENDERS)).map_err(|e| IoError::os(root, e))?;
+        let manifest = WorkspaceManifest {
+            generator: generator.to_owned(),
+            created: Timestamp::now(),
+            source: WorkspaceSource {
+                path: source.to_path_buf(),
+                series_id: series.id.clone(),
+                format: series.format.clone(),
+                files: Vec::new(),
+                volume: None,
+            },
+            modality: None,
+        };
+        let text =
+            serde_json::to_string_pretty(&manifest.to_json()).map_err(|e| IoError::invalid(root, e.to_string()))?;
+        write_atomic(&manifest_path, text.as_bytes())?;
+        Ok(Self { root: root_abs, manifest })
+    }
+
     /// Declares the modality of a source that carries none (e.g. `CT` for a
     /// NIfTI file), or clears it with `None`; saved in the manifest.
     pub fn set_modality(&mut self, modality: Option<&str>) -> Result<(), IoError> {

@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FERRUM · PR #138 — финальный отчёт: STOW + agent PACS commands (Stage 32 PR 3, #76)</title>
+<style>
+  :root { --bg:#fbfbfd; --fg:#1d1f26; --muted:#5b6070; --line:#e2e5ec; --accent:#1f6feb; --ok:#1a7f37; --warn:#9a6700; --bad:#b42318; --card:#fff; --code:#f3f4f7; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#12141a; --fg:#e6e7ea; --muted:#a2a8b6; --line:#2a2e38; --accent:#6ba6ff; --ok:#4ac26b; --warn:#d4a72c; --bad:#ff7b72; --card:#191c23; --code:#1f232c; } }
+  * { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.6 -apple-system,"Segoe UI",Roboto,Arial,sans-serif; }
+  main { max-width:1080px; margin:0 auto; padding:40px 24px 80px; }
+  h1 { font-size:29px; line-height:1.25; margin:0 0 8px; letter-spacing:-0.02em; }
+  h2 { font-size:21px; margin:44px 0 14px; padding-bottom:8px; border-bottom:1px solid var(--line); }
+  .sub { color:var(--muted); margin:0 0 24px; }
+  .meta { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:28px; }
+  .pill { font-size:13px; padding:3px 10px; border-radius:999px; border:1px solid var(--line); background:var(--card); color:var(--muted); }
+  .pill.ok { color:var(--ok); border-color:color-mix(in srgb,var(--ok) 40%,transparent); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px 20px; margin:14px 0; }
+  code,.mono { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:13px; }
+  code { background:var(--code); padding:1px 5px; border-radius:4px; }
+  table { width:100%; border-collapse:collapse; margin:14px 0; font-size:14px; }
+  th,td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; font-size:13px; text-transform:uppercase; letter-spacing:.04em; }
+  .tag { font-size:12px; font-weight:600; padding:2px 7px; border-radius:5px; white-space:nowrap; }
+  .t-fixed { background:color-mix(in srgb,var(--ok) 16%,transparent); color:var(--ok); }
+  .grid { display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); }
+  .stat { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px; }
+  .stat b { display:block; font-size:26px; line-height:1.2; } .stat span { color:var(--muted); font-size:13px; }
+  ul { padding-left:22px; } li { margin:4px 0; }
+  .note { border-left:3px solid var(--accent); padding-left:14px; color:var(--muted); margin:14px 0; }
+  footer { margin-top:56px; padding-top:18px; border-top:1px solid var(--line); color:var(--muted); font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+<h1>PR #138 — STOW-RS + agent PACS query/retrieve/echo</h1>
+<p class="sub">Финальный отчёт: Stage 32 PR 3 (issue #76 P2, критерий 32.2/32.4). FERRUM, ноябрь 2026. Описывает head SHA <code>50c314ad99212d9e61c7cbd13ca8e65870c7cdd0</code>. Отчёт живёт в самом PR и правится по итогам ревью; при мердже остаётся в последней версии (правило пользователя).</p>
+<div class="meta">
+  <span class="pill">Stage 32 PR 3 · #76 · 32.2/32.4</span>
+  <span class="pill">size L</span>
+  <span class="pill ok">G1+G2 утверждены</span>
+  <span class="pill ok">preflight: all checks passed</span>
+  <span class="pill ok">CLI=MCP · privacy scan</span>
+</div>
+<div class="grid">
+  <div class="stat"><b>23</b><span>файла (+1816/−27)</span></div>
+  <div class="stat"><b>42</b><span>agent-команды (+3 pacs)</span></div>
+  <div class="stat"><b>0</b><span>send-off команд в agent set</span></div>
+  <div class="stat"><b>SSRF</b><span>allowlist + metadata block</span></div>
+</div>
+
+<h2>1. Что и зачем</h2>
+<p>Де-идентификация возвращается в PACS, а harness получает PACS-команды. <strong>STOW-RS</strong> (host-only) шлёт де-идентифицированный SEG/SR export (Stage 31) в PACS с per-instance response. <strong>Agent pacs query/retrieve/echo</strong> (read-only) — QIDO/C-FIND query, WADO retrieve (refuses dicom:// — C-MOVE host-only), C-ECHO verify. URL-source workspace (no local patient files, pixels in memory). <strong>SSRF</strong>: operator allowlist + always-block metadata/link-local; re-check on reload.</p>
+<div class="note"><strong>Send-off boundary (ADR 0021 §5)</strong>: STOW/C-MOVE/C-STORE отсутствуют в agent command set (host-only, person's action). Agent retrieve — WADO only. Privacy: query pseudonymised (anon-…), privacy scan passes. CLI=MCP identical JSON; commands.json regen (42).</div>
+
+<h2>2. Код-карта</h2>
+<p class="sub">Pinned к head SHA <code>50c314a</code>.</p>
+<table>
+  <tr><th>Утверждение</th><th>Реализация</th></tr>
+  <tr><td>STOW-RS host-only: DicomWebStow store/store_files (export→STOW)</td><td class="mono">crates/ferrum-io/src/dicom/stow.rs:79,131,156</td></tr>
+  <tr><td>Per-instance response: Success/Warning/Failure (0008,1190/1199/1198)</td><td class="mono">crates/ferrum-io/src/dicom/stow.rs:187,30,54</td></tr>
+  <tr><td>Agent pacs query/retrieve/echo (thin over io; retrieve refuses dicom://)</td><td class="mono">crates/ferrum-agent/src/commands/pacs.rs:27,37,60</td></tr>
+  <tr><td>SSRF: check_pacs_allowed (allowlist) + is_blocked_host (metadata/link-local)</td><td class="mono">crates/ferrum-agent/src/commands/pacs.rs:91,168</td></tr>
+  <tr><td>URL-source workspace (create_remote, no local patient files)</td><td class="mono">crates/ferrum-io/src/workspace.rs:291; ferrum-agent/src/study.rs:51,222,310</td></tr>
+  <tr><td>Schema pacs_schema + CLI Pacs + commands.json (42) + reference</td><td class="mono">crates/ferrum-agent/src/schema.rs; ferrum-cli/src/cli.rs; skills/ferrum/schemas/commands.json</td></tr>
+  <tr><td>Privacy scan PACS + SSRF reload re-check + STOW/contract tests</td><td class="mono">crates/ferrum-agent/tests/privacy.rs; tests/pacs.rs; ferrum-io/tests/dicomstow.rs</td></tr>
+</table>
+
+<h2>3. Покрытие критериев</h2>
+<table>
+  <tr><th>Критерий</th><th>Тест</th><th>Статус</th></tr>
+  <tr><td>32.2-a STOW stores de-identified SEG/SR, response checked</td><td class="mono">dicomstow 6 (de-identified export no identifiers raw multipart scan; per-instance success/warning/failure; 409/auth/timeout) + 4 unit</td><td><span class="tag t-fixed">✅</span></td></tr>
+  <tr><td>32.2-b STOW host-only, not agent</td><td class="mono">STOW/C-MOVE/C-STORE absent from command set; agent retrieve refuses dicom://</td><td><span class="tag t-fixed">✅</span></td></tr>
+  <tr><td>32.4-a agent query/retrieve, schema/commands.json/CLI=MCP</td><td class="mono">pacs contract 5 (query/retrieve/echo identical JSON CLI+MCP, crafted-manifest refusal); commands.json 42; schema freshness 5</td><td><span class="tag t-fixed">✅</span></td></tr>
+  <tr><td>32.4-b pseudonymised ids, privacy scan</td><td class="mono">privacy 3 (pacs_outputs_contain_no_identifiers); query anon-…; SSRF allowlist + metadata block + reload re-check</td><td><span class="tag t-fixed">✅</span></td></tr>
+</table>
+
+<h2>4. Верификация</h2>
+<ul>
+  <li>Полный preflight (WSL Ubuntu-24.04, CI-порядок + GPU parity + analyze.py): <code>all checks passed</code> (без teardown-флейка).</li>
+  <li>STOW 6+4, pacs contract 5, privacy 3, SSRF 5 unit, schema freshness 5, cli 7 (count 42), mcp 3.</li>
+  <li>fmt/clippy -D warnings чисто; analyze.py 32.2-a/b, 32.4-a/b покрыты (32.5 — PR 4).</li>
+  <li>EOL care: privacy.rs CRLF preserved (+107/0, not rewrite); no patient/volume data committed.</li>
+</ul>
+
+<h2>5. История ревью</h2>
+<div class="card">
+  <p><strong>Раунд 1</strong> (code + security, агент <code>review-dicomweb3</code>, выполнение + мутации): вердикт <span class="tag t-fixed">approve</span> — 0 blocking, 0 should-fix, 4 nits. <strong>Send-off boundary + SSRF + privacy SOUND и mutation-proven</strong>: M1 (убрать reload re-check) → crafted-manifest тест RED; M2 (is_blocked_host→false) → metadata/link-local тест RED; M3 (series_key→raw id) → privacy scan RED; M4 study scan PACS URL refusal (не network). STOW response tags проверены по PS3.18 Annex I + dictionary; CLI=MCP 5/5; licences ok.</p>
+  <p>Nits (не блокируют): DNS-rebinding residual (неотъемлемо от hostname-allowlist, operator-trust; resolve+pin IP — возможное усиление); явный is_pacs_url refusal в check_source (defense-in-depth, M4 уже безопасен); STOW RETRIEVE_URL quirk validation — PR 4 Orthanc; ::ffff:127.0.0.1 mapped loopback refused by default (restrictive, безопасно).</p>
+</div>
+
+<h2>6. Out of scope / notes</h2>
+<ul>
+  <li>PR 4: Orthanc-in-Docker CI (query→retrieve→open, pinned-phantom pixel-match, STOW validated by highdicom, graceful skip). STOW success-sequence tag (0008,1190) confirms against real Orthanc there.</li>
+  <li>Dictionary quirk: (0008,1190) named RETRIEVE_URL in dicom-rs 0.10 (used via constant + comment, verified pydicom + PS3.18 Annex I).</li>
+</ul>
+
+<footer>FERRUM · Stage 32 PR 3 · #76 · head SHA <code>50c314ad99212d9e61c7cbd13ca8e65870c7cdd0</code> · отчёт коммичен в PR и правится по итогам ревью пользователя.</footer>
+</main>
+</body>
+</html>

@@ -242,3 +242,19 @@ committed data). Integration tests (`crates/ferrum-io/tests/dicomdimse.rs`):
 Integration against a real Orthanc (the pinned phantom of 32.1-b, STOW,
 highdicom) is **PR 4**; agent query/retrieve commands and the privacy scan are
 **PR 3**.
+
+## 9. PR 3 as built — the agent surface (32.4)
+
+PR 3 wires the read-only DIMSE operations into the agent: `pacs query` calls
+`DicomDimseRepository::scan` (C-FIND) for a `dicom://` URL, and `pacs echo`
+calls `DicomDimseRepository::echo` (C-ECHO). Output is pseudonymised and the
+URL is checked against the operator's PACS allowlist (`network.pacs`) before
+any association — the SSRF boundary ([agent-cli.md](agent-cli.md) §PACS).
+
+**C-MOVE and the C-STORE SCP stay host-only.** `pacs retrieve` uses WADO-RS
+(DICOMweb) only and refuses a `dicom://` URL with a hint that DIMSE retrieval
+is a host operation; no agent command calls `load` (C-MOVE) or binds a
+`StoreScp`. The send-off boundary of §5 is enforced at the agent command
+layer: the command set contains no STOW/C-MOVE/C-STORE (a test checks the
+command list, the MCP tools and `commands.json`). Tests:
+`ferrum-agent/tests/pacs.rs`.

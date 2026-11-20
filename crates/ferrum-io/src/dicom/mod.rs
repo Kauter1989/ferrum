@@ -8,6 +8,7 @@ pub mod export;
 pub mod frames;
 pub mod header;
 pub mod series;
+pub mod stow;
 pub mod volumes;
 pub mod web;
 

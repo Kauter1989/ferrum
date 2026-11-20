@@ -332,8 +332,15 @@ fn a_connection_refusal_is_an_io_error() {
     let url = PathBuf::from(format!("dicomweb://127.0.0.1:{port}/dicom-web?PatientID=PID-SECRET-987654"));
     let err = repo.scan(&[url], &NoProgress).unwrap_err();
     assert!(matches!(err, RepositoryError::Io(_)), "{err}");
-    assert!(err.to_string().contains("connection"), "{err}");
-    assert!(!err.to_string().contains("PID-SECRET-987654"), "the query never leaks: {err}");
+    // A closed port is a connection refusal where the OS refuses, but a CI
+    // firewall may drop the SYN instead, surfacing as a timeout — both are Io
+    // errors (32.1-c: an error, never a panic), so accept either wording.
+    let msg = err.to_string();
+    assert!(
+        msg.contains("connection") || msg.contains("timed out"),
+        "a closed port is a connection or timeout error: {msg}"
+    );
+    assert!(!msg.contains("PID-SECRET-987654"), "the query never leaks: {msg}");
 }
 
 #[test]

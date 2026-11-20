@@ -43,6 +43,16 @@ pub fn series_key(config: &AgentConfig, id: &str) -> String {
     }
 }
 
+/// `true` when `path` is a PACS URL (DICOMweb or DIMSE) rather than a file
+/// path. A PACS source is governed by the operator's PACS allowlist
+/// (`network.pacs`, checked by the `pacs` commands), not `data.read_roots`,
+/// and its pixels stay in memory (ADR 0021 §2): the workspace records the
+/// URL and re-retrieves on each load.
+pub(crate) fn is_pacs_url(path: &Path) -> bool {
+    let Some(text) = path.to_str() else { return false };
+    text.starts_with("dicomweb://") || text.starts_with("dicomwebs://") || text.starts_with("dicom://")
+}
+
 /// Finds all series under `paths`.
 pub fn scan(paths: &[PathBuf]) -> Result<Vec<SeriesDescriptor>, AgentError> {
     CompositeRepository::default().scan(paths, &NoProgress).map_err(|e| match e {
@@ -153,6 +163,9 @@ impl Study {
         series: Option<&str>,
         cache: Option<&mut VolumeCache>,
     ) -> Result<Self, AgentError> {
+        if is_pacs_url(source) {
+            return Self::open_remote(config, root, source, series, cache);
+        }
         let source = config.check_source(source)?;
         if !source.exists() {
             return Err(AgentError::not_found(format!("{} does not exist", source.display())));
@@ -202,6 +215,40 @@ impl Study {
         Ok(study)
     }
 
+    /// Opens a PACS URL into a workspace (Stage 32, PR 3). The URL is the
+    /// source: the series is queried and retrieved in memory, and the
+    /// workspace records the URL (no local patient files). The `pacs`
+    /// command checks the operator's PACS allowlist before calling this.
+    fn open_remote(
+        config: &AgentConfig,
+        root: &Path,
+        source: &Path,
+        series: Option<&str>,
+        cache: Option<&mut VolumeCache>,
+    ) -> Result<Self, AgentError> {
+        crate::commands::pacs::check_pacs_allowed(config, &source.to_string_lossy())?;
+        let found = scan(&[source.to_path_buf()])?;
+        let choice = choose(config, &found, series)?;
+        if root.join(ferrum_io::workspace::files::MANIFEST).exists() {
+            let ws = Workspace::open(root)?;
+            let m = &ws.manifest().source;
+            if m.path != source || m.series_id != choice.group.id {
+                return Err(AgentError::bad_request(format!("{} already holds another series", root.display()))
+                    .hint("use a new workspace for each series"));
+            }
+            return Self::load(config, root, cache);
+        }
+        check_size(config, &choice.chosen)?;
+        let workspace = Workspace::create_remote(root, source, &choice.group, &generator())?;
+        let loaded = load_series(&choice.chosen)?;
+        if let Some(c) = cache {
+            c.entries.insert(root.to_path_buf(), cached(&workspace, &loaded, &choice.volumes));
+        }
+        let mut study = Self::from_workspace(workspace, loaded.volume, loaded.metadata)?;
+        study.volumes = choice.volumes;
+        Ok(study)
+    }
+
     /// Loads the study of the workspace at `root`, reusing a cached series
     /// when its source files are unchanged.
     pub fn load(config: &AgentConfig, root: &Path, cache: Option<&mut VolumeCache>) -> Result<Self, AgentError> {
@@ -211,6 +258,9 @@ impl Study {
         }
         let workspace = Workspace::open(root)?;
         let src = workspace.manifest().source.clone();
+        if is_pacs_url(&src.path) {
+            return Self::load_remote(config, root, workspace, cache);
+        }
         // A crafted manifest must not split the checked spelling from
         // the opened one: `..` resolves lexically in the check, but
         // verify_sources, the cache stamps and the DICOM export open the
@@ -253,6 +303,37 @@ impl Study {
         Self::from_workspace(workspace, loaded.volume, loaded.metadata)?.with_volumes(volumes, src.volume)
     }
 
+    /// Loads a PACS-sourced workspace: re-query and re-retrieve the series in
+    /// memory. There are no local files to hash or read-root-check — the URL
+    /// is governed by the operator's PACS allowlist (checked by the `pacs`
+    /// command). A cached series is reused while the workspace is unchanged.
+    fn load_remote(
+        config: &AgentConfig,
+        root: &Path,
+        workspace: Workspace,
+        cache: Option<&mut VolumeCache>,
+    ) -> Result<Self, AgentError> {
+        let src = workspace.manifest().source.clone();
+        refuse_parent_components(&src.path)?;
+        // Re-check the allowlist on every reload: a crafted manifest must not
+        // steer a later command at a disallowed host (L49 family).
+        crate::commands::pacs::check_pacs_allowed(config, &src.path.to_string_lossy())?;
+        if let Some(hit) = cache.as_deref().and_then(|c| c.get(root, &workspace)) {
+            return Self::from_workspace(workspace, hit.volume, hit.metadata)?.with_volumes(hit.volumes, src.volume);
+        }
+        workspace.verify_sources()?;
+        let found = scan(std::slice::from_ref(&src.path))?;
+        let series = found.iter().find(|s| s.id == src.series_id).ok_or_else(|| {
+            AgentError::new(ErrorCode::SourceChanged, "the workspace's series is no longer in its PACS source")
+        })?;
+        check_size(config, series)?;
+        let loaded = load_series(series)?;
+        if let Some(c) = cache {
+            c.entries.insert(root.to_path_buf(), cached(&workspace, &loaded, &[]));
+        }
+        Self::from_workspace(workspace, loaded.volume, loaded.metadata)
+    }
+
     /// Sets the series' volumes and the open one (by id).
     fn with_volumes(mut self, volumes: Vec<SeriesDescriptor>, open: Option<String>) -> Result<Self, AgentError> {
         self.open_volume = open.and_then(|id| volumes.iter().find(|v| v.id == id).cloned());
@@ -275,8 +356,15 @@ impl Study {
         let annotations = workspace.load_annotations([d.x, d.y, d.z])?.unwrap_or_default();
         let segments = workspace.load_segments(&volume)?.unwrap_or_else(|| SegmentationSet::new(d));
         let mut h = Sha256::new();
-        for f in &workspace.manifest().source.files {
-            h.update(f.sha256.as_bytes());
+        let source = &workspace.manifest().source;
+        if source.files.is_empty() {
+            // A PACS source has no local files: the URL identifies it (the
+            // archive is authoritative and each load re-retrieves).
+            h.update(source.path.to_string_lossy().as_bytes());
+        } else {
+            for f in &source.files {
+                h.update(f.sha256.as_bytes());
+            }
         }
         let source_sha256 = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
         Ok(Self {

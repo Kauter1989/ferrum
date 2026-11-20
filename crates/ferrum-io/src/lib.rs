@@ -30,6 +30,7 @@ use ferrum_domain::{LoadedSeries, ProgressSink, RepositoryError, SeriesDescripto
 
 pub use annotations::{annotation_report_json, annotations_from_json, read_annotations, write_annotation_report};
 pub use dicom::dimse::{DicomDimseRepository, ScpHandle, StoreScp};
+pub use dicom::stow::{DicomWebStow, StowInstance, StowReport, StowStatus};
 pub use dicom::web::DicomWebRepository;
 pub use dicom::DicomRepository;
 pub use engine_inputs::EngineInput;

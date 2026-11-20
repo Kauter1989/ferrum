@@ -114,20 +114,7 @@ impl DicomWebRepository {
         host: &str,
         fut: impl Future<Output = Result<T, RepositoryError>>,
     ) -> Result<T, RepositoryError> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| RepositoryError::Io(format!("PACS client runtime: {e}")))?;
-        let timeout = self.timeout;
-        let host = host.to_string();
-        runtime.block_on(async move {
-            match tokio::time::timeout(timeout, fut).await {
-                Ok(result) => result,
-                Err(_) => {
-                    Err(RepositoryError::Io(format!("{host}: PACS request timed out after {} s", timeout.as_secs())))
-                }
-            }
-        })
+        block_on_pacs(self.timeout, host, fut)
     }
 
     /// One QIDO series query: study-scoped when the URL filters by
@@ -342,7 +329,7 @@ struct PacsUrl {
 }
 
 /// `(scheme, secure, rest)` when `text` starts with a DICOMweb scheme.
-fn split_scheme(text: &str) -> Option<(&'static str, bool, &str)> {
+pub(crate) fn split_scheme(text: &str) -> Option<(&'static str, bool, &str)> {
     if let Some(rest) = text.strip_prefix(SCHEME) {
         Some((SCHEME, false, rest))
     } else {
@@ -499,10 +486,33 @@ fn parse_retrieval_url(text: &str) -> Result<RetrievalTarget, RepositoryError> {
     })
 }
 
+/// Blocks on one PACS request on a fresh current-thread runtime under
+/// `timeout`. The future maps its own errors; an expired deadline drops the
+/// request (reqwest aborts it) and reports a timeout naming the host only.
+/// Shared by the read-only repository and the host-only STOW client (L23).
+/// Call from synchronous code, not from inside an ambient tokio runtime.
+pub(crate) fn block_on_pacs<T>(
+    timeout: Duration,
+    host: &str,
+    fut: impl Future<Output = Result<T, RepositoryError>>,
+) -> Result<T, RepositoryError> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| RepositoryError::Io(format!("PACS client runtime: {e}")))?;
+    let host = host.to_string();
+    runtime.block_on(async move {
+        match tokio::time::timeout(timeout, fut).await {
+            Ok(result) => result,
+            Err(_) => Err(RepositoryError::Io(format!("{host}: PACS request timed out after {} s", timeout.as_secs()))),
+        }
+    })
+}
+
 /// Maps a `dicom-web` failure to a repository error. Messages name the host
 /// and the failure kind; the request URL (its query may hold identifiers)
 /// and credentials never appear.
-fn map_web_error(e: DicomWebError, host: &str) -> RepositoryError {
+pub(crate) fn map_web_error(e: DicomWebError, host: &str) -> RepositoryError {
     match e {
         DicomWebError::RequestFailed { source, .. } => {
             if source.is_connect() {

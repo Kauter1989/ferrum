@@ -3084,5 +3084,62 @@
       ],
       "additionalProperties": false
     }
+  },
+  "pacs query": {
+    "description": "Queries a PACS for series (read-only): QIDO-RS over DICOMweb (dicomweb://host[:port]/service-root?keyword=value, dicomwebs:// for HTTPS) or C-FIND over DIMSE (dicom://host[:port]/CALLED-AE?keyword=value). Returns pseudonymised series ids, format, modality, dims and a series-level description — no patient name, ID, birth date or accession number. Query keywords: PatientID, PatientName, AccessionNumber, StudyInstanceUID, SeriesInstanceUID, StudyDate, Modality, StudyDescription, SeriesDescription, SeriesNumber; limit and offset paginate. The operator allows the PACS in network.pacs; without a configuration only loopback hosts are allowed.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "PACS query URL (dicomweb://, dicomwebs:// or dicom://) with matching keywords"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "pacs retrieve": {
+    "description": "Retrieves a series from a DICOMweb PACS over WADO-RS into a workspace and describes it (read-only). The pixels stay in memory and are re-retrieved on each call; the workspace records the PACS URL as its source. Give the query URL and, when it returns several series, the series id from pacs query. Retrieval over DIMSE (C-MOVE) is host-only and not an agent command.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "url": {
+          "type": "string",
+          "description": "DICOMweb query URL (dicomweb:// or dicomwebs://)"
+        },
+        "series": {
+          "type": "string",
+          "description": "series id from pacs query, when the query returns several"
+        }
+      },
+      "required": [
+        "workspace",
+        "url"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "pacs echo": {
+    "description": "Verifies a classic PACS node with C-ECHO (read-only): dicom://host[:port]/CALLED-AE. Returns reachable true when the node answers the verification.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "DIMSE node URL (dicom://host[:port]/CALLED-AE)"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "additionalProperties": false
+    }
   }
 }
