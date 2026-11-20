@@ -93,6 +93,9 @@ workspace paths are placed under the operator's `data.workspace_root`.
 | `segment auto -w W [--engine URL] [--label NAME]… [--name-prefix P] [--modality M] [--agent ID]` | Runs an automatic engine (e.g. TotalSegmentator); every structure found becomes a segment proposed by the engine, with checks; existing segments keep their voxels |
 | `review list -w W` | Proposed annotations and segments |
 | `export bundle -w W [--format ferrum\|dicom]… [--deidentify basic] [--deid-option OPT]…` | `export/` in the workspace, each file with SHA-256: `report.json` and, by format, `annotations.json` + `segments.nii.gz` + `segments.json` (`ferrum`, default) or `segmentation.dcm` (DICOM SEG) + `measurements.dcm` (SR, TID 1500) (`dicom`); unconfirmed items are marked in every file, rejected ones left out of DICOM ([format](workspace-format.md#5-dicom-export)). `--deidentify basic` de-identifies the DICOM objects under the PS3.15 Basic Application Level Confidentiality Profile (Stage 31, [design](deidentification.md)) — the sole privacy gate for them, File Meta Information replaced; `--deid-option` (repeatable, requires `--deidentify`) selects `retain_uids`, `retain_dates_modified`, `clean_descriptors`, `retain_device_identity`, `retain_institution_identity`, `retain_patient_characteristics` |
+| `pacs query URL` | Queries a PACS for series (read-only): QIDO-RS over DICOMweb (`dicomweb://host[:port]/service-root?keyword=value`, `dicomwebs://` for HTTPS) or C-FIND over DIMSE (`dicom://host[:port]/CALLED-AE?keyword=value`). Returns pseudonymised series ids, format, modality, dims and a series-level description — no patient name, ID, birth date or accession number. Keywords: `PatientID`, `PatientName`, `AccessionNumber`, `StudyInstanceUID`, `SeriesInstanceUID`, `StudyDate`, `Modality`, `StudyDescription`, `SeriesDescription`, `SeriesNumber`; `limit`/`offset` paginate ([below](#pacs-queryretrieve-and-the-ssrf-boundary)) |
+| `pacs retrieve -w W URL [--series S]` | Retrieves a series from a DICOMweb PACS over WADO-RS into the workspace W and describes it (read-only). The pixels stay in memory and are re-retrieved on each call; the workspace records the PACS URL as its source (no local patient files). `--series` takes a series id from `pacs query` when the query returns several. Retrieval over DIMSE (C-MOVE) is host-only, not an agent command |
+| `pacs echo URL` | Verifies a classic PACS node with C-ECHO (read-only): `dicom://host[:port]/CALLED-AE`. Returns `reachable: true` when the node answers |
 | `review confirm\|reject -w W (--annotation ID \| --segment L) --by NAME` | Only if the operator allows harness review |
 | `run "<command>" --params '<json>'` | Any command with JSON parameters: the same call the MCP server makes |
 | `commands` | The command names |
@@ -301,6 +304,7 @@ salt = "site-secret"
 
 [network]
 engines = ["http://127.0.0.1:8765", "http://127.0.0.1:8766"]   # segmentation engines the agent may use
+pacs = ["dicomweb://pacs.example:8042/dicom-web", "dicom://10.0.0.5:104/PACS"]   # PACS the agent may query/retrieve/verify (read-only)
 gpu_groups = { gpu0 = ["http://127.0.0.1:8765", "http://127.0.0.1:8766"] }  # engines sharing a GPU: one call at a time
 gpu_capacity_mib = { gpu0 = 11264 }   # optional: leases of the group must fit (a model server can stay)
 gpu_peaks_mib = { "http://127.0.0.1:8765" = 6000 }   # optional: GPU memory of one call (whole engine process)
@@ -372,6 +376,56 @@ configuration sets none.
 
 **Equivalence:** a test runs the same session through the command line
 and through MCP and checks that both give identical JSON.
+
+## PACS query/retrieve and the SSRF boundary
+
+`pacs query`, `pacs retrieve` and `pacs echo` open a study the site keeps in
+its PACS (Stage 32, [ADR 0021](decisions/0021-pacs-client.md),
+[dicomweb.md](dicomweb.md), [dicomdimse.md](dicomdimse.md)). They are
+**read-only**: query (QIDO-RS / C-FIND), retrieve (WADO-RS) and verify
+(C-ECHO). **Send-off is host-only and has no agent command** — STOW-RS,
+C-MOVE and the C-STORE SCP move data off the workstation, so a person's
+explicit action in a host calls them (`ferrum_io::DicomWebStow`,
+`DicomDimseRepository::load`); the agent command set contains none of them
+(a test checks the command list, the MCP tools and `commands.json`).
+`pacs retrieve` therefore uses WADO-RS only; a `dicom://` URL is refused
+with a hint that DIMSE retrieval is a host operation.
+
+**Privacy.** A query returns pseudonymised series ids (`anon-…`, the same
+salted hashes as `study scan`) and series-level text only — no patient name,
+ID, birth date or accession number. A retrieved study's identifiers stay
+inside FERRUM exactly as for files: `study info` pseudonymises the UIDs and
+withholds dates/accession unless the operator allows them, and the privacy
+scan (`tests/privacy.rs`, `tests/pacs.rs`) reads every envelope. The
+workspace records the PACS URL as its source and keeps **no local patient
+files**: retrieved pixels stay in memory and each call re-retrieves them
+(ADR 0021 §2). Query *inputs* may carry identifiers (a `PatientID` filter is
+how a study is found); they are the harness's own input, echoed in
+`provenance.params` like every command's parameters, and never appear in
+error messages (the URL is stripped to scheme + host).
+
+**SSRF boundary.** An agent-supplied URL is a network destination the
+operator must allow, so every `pacs` command checks it **before any
+request**:
+
+- The operator lists allowed PACS in `[network] pacs` (full
+  `dicomweb://`/`dicomwebs://`/`dicom://` URLs). The check matches the
+  scheme and authority (`host[:port]`) of the command URL against an entry.
+- Without a configuration file, only loopback hosts (`127.0.0.0/8`,
+  `localhost`, `::1`) are allowed — the same posture as engines.
+- Link-local and cloud-metadata addresses are **always refused, even when
+  allow-listed**: `169.254.0.0/16` (including the `169.254.169.254` metadata
+  endpoint), IPv6 `fe80::/10`, unspecified (`0.0.0.0`, `::`), broadcast,
+  IPv4-mapped forms of these, and `metadata.google.internal`. These are
+  never a legitimate PACS and are the classic SSRF targets.
+- Private/on-prem ranges (`10/8`, `192.168/16`, …) are **not** blocked by
+  the host rule — a site PACS lives there; the operator allowlist is the
+  boundary for them. Blocking all internal addresses would refuse the very
+  servers a hospital runs.
+
+The repository API (`DicomWebRepository`, `DicomDimseRepository`) is
+operator-configured and composes freely in a host; the restriction lives at
+the agent command layer, where untrusted URLs arrive.
 
 ## Segmentation engines
 

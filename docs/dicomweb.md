@@ -2,7 +2,8 @@
 
 - **Spec:** `dev_plan.md` Stage 32, criteria 32.1-a…c (#76)
 - **Decision:** [ADR 0021](decisions/0021-pacs-client.md)
-- **Status:** G2 design; PR 1 implements 32.T1
+- **Status:** PR 1 (32.T1) and PR 2 (32.T2) merged; PR 3 implements 32.T3
+  (STOW-RS §9 + agent query/retrieve); PR 4 (Orthanc CI) pending
 
 FERRUM opens studies a site keeps in its PACS. The client is a
 `VolumeRepository` implementation in `ferrum-io`
@@ -276,3 +277,51 @@ parameters, userinfo refusal, query stripped from errors), descriptor id.
 
 Integration against a real Orthanc (the pinned phantom of 32.1-b, STOW,
 highdicom) is PR 4.
+
+## 9. PR 3 as built — STOW-RS send-off and the agent surface (32.2, 32.4)
+
+### STOW-RS, host-only (`dicom/stow.rs`)
+
+`DicomWebStow` stores DICOM objects to a PACS over `dicom-web`'s STOW API
+(`store_instances`, POST `{service-root}/studies`). It is **host-only**:
+called from a person's explicit action in a host, never registered as an
+agent command (ADR 0021 §5, criterion 32.2-b). It shares the read-only
+repository's request deadline and error mapping (`web::block_on_pacs`,
+`web::map_web_error`, L23) and the same auth posture (basic/bearer on the
+client, never in a URL).
+
+- `store(target, objects, progress)` sends Part 10 objects;
+  `store_files(target, paths, progress)` is the **export → STOW hand-off**:
+  the Stage 31 exporter ([`deidentification.md`](deidentification.md)) writes
+  the de-identified `segmentation.dcm` / `measurements.dcm`
+  (`DicomExportOptions::deid`), and the host sends those files. The deid
+  profile is the sole privacy gate — what leaves FERRUM is already
+  de-identified; STOW adds no identifiers.
+- The response is checked **per instance** (PS3.18 §10.5.3, Store Instances
+  Response Module, Annex I): `StowReport` lists each referenced instance as
+  `Success` (Referenced SOP Sequence, 0008,1190), `Warning` (0008,1199, with
+  Warning Reason 0008,1196) or `Failure` (Failed SOP Sequence 0008,1198, with
+  Failure Reason 0008,1197). `all_stored()` is false when any instance
+  failed. (The 0.10 DICOM dictionary names tag 0008,1190 `RETRIEVE_URL`; its
+  value is the STOW success sequence — the code uses the dictionary constant
+  and comments the quirk.)
+- A non-success HTTP status (e.g. 409, one or more instances rejected) is a
+  `RepositoryError::Io` naming the host and status; `dicom-web` 0.6 does not
+  expose the 409 body, so per-instance failure detail is available on the
+  200/202 response path. An empty input is `NothingFound`; a slow PACS times
+  out (`Io`). Tests: `tests/dicomstow.rs` (mock PACS — a de-identified export
+  arrives with no identifiers, per-instance success/warning/failure,
+  409/auth/timeout). Real Orthanc + highdicom validation is PR 4.
+
+### Agent query/retrieve/verify (`ferrum-agent`, 32.4)
+
+The agent gains three **read-only** commands, thin over the repositories:
+`pacs query` (QIDO-RS / C-FIND), `pacs retrieve` (WADO-RS into a workspace)
+and `pacs echo` (C-ECHO). Send-off (STOW/C-MOVE/C-STORE) is absent from the
+command set; `pacs retrieve` refuses a `dicom://` URL (C-MOVE is host-only).
+A PACS-sourced workspace records the URL as its source and keeps no local
+patient files (`Workspace::create_remote`); each load re-retrieves in memory
+(ADR 0021 §2). Query output is pseudonymised; the SSRF allowlist
+(`network.pacs`) and the privacy scan are described in
+[agent-cli.md](agent-cli.md) §PACS. Tests: `ferrum-agent/tests/pacs.rs`
+(mock PACS, CLI = MCP, pseudonymisation, SSRF refusals).
