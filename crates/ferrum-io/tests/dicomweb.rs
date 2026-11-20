@@ -336,7 +336,10 @@ fn a_connection_refusal_is_an_io_error() {
     // firewall may drop the SYN instead, surfacing as a timeout — both are Io
     // errors (32.1-c: an error, never a panic), so accept either wording.
     let msg = err.to_string();
-    assert!(msg.contains("connection") || msg.contains("timed out"), "a closed port is a connection or timeout error: {msg}");
+    assert!(
+        msg.contains("connection") || msg.contains("timed out"),
+        "a closed port is a connection or timeout error: {msg}"
+    );
     assert!(!msg.contains("PID-SECRET-987654"), "the query never leaks: {msg}");
 }
 
