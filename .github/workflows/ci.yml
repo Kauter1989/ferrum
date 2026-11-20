@@ -111,6 +111,52 @@ jobs:
           cargo test -p ferrum-io --test dicom_export
           python scripts/validate_dicom_export.py "$FERRUM_DICOM_EXPORT_DIR"
 
+  orthanc:
+    # Integration against a real Orthanc PACS (Stage 32, PR 4, #76, 32.5).
+    # Orthanc's DICOMweb plugin is AGPL: Orthanc runs as a separate service
+    # container reached over HTTP only, never linked into FERRUM (ADR 0021 §6,
+    # constitution licences). highdicom (MIT) validates the STOW round-trip.
+    # The job runs on the runner host, so the service port maps to localhost.
+    runs-on: ubuntu-latest
+    services:
+      orthanc:
+        # Pinned image; the DICOMweb plugin is bundled and enabled by default.
+        image: orthancteam/orthanc:26.11.1
+        env:
+          DICOM_WEB_PLUGIN_ENABLED: 'true'
+          ORTHANC__DICOM_WEB__ROOT: '/dicom-web/'
+          ORTHANC__AUTHENTICATION_ENABLED: 'true'
+          ORTHANC__REMOTE_ACCESS_ALLOWED: 'true'
+          ORTHANC__REGISTERED_USERS: '{"orthanc": "orthanc"}'
+        ports:
+          - '8042:8042'
+    env:
+      FERRUM_ORTHANC_URL: http://localhost:8042/dicom-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Wait for the Orthanc DICOMweb endpoint
+        run: |
+          for i in $(seq 1 60); do
+            curl -sf -u orthanc:orthanc http://localhost:8042/dicom-web/system && break
+            sleep 2
+          done
+          curl -sf -u orthanc:orthanc http://localhost:8042/dicom-web/system
+      - name: Rust integration (query/retrieve/open pixel match, STOW success tag)
+        run: cargo test -p ferrum-io --test orthanc -- --test-threads=1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install highdicom (MIT) and the test dependencies
+        run: pip install highdicom pydicom pytest requests numpy
+      - name: Build ferrum-cli (the de-identified SEG/SR export)
+        run: cargo build -p ferrum-cli
+      - name: Python highdicom validation of the STOW round-trip
+        env:
+          FERRUM_CLI: target/debug/ferrum-cli
+        run: pytest scripts/test_orthanc.py -q
+
   python-lint:
     # ruff (ruff.toml) on the Python files a pull request changes; older files
     # are brought in line when they are touched (docs/quality.md). Also runs
