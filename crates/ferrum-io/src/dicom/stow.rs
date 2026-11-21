@@ -200,7 +200,9 @@ fn parse_response(obj: &InMemDicomObject) -> StowReport {
 /// Appends the Referenced SOP Sequence (0008,1199) items, splitting success
 /// from warning by the presence of a non-zero Warning Reason (0008,1196).
 fn collect_referenced(obj: &InMemDicomObject, out: &mut Vec<StowInstance>) {
-    let Some(items) = obj.element_opt(tags::REFERENCED_SOP_SEQUENCE).ok().flatten().and_then(|e| e.items()) else { return };
+    let Some(items) = obj.element_opt(tags::REFERENCED_SOP_SEQUENCE).ok().flatten().and_then(|e| e.items()) else {
+        return;
+    };
     for item in items {
         let reason = header::int_of(item, tags::WARNING_REASON).map(|r| r as u16).filter(|&r| r != 0);
         let status = if reason.is_some() { StowStatus::Warning } else { StowStatus::Success };
