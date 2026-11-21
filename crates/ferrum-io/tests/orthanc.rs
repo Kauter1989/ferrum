@@ -152,7 +152,9 @@ fn query_retrieve_open_matches_the_phantom_voxel_for_voxel() {
     assert_eq!(web.metadata.study.series_instance_uid, SERIES_UID);
 
     // The existing viewer path (composite repository) opens the same study.
-    let composite = CompositeRepository::default();
+    // The composite's DICOMweb repository needs the PACS credentials (the
+    // default composite carries none), so build it with the authenticated one.
+    let composite = CompositeRepository::new(vec![Box::new(DicomRepository), Box::new(pacs.repo())]);
     let cs = composite.scan(&[query], &NoProgress).unwrap();
     assert_eq!(cs.len(), 1);
     let cw = composite.load(&cs[0], &NoProgress).unwrap();
