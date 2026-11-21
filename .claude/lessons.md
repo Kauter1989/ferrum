@@ -1029,6 +1029,126 @@ that says so instead of editing the old one.
 - **Rule:** Keep a WSL session open for the whole build; the VM does not
   survive the last session closing, whatever the process tree looks like.
 
+### L53 — A full WSL VHDX drive masquerades as a broken WSL (2026-11, Stage 32 PR 4)
+
+- **Symptom:** WSL2 fell into a persistent `Wsl/Service/CreateInstance/E_FAIL`:
+  the VM was created but the guest shut down on boot (Hyper-V-Worker event
+  18508). Ubuntu-24.04 would not boot at all; Ubuntu-22.04 booted but a heavy
+  cargo build died with rustc `SIGBUS` (signal 7) and the filesystem went
+  **read-only** (`touch: Read-only file system`, `/usr/bin/dmesg: Input/output
+  error`). Hours were spent restarting LxssManager/hns/vmcompute, resetting HNS
+  networks, `wsl --update`, rebooting, and disabling the ASUS AsIO drivers — all
+  red herrings.
+- **Root cause:** the drive holding the WSL virtual disks (`E:\WSL\*\ext4.vhdx`)
+  was **100 % full (0 bytes free)**. A dynamically-expanding VHDX cannot grow on
+  a full volume, so the guest ext4 hits I/O errors, remounts read-only, and the
+  VM fails to start. The disks were SMART-healthy — not hardware, just full.
+  `target/` (73 GB) + `target-wsl/` (36 GB) of regenerable cargo artifacts had
+  filled the 1.9 TB volume.
+- **Fix:** freed ~100 GB by deleting the cargo `target` and `target-wsl`
+  directories; `wsl --shutdown` then boot — Ubuntu-24.04 restored, preflight
+  `all checks passed`, real-Orthanc integration 3/3.
+- **Guard:** before any WSL build, check free space on the **VHDX drive** (not
+  just the repo drive) and log it; refuse below a floor (~10 GB). Build into a
+  per-branch+date `CARGO_TARGET_DIR` and delete it when the branch merges, so
+  artifacts never accumulate (see `ferrum-build.sh` / `ferrum-clean-builds.sh`).
+  This supersedes the weighable advice of L15 with a mechanical gate (L38).
+- **Rule:** `E_FAIL` / SIGBUS / read-only fs in WSL → **check the VHDX drive
+  free space first**, before services, drivers, or reboot.
+
+### L54 — A mock that mirrors the code's assumption is not independent validation (2026-11, Stage 32 PR 3→4)
+
+- **Symptom:** the STOW-RS response parser read the success count from tag
+  `(0008,1190)` RetrieveURL. PR 3's review "verified the tag against pydicom +
+  PS3.18", and the unit tests + the mock PACS built the response with the same
+  `(0008,1190)` assumption — so everything passed. Against a **real Orthanc**
+  the success count was 0: `(0008,1190)` is a single Retrieve URL string, and the
+  stored instances are in the **Referenced SOP Sequence `(0008,1199)`** (PS3.18
+  Annex I). The mock and the code were wrong together.
+- **Root cause:** a mock constructed from the same misunderstanding as the code
+  is self-consistent, not independent. It cannot catch a wrong wire-format
+  assumption; only a real peer (or a fixture captured from one) can.
+- **Fix:** read success/warning from `(0008,1199)` (an item with a non-zero
+  Warning Reason is a warning), failure from `(0008,1198)`; corrected the unit
+  tests, the mock, and the Python check; validated 3/3 against a real Orthanc.
+- **Guard:** wire-format / protocol parsing must be validated against a **real
+  peer** (CI service container or local Docker) before G3; a local graceful-skip
+  is not validation. The G3 report must show the real-service result. Extends L5:
+  a test must check ground truth, not the code's own assumption.
+- **Rule:** for any code that parses another implementation's output, capture a
+  real response as the fixture; a hand-built mock that agrees with the code
+  proves nothing.
+
+### L55 — A reset in a shared worktree moved the branch under the working tree (2026-11, Stage 32 PR 4)
+
+- **Symptom:** a verification script ran `git -C <worktree> reset --hard
+  refs/tmp/…` in a stale worktree that shared the **same branch** as the Windows
+  working tree. The reset moved the branch ref, silently dropping the fix
+  commits from the working tree (recovered only via reflog). A later `checkout
+  -B` in the same setup also failed to move HEAD as expected.
+- **Root cause:** a worktree and the main working tree share branch refs; a
+  `reset --hard` / `checkout -B` on a branch checked out elsewhere moves it under
+  the other tree. Stale worktree entries (`git worktree list … prunable`) make
+  this easy to trigger by accident.
+- **Fix:** recovered the commits from reflog; switched verification to a
+  **detached HEAD worktree of an independent clone** (`git worktree add
+  --detach <path> <ref>`), which never moves a branch.
+- **Guard (dangerous-operation protocol):** before any `reset --hard`, branch
+  delete, or bulk file delete: (1) gather the full picture — `git status`,
+  `git reflog`, `git worktree list`, which commits would be lost and whether they
+  are merged/approved, whether the branch is checked out elsewhere; (2) if the
+  operation could lose **new, approved** code, STOP and propose an alternative
+  (detached worktree, a `backup-<name>` branch first, cherry-pick, stash);
+  (3) delete only confirmed regenerable artifacts, never patient data or
+  approved code, and show what will be removed first.
+- **Rule:** verification worktrees are detached HEAD of an independent clone;
+  never reset a branch that is checked out in another worktree. Assess
+  consequences before any destructive git/file operation.
+
+### L56 — WSL E_FAIL: a diagnostic order, not a chase (2026-11, Stage 32 PR 4)
+
+- **Symptom:** the generic `Wsl/Service/CreateInstance/E_FAIL` sent the session
+  through service restarts, HNS/WinNAT resets, `wsl --update`, a reboot, and an
+  ASUS AsIO driver disable — none fixed it; the real cause (L53, full disk) was
+  found last.
+- **Root cause:** no ordered diagnostic; the cheapest, most likely cause (disk
+  space) was checked after the expensive ones.
+- **Guard:** on WSL `E_FAIL` / boot failure, check in this order: **(1) free
+  space on the VHDX drive** (`Get-Volume`, the drive of `ext4.vhdx`) and cargo
+  target size; **(2)** LxssManager/hns/vmcompute service state + HNS networks;
+  **(3)** `wsl --shutdown` + reboot; **(4)** drivers / conflicting software
+  (AsIO, Nahimic) only if the above are clean. Read the Hyper-V-Worker /
+  Hyper-V-Compute admin logs (elevated) for the actual VM failure reason.
+- **Rule:** cheapest-likely-first; a full disk is the first suspect for WSL I/O
+  errors, not a driver.
+
+### L57 — A new native crypto dep broke the Windows build (2026-11, Stage 32 PR 1)
+
+- **Symptom:** adding `dicom-web` pulled reqwest → rustls-with-**aws-lc-rs** →
+  `aws-lc-sys`, which compiles AWS-LC from C. On the dev Windows machine that C
+  build fails under cargo with MSVC `D8050` ("cannot execute c1.dll: failed to
+  get command line into debug records"); the *identical* `cl.exe` command
+  succeeds from a `cmd` prompt — Kaspersky interfering with cargo's child
+  processes (the L39 family). Since `ferrum-io` is a core crate, the whole
+  Windows workspace build/check stopped working.
+- **Root cause:** a new dependency added a native C build that the Windows
+  antivirus/toolchain environment could not compile; Linux/WSL/CI build cleanly.
+- **Fix (accepted):** build/test in WSL (documented in `docs/dicomweb.md` §6).
+  Updating MSVC was tried and **did not help**: VS 2022 17.3/MSVC 14.33 →
+  17.14/MSVC 14.44 still fails `D8050` on `aws-lc-sys` — confirming the cause is
+  Kaspersky interfering with cargo's child `cl.exe` (the `/Z7` debug-records
+  command line), not the toolchain version. The Windows desktop build needs a
+  **Kaspersky exclusion** for the cargo registry + build dirs (or disabling its
+  process-injection protection); a ring-based transport (the workspace already
+  uses ureq+ring) would remove the native AWS-LC build entirely — a backlog
+  follow-up.
+- **Guard:** before merging a dependency that adds a native build (aws-lc-sys,
+  ring, openssl-sys, …), check the Windows build under the dev antivirus and
+  document the constraint; security-review asks "does this dep add a native
+  build, and what is its Windows/Kaspersky impact?".
+- **Rule:** a dependency is not licence-clean only; it must also build on every
+  supported host. Native-build deps get an explicit Windows build check.
+
 ## What worked
 
 ### W1 — Field test on the user's GPU with a throw-away script (2026-10, Stage 17)

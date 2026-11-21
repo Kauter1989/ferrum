@@ -1,4 +1,5 @@
 /target
+/.builds
 **/*.rs.bk
 .DS_Store
 /.idea
