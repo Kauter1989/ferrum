@@ -186,14 +186,33 @@ fn parse_target(text: &str) -> Result<(String, String), RepositoryError> {
 /// sequences.
 fn parse_response(obj: &InMemDicomObject) -> StowReport {
     let mut instances = Vec::new();
-    // Success: Referenced SOP Sequence (0008,1190). The 0.10 dictionary names
-    // this tag RETRIEVE_URL; its value is the STOW success sequence.
-    collect_sequence(obj, tags::RETRIEVE_URL, StowStatus::Success, &mut instances);
-    // Warning: Referenced SOP Sequence (0008,1199).
-    collect_sequence(obj, tags::REFERENCED_SOP_SEQUENCE, StowStatus::Warning, &mut instances);
+    // Success and warning both live in the Referenced SOP Sequence (0008,1199):
+    // an item carrying a non-zero Warning Reason (0008,1196) is a warning, any
+    // other item is a success. (0008,1190) is the Retrieve URL — a single UR,
+    // not an instance sequence (verified against a real Orthanc, PR 4; the
+    // 0.10 dictionary names it RETRIEVE_URL).
+    collect_referenced(obj, &mut instances);
     // Failure: Failed SOP Sequence (0008,1198).
     collect_sequence(obj, tags::FAILED_SOP_SEQUENCE, StowStatus::Failure, &mut instances);
     StowReport { instances }
+}
+
+/// Appends the Referenced SOP Sequence (0008,1199) items, splitting success
+/// from warning by the presence of a non-zero Warning Reason (0008,1196).
+fn collect_referenced(obj: &InMemDicomObject, out: &mut Vec<StowInstance>) {
+    let Some(items) = obj.element_opt(tags::REFERENCED_SOP_SEQUENCE).ok().flatten().and_then(|e| e.items()) else {
+        return;
+    };
+    for item in items {
+        let reason = header::int_of(item, tags::WARNING_REASON).map(|r| r as u16).filter(|&r| r != 0);
+        let status = if reason.is_some() { StowStatus::Warning } else { StowStatus::Success };
+        out.push(StowInstance {
+            sop_class_uid: header::str_of(item, tags::REFERENCED_SOP_CLASS_UID).unwrap_or_default(),
+            sop_instance_uid: header::str_of(item, tags::REFERENCED_SOP_INSTANCE_UID).unwrap_or_default(),
+            status,
+            reason,
+        });
+    }
 }
 
 /// Appends the instances of one response sequence with their status.
@@ -245,18 +264,17 @@ mod tests {
     #[test]
     fn response_reports_success_warning_and_failure_per_instance() {
         // covers 32.2-a: the response is checked per instance
-        let mut ok = referenced("1.2.840.10008.5.1.4.1.1.66.4", "1.2.3.1");
-        ok.put(DataElement::new(tags::WARNING_REASON, VR::US, PrimitiveValue::from(0u16)));
+        let ok = referenced("1.2.840.10008.5.1.4.1.1.66.4", "1.2.3.1");
         let mut warn = referenced("1.2.840.10008.5.1.4.1.1.66.4", "1.2.3.2");
         warn.put(DataElement::new(tags::WARNING_REASON, VR::US, PrimitiveValue::from(0xB000u16)));
         let mut fail = referenced("1.2.840.10008.5.1.4.1.1.66.4", "1.2.3.3");
         fail.put(DataElement::new(tags::FAILURE_REASON, VR::US, PrimitiveValue::from(0xA700u16)));
+        // success and warning share the Referenced SOP Sequence (0008,1199)
         let response = InMemDicomObject::from_element_iter([
-            DataElement::new(tags::RETRIEVE_URL, VR::SQ, dicom_core::value::DataSetSequence::from(vec![ok])),
             DataElement::new(
                 tags::REFERENCED_SOP_SEQUENCE,
                 VR::SQ,
-                dicom_core::value::DataSetSequence::from(vec![warn]),
+                dicom_core::value::DataSetSequence::from(vec![ok, warn]),
             ),
             DataElement::new(tags::FAILED_SOP_SEQUENCE, VR::SQ, dicom_core::value::DataSetSequence::from(vec![fail])),
         ]);
@@ -275,7 +293,7 @@ mod tests {
     fn an_all_success_response_is_stored() {
         // covers 32.2-a
         let response = InMemDicomObject::from_element_iter([DataElement::new(
-            tags::RETRIEVE_URL,
+            tags::REFERENCED_SOP_SEQUENCE,
             VR::SQ,
             dicom_core::value::DataSetSequence::from(vec![referenced("1.2", "1.2.3")]),
         )]);

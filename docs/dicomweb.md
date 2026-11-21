@@ -2,8 +2,9 @@
 
 - **Spec:** `dev_plan.md` Stage 32, criteria 32.1-a…c (#76)
 - **Decision:** [ADR 0021](decisions/0021-pacs-client.md)
-- **Status:** PR 1 (32.T1) and PR 2 (32.T2) merged; PR 3 implements 32.T3
-  (STOW-RS §9 + agent query/retrieve); PR 4 (Orthanc CI) pending
+- **Status:** PRs 1–3 (32.T1–T3) merged (#136, #137, #138); PR 4 implements
+  32.T4 (Orthanc-in-Docker CI integration + highdicom validation, §10), closing
+  #76
 
 FERRUM opens studies a site keeps in its PACS. The client is a
 `VolumeRepository` implementation in `ferrum-io`
@@ -325,3 +326,78 @@ patient files (`Workspace::create_remote`); each load re-retrieves in memory
 (`network.pacs`) and the privacy scan are described in
 [agent-cli.md](agent-cli.md) §PACS. Tests: `ferrum-agent/tests/pacs.rs`
 (mock PACS, CLI = MCP, pseudonymisation, SSRF refusals).
+
+## 10. PR 4 as built — Orthanc-in-Docker CI + highdicom (32.5, closes #76)
+
+PR 4 checks the client against a **real PACS**, not a mock: query → retrieve →
+open with a voxel-for-voxel pixel match, and a STOW'd SEG validated by
+highdicom. It closes the Orthanc clause of 32.1-b ("a pinned phantom retrieved
+from Orthanc") and criteria 32.5-a…b.
+
+### Orthanc as a separate AGPL service
+
+Orthanc's DICOMweb plugin is **AGPL**, so Orthanc runs as a **separate Docker
+service**, reached over HTTP only — never linked into FERRUM (ADR 0021 §6,
+constitution licences; FERRUM stays MIT OR Apache-2.0). The CI job `orthanc`
+(`.github/workflows/ci.yml`) starts the pinned image
+`orthancteam/orthanc:26.11.1` (Orthanc 1.13.1, DICOMweb plugin 1.24) as a
+GitHub Actions **service container**. The plugin is bundled and enabled by
+default; the job sets `DICOM_WEB_PLUGIN_ENABLED=true`,
+`ORTHANC__DICOM_WEB__ROOT=/dicom-web/`, authentication on with the default
+`orthanc`/`orthanc` user (`ORTHANC__REGISTERED_USERS`). The job runs on the
+runner host, so the service port maps to `localhost:8042` and the DICOMweb
+endpoint is `http://localhost:8042/dicom-web` (`FERRUM_ORTHANC_URL`). A curl
+loop waits for `/dicom-web/system` before the tests run. highdicom (MIT) is
+installed in the job's Python layer; it is a test dependency, never linked into
+Rust.
+
+### Rust integration (`crates/ferrum-io/tests/orthanc.rs`)
+
+| Test | Covers |
+|---|---|
+| `query_retrieve_open_matches_the_phantom_voxel_for_voxel` — STOW a run-time CT phantom to Orthanc, QIDO-query it, WADO-retrieve and open it; the volume equals the file reader's voxel for voxel (absolute phantom gradient through the Modality LUT), and the composite (viewer path) opens it identically | 32.5-a, 32.1-b |
+| `stow_of_a_deidentified_seg_reports_the_success_sequence` — STOW a de-identified SEG/SR export; `StowReport` reports both instances as `Success` | 32.5-a, 32.2-a |
+| `an_absent_study_is_nothing_found` — a query matching nothing is `NothingFound`, never a panic | 32.5-a, 32.1-c |
+
+**STOW tag confirmation (the PR 3 quirk).** `stow::parse_response` reads the
+success sequence only from tag **(0008,1190)**, which the dicom-rs 0.10
+dictionary names `RETRIEVE_URL` (§9). A green `count(Success) == 2` against a
+real Orthanc confirms Orthanc reports its stored instances under (0008,1190):
+were it another tag, the success count would be 0 and the test would fail. The
+Python layer independently reads the raw STOW JSON's `00081190` sequence. No
+`parse_response` change was needed — the tag is confirmed, not fixed. (Confirmed
+by CI; the dev machine has no Docker, so locally the test skips — see below.)
+
+### Python highdicom validation (`scripts/test_orthanc.py`)
+
+A self-contained round-trip, in the `test_deid_oracle.py` pattern (venv, skip
+without deps): generate a CT phantom with identifiers (pydicom) → STOW it to
+Orthanc → `ferrum-cli` opens it, segments a blob and exports a de-identified
+SEG/SR (`export bundle --deidentify basic`, Stage 31) → STOW the export back →
+**retrieve both objects over WADO-RS** → validate what comes back with
+highdicom: the SEG as a `Segmentation` (binary, contiguous segment numbers,
+labels/algorithm, non-empty frames, orthonormal geometry, referenced source
+images) and the SR as a `Comprehensive3DSR` with a TID 1500 measurement report
+(segment volume measured). A third test asserts none of the source identifiers
+leaks into the retrieved SEG and that `PatientIdentityRemoved == YES`. The STOW
+response's `00081190` success sequence is checked to reference both exported
+SOP Instance UIDs.
+
+### Graceful skip (32.5-b) and run-time data
+
+Both layers skip when no PACS is reachable. Rust: `FERRUM_ORTHANC_URL` wins
+(CI sets it); otherwise a 500 ms TCP probe of `127.0.0.1:8042` decides — absent
+Orthanc, each test prints a skip note and returns (passes). Python:
+`pytest.importorskip` for pydicom/highdicom/requests/numpy, a `ferrum-cli`
+lookup, and an Orthanc `/system` probe; an explicitly configured but unreachable
+`FERRUM_ORTHANC_URL` is a failure (CI must catch a broken service), the default
+probe skips. All DICOM is generated at run time (`tests/common`, pydicom); **no
+patient or volume data is committed**.
+
+**Local verification.** The dev machine's Docker Desktop does not start (and
+WSL has no Docker Engine), so the integration runs in CI, where the service
+container is up. Locally the skip behaviour is verified: the three Rust tests
+pass by skipping (`cargo test -p ferrum-io --test orthanc`, no PACS) and the
+Python module skips (`pytest scripts/test_orthanc.py`, no pydicom/highdicom).
+The pixel-match, STOW-tag and highdicom assertions are exercised by the CI
+`orthanc` job against the real PACS.
