@@ -1137,11 +1137,14 @@ that says so instead of editing the old one.
   Updating MSVC was tried and **did not help**: VS 2022 17.3/MSVC 14.33 →
   17.14/MSVC 14.44 still fails `D8050` on `aws-lc-sys` — confirming the cause is
   Kaspersky interfering with cargo's child `cl.exe` (the `/Z7` debug-records
-  command line), not the toolchain version. The Windows desktop build needs a
-  **Kaspersky exclusion** for the cargo registry + build dirs (or disabling its
-  process-injection protection); a ring-based transport (the workspace already
-  uses ureq+ring) would remove the native AWS-LC build entirely — a backlog
-  follow-up.
+  command line), not the toolchain version. Excluding the repo folder from
+  Kaspersky file scanning also did not help (it is process protection, not file
+  scanning); a `--release` build avoids `D8050` (no `/Z7`) but then fails the
+  `stdalign` compiler-feature probe. The Windows desktop build needs Kaspersky
+  to **trust the compiler processes** (`cl.exe`/`c1.dll`/`cargo.exe` in
+  Application Activity Control) or disable its process-injection protection; a
+  ring-based transport (the workspace already uses ureq+ring) would remove the
+  native AWS-LC build entirely — a backlog follow-up.
 - **Guard:** before merging a dependency that adds a native build (aws-lc-sys,
   ring, openssl-sys, …), check the Windows build under the dev antivirus and
   document the constraint; security-review asks "does this dep add a native
