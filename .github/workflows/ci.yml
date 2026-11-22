@@ -12,6 +12,10 @@ on:
 env:
   CARGO_TERM_COLOR: always
   FERRUM_REQUIRE_GPU: '1'
+  # CI uses the default target/ dir (its artifact paths and rust-cache key on
+  # it); the committed .cargo/config.toml target-dir=.builds is for local dev
+  # isolation (L53) and is overridden here so CI paths stay valid.
+  CARGO_TARGET_DIR: target
 
 jobs:
   check:

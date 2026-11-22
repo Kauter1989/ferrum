@@ -71,6 +71,12 @@ DICOM tags only via `dicom_dictionary_std::tags`.
 - **Safety cases first** (L7): the `forbidden` and `limit` paths.
 - **Break the code on purpose once** to see the new test fail. Then
   restore it.
+- **Validate wire-format parsing against a real peer** (L54): a mock built
+  from the same assumption as the code is self-consistent, not independent —
+  it passed while the STOW success tag was wrong. Capture a real response as
+  the fixture, or run the integration against the real service (CI service
+  container / local Docker) before G3. A local graceful-skip is not validation;
+  the G3 report must show the real-service result.
 - **Cite the criterion** the test verifies with a comment on the test:
   `// covers 18.2-b` (`# covers …` in Python). `ferrum-analyze` reads
   these comments.
@@ -157,8 +163,34 @@ Notes:
     function, never `allow`.
 - **No `unwrap()`/`expect()` outside tests.** Every public item has a doc
   comment.
-- **Disk:** the cloud allowance is small (L15). Remove
-  `target/llvm-cov-target` and `target/release` when not needed.
+- **Disk — a gate, not advice** (L53, supersedes L15). A full drive holding the
+  WSL `ext4.vhdx` causes I/O errors, a read-only filesystem, rustc `SIGBUS` and
+  `Wsl/Service/CreateInstance/E_FAIL` — it masquerades as a broken WSL. So:
+  - `preflight.sh` **assesses free space on the build drive before building and
+    logs it** to `.claude/state/build-space.log`; it refuses below ~10 GB.
+  - Build into a **unique per-branch+date target dir** with
+    `ferrum-build.sh` (sets `CARGO_TARGET_DIR=.builds/<branch>-<YYYYMMDD>` and
+    runs the preflight), so artifacts never pile up in one shared `target/`.
+    The committed `.cargo/config.toml` sets a **project-relative**
+    `target-dir = ".builds"` (no absolute path — the repo clones cleanly on any
+    machine), and `ferrum-build.sh` defaults `CARGO_HOME` to a project-relative
+    `.cargo-home/` unless set locally, keeping the registry off the system
+    drive too. Both `.builds/` and `.cargo-home/` are gitignored.
+  - **Clean the branch's build dir when the branch merges** (deliver, §7);
+    `ferrum-clean-builds.sh` previews merged/old `.builds/*` dirs and removes
+    them only with `--apply` (regenerable artifacts only, never source/data).
+  - On WSL `E_FAIL`/SIGBUS/read-only fs, **check the VHDX drive free space
+    first** (L56), before services, drivers, or reboot.
+- **Destructive git/file operations — assess first** (L55). Before any
+  `reset --hard`, branch delete, or bulk delete: gather the full picture
+  (`git status`, `git reflog`, `git worktree list`, which commits would be lost
+  and whether they are merged/approved, whether the branch is checked out in
+  another worktree). If it could lose **new, approved** code, STOP and propose
+  an alternative (a detached worktree, a `backup-<name>` branch first,
+  cherry-pick, stash). Verification worktrees are a **detached HEAD of an
+  independent clone** (`git worktree add --detach <path> <ref>`) — never reset a
+  branch checked out elsewhere (a shared-worktree reset moves the branch under
+  the working tree and drops commits).
 
 ## 5. Look at the result yourself
 
@@ -223,6 +255,11 @@ did not.
 6. Merge only when the user says so. Use a merge commit, as in the
    repo's history. After the merge, regenerate the report from the merged
    tree as phase 11 (`ferrum-report`, `docs/<feature>/`).
+7. **Clean the branch's build dir after the merge** (L53): remove
+   `.builds/<branch>-*` (or run `ferrum-clean-builds.sh --apply`, which prunes
+   merged/old branch dirs), so regenerable artifacts never fill the build
+   drive. Delete only build artifacts — never source, patient data, or approved
+   code, and assess consequences first (L55).
 
 ## 8. Record (retro)
 

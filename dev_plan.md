@@ -1295,6 +1295,15 @@ a proposal; each stage starts with its spec at gate G1. Sizes follow
 
 ### Backlog (feature or small, any time)
 
+- **Ring-based DICOMweb transport (Windows build, L57):** `dicom-web`'s reqwest
+  uses rustls-with-aws-lc-rs, so `aws-lc-sys` compiles AWS-LC from C and the
+  Windows build fails under the dev antivirus (MSVC `D8050`, Kaspersky — L39).
+  The workspace already uses ureq+ring; a ring-based QIDO/WADO/STOW client (or a
+  `dicom-web` patch to `rustls-no-provider` + ring) removes the native AWS-LC
+  build and restores the Windows desktop build. Updating MSVC was tried and did
+  not help (VS 2022 17.14 / MSVC 14.44 still fails `D8050` — the cause is
+  Kaspersky, not the toolchain); short-term mitigation is a Kaspersky exclusion
+  for the cargo registry + build dirs. See `docs/dicomweb.md` §6.
 - **`view serve` without a configuration (security review N1):** the hello
   line carries no "no operator configuration" warning, unlike the agent
   envelopes; add a note when `config.is_default`.

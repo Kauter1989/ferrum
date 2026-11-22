@@ -141,6 +141,13 @@ Before **every** push:
    .claude/skills/ferrum-change/preflight.sh            # or --quick, --coverage
    ```
 
+   `preflight.sh` first **assesses free space on the build drive and logs it**
+   (`.claude/state/build-space.log`), refusing below ~10 GB — a full WSL VHDX
+   drive causes I/O errors / read-only fs / `E_FAIL` (L53). Prefer
+   `ferrum-build.sh`, which builds into a unique per-branch+date
+   `CARGO_TARGET_DIR=.builds/<branch>-<date>` so artifacts never accumulate;
+   clean the branch's dir after the merge (`ferrum-clean-builds.sh`, L53).
+
 2. **On Windows, in WSL** — the same Linux CI uses, which is where the
    Linux-only cases and the hooks actually run:
 

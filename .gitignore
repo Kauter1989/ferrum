@@ -1,4 +1,6 @@
 /target
+/.builds
+/.cargo-home
 **/*.rs.bk
 .DS_Store
 /.idea
