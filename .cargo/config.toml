@@ -1,0 +1,7 @@
+# Project-local cargo configuration (portable — no absolute paths, so the repo
+# clones cleanly on any machine). Build artifacts go to a project-relative
+# `.builds/` dir, never a shared accumulating `target/` or a home-dir drive
+# (L53). `ferrum-build.sh` isolates each branch+date under `.builds/` and
+# defaults CARGO_HOME to a project-relative `.cargo-home/` when not set locally.
+[build]
+target-dir = ".builds"

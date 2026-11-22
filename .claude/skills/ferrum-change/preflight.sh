@@ -82,7 +82,7 @@ if (( COVERAGE )); then
 fi
 
 echo
-du -sh target 2>/dev/null | sed 's/^/target size: /'
+du -sh "${CARGO_TARGET_DIR:-target}" 2>/dev/null | sed 's/^/target size: /'
 if (( ${#failed[@]} )); then
   echo "FAILED: ${failed[*]}"
   exit 1

@@ -19,7 +19,14 @@ stamp=$(date +%Y%m%d)
 export CARGO_TARGET_DIR="$PWD/.builds/${safe_branch}-${stamp}"
 mkdir -p "$CARGO_TARGET_DIR"
 
+# Keep the cargo registry off the system drive too, portably: honour a locally
+# set CARGO_HOME, else default to a project-relative .cargo-home (gitignored).
+# No absolute path is committed, so the repo clones cleanly on any machine.
+export CARGO_HOME="${CARGO_HOME:-$PWD/.cargo-home}"
+mkdir -p "$CARGO_HOME"
+
 echo "==> build dir: $CARGO_TARGET_DIR"
+echo "    CARGO_HOME: $CARGO_HOME"
 echo "    (unique per branch+date; clean with ferrum-clean-builds.sh after merge)"
 
 here=$(cd "$(dirname "$0")" && pwd)

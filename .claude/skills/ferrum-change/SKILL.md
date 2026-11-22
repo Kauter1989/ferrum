@@ -171,6 +171,11 @@ Notes:
   - Build into a **unique per-branch+date target dir** with
     `ferrum-build.sh` (sets `CARGO_TARGET_DIR=.builds/<branch>-<YYYYMMDD>` and
     runs the preflight), so artifacts never pile up in one shared `target/`.
+    The committed `.cargo/config.toml` sets a **project-relative**
+    `target-dir = ".builds"` (no absolute path — the repo clones cleanly on any
+    machine), and `ferrum-build.sh` defaults `CARGO_HOME` to a project-relative
+    `.cargo-home/` unless set locally, keeping the registry off the system
+    drive too. Both `.builds/` and `.cargo-home/` are gitignored.
   - **Clean the branch's build dir when the branch merges** (deliver, §7);
     `ferrum-clean-builds.sh` previews merged/old `.builds/*` dirs and removes
     them only with `--apply` (regenerable artifacts only, never source/data).
