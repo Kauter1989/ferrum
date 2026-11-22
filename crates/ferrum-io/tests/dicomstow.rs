@@ -239,31 +239,33 @@ fn received_objects(
 
 /// A Store Instances Response referencing `ids` with the given statuses.
 fn response_json(success: &[(String, String)], warning: &[(String, String)], failure: &[(String, String)]) -> String {
-    let seq = |ids: &[(String, String)], reason: Option<(&str, u16)>| {
-        let items: Vec<_> = ids
-            .iter()
-            .map(|(class, instance)| {
-                let mut item = serde_json::json!({
-                    "00081150": { "vr": "UI", "Value": [class] },
-                    "00081155": { "vr": "UI", "Value": [instance] },
-                });
-                if let Some((tag, code)) = reason {
-                    item[tag] = serde_json::json!({ "vr": "US", "Value": [code] });
-                }
-                item
-            })
-            .collect();
-        serde_json::json!({ "vr": "SQ", "Value": items })
+    let item = |class: &str, instance: &str, reason: Option<(&str, u16)>| {
+        let mut it = serde_json::json!({
+            "00081150": { "vr": "UI", "Value": [class] },
+            "00081155": { "vr": "UI", "Value": [instance] },
+        });
+        if let Some((tag, code)) = reason {
+            it[tag] = serde_json::json!({ "vr": "US", "Value": [code] });
+        }
+        it
     };
     let mut obj = serde_json::Map::new();
-    if !success.is_empty() {
-        obj.insert("00081190".into(), seq(success, None));
+    // Success and warning share the Referenced SOP Sequence (0008,1199); a
+    // warning item carries a Warning Reason (0008,1196). (0008,1190) is the
+    // Retrieve URL, not an instance sequence (real Orthanc, PR 4).
+    let mut referenced: Vec<serde_json::Value> = Vec::new();
+    for (class, instance) in success {
+        referenced.push(item(class, instance, None));
     }
-    if !warning.is_empty() {
-        obj.insert("00081199".into(), seq(warning, Some(("00081196", 0xB000))));
+    for (class, instance) in warning {
+        referenced.push(item(class, instance, Some(("00081196", 0xB000))));
+    }
+    if !referenced.is_empty() {
+        obj.insert("00081199".into(), serde_json::json!({ "vr": "SQ", "Value": referenced }));
     }
     if !failure.is_empty() {
-        obj.insert("00081198".into(), seq(failure, Some(("00081197", 0xA700))));
+        let items: Vec<_> = failure.iter().map(|(c, i)| item(c, i, Some(("00081197", 0xA700)))).collect();
+        obj.insert("00081198".into(), serde_json::json!({ "vr": "SQ", "Value": items }));
     }
     serde_json::Value::Object(obj).to_string()
 }
