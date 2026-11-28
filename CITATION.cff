@@ -10,8 +10,8 @@ repository-code: "https://github.com/Kauter1989/ferrum"
 license:
   - MIT
   - Apache-2.0
-version: 0.4.0
-date-released: "2026-11-14"
+version: 0.5.0
+date-released: "2026-11-28"
 keywords:
   - medical imaging
   - volume rendering
