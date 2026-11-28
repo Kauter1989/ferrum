@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-11-28
+
 ### Added
 
 - Studies open from a PACS (Stage 32 PR 1, [#76](https://github.com/Kauter1989/ferrum/issues/76), [design](docs/dicomweb.md), [ADR 0021](docs/decisions/0021-pacs-client.md)). `ferrum-io` gains `DicomWebRepository` on `dicom-web` 0.6: a `dicomweb://host/dicom-web?PatientID=…` path (`dicomwebs://` for HTTPS) is a QIDO-RS series query, and the chosen series is retrieved over WADO-RS and assembled by the **same pipeline as the file reader** — the canonical LPS grid, the lossless HU storage and the voxel values match the downloaded study exactly. Basic/bearer auth is configured on the repository, never parsed from a URL; every request carries a deadline (default 30 s); connection failures, HTTP errors, authentication refusals, timeouts and non-DICOM responses are `RepositoryError`s, never panics, and an empty query is `NothingFound`. Retrieved data stays in memory (nothing is written to disk), and descriptors and error strings carry no patient identifiers or credentials. The default composite repository opens files and PACS URLs alike, so the existing viewer opens a retrieved study with no app-layer change. Send-off (STOW/C-MOVE/C-STORE) stays host-only and is not part of this client; DIMSE, the agent query/retrieve commands and the Orthanc CI integration are the stage's next PRs.
@@ -244,6 +246,7 @@ frame, 2D slices and MPR, GPU volume rendering (tissue, isosurface, MIP,
 transfer functions) with a CPU reference renderer and parity tests,
 measurements, clipping, eraser and headless snapshots.
 
+[0.5.0]: https://github.com/Kauter1989/ferrum/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Kauter1989/ferrum/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Kauter1989/ferrum/compare/v0.2.3...v0.3.0
 [0.2.3]: https://github.com/Kauter1989/ferrum/compare/v0.2.2...v0.2.3
