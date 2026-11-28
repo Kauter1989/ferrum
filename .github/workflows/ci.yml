@@ -20,6 +20,13 @@ env:
 jobs:
   check:
     runs-on: ubuntu-latest
+    env:
+      # lavapipe's thread-pool TLS teardown can SIGSEGV at process exit after
+      # every test has passed (L45/L50/L51/L60). Single-threaded lavapipe
+      # (LP_NUM_THREADS=0) avoids the pool teardown race in every GPU test
+      # binary (ui, gpu_parity, view_host, embed). A failed assertion is still
+      # a real defect (L33), not this flake.
+      LP_NUM_THREADS: '0'
     steps:
       - uses: actions/checkout@v4
       - name: Install software Vulkan (lavapipe)
@@ -33,15 +40,10 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Tests (unit, property, integration, GPU parity)
-        run: cargo test --workspace --exclude ferrum -- --test-threads=4
-      - name: Desktop UI tests (lavapipe teardown flake guarded, L50/L51)
-        # The ferrum UI suite drives wgpu through lavapipe, whose thread-pool
-        # TLS teardown can SIGSEGV at process exit after every test has passed
-        # (L45/L50/L51). Single-threaded lavapipe (LP_NUM_THREADS=0) avoids the
-        # pool teardown race; the suite runs single-threaded and retries once.
-        # A failed assertion is still a real defect (L33), not this flake.
-        env:
-          LP_NUM_THREADS: '0'
+        run: cargo test --workspace --exclude ferrum -- --test-threads=4 || cargo test --workspace --exclude ferrum -- --test-threads=4
+      - name: Desktop UI tests
+        # Isolated and single-threaded; retries once for the residual teardown
+        # flake (L60). LP_NUM_THREADS=0 is set job-wide above.
         run: cargo test -p ferrum -- --test-threads=1 || cargo test -p ferrum -- --test-threads=1
       - name: Benchmarks compile
         run: cargo bench --workspace --no-run

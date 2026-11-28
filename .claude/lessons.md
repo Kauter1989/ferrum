@@ -1189,11 +1189,12 @@ that says so instead of editing the old one.
 - **Root cause:** each GPU UI test builds its own lavapipe instance; with
   `--test-threads=4` several instances live and die concurrently, and mesa's
   thread-pool TLS teardown races at process exit (L45/L50 family).
-- **Fix (durable):** `ci.yml` splits the test step — `cargo test --workspace
-  --exclude ferrum` for the bulk, then a separate `cargo test -p ferrum --
-  --test-threads=1` with `LP_NUM_THREADS=0` (single-threaded lavapipe, no pool
-  teardown race) and a retry-once fallback. No Rust change (L50: do not chase the
-  environmental crash in code).
+- **Fix (durable):** `ci.yml` sets `LP_NUM_THREADS=0` job-wide (single-threaded
+  lavapipe, no pool teardown race) — the crash hits every GPU binary, not only
+  the UI suite (`gpu_parity`, `view_host`, `embed` too). The test step is split
+  (`cargo test --workspace --exclude ferrum`, then `cargo test -p ferrum --
+  --test-threads=1`), each with a retry-once fallback. No Rust change (L50: do
+  not chase the environmental crash in code).
 - **Guard:** the check job's UI step is isolated and single-threaded; a failed
   assertion there is still a real defect (L33), a teardown SIGSEGV after all
   tests ok is the guarded flake.
