@@ -970,7 +970,13 @@ that says so instead of editing the old one.
   CI's own mesa under instrumentation). Environmental, not FERRUM's; a
   flake, not a regression — the assertions all passed before the crash.
 - **Fix:** re-ran the failed job (`gh run rerun <run-id> --failed`); it
-  passed. No code change.
+  passed. **Permanent fix (2026-11-22):** `make coverage-ci` now runs
+  `cargo llvm-cov --workspace --exclude ferrum` — the ferrum crate's only test
+  is the GPU UI suite, so excluding it keeps the instrumented run from crashing
+  in lavapipe teardown. The uninstrumented `check` job still runs the UI tests
+  (authoritative), and the library coverage they exercise is also covered by the
+  gpu_parity, view_host and unit suites: the line floor stays green (90.4 % ≥
+  87 %). No more admin-merge needed for this flake.
 - **Guard:** when `coverage` fails with a SIGSEGV in `ferrum --test ui`
   *after* all tests printed ok, the `check` job is green, and the PR
   touches no Rust, treat it as the instrumented-teardown flake: confirm
