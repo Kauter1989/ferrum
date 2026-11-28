@@ -87,6 +87,11 @@ image, fix the label in `release.yml`, verify with a dry run from the fix
 branch, and re-dispatch. The tag is created only by the publish job, so a
 failed run leaves nothing to clean up.
 
+The release workflow pins `CARGO_TARGET_DIR: target` because its packaging
+reads `target/…`, while `.cargo/config.toml` sets `target-dir = .builds`
+(L59). After any change to `.cargo/config.toml` or the build layout, dry-run
+the release workflow (empty `tag`) and check the archives before publishing.
+
 ## 5. Afterwards
 
 - Republish the development dashboard (skill `ferrum-dashboard`): the new

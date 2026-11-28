@@ -1181,6 +1181,27 @@ that says so instead of editing the old one.
 - **Rule:** FERRUM's voxel indices are LPS, not the file's stored orientation;
   transform external labels before deriving points or scoring.
 
+### L59 — The release workflow read target/ while the build used .builds (2026-11, 0.5.0)
+
+- **Symptom:** the v0.5.0 release run failed all three platform builds at
+  "Bind the panel module": `wasm-bindgen` could not find
+  `target/wasm32-unknown-unknown/release/ferrum_wasm.wasm`.
+- **Root cause:** the project's `.cargo/config.toml` sets `target-dir = .builds`
+  (L53, so artifacts never accumulate), but `release.yml` hard-codes `target/…`
+  in the bindgen and packaging steps. The builds landed under `.builds/`, the
+  packaging looked in `target/`. The mismatch appeared only after the `.builds`
+  config landed; 0.4.0 had released before it.
+- **Why it was missed:** the release workflow was not re-run after the build-dir
+  config changed; CI (`ci.yml`) does not exercise the release packaging.
+- **Fix:** pin `CARGO_TARGET_DIR: target` in the release workflow env (it
+  overrides the config); verified by a full dry run (all three platforms) before
+  re-dispatching the tag.
+- **Guard:** ferrum-release §4: the release workflow must pin its target dir
+  consistently with its packaging paths; dry-run the release workflow after any
+  change to `.cargo/config.toml` or the build layout.
+- **Rule:** A build-layout change must be checked against every consumer of the
+  artifact paths — the release packaging included.
+
 ### L60 — The check job's UI-teardown flake, fixed durably (2026-11, 0.5.0)
 
 - **Symptom:** through the 0.5.0 release the `check` job repeatedly failed with
