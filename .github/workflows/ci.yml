@@ -32,8 +32,17 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
-      - name: Tests (unit, property, integration, GPU parity, UI)
-        run: cargo test --workspace -- --test-threads=4
+      - name: Tests (unit, property, integration, GPU parity)
+        run: cargo test --workspace --exclude ferrum -- --test-threads=4
+      - name: Desktop UI tests (lavapipe teardown flake guarded, L50/L51)
+        # The ferrum UI suite drives wgpu through lavapipe, whose thread-pool
+        # TLS teardown can SIGSEGV at process exit after every test has passed
+        # (L45/L50/L51). Single-threaded lavapipe (LP_NUM_THREADS=0) avoids the
+        # pool teardown race; the suite runs single-threaded and retries once.
+        # A failed assertion is still a real defect (L33), not this flake.
+        env:
+          LP_NUM_THREADS: '0'
+        run: cargo test -p ferrum -- --test-threads=1 || cargo test -p ferrum -- --test-threads=1
       - name: Benchmarks compile
         run: cargo bench --workspace --no-run
       - name: Release build
