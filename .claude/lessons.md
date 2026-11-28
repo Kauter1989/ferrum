@@ -1202,6 +1202,26 @@ that says so instead of editing the old one.
 - **Rule:** A build-layout change must be checked against every consumer of the
   artifact paths — the release packaging included.
 
+### L60 — The check job's UI-teardown flake, fixed durably (2026-11, 0.5.0)
+
+- **Symptom:** through the 0.5.0 release the `check` job repeatedly failed with
+  a SIGSEGV in `ferrum --test ui` at process exit after all 19 tests printed ok
+  (L51); re-runs were a coin flip and cost many CI cycles.
+- **Root cause:** each GPU UI test builds its own lavapipe instance; with
+  `--test-threads=4` several instances live and die concurrently, and mesa's
+  thread-pool TLS teardown races at process exit (L45/L50 family).
+- **Fix (durable):** `ci.yml` sets `LP_NUM_THREADS=0` job-wide (single-threaded
+  lavapipe, no pool teardown race) — the crash hits every GPU binary, not only
+  the UI suite (`gpu_parity`, `view_host`, `embed` too). The test step is split
+  (`cargo test --workspace --exclude ferrum`, then `cargo test -p ferrum --
+  --test-threads=1`), each with a retry-once fallback. No Rust change (L50: do
+  not chase the environmental crash in code).
+- **Guard:** the check job's UI step is isolated and single-threaded; a failed
+  assertion there is still a real defect (L33), a teardown SIGSEGV after all
+  tests ok is the guarded flake.
+- **Rule:** isolate an environmentally flaky suite into its own step with a
+  root-cause workaround and a bounded retry, instead of re-running the whole job.
+
 ## What worked
 
 ### W1 — Field test on the user's GPU with a throw-away script (2026-10, Stage 17)
