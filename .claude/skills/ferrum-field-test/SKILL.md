@@ -73,6 +73,11 @@ lives in the scratchpad, and you send it as a file.
      CC BY-SA 4.0) so Dice against ground truth is possible;
    - never ask for a real patient's study to be sent back;
    - NIfTI needs `study open --modality CT` (L10).
+- A prompt point derived from a NIfTI label must be in FERRUM's canonical
+  **LPS** frame, not the file's stored orientation (MSD is RAS: flip x, y).
+  Use the mask voxel nearest the centroid (a crescent organ's centroid can
+  lie outside it), and reorient both masks to a common canonical frame
+  (`nib.as_closest_canonical`) before computing Dice (L58).
 7. **The script expects FERRUM's guard rails.** A `limit` from
    `segment threshold` is a designed outcome (L14): try a narrower range
    once, then continue with the next step.

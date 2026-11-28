@@ -1158,6 +1158,29 @@ that says so instead of editing the old one.
 - **Rule:** a dependency is not licence-clean only; it must also build on every
   supported host. Native-build deps get an explicit Windows build check.
 
+### L58 — A prompt point from a NIfTI label landed in the wrong frame (2026-11, 0.5.0 field test)
+
+- **Symptom:** nnInteractive on the GPU segmented 4 voxels (Dice 0.0002) of the
+  MSD spleen instead of the organ; the point came from the ground-truth label's
+  centroid.
+- **Root cause:** two frame mismatches. (1) The MSD NIfTI is stored RAS, but
+  FERRUM reorients volumes to canonical **LPS** (flip x, y); a voxel index read
+  from the raw label array points to a different physical location in FERRUM's
+  frame (`[130,229,31]` RAS = `[381,282,31]` LPS). (2) The spleen is crescent-shaped,
+  so its centroid can lie outside the mask — use the mask voxel nearest the
+  centroid (medoid). The Dice comparison also needs both masks reoriented to a
+  common canonical frame (`nib.as_closest_canonical`).
+- **Why it was missed:** the image and label affines are identical, which hides
+  that FERRUM's *internal* frame differs from the stored one.
+- **Fix:** compute the prompt in LPS (flip x, y of the RAS label), pick the medoid,
+  and compare Dice after canonical reorientation — Dice 0.9039, 247.4 ml vs
+  253.1 ml ground truth, one point, 0.65 s, peak 7879 MiB on the RTX 3080.
+- **Guard:** ferrum-field-test §2 rule 6: a prompt point derived from a NIfTI
+  label must be transformed into FERRUM's LPS frame, and mask comparisons
+  reoriented to a common canonical frame.
+- **Rule:** FERRUM's voxel indices are LPS, not the file's stored orientation;
+  transform external labels before deriving points or scoring.
+
 ## What worked
 
 ### W1 — Field test on the user's GPU with a throw-away script (2026-10, Stage 17)
