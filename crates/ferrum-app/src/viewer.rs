@@ -12,7 +12,7 @@ use ferrum_domain::{
 use ferrum_processing::AmbientOcclusion;
 use ferrum_render::cpu::{CpuRaycaster, CpuScene, SegmentLayer};
 use ferrum_render::{FrameParams, SliceParams};
-use glam::{UVec3, Vec2, Vec3};
+use glam::{UVec2, UVec3, Vec2, Vec3};
 
 use crate::dataset::{Dataset, BRICK_SIZE};
 use crate::jobs::{FilterKind, JobEvent, JobQueue};
@@ -22,6 +22,7 @@ mod ai;
 mod metrics;
 mod review;
 mod segments;
+mod view_state;
 mod volumes;
 mod workflow;
 
@@ -29,6 +30,7 @@ pub use ai::{AiState, AiStatus};
 pub use metrics::{MetricsOutcome, MetricsState, MetricsView};
 pub use review::ReviewEntry;
 pub use segments::{RegionSettings, SegmentSummary, SegmentationState};
+pub use view_state::value_unit;
 pub use volumes::{VolumeEntry, VOLUME_CACHE_BYTES};
 pub use workflow::SegmentationStep;
 
@@ -763,9 +765,63 @@ impl Viewer {
         )
     }
 
+    /// Renders the 3D view with the CPU reference ray caster (the oracle
+    /// `volume.wgsl` mirrors) at `size` pixels, top row first. `None` without
+    /// a dataset. The scene is the one the GPU holds after [`Viewer::sync_gpu`]
+    /// — transfer function, eraser mask, ambient occlusion, brick occupancy
+    /// and segments — and jitter is off, so the image is deterministic and
+    /// the two backends can be compared pixel by pixel (the view host's
+    /// CPU fallback and its GPU/CPU parity, Stage 29).
+    pub fn render_volume_cpu(&self, size: UVec2) -> Option<Vec<Rgba8>> {
+        let d = self.dataset.as_ref()?;
+        let mut params = self.frame_params(size.as_vec2())?;
+        params.jitter = false;
+        let settings = self.volume.settings;
+        let tf = &self.volume.tf;
+        let occupancy =
+            (params.brick_size > 0).then(|| d.bricks.occupancy(|mn, mx| settings.range_visible(mn, mx, tf)));
+        let ao = self
+            .volume
+            .ao
+            .as_ref()
+            .filter(|(r, _, _)| *r == d.revision && self.volume.settings.ambient_occlusion)
+            .map(|(_, _, a)| a.as_ref());
+        let seg_lut = self.segments.set().map(|s| s.lut());
+        let segments =
+            self.segments.set().zip(seg_lut.as_ref()).map(|(s, lut)| SegmentLayer { labels: s.labels(), lut });
+        let scene = CpuScene {
+            volume: &d.volume,
+            mask: self.volume.mask.as_ref(),
+            ao,
+            lut: &self.volume.tf_lut,
+            occupancy: occupancy.as_deref(),
+            segments,
+        };
+        Some(CpuRaycaster::new(scene, &params).render(size.x.max(1), size.y.max(1)))
+    }
+
     /// Eraser mask, if the eraser has been used.
     pub fn mask(&self) -> Option<&VoxelMask> {
         self.volume.mask.as_ref()
+    }
+
+    /// Draws the current view over a **masked copy** of the data (Clean
+    /// Pixel Data, Stage 31, criterion 31.3-c): the voxels of `boxes` are
+    /// replaced by the stored value `fill` before drawing, and the view
+    /// state, window and overlay are unchanged. Masking is a pixel transform
+    /// on the data ([`Volume::masked_copy`]) — the renderers draw exactly as
+    /// before, so the rendering rule is untouched. The masked dataset is
+    /// installed only for the duration of `draw` (its fresh revision makes
+    /// the GPU sink upload it); afterwards the original dataset is restored.
+    /// `None` without a dataset.
+    pub fn render_masked<R>(&mut self, boxes: &[VoxelBox], fill: u16, draw: impl FnOnce(&mut Self) -> R) -> Option<R> {
+        let original = self.dataset.take()?;
+        let masked = original.volume.masked_copy(boxes, fill);
+        let revision = self.bump_revision();
+        self.dataset = Some(Dataset::new(masked, original.metadata.clone(), revision));
+        let out = draw(self);
+        self.dataset = Some(original);
+        Some(out)
     }
 
     /// Number of undoable eraser strokes.

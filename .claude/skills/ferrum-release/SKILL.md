@@ -89,6 +89,10 @@ failed run leaves nothing to clean up.
 
 ## 5. Afterwards
 
+- Republish the development dashboard (skill `ferrum-dashboard`): the new
+  tag on `main` shifts the lifecycle colours, so run
+  `python scripts/dashboard/publish.py --ref origin/develop` after the
+  release.
 - Merged PRs are finished. New work starts on a fresh branch from
   `develop`.
 - If anything in the sequence went wrong, record it with skill

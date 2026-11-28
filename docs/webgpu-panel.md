@@ -79,3 +79,92 @@ transfer-function editor, no `ferrum-view/1` state, no events, no tests. The
 binding has no automated test, because a WebGPU run needs a headed browser;
 the measurement above is a field observation, recorded here so the design
 quotes a measured number rather than an estimate (lesson L13).
+
+## As built (Stage 29 PR 5, criterion 29.2-a)
+
+The panel now draws the segment overlay and follows the host's view state:
+
+- `ferrum-wasm` gains `set_labels(dims, bytes)` (the host's `/api/labels` grid →
+  `LabelMap` → `SegmentationSet`), `set_segment(label, name, color, visible,
+  opacity)` (the metadata of `/api/state` `segments.items`) and
+  `set_overlay(shown, fill_opacity, style)`. They upload the labels and the
+  domain's one colour table (`SegmentationSet::lut`) through the renderer's
+  existing `update_labels`/`set_segment_colors`; the overlay is drawn by the
+  **existing** `slice.wgsl`/`volume.wgsl` shaders (`slice_params.segments`,
+  `frame_params.with_segments`) — no new image-formation code (rendering rule).
+- The panel (`integrations/dsh/plugin/lib/client.js`) takes `/api/state` and
+  `/api/labels` after the volume, applies the overlay, and offers an overlay
+  toggle, a style select and a fill-opacity slider; a person's overlay and
+  component changes go back through `POST /api/input`. The rotating token is
+  refreshed (PR 4).
+- Still ahead: the transfer-function editor and measurements (PR 6), and a
+  headed-browser automated test of the binding (PR 7). The overlay rendering
+  itself is verified by the host's GPU↔CPU parity suite and a field browser
+  check, not by a native test (a WebGPU run needs a headed browser).
+
+## As built (Stage 29 PR 6, criteria 29.2-b/c)
+
+The panel edits the transfer function and measures, without adding any
+image-formation code:
+
+- **TF editor (29.2-b).** `ferrum-wasm` exposes the domain's edit-API:
+  `tf_points()` (the control points as five floats each — position, opacity,
+  r, g, b; `src/tf.rs`, host-tested), `tf_histogram()` (the volume's
+  `storage_histogram`, 256 bins normalised to `[0, 1]`), `tf_move_point`,
+  `tf_insert_point`, `tf_remove_point`, `tf_set_color` and `tf_hit_test`.
+  Every mutating binding re-bakes the LUT through the existing
+  `upload_occupancy` (`bake(256)` → `renderer.set_transfer_function`), so the
+  edited function is drawn by the **existing** `volume.wgsl` in
+  `transfer_function` mode — no new shader, no second sampling path
+  (rendering rule). The panel's `TfEditor` is a small 2D canvas shown for that
+  mode: histogram background, draggable handles, a colour strip the browser
+  interpolates, and a per-point colour picker; double-click inserts,
+  right-click removes an interior point. The TF stays **panel-local**: the
+  ViewState contract does not carry it (design §5).
+- **Measurements (29.2-c).** The tool machine stays in the host (PR 2's
+  `draw` input → `Viewer::slice_input`); the panel runs no tool logic of its
+  own. A tool selector (`navigate`/`distance`/`rect`/`angle`/`area`) switches
+  to the 2D view, where a drag collects pixels of the axial slice the panel
+  shows; the commit syncs `plane` and `slice` to the host in order and sends
+  `{"draw":{"tool","points"}}`. The host computes the value; the panel reads
+  it from the new `GET /api/annotations` (kind, plane, slice, value/unit/label
+  from `Annotation::value/unit/label`, `points_mm`; numbers and labels only,
+  [view-host.md](view-host.md) §4.6) and displays it twice: shapes with
+  mm/deg/mm² labels on a canvas2d overlay above the WebGPU canvas (the shown
+  slice's annotations plus the drag preview), and a text list. A light poll
+  picks up annotations an agent writes — the host's workspace reload now
+  adopts annotations the way it adopts segments. The overlay's close/dedup
+  rules mirror the host tool's 6 mm tolerance and 0.5 mm minimum.
+- Tests: `tests/tf_editor.rs` (the wire form round-trips, every edit reaches
+  it, the histogram normalises), `test_one_renderer.py` (the bindings call
+  the domain API and re-bake), `test_panel.py` (editor and tool wiring),
+  `view_host.rs` (the endpoint's exact values, token guard, privacy, and the
+  agent-written reload). The browser render of the edited TF and the drawn
+  measurements is a field check (PR 7's headed-browser path), **not verified
+  locally** — a WebGPU run needs a headed browser.
+
+## As built (Stage 29 PR 7, criterion 29.5-b)
+
+The WebGPU path now has an automated headed-browser test:
+
+- `integrations/dsh/tests/webgpu.mjs` (Playwright, `playwright-core`) serves the
+  `panel/` directory, launches the machine's **Edge headed**
+  (`channel: "msedge"`, `headless: false`, `--enable-unsafe-webgpu
+  --ignore-gpu-blocklist`), loads `stand.html`, and checks that the renderer
+  draws the phantom: the status names an adapter, and a **screenshot** of the
+  canvas (a WebGPU canvas does not preserve its drawing buffer, so `drawImage`
+  would read black) has many non-black pixels in every view mode (3D/slice/MPR)
+  and every render technique (tissue/isosurface/MIP/transfer function). It
+  writes screenshots to the scratchpad for a person to look at (L1).
+- `test_webgpu.py` runs it from the repository's test command and **skips
+  gracefully** when no Node ≥ 18, no `playwright-core`, no headed browser or no
+  WebGPU adapter is present (set `FERRUM_NODE` to a newer node) — CI without a
+  headed GPU browser stays green, the same skip as `test_panel.py` without node.
+- **Verified locally** in headed Edge: adapter `BrowserWebGpu` at ~128 fps, the
+  chest phantom renders in 3D (≈18 % non-black pixels), slice, MPR and all four
+  techniques; no page error. The earlier "no adapter" reading came from forcing
+  `--use-angle=vulkan`; the plain `--enable-unsafe-webgpu` flag works. A machine
+  whose headed browser still exposes no adapter skips (field test, L30).
+- Run it: `npm install` in `integrations/dsh/tests` (uses the system Edge, no
+  browser download), build the panel module (`panel/build.cmd`), then
+  `node webgpu.mjs` with Node ≥ 18, or `pytest integrations/dsh/tests/test_webgpu.py`.

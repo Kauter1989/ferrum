@@ -11,6 +11,7 @@ authors.workspace = true
 ferrum-app.workspace = true
 ferrum-domain.workspace = true
 ferrum-io.workspace = true
+ferrum-processing.workspace = true
 ferrum-render = { workspace = true, features = ["gpu"] }
 glam.workspace = true
 image.workspace = true
@@ -26,6 +27,9 @@ sha2.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 ureq.workspace = true
+dicom-core.workspace = true
+dicom-object.workspace = true
+dicom-dictionary-std.workspace = true
 
 [lints]
 workspace = true

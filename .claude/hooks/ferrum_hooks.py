@@ -28,6 +28,11 @@ import sys
 import time
 
 PROTECTED = {"develop", "main"}
+# The dashboard's publication branch (skill ferrum-dashboard): GitHub Pages
+# serves it and CI does not judge it (ci.yml runs on develop/main/PRs), so it
+# is exempt from the name rule (J) and the local cargo gate (E). It holds
+# only the generated site, never code.
+PUBLISH_BRANCHES = {"gh-pages"}
 # J: branch names (skill new-branch): <type>/<lowercase-words-joined-by-dashes>, or release/<x.y.z>.
 BRANCH_TYPES = ("feat", "fix", "docs", "refactor", "perf", "test", "chore")
 BRANCH_NAME = re.compile(
@@ -98,6 +103,12 @@ MATRIX = [
         r"crates/ferrum-io/src/(dicom|nifti)[^/]*\.rs$",
         "Input reader changed: reorient into LPS; check what metadata the format lacks (modality, units) "
         "and test NIfTI and DICOM (L10).",
+    ),
+    (
+        r"^dev_plan\.md$|^docs/architecture\.md$|^crates/[^/]+/Cargo\.toml$",
+        "Plan/architecture/crate manifest changed: regenerate the dashboard "
+        "(python scripts/dashboard/generate.py --ref HEAD) and publish it after the merge "
+        "(skill ferrum-dashboard).",
     ),
 ]
 
@@ -255,7 +266,13 @@ def created_branches(sub, args):
 
 
 def check_branch_names(names):
-    bad = sorted({n for n in names if n and n not in PROTECTED and n != "HEAD" and not BRANCH_NAME.match(n)})
+    bad = sorted(
+        {
+            n
+            for n in names
+            if n and n not in PROTECTED and n not in PUBLISH_BRANCHES and n != "HEAD" and not BRANCH_NAME.match(n)
+        }
+    )
     if bad:
         deny(
             f"Branch name {', '.join(bad)} does not follow the convention (skill new-branch): "
@@ -297,6 +314,11 @@ def check_push(cwd, root, args, branch, command):
     )
     if tags:
         return ask("Pushing tags publishes a version; releases need the user's word (ferrum-release, G3).")
+    if dests and all(d in PUBLISH_BRANCHES for d in dests):
+        # The publication branch holds only the generated dashboard site; CI
+        # never runs on it, so the local cargo gate would judge a push CI does
+        # not see. The name rule (J) already exempted it above.
+        return None
     if "FERRUM_SKIP_PREPUSH=" in command:
         # The escape hatch stays, but only as an explicit, recorded act: a bare
         # `FERRUM_SKIP_PREPUSH=1` is refused, and the value has to say why, so
@@ -737,6 +759,22 @@ def note_id(note):
 
 
 # ------------------------------------------------------------------ H
+def dashboard_freshness(root, lines):
+    """H: note when the published dashboard lags develop or the release tag."""
+    try:
+        published = json.loads(git(root, "show", "origin/gh-pages:data.json", timeout=10))
+        meta = published["meta"]
+        dev = git(root, "rev-parse", "origin/develop").strip()
+        tag = git(root, "describe", "--tags", "--abbrev=0", "origin/main").strip()
+    except (RuntimeError, subprocess.TimeoutExpired, ValueError, KeyError, OSError):
+        return  # no published dashboard yet, or no refs — nothing to compare
+    if meta.get("target_sha") != dev or meta.get("release_tag") != tag:
+        lines.append(
+            f"Dashboard published at {str(meta.get('target_sha'))[:7]} (tag {meta.get('release_tag')}); "
+            f"develop is {dev[:7]} (tag {tag}) — republish after the merge (skill ferrum-dashboard)."
+        )
+
+
 def session_start(data):
     cwd = data.get("cwd") or os.getcwd()
     try:
@@ -763,6 +801,7 @@ def session_start(data):
             lines.append("Merge or rebase origin/develop before designing or pushing (L3).")
     except (RuntimeError, subprocess.TimeoutExpired, ValueError):
         pass
+    dashboard_freshness(root, lines)
     lessons = os.path.join(root, ".claude", "lessons.md")
     if os.path.exists(lessons):
         with open(lessons, encoding="utf-8") as f:

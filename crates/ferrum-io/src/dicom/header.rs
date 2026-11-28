@@ -246,6 +246,24 @@ pub fn study_info(obj: &InMemDicomObject) -> ferrum_domain::StudyInfo {
     }
 }
 
+/// Patient identification of a DICOM object — the privacy scan's source
+/// ([#74](https://github.com/Kauter1989/ferrum/issues/74)). The values stay
+/// inside FERRUM; the scan returns positions only. Each value is capped at
+/// its DICOM VR maximum (PN 64 per component, LO 64, SH 16, DA 8): a
+/// crafted multi-megabyte value must not turn the host's per-text scan
+/// into minutes of CPU (security review of #110).
+pub fn patient_identifiers(obj: &InMemDicomObject) -> ferrum_domain::PatientIdentifiers {
+    let s = |tag| str_of(obj, tag).unwrap_or_default();
+    let capped = |v: String, n: usize| -> String { v.chars().take(n).collect() };
+    let name = s(tags::PATIENT_NAME).split('^').map(|c| capped(c.to_owned(), 64)).collect::<Vec<_>>().join("^");
+    ferrum_domain::PatientIdentifiers {
+        name,
+        patient_id: capped(s(tags::PATIENT_ID), 64),
+        birth_date: capped(s(tags::PATIENT_BIRTH_DATE), 8),
+        accession_number: capped(s(tags::ACCESSION_NUMBER), 16),
+    }
+}
+
 /// Selected, human-readable attributes shown in the info dialog.
 pub fn describe(obj: &InMemDicomObject) -> Vec<(String, String)> {
     const SHOWN: [(Tag, &str); 20] = [

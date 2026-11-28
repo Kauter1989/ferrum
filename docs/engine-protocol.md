@@ -316,3 +316,36 @@ Every label value present in the map becomes a segment, named after
 | nnInteractive | [`bridges/`](../bridges) `ferrum-bridge nninteractive` (Python, FastAPI; [demo guide](ai-demo.md)) | point, box (planar), scribble, lasso | — | Weights CC BY-NC-SA 4.0 → `research_only: true`; NVIDIA GPU, ~10 GB VRAM recommended; frees the image on `DELETE`; the model runs in a worker process that `POST /v1/unload` ends; `deterministic` only with `--deterministic` |
 | MONAI Label | [`bridges/`](../bridges) `ferrum-bridge monailabel` ([demo guide](ai-demo.md#monai-label-your-own-models)) | point (DeepEdit / DeepGrow / SAM2), box (SAM2) | yes: the app's `segmentation` model and its labels | Client of a running MONAI Label server: one MONAI Label session per volume, clicks replayed on `/infer` (undo = replay without the last prompt); `research_only: true` unless `--clinical-weights`; `deterministic: false` |
 | TotalSegmentator | [`bridges/`](../bridges) `ferrum-bridge totalsegmentator` ([demo guide](ai-demo.md)) | — | yes: 117 CT classes (`total`), 50 MR (`total_mr`), other tasks | Code and `total` Apache-2.0; licensed tasks → `research_only: true`; usage statistics disabled by the bridge; each job in a child process (GPU memory freed, cancel ends it) |
+
+## 7. The OCR bridge kind (Clean Pixel Data, Stage 31)
+
+An **optional** bridge kind for the burned-in text check of Clean Pixel
+Data ([deidentification.md](deidentification.md) §2, criterion 31.3-b). It
+follows this protocol's conventions — `/v1`, JSON control messages, the
+error envelope of §2, the bearer token — with one extra capability and one
+extra endpoint. No OCR runs in Rust and no weights are bundled
+(constitution); a production OCR bridge is a follow-up, the interface and
+the skip/report behaviour are delivered.
+
+- `GET /v1/info` answers as in §3 with `capabilities.ocr: true`. FERRUM
+  refuses a bridge that speaks another protocol or lacks the capability.
+- `POST /v1/ocr` takes one rendered image as PNG bytes
+  (`Content-Type: image/png`) and answers the detected text regions in
+  image pixel coordinates (0-based, half-open):
+
+  ```json
+  { "regions": [ { "x": 40, "y": 12, "w": 180, "h": 24 } ] }
+  ```
+
+  An empty `regions` array means no text was detected — a real answer, not
+  a skip. Errors use the envelope of §2.
+
+The client is `ferrum_engines::ocr` (`OcrBridge`, `check`). Without a
+configured bridge (`[network] ocr_bridge` in the operator configuration)
+the step is **skipped and reported**; a bridge that cannot be reached or
+answers wrongly is **failed and reported** — never silently passed. The
+agent's `view slice --ocr` writes the outcome into the sidecar's `ocr`
+block (`status: skipped|detected|failed`); with `--masked`, detected
+regions extend the mask (conservatively: each region's bounding box mapped
+through the render's pixel-to-voxel affine, rounded outwards, on the
+render's slice).

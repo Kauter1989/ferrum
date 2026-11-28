@@ -46,6 +46,31 @@ gpu_tests() {
   FERRUM_REQUIRE_GPU=1 cargo test --workspace -- --test-threads=4
 }
 
+# Assess free space on the build drive BEFORE building and log it (L53). A full
+# WSL VHDX drive causes I/O errors / read-only fs / E_FAIL, so this is a gate,
+# not advice (L38). Builds go into a per-branch+date CARGO_TARGET_DIR
+# (ferrum-build.sh) and are cleaned when the branch merges (ferrum-clean-builds.sh).
+disk_space() {
+  local tdir="${CARGO_TARGET_DIR:-$PWD/target}"
+  local probe="$tdir"
+  [[ -d "$probe" ]] || probe=$(dirname "$tdir")
+  local free_gb branch
+  free_gb=$(df -Pk "$probe" 2>/dev/null | awk 'NR==2 {printf "%d", $4/1024/1024}')
+  branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo detached)
+  mkdir -p .claude/state
+  printf '%s\tbranch=%s\ttarget=%s\tfree=%sGB\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$branch" "$tdir" "${free_gb:-?}" \
+    >> .claude/state/build-space.log
+  echo "    build drive free: ${free_gb:-?} GB (target: $tdir)"
+  if [[ -n "${free_gb:-}" ]] && (( free_gb < 10 )); then
+    echo "    LOW DISK SPACE (<10 GB) on the build drive (L53). Clean old builds:"
+    echo "      .claude/skills/ferrum-change/ferrum-clean-builds.sh"
+    return 1
+  fi
+}
+
+disk_space || { echo "FAILED: disk space"; exit 1; }
+
 step "format" cargo fmt --all -- --check
 step "clippy" cargo clippy --workspace --all-targets -- -D warnings
 step "schema" schema_fresh
@@ -57,7 +82,7 @@ if (( COVERAGE )); then
 fi
 
 echo
-du -sh target 2>/dev/null | sed 's/^/target size: /'
+du -sh "${CARGO_TARGET_DIR:-target}" 2>/dev/null | sed 's/^/target size: /'
 if (( ${#failed[@]} )); then
   echo "FAILED: ${failed[*]}"
   exit 1

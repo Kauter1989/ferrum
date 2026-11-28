@@ -467,7 +467,7 @@ switch time and GPU memory on a real GPU.
 
 ---
 
-## Stage 23 — GPU sharing with an external model server 🚧 (G1 ✅, G2 ✅; PR 3 of 3)
+## Stage 23 — GPU sharing with an external model server ✅ (G1 ✅, G2 ✅; field run 2026-11-14)
 
 Medical Harness runs its language model locally as a `llama-server`
 sidecar on the same 12 GB card as FERRUM's engines
@@ -536,10 +536,10 @@ running engine job.
 | 23.T6 `engine unload`, `engine list` fields | 23.4-c/d | 2 | ✅ |
 | 23.T7 domain port, `GatedEngine`, `Viewer` waiting and cancel | 23.3-a/b | 3 | ✅ |
 | 23.T8 AI panel waiting state; `gpu hold` | 23.3-c, 23.5-d | 3 | ✅ |
-| 23.T9 benchmark holder options; field run; recipe | 23.5-a/b/c | 3 | options ✅ (dry run); field run and recipe pending |
+| 23.T9 benchmark holder options; field run; recipe | 23.5-a/b/c | 3 | ✅ field run 2026-11-14: 20/20 with holder, no OOM; recipe gpu-sharing §5 |
 
 **Size:** XL, five contract surfaces. It is split into three PRs of size L
-([design §7–8](docs/gpu-sharing.md#7-size-and-pr-split)):
+([design §8–9](docs/gpu-sharing.md#8-size-and-pr-split)):
 1. the lock crate, configuration and agent;
 2. the protocol, the bridges and `engine unload`, then a field test;
 3. the desktop, `gpu hold` and the benchmark, then the field run of the
@@ -547,7 +547,7 @@ running engine job.
 
 ---
 
-## Stage 24 — Embeddable viewer widget (`ferrum-ui`) 🚧 (G1 ✅, G2 ✅; PR 1 of 2)
+## Stage 24 — Embeddable viewer widget (`ferrum-ui`) 🚧 (G1 ✅, G2 ✅; PR 2 of 2)
 
 Medical Harness shows a conversation and FERRUM's viewer in one egui/wgpu
 window ([#69](https://github.com/Kauter1989/ferrum/issues/69); P1 for the
@@ -602,10 +602,10 @@ through `Viewer` or its own code), theming beyond FERRUM's dark theme.
 | 24.T1 crate `ferrum-ui`; views, panels, theme, widgets, GPU bridge moved | 24.1-a, 24.3-c | 1 | ✅ |
 | 24.T2 `ViewerWidget` (layout, tool bar, polling, GPU sync), `panels::side_panel`, `PanelRequest` | 24.1-b/c | 1 | ✅ |
 | 24.T3 desktop on `ferrum-ui`; UI tests and parity unchanged; renders before and after compared | 24.3-a/b | 1 | ✅ |
-| 24.T4 events | 24.2-a/b/c | 2 | |
-| 24.T5 example host and its UI test | 24.4-a/b | 2 | |
-| 24.T6 licence and badge test in the embedded layout | 24.5-a/b | 2 | |
-| 24.T7 docs, events privacy test | — | 2 | |
+| 24.T4 events | 24.2-a/b/c | 2 | ✅ |
+| 24.T5 example host and its UI test | 24.4-a/b | 2 | ✅ |
+| 24.T6 licence and badge test in the embedded layout | 24.5-a/b | 2 | ✅ |
+| 24.T7 docs, events privacy test | — | 2 | ✅ |
 
 ## Stage 25 — Local GPU view for a harness (`ferrum-view/1`) ✅
 
@@ -859,6 +859,9 @@ overlay consolidation, the tests that cannot fail that the review listed).
 embedding `ferrum-agent` v0.3.0 ([#82](https://github.com/Kauter1989/ferrum/issues/82),
 request 13 of `docs/ferrum-integration.md` there). Closes the S2 backlog
 item of the 0.4.0-prep security review (the same lexical root check).
+**Merged:** [#99](https://github.com/Kauter1989/ferrum/pull/99), merge
+`52bb981` (2026-11-14); issue #82 closed; lesson L49; final report in
+[docs/read-root-boundary/pr-99-report.html](docs/read-root-boundary/pr-99-report.html).
 
 **The defect.** `AgentConfig::check_source` compares a source path with
 `read_roots` lexically (`absolute` + `normalise`), so a symlink inside a
@@ -933,31 +936,374 @@ choice, no agent boundary).
 
 | Task | What | Criteria | PR | State |
 |---|---|---|---|---|
-| F2.1 | canonical comparison of the returned spelling in `check_source` / `resolve_workspace`; the load re-checks the manifest's file paths | F2.1-a, F2.1-b, F2.1-c | 1 | ✅ |
-| F2.2 | no-follow bounded walk in `collect_files`; `RepositoryError::Limit` | F2.2-a, F2.2-b | 1 | ✅ |
-| F2.3 | the tests, red first; docs and CHANGELOG | F2.3 | 1 | ✅ |
+| F2.1 | canonical comparison of the returned spelling in `check_source` / `resolve_workspace`; the load re-checks the manifest's file paths | F2.1-a, F2.1-b, F2.1-c | [#99](https://github.com/Kauter1989/ferrum/pull/99) | ✅ |
+| F2.2 | no-follow bounded walk in `collect_files`; `RepositoryError::Limit` | F2.2-a, F2.2-b | [#99](https://github.com/Kauter1989/ferrum/pull/99) | ✅ |
+| F2.3 | the tests, red first; docs and CHANGELOG | F2.3 | [#99](https://github.com/Kauter1989/ferrum/pull/99) | ✅ |
+
+## Stage 27 — Identifier spans for host privacy layers (#74) ✅ (feature, autonomous; PR #110 merged)
+
+Medical Harness de-identifies free text before it reaches a model, a log or
+a report ([#74](https://github.com/Kauter1989/ferrum/issues/74); P1 for the
+harness's Demo 3). FERRUM knows the study's real identifiers, so it can say
+**where** they appear in a host's text — positions and kinds only, never
+the values. A library API (`ferrum_agent::identifiers`), **not an agent
+command**: a model must not be able to test guessed names against the
+patient's identifiers.
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 27.1 | As a **harness developer**, I want the positions of a study's identifiers in a text so that my privacy layer can mask them without the values ever leaving FERRUM. | [27.1-a] `scan_identifiers(config, workspace, text)` returns `Vec<Span{start, end, kind}>` (byte offsets; kinds: patient name, patient ID, birth date, accession number) for English and Russian text, tolerant to case, Cyrillic↔Latin transliteration, initials («Иванов И.И.»), inflected forms and the common date formats of a DICOM `YYYYMMDD` date; a NIfTI study gives none; a missing workspace is `no_study`, a source outside the read roots `forbidden`. [27.1-b] The output carries positions and kinds only, never a value (scanned). [27.1-c] The agent command set is unchanged: the scan is in neither the command list, the MCP tools nor `commands.json` (a test checks all three). |
+
+**Size:** M, one PR. **Design:** the module's own docs and the ADR-free
+library-API pattern of `ferrum_agent::decisions` (16.7); the reader lives in
+`ferrum-io` (only it parses files), the matcher in `ferrum-agent`.
+
+### Implementation
+
+| Task | What | Criteria | PR | State |
+|---|---|---|---|---|
+| 27.T1 `PatientIdentifiers` (domain) + `read_patient_identifiers` (io) | 27.1-a | 1 | ✅ (#110) |
+| 27.T2 the matcher: fold, names, initials, inflections, dates; `scan_identifiers` | 27.1-a/b | 1 | ✅ (#110) |
+| 27.T3 tests: exact spans (EN/RU), no values, not a command, errors; docs | 27.1-a/b/c | 1 | ✅ (#110) |
+
+## Stage 28 — Drive the view: `ferrum-view/1` state and agent commands (#70) 🚧 (stage, gated)
+
+**Track:** stage — a contract surface (the `ferrum-view/1` schema, new agent
+commands, a new workspace artifact). **Mode:** gated (G1 spec, G2 design,
+G3 merge). **Found by:** Medical Harness, Demo 4
+([#70](https://github.com/Kauter1989/ferrum/issues/70); P1).
+
+An agent drives what the person sees — open the lung window, go to slice 142,
+show segment 3, draw the long axis — without sitting in the render loop, and
+the person takes over at any time. What exists: the HTTP view host serves a
+2D state, input and events (Stage 25, `ferrum-view/1`), and the embeddable
+widget returns the frame's events as Rust types (Stage 24 PR 2, #109). What
+is missing: the versioned **ViewState** JSON contract, agent commands that
+set it, the `roi_drawn`/`camera_changed` events in JSON, and the binding to
+the workspace's source hash. No command creates a decision (those stay with
+`ferrum_agent::decisions`, 16.7).
+
+**Design constraint (layering).** `ferrum-agent` depends on neither
+`ferrum-app` nor `ferrum-view`. So the view state is a **workspace artifact**
+owned by `ferrum-io` (like `annotations.json`): the agent commands read and
+write it, and the live clients — the widget (`ferrum-ui`) and the host
+(`ferrum-view`) — apply it to their `Viewer` through a `ferrum-app` use case.
+The `ViewState` type lives in `ferrum-domain`. **In process first** (the
+issue): the widget applies the full state; the HTTP host adopts the artifact
+for its existing 2D controls now, and streaming the full state (camera, 3D)
+to other hosts is Stage 29.
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 28.1 | As a **harness developer**, I want a versioned view-state contract so that any client and the agent agree on what "the view" is. | [28.1-a] `ferrum-view/1` **ViewState**: `component` (`slice`/`mpr`/`volume`), `plane`, `slice` or `point`, `window`, `overlays`, `camera`, `selected_segment`, `tool`, `source_hash`, `revision`; a spec page and conformance fixtures (valid and invalid). [28.1-b] **Events** in JSON: `point_picked`, `roi_drawn`, `slice_changed`, `window_changed`, `camera_changed` (the host's `plane_changed`/`segments_changed` are kept), with `seq` and `dropped`; fixtures. The widget's Rust events (#109) get this JSON form (Stage 24 Q3). |
+| 28.2 | As a **clinician**, I want the agent to drive the view while I can take over at any moment. | [28.2-a] In process: applying a ViewState through the widget sets plane/slice/window/overlay/selected/tool/camera via a `Viewer` use case; the person's next input wins (no lock, no mode). [28.2-b] The HTTP host applies the artifact for its 2D controls (slice/plane/window/overlay); a field it cannot yet honour (camera/3D) is reported in the answer, not silently dropped. |
+| 28.3 | As a **harness developer**, I want agent commands to set and read the view, identical over CLI and MCP. | [28.3-a] `view set`, `view state`, `view events` with JSON Schemas; CLI and MCP give identical JSON; `commands.json` and `commands.md` regenerated; contract tests. [28.3-b] A contract test sets a state and reads back the events it produced. [28.3-c] No command creates a decision: review state is untouched (a test). |
+| 28.4 | As an **operator**, I want a stale view refused so the agent cannot drive a study that changed under it. | [28.4-a] ViewState carries the workspace `source_hash`; `view set` with a stale hash is `source_changed` and applies nothing (the decisions-API binding, 16.8). |
+| 28.5 | As an **operator**, I want no identifiers in the view state or events. | [28.5-a] The privacy scan covers the ViewState artifact, the events and the command envelopes; a study in a patient-named folder leaks neither the name nor the path (25.5-a extended). |
+
+**Success metric:** in the example host, an agent `view set` (lung window,
+slice 142, show segment 3) is reflected within one frame, the events read
+back match, and the person scrolls and takes over.
+
+**Size:** L, two PRs — (1) the contract, the artifact, the in-process apply
+and the JSON events; (2) the agent commands and their contract tests. A new
+ADR 0018 (the view-state contract). **Design:** [docs/view-state.md](docs/view-state.md),
+[ADR 0018](docs/decisions/0018-view-state-contract.md) (G2 design written,
+pending approval): the view state is a workspace artifact (`ferrum-io`), the
+`ViewState` type in `ferrum-domain`, the apply use case in `ferrum-app`; the
+agent links neither the app nor the host.
+
+**Out of scope:** streaming the full ViewState (camera/3D/overlays/selected/
+tool) to the HTTP host and the browser — Stage 29; decisions through the
+view (they stay with `ferrum_agent::decisions`); remote exposure and TLS;
+several viewers per host.
+
+**Clarifications (`assumed:`, G2 to confirm):**
+- assumed: the view state is a workspace artifact (`view.json`) plus an event
+  log (`view-events.json`), owned by `ferrum-io`; the agent never links
+  `ferrum-app`/`ferrum-view`.
+- assumed: the `ViewState` type lives in `ferrum-domain`; the host keeps its
+  in-memory event ring and also persists it so `view events` reads the same
+  sequence.
+- assumed: the HTTP host honours the 2D subset in this stage and reports
+  unhonoured fields; full streaming is Stage 29.
+
+### Implementation
+
+| Task | What | Criteria | PR | State |
+|---|---|---|---|---|
+| 28.T1 `ViewState`/event types (domain), the JSON schema, spec page, conformance fixtures | 28.1-a/b | 1 | ✅ |
+| 28.T2 the artifact (io) + apply use case (app) + widget event mapping + privacy | 28.2-a, 28.5-a | 1 | ✅ |
+| 28.T3 the host applies the 2D subset + `unhonoured`; `source_hash` → `source_changed` | 28.2-b, 28.4-a | 1 | ✅ |
+| 28.T4 `view set/state/events`, schemas, contract tests, CLI = MCP, docs | 28.3-a/b/c | 1 | ✅ |
+
+Delivered as one PR (within size L); G1 and G2 approved, G3 pending. The widget
+maps its frame events to the contract form (`ferrum_ui::to_view_event`); the
+host that embeds it watches the artifact through `ferrum-io` (the widget and
+app do not depend on io).
+
+## Stage 29 — The view everywhere: full streaming, the browser panel, hardening ✅ (stage, gated; PRs #123, #126, #125, #124, #127, #129, #130 merged)
+
+**Track:** stage. **Mode:** gated (G1 spec, G2 design, G3 merge). Closes the
+out-of-scope of Stages 25–26 and the follow-ups of #91.
+
+Stage 28 gives the ViewState contract and the in-process apply; Stage 29
+streams the full state to other hosts, makes the browser panel a full client,
+and hardens the protocol and the rendering rule.
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 29.1 | As a **harness developer**, I want the full ViewState over HTTP, not only in process. | [29.1-a] The host serves `component`/`mpr`/`volume`, `camera`, `overlays`, `selected_segment`, `tool`; `POST /api/input` sets them; `camera_changed` and `roi_drawn` reach `/api/events` (closes Stage 25's MPR/3D deferral). [29.1-b] GPU/CPU parity for the new views (`gpu_parity.rs`). |
+| 29.2 | As a **clinician**, I want the browser panel to show the study fully. | [29.2-a] Segments and their overlay in the WebGPU panel. [29.2-b] The transfer-function editor. [29.2-c] Measurements in the panel. |
+| 29.3 | As a **harness developer**, I want a practical wire. | [29.3-a] Compressed or 16-bit volume transfer (a 512×512×252 study crosses the wire as 252 MB today). |
+| 29.4 | As an **operator**, I want a hardened protocol. | [29.4-a] A short-lived, rotating token for `ferrum-view/1` (an ADR first). |
+| 29.5 | As a **maintainer**, I want one overlay rule and a tested WebGPU path. | [29.5-a] Consolidate the CPU segment overlay — the third copy of the `slice.wgsl` rule — behind one rule with a parity case. [29.5-b] An automated test of the WebGPU path (a headed browser). |
+
+**Out of scope:** remote exposure and TLS; several viewers per host. The
+"tests that cannot fail" left by #91's review fold into 29.5 or a small
+track.
+
+**Size:** XL, seven PRs; G2 plans the split. **Design:**
+[docs/view-streaming.md](docs/view-streaming.md),
+[ADR 0019](docs/decisions/0019-view-host-rotating-token.md) (rotating token;
+approved and merged). Two consumers share the ViewState: the
+host-rendered page/`frame.png` (full state + MPR/3D frames) and the
+browser-rendered WebGPU panel (segments/overlay, TF editor, measurements).
+
+**Where the Stage 26 out-of-scope lands:** segments/overlay → 29.2-a; the
+transfer-function editor → 29.2-b; measurements → 29.2-c; compressed/16-bit
+transfer → 29.3-a; WebGPU test automation → 29.5-b; the rotating token →
+29.4-a; the CPU overlay consolidation → 29.5-a. Stage 25's MPR crosshair / 3D
+orbit / volume view over HTTP → 29.1.
+
+### Implementation
+
+| Task | What | Criteria | PR | State |
+|---|---|---|---|---|
+| 29.T1 one CPU slice-overlay rule (primitive) + CPU-vs-GPU slice parity | 29.5-a | 1 | ✅ |
+| 29.T2 host full ViewState + MPR/3D frames + camera/roi events + parity | 29.1-a/b | 2 | ✅ |
+| 29.T3 16-bit volume transfer (u16 default, f32 opt-in) + `/api/labels` | 29.3-a | 3 | ✅ |
+| 29.T4 rotating token (ADR 0019) | 29.4-a | 4 | ✅ |
+| 29.T5 panel segments/overlay + host sync (verify wasm build of app) | 29.2-a | 5 | ✅ |
+| 29.T6 panel TF editor + measurements | 29.2-b/c | 6 | ✅ |
+| 29.T7 headed-browser WebGPU automation | 29.5-b | 7 | ✅ |
+
+PR 1 is foundational (the rendering rule); PRs 3 and 4 are independent and can
+land while PR 2 is in review; PRs 5–7 build the panel on the full state + wire.
+
+---
+
+## Stage 30 — Development dashboard 🚧 (feature, autonomous)
+
+The maintainer and the G3 reviewer read the plan, the coverage report and
+the per-PR HTML reports separately; nothing shows the whole picture —
+which features are in the latest release, which are merged into `develop`
+but unreleased, which are in development, which are planned — nor the
+crate architecture next to it. This stage adds a self-contained dashboard
+generated from the repository itself: `dev_plan.md` at the release tag and
+at the target revision, `cargo metadata`, the `covers` convention of
+`ferrum-analyze`, and the report template's palette. The dashboard is a
+derived view: no status is entered by hand, and generation runs locally in
+the workflow (skill `ferrum-dashboard`, PR 3), not in CI — CI minutes stay
+for the tests (L34). Publication is a push to a `gh-pages` branch that
+GitHub Pages serves from the branch, without Actions minutes.
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 30.1 | As a **maintainer**, I want the plan parsed mechanically at two revisions so that the dashboard never drifts from `dev_plan.md`. | [30.1-a] The generator parses every `## Stage N` section of a fixture plan: number, title, heading marker (✅/🚧/📋), story rows `N.k`, criteria `[N.k-x]` with inline ✅ and PR references; struck-through criteria (`~~[N.k-x]~~`) are excluded; letter stages (F1/F2), the Roadmap's draft stages (`### Stage N`) and early stages whose criteria carry no IDs parse as story-level units with the heading's marker; Implementation tables are recognised by their header and their rows are not stories; the parsed structure equals an exact expected fixture. [30.1-b] Lifecycle is derived per criterion and per stage from two revisions: `released` when done at the latest `v*` tag reachable from `origin/main`; `develop` when done at the target revision but not at the tag (or no done evidence at the tag); `progress` when not done and the heading is 🚧; `planned` when not done and the heading is 📋; done means an inline ✅ or a ✅ heading. A fixture repository (tag + target) yields exact buckets, including a lagging heading (stage 🚧, criterion ✅ with a merged PR → criterion `develop`); a stage's bucket is `unknown` > `progress` > `develop` > `released` > `planned` over its criteria, and its counts per bucket are exact. [30.1-c] A criterion's verification reuses the `ferrum-analyze` convention: code files citing `covers N.k-x` (the same extensions and skipped directories) and docs validation-table rows naming the ID with `visual`/`field`/`manual`; the output names the citing files and levels. [30.1-d] The crate graph comes from `cargo metadata --no-deps --format-version 1` (fallback: the workspace `Cargo.toml` when cargo is unavailable): nodes are the workspace crates with their `description`, edges the intra-workspace dependencies; the declared layering (CLAUDE.md) is checked — dependencies point inward through the tier table, with the documented same-tier pairs and the per-crate prohibitions (`ferrum-app` without wgpu/egui, `ferrum-agent`'s closed dependency list without wgpu/egui, `ferrum-ui` without eframe/rfd, `ferrum-view` without egui, `ferrum-gpu-lock` standalone); every violating edge is named; a crate changed since the release tag is marked. [30.1-e] Output is deterministic and clean: two runs on the same inputs produce byte-identical `data.json` (sorted keys; the stamp — source SHAs, tag, target commit date — is derived from git, not the wall clock, and lives in one `meta` block); no absolute machine path (drive letter, `/home/`, `/Users/`, `/mnt/`) appears anywhere in the output. [30.1-f] The generator refuses to guess: an unknown heading marker or a story row without criteria under a ✅/🚧 heading produces a named warning in `meta.warnings` and the item is marked `unknown`, never silently defaulted (L37 family). [30.1-g] CI runs the dashboard tests: the `python-lint` job installs pytest and runs `tests/dashboard`; `analyze.py --stage 30` exits 0 before the PR. |
+| 30.2 | As a **G3 reviewer**, I want one self-contained page that shows the plan's state and the architecture, with the release lifecycle in colour, so that I can read the whole picture offline. | [30.2-a] The page is one HTML file: inline CSS and JS, the plan data rendered into the HTML with `data-*` attributes (`data.json` is written alongside for machine consumers); no external subresource (no http(s) `src`, `@import`, `import()` or `<link>`; GitHub navigation links are allowed); it renders from `file://`. [30.2-b] The four lifecycle states carry four colours from the report palette (`--ok` released, `--accent` develop, `--warn` progress, `--muted` planned), defined once for light and dark (`prefers-color-scheme`); every coloured chip also carries a text badge naming the state. [30.2-c] Each stage is a card with a segmented progress bar (criterion counts per bucket), its stories and expandable criteria; a criterion names its citing tests and PRs as links pinned to the source SHA (`blob/<sha>/…`); the footer names the release tag, the target revision SHA and the generation date. [30.2-d] The architecture section lists every workspace crate with its description, its intra-workspace dependencies, a mark when it changed since the release tag, and the named layering violations from 30.1-d. |
+| 30.3 | As a **maintainer**, I want to filter and explore the dashboard so that I can find a feature or a crate quickly. | [30.3-a] A filter bar (lifecycle checkboxes, a heading-status select, a search input) narrows the stage cards by their `data-bucket`/`data-status`/text and shows a visible/total count; the inline script passes `node --check`. [30.3-b] The architecture section renders an SVG dependency graph: a node per workspace crate (`data-crate`), an edge per intra-workspace dependency (`data-from`/`data-to`); clicking a node highlights it and its neighbours, the wheel zooms and dragging pans. [30.3-c] Native selects declare `color-scheme` and style their options for light and dark (L35). |
+| 30.4 | As a **maintainer**, I want the workflow to keep the dashboard current and published without CI minutes so that the public page never silently lags the plan. | [30.4-a] A skill `ferrum-dashboard` documents generate / verify / G3-snapshot / publish (after a merge and after a release). [30.4-b] Hooks J and E exempt the `gh-pages` publication branch (the name rule and the local cargo gate); other unconventional names stay denied. [30.4-c] Hook G reminds to regenerate/publish when `dev_plan.md`, `docs/architecture.md` or a crate manifest changes; hook H notes at session start when the published dashboard lags `develop` or the release tag, and stays silent when fresh. [30.4-d] `publish.py` generates the site from a committed revision and pushes it to `gh-pages` (an orphan branch holding the site + `.nojekyll`) via a throw-away worktree, leaving the caller's branch untouched; no Actions minutes. [30.4-e] CLAUDE.md's skill table, `ferrum-change`'s matrix and `ferrum-release`'s checklist name the dashboard. |
+
+**Success metrics:** generation ≤ 5 s on this repository (measured);
+byte-identical `data.json` on repeated runs (test); `index.html` ≤ 300 KB
+(measured); zero external subresources (structural test); the interactivity
+script passes `node --check`.
+
+**Out of scope:** a live backend or client-side GitHub API calls; any
+change to the crates; CI generation (the skill generates locally);
+patient data — the dashboard holds only plan and code metadata.
+
+**Clarifications:**
+- assumed: three M PRs (data engine; page; interactivity + workflow
+  integration), autonomous mode per `ferrum-size` budgets (≤ 1500 lines,
+  ≤ 25 files each). The measured whole-feature diff crossed M (1844
+  lines), so it was split at the module boundary (L36); the spec grows by
+  row 30.2 in PR 2 and rows 30.3–30.4 in PR 3.
+- assumed: "latest release" is the latest `v*` tag reachable from
+  `origin/main` (`git describe --tags --abbrev=0`), never the Cargo.toml
+  version or the Roadmap prose — both lag (the Roadmap says "before the
+  0.4.0 release" while v0.4.0 is tagged).
+- assumed: the generator lives in `scripts/dashboard/` and its tests in
+  `tests/dashboard/`, because `analyze.py` walks those directories and
+  skips `.claude/` — criterion citations must be visible to ferrum-analyze.
+- assumed: criterion lifecycle refinement: ✅-at-tag is primary; a cited
+  PR is matched by merge SUBJECT only (`Merge pull request #N ` or squash
+  `(#N)`), across all refs — a body mention of an issue number is not a
+  merge — and checked with `git merge-base --is-ancestor` against the tag
+  and the target separately (a release-only merge still counts for the
+  tag); `covers` citations at the tag cross-check. A heading that lags its
+  criteria is surfaced as a warning, not silently trusted.
+- assumed: the worktree `target/dashboard` holds this work because the
+  main tree carries concurrent Stage 28 work (`feat/70-view-state`,
+  uncommitted); the main tree is never touched.
+- assumed (PR 3, recorded for the design): publication branch `gh-pages`
+  served by Pages from the branch (no Actions minutes; the 10 builds/hour
+  soft limit is ample); hooks J/E get an explicit exception for it; the
+  user approved this design in chat on 2026-11-15.
+
+### Implementation
+
+| Task | What | Criteria | PR | State |
+|---|---|---|---|---|
+| 30.T1 | generator: plan parser, lifecycle, coverage, deterministic output | 30.1-a…f | 1 | ✅ |
+| 30.T2 | crate graph + page core: layering model, template, colours/badges, stage cards, criteria links, crate table, footer | 30.1-d, 30.2-a…d | 2 | ✅ |
+| 30.T3 | CI: pytest step in `python-lint` | 30.1-g | 1 | ✅ |
+| 30.T4 | interactivity: SVG graph, filters, search, popup colours (L35) | 30.3-a…c | 3 | ✅ |
+| 30.T5 | skill `ferrum-dashboard`, hooks J/E/G/H, publish flow, integration | 30.4-a…e | 3 | ✅ |
+
+---
+
+## Stage 31 — DICOM de-identification: PS3.15 Basic Profile and Clean Pixel Data (#75) ✅ (stage, gated; PRs #132, #133, #134 merged)
+
+([#75](https://github.com/Kauter1989/ferrum/issues/75); P2). **Design:**
+[docs/deidentification.md](docs/deidentification.md),
+[ADR 0020](docs/decisions/0020-deidentification-profile.md). Medical Harness
+needs identifier-free inputs for remote vision models and for exports to
+research or another site. FERRUM already pseudonymises its agent outputs and
+its DICOM export UIDs (`dicom/export.rs`); this stage adds a *standard*
+de-identification: the PS3.15 Annex E **Basic Application Level Confidentiality
+Profile** with its options, **Clean Pixel Data** (burned-in text), and test
+oracles against established anonymisers. Privacy-sensitive: G1 before any code.
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 31.1 | As a **harness developer**, I want every attribute of Table E.1-1 handled by the Basic Profile's action so that de-identification follows the standard, not a hand-written list. | [31.1-a] The profile's attribute rules are **generated from a committed Table E.1-1 data file** (tag, keyword, action), not written by hand; a test fails when the table and the generator disagree. [31.1-b] On synthetic DICOM carrying every attribute of Table E.1-1, the output matches the profile's action for each: `D` replace with a non-empty consistent value, `Z` replace with zero-length, `X` remove, `U` replace with a consistent pseudonymous UID, `C` clean (descriptors), `K` keep, `R` replace per the option, `Z/D` per the option; a pinned fixture fixes the action of each row. [31.1-c] UIDs are replaced consistently within one de-identification run (study/series/SOP/frame-of-reference map stably), reusing the export's salted UID derivation; `retain UIDs` keeps them. [31.1-d] The de-identified object keeps the attributes the profile keeps (e.g. patient age/sex under the *Retain Patient Characteristics* option; the Basic Profile default removes age and zeroes sex) and the pixel data; a test reads it back through FERRUM's own reader. |
+| 31.2 | As a **harness developer**, I want the Basic Profile's options so that a site can retain what its protocol allows. | [31.2-a] Options: *retain longitudinal dates modified* (dates shifted by a consistent per-patient offset, time kept), *retain UIDs*, *clean descriptors* (free-text fields searched for identifiers and cleaned), *retain device identity*, *retain institution identity*, *retain patient characteristics*; each option changes exactly the rows Table E.1-1 marks option-dependent, pinned by a fixture per option. [31.2-b] An unknown option is refused; the default is the Basic Profile with no options (the most conservative). |
+| 31.3 | As a **harness developer**, I want Clean Pixel Data so that renders sent to a vision model carry no burned-in text. | [31.3-a] Known burned-in regions (the DICOM `BurnedInAnnotation` flag and a configured region mask) are masked in the pixel data; a test with burned-in text in a known region shows the region replaced and the rest of the image unchanged. [31.3-b] An optional OCR check runs **behind a bridge** (`ferrum-engine/1`-style, out of process; no OCR in Rust, no weights bundled); without a bridge the step is skipped and reported, never silently passed. [31.3-c] Renders can be requested "masked": `view slice --masked` (and the host's frame route) applies the region mask; a visual test fixes a masked render of a phantom with burned-in text. |
+| 31.4 | As a **maintainer**, I want test oracles against established anonymisers so that the profile is checked, not asserted. | [31.4-a] A diff test compares FERRUM's output against **pydicom/deid** (MIT) and the **RSNA/CTP** anonymizer profile on the same synthetic study; differences are named and justified (the test pins the expected agreement, not a vague "close"). [31.4-b] The oracles run in the Python test layer (CI `python-lint`/pytest), generate their DICOM at run time, and commit no patient or volume data. |
+| 31.5 | As a **harness developer**, I want de-identification wired into exports and the agent so that it is usable, not a library only. | [31.5-a] `export bundle --deidentify basic [--option …]` writes a de-identified DICOM export; the agent command set gains the option with a JSON Schema, `commands.json`, docs and contract tests (CLI = MCP); the privacy scan passes. [31.5-b] The de-identification is orchestrated in `ferrum-io` beside the export use case (ADR 0018: the agent never links the app; the `Exporter` port is planned, today called directly — the existing DICOM SEG/SR export pattern); the CLI/agent are thin (parameters → options), no business logic in them; the rendering rule is untouched (masking is a pixel transform, not image formation). |
+
+**Success metrics:** every Table E.1-1 row's action pinned by a fixture; the
+pydicom/deid + CTP diff test green; a masked render of burned-in text verified
+visually; the privacy scan over every output passes.
+
+**Out of scope:** a full DICOM router (DIMSE C-MOVE is #76); OCR weights or
+inference in Rust; de-identification of non-DICOM formats (NIfTI has no standard
+profile — pseudonymisation of its sidecar is separate); any change to the
+`ferrum-view/1` contract beyond the masked-render flag.
+
+**Clarifications (assumed, for G1):**
+- assumed: the Table E.1-1 data file is committed as a structured table
+  (CSV/JSON) under `crates/ferrum-io/src/dicom/`, generated/verified against the
+  standard once; the Rust generator reads it (no hand-written attribute list).
+- assumed: Clean Pixel Data masking uses `BurnedInAnnotation` + a rectangular
+  region mask first; OCR is an optional bridge follow-up within the stage.
+- assumed: this is a **gated stage** (privacy hard stop): G1 spec → G2 design
+  (a new ADR for the de-identification profile + the OCR bridge) → per-PR G3.
+- assumed: PR split (size L/XL, to be confirmed at G2): (1) the profile engine
+  + Table E.1-1 generator + options (31.1–31.2); (2) Clean Pixel Data + masked
+  renders (31.3); (3) oracles + export/agent integration (31.4–31.5).
+
+### Implementation
+
+| Task | What | Criteria | PR | State |
+|---|---|---|---|---|
+| 31.T1 | Basic Profile engine + Table E.1-1 generator + options | 31.1-a…d, 31.2-a…b | 1 | ✅ merged (#132) |
+| 31.T2 | Clean Pixel Data masking + masked renders (+ OCR bridge) | 31.3-a…c | 2 | ✅ merged (#133) |
+| 31.T3 | pydicom/deid + CTP oracles; export/agent integration | 31.4-a…b, 31.5-a…b | 3 | ✅ |
+
+---
+
+## Stage 32 — DICOMweb and DIMSE: QIDO/WADO/STOW client and C-FIND/C-MOVE/C-ECHO (#76) ✅ (stage, gated; PRs #136, #137, #138 merged; PR 4 completes 32.5 and closes #76)
+
+([#76](https://github.com/Kauter1989/ferrum/issues/76); P2, for the harness's
+Demo 8 hand-off). Real sites keep studies in a PACS; Medical Harness needs to
+open studies from a PACS and hand SEG/SR results back. The Rust ecosystem has no
+mature DICOMweb client (`dicom-web` 0.6, `dicomweb-client` 0.1). Network- and
+privacy-sensitive: G1 before any code.
+
+**G2 design:** [ADR 0021](docs/decisions/0021-pacs-client.md) (PACS client +
+send-off boundary) and [dicomweb.md](docs/dicomweb.md) (repository fit,
+QIDO/WADO flow, errors, auth, privacy, PR split).
+
+| # | User story | Acceptance criteria |
+|---|---|---|
+| 32.1 | As a **clinician**, I want to open a study from a PACS so that I can read studies the site keeps in its archive. | [32.1-a] A `VolumeRepository` over **QIDO-RS** (query studies/series) and **WADO-RS** (retrieve metadata + frames) in `ferrum-io` on dicom-rs: `scan` queries, `load` retrieves and reorients into the canonical LPS grid like the file readers. [32.1-b] A retrieved study opens and renders through the existing viewer; the pixel values match the source (a pinned phantom retrieved from Orthanc). [32.1-c] Connection errors, auth (basic/bearer), timeouts and a non-DICOM response are reported as `RepositoryError`, never a panic; a query that returns nothing is `NothingFound`. |
+| 32.2 | As a **clinician**, I want to hand a SEG/SR back to the PACS so that the result reaches the site's archive. | [32.2-a] **STOW-RS** stores a de-identified SEG/SR export (Stage 31) to the PACS; the response is checked (success/warning/failure per instance). [32.2-b] STOW is **host-only, never an agent command** (it sends data off the workstation); the host calls it from a person's explicit action. |
+| 32.3 | As a **harness developer**, I want DIMSE so that a classic PACS (no DICOMweb) is reachable. | [32.3-a] **C-FIND** (query), **C-MOVE** (retrieve) and **C-ECHO** (verify) through `dicom-ul`; a C-MOVE receives the study into the workspace via a C-STORE SCP. [32.3-b] C-MOVE/C-STORE send data off the workstation → **host-only, not agent commands**; C-ECHO/C-FIND (read-only) may be agent commands. |
+| 32.4 | As a **harness developer**, I want agent query/retrieve so that the harness can open a PACS study, without leaking identifiers. | [32.4-a] Agent commands for **query and retrieve only** (QIDO/WADO, C-FIND/C-ECHO); a JSON Schema, `commands.json`, docs and contract tests (CLI = MCP). [32.4-b] A query returns **pseudonymised ids** (no patient name/ID/birth date/accession in the output); the privacy scan passes. STOW/C-MOVE/C-STORE are absent from the command set. |
+| 32.5 | As a **maintainer**, I want integration tests against a real PACS so that the client is checked, not asserted. | [32.5-a] **Orthanc in Docker** as the test PACS (its DICOMweb plugin is **AGPL** → a separate service, never linked — constitution licences); CI integration tests: query, retrieve, open; STOW of a SEG; **highdicom** validates what comes back. [32.5-b] The tests generate their DICOM at run time (a phantom), commit no patient data, and skip gracefully when Docker/Orthanc is unavailable (local), running in CI where the service is up. |
+
+**Success metrics:** a phantom study queried → retrieved → opened from Orthanc
+with matching pixels; a STOW'd SEG validated by highdicom; the privacy scan over
+every query output passes; the agent command set excludes every send-off command.
+
+**Out of scope:** a PACS server implementation; TLS termination beyond the
+client's HTTPS support; WADO-URI (legacy) beyond a fallback if trivial; any
+change to the rendering rule (the client feeds the existing reader/viewer).
+
+**Clarifications (assumed, for G1):**
+- assumed: built on dicom-rs (`dicom-web` for QIDO/WADO/STOW, `dicom-ul` for
+  DIMSE, `dicom-object`); the client lives in `ferrum-io` (the only data crate),
+  a `VolumeRepository` impl beside the file readers.
+- assumed: **Orthanc's DICOMweb plugin is AGPL** and runs as a separate Docker
+  service in CI, never linked into FERRUM (licence constitution). highdicom
+  (MIT) validates the STOW result in the Python test layer.
+- assumed: **send-off operations (STOW, C-MOVE, C-STORE) are host-only**, called
+  from a person's action, never agent commands (privacy/safety hard stop);
+  query/retrieve (read-only) are agent commands with pseudonymised output.
+- assumed: this is a **gated stage** (network + privacy hard stop): G1 spec → G2
+  design (a new ADR for the PACS client + the send-off boundary) → per-PR G3.
+- assumed: PR split (size XL, confirmed at G2): (1) QIDO/WADO `VolumeRepository`
+  + open (32.1); (2) DIMSE C-FIND/C-MOVE/C-ECHO (32.3); (3) STOW + agent
+  query/retrieve commands + privacy (32.2, 32.4); (4) Orthanc CI integration +
+  highdicom validation (32.5).
+
+### Implementation
+
+| Task | What | Criteria | PR | State |
+|---|---|---|---|---|
+| 32.T1 | QIDO/WADO VolumeRepository + open | 32.1-a…c | 1 | ✅ merged (#136) |
+| 32.T2 | DIMSE C-FIND/C-MOVE/C-ECHO | 32.3-a…b | 2 | ✅ merged (#137) |
+| 32.T3 | STOW + agent query/retrieve + privacy | 32.2-a…b, 32.4-a…b | 3 | ✅ merged (#138): STOW host-only + pacs query/retrieve/echo + SSRF allowlist + privacy scan |
+| 32.T4 | Orthanc CI integration + highdicom | 32.5-a…b | 4 | 🚧 code complete (feat/32-orthanc-ci), preflight green (WSL pf32d): Orthanc service container (AGPL, separate) + Rust query/retrieve/open pixel-match & STOW (0008,1190) tag + Python highdicom round-trip; graceful skip verified local, integration verified by CI; G3 pending |
+
+---
 
 ## Roadmap
 
-Updated 2026-11-14, before the 0.4.0 release. Order is a proposal; each
-stage starts with its spec at gate G1. Sizes follow `ferrum-size`.
+Updated 2026-11-16, after the 0.4.0 release (v0.4.0, 2026-11-14). Order is
+a proposal; each stage starts with its spec at gate G1. Sizes follow
+`ferrum-size`. Rows marked ✅ are delivered; the rest are upcoming.
 
 ### Next
 
 | # | What | Kind | Why now |
 |---|---|---|---|
-| 1 | Release 0.4.0: Stages 18 and 20, loader warnings (2.7), DICOM in LPS (2.8), lossless HU (18.13) since 0.3.0 | release (`ferrum-release`) | `develop` holds a large unreleased change set; the user decides |
+| 1 | Release 0.4.0: Stages 18 and 20, loader warnings (2.7), DICOM in LPS (2.8), lossless HU (18.13) since 0.3.0 | ✅ done (v0.4.0, 2026-11-14) | released; the change set shipped |
 | 2 | Field test on the user's machine: Stage 20 on a scanner's Enhanced MR or PET (success metric, 0.01 mm), switch time and VRAM on the GPU; 18.13-f against pyradiomics | field test (`ferrum-field-test`) | the open criteria of Stages 18 and 20 can only be closed there |
 | 3 | Stage 21 — PET quantification (below) | stage, L | from the MR/PET assessment (2026-10-14): without units and SUV a PET study has no usable numbers |
 | 4 | Stage 22 — PET/CT fusion (below) | stage, L, new ADR | the main way PET is read; needs a second volume in `Dataset` and `GpuSink` |
 | 5 | Stage 16 — the rest: 16.1 confirm all, 16.2 export only confirmed, 16.3 provenance of a corrected segment, 16.4 annotation mode | stage, M per story | open since Stage 16; 16.5–16.6 are done |
-| 6 | Stage 19 — reproducible radiomics and comparison (IBSI, textures, change over time) | stage, XL, G1 again | waits for the release of Stage 18 (its own rule); MR normalisation joins it |
-| 7 | Interactive view host for generative UI — delivered as Stages 25 and 26: `view serve`, the DeepSeek Harness plugin, the WebGPU panel ([ADR 0014](docs/decisions/0014-generative-ui-view-host.md), [ADR 0017](docs/decisions/0017-view-host-crate.md)) | ✅ done | follow-ups open: rotating tokens (an ADR first), the CPU overlay consolidation, WebGPU test automation |
-| 8 | Stage 23 — GPU sharing with an external model server ([#68](https://github.com/Kauter1989/ferrum/issues/68)) — code complete, PRs 1–3 merged | ✅ code; field run open | 23.T9: the 20-call recipe on the user's 12 GB card |
-| 9 | Stage 24 PR 2 — widget events and the example host (24.T4–T7, [design](docs/embeddable-viewer.md)) | feature, M | G1 ✅ G2 ✅; completes the embeddable viewer for the harness's Demo 4; the next feature proposed after the release |
+| 6 | Stage 19 — reproducible radiomics and comparison (IBSI, textures, change over time) | stage, XL, G1 again | Stage 18 released in 0.4.0, so this is unblocked; MR normalisation joins it |
+| 7 | Interactive view host for generative UI — delivered as Stages 25 and 26: `view serve`, the DeepSeek Harness plugin, the WebGPU panel ([ADR 0014](docs/decisions/0014-generative-ui-view-host.md), [ADR 0017](docs/decisions/0017-view-host-crate.md)) | ✅ done | follow-ups → Stage 29: rotating tokens (an ADR first), the CPU overlay consolidation, WebGPU test automation, the browser panel's segments/measurements |
+| 8 | Stage 23 — GPU sharing with an external model server ([#68](https://github.com/Kauter1989/ferrum/issues/68)) — code complete, PRs 1–3 merged | ✅ field run 2026-11-14: 20/20 with holder, recipe §5 | — |
+| 9 | Stage 24 PR 2 — widget events and the example host (24.T4–T7, [design](docs/embeddable-viewer.md)) | ✅ done (#109) | — |
+| 10 | Stage 28 — drive the view: `ferrum-view/1` ViewState and agent commands ([#70](https://github.com/Kauter1989/ferrum/issues/70)) | 🚧 in develop (#116 merged); gated | ViewState + agent commands delivered (#116); the gated stage's remainder is in progress |
+| 11 | Stage 29 — the view everywhere: full streaming, the browser panel, hardening | ✅ done (PRs #123, #126, #125, #124, #127, #129, #130) | closes the out-of-scope of Stages 25–26 and the #91 follow-ups |
 
 ### Backlog (feature or small, any time)
 
+- **Ring-based DICOMweb transport (Windows build, L57):** `dicom-web`'s reqwest
+  uses rustls-with-aws-lc-rs, so `aws-lc-sys` compiles AWS-LC from C and the
+  Windows build fails under the dev antivirus (MSVC `D8050`, Kaspersky — L39).
+  The workspace already uses ureq+ring; a ring-based QIDO/WADO/STOW client (or a
+  `dicom-web` patch to `rustls-no-provider` + ring) removes the native AWS-LC
+  build and restores the Windows desktop build. Updating MSVC was tried and did
+  not help (VS 2022 17.14 / MSVC 14.44 still fails `D8050` — the cause is
+  Kaspersky, not the toolchain); short-term mitigation is a Kaspersky exclusion
+  for the cargo registry + build dirs. See `docs/dicomweb.md` §6.
 - **`view serve` without a configuration (security review N1):** the hello
   line carries no "no operator configuration" warning, unlike the agent
   envelopes; add a note when `config.is_default`.

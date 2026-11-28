@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FERRUM · PR #125 — финальный отчёт: 16-bit том + /api/labels (Stage 29 PR 3)</title>
+<style>
+  :root { --bg:#fbfbfd; --fg:#1d1f26; --muted:#5b6070; --line:#e2e5ec; --accent:#1f6feb; --ok:#1a7f37; --warn:#9a6700; --bad:#b42318; --card:#fff; --code:#f3f4f7; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#12141a; --fg:#e6e7ea; --muted:#a2a8b6; --line:#2a2e38; --accent:#6ba6ff; --ok:#4ac26b; --warn:#d4a72c; --bad:#ff7b72; --card:#191c23; --code:#1f232c; } }
+  * { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.6 -apple-system,"Segoe UI",Roboto,Arial,sans-serif; }
+  main { max-width:1080px; margin:0 auto; padding:40px 24px 80px; }
+  h1 { font-size:29px; line-height:1.25; margin:0 0 8px; letter-spacing:-0.02em; }
+  h2 { font-size:21px; margin:44px 0 14px; padding-bottom:8px; border-bottom:1px solid var(--line); }
+  .sub { color:var(--muted); margin:0 0 24px; }
+  .meta { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:28px; }
+  .pill { font-size:13px; padding:3px 10px; border-radius:999px; border:1px solid var(--line); background:var(--card); color:var(--muted); }
+  .pill.ok { color:var(--ok); border-color:color-mix(in srgb,var(--ok) 40%,transparent); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px 20px; margin:14px 0; }
+  code,.mono { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:13px; }
+  code { background:var(--code); padding:1px 5px; border-radius:4px; }
+  table { width:100%; border-collapse:collapse; margin:14px 0; font-size:14px; }
+  th,td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; font-size:13px; text-transform:uppercase; letter-spacing:.04em; }
+  .tag { font-size:12px; font-weight:600; padding:2px 7px; border-radius:5px; white-space:nowrap; }
+  .t-fixed { background:color-mix(in srgb,var(--ok) 16%,transparent); color:var(--ok); }
+  .t-should { background:color-mix(in srgb,var(--warn) 18%,transparent); color:var(--warn); }
+  .grid { display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); }
+  .stat { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px; }
+  .stat b { display:block; font-size:26px; line-height:1.2; } .stat span { color:var(--muted); font-size:13px; }
+  ul { padding-left:22px; } li { margin:4px 0; }
+  .note { border-left:3px solid var(--accent); padding-left:14px; color:var(--muted); margin:14px 0; }
+  footer { margin-top:56px; padding-top:18px; border-top:1px solid var(--line); color:var(--muted); font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+<h1>PR #125 — 16-bit том + /api/labels</h1>
+<p class="sub">Финальный отчёт: Stage 29 PR 3 (критерий 29.3-a). FERRUM, ноябрь 2026. Описывает head SHA <code>225645794a8a4ccd087d2ec7ae25ad160dc4079f</code>. Отчёт живёт в самом PR и правится по итогам ревью; при мердже остаётся в последней версии (правило пользователя).</p>
+<div class="meta">
+  <span class="pill">Stage 29 PR 3 · 29.3-a</span>
+  <span class="pill">size S</span>
+  <span class="pill ok">G1+G2 утверждены</span>
+  <span class="pill ok">preflight: all checks passed</span>
+</div>
+<div class="grid">
+  <div class="stat"><b>÷2</b><span>размер тома на проводе (u16 vs f32)</span></div>
+  <div class="stat"><b>u8</b><span>label-карта для overlay</span></div>
+  <div class="stat"><b>2</b><span>новые интеграционные теста</span></div>
+  <div class="stat"><b>0</b><span>потерь точности (storage — источник)</span></div>
+</div>
+
+<h2>1. Что и зачем</h2>
+<p>Том 512×512×252 crossing as f32 — ~264 МБ. Теперь <code>/api/volume</code> по умолчанию отдаёт <strong>u16 storage</strong> тома (вдвое меньше), а клиент реконструирует физическое значение <code>min + stored × (max − min) / 65535</code> из <code>value_range</code>. Это lossless: storage — источник истины (<code>physical = range.from_storage(data)</code>). Форма <code>?storage=f32</code> сохранена для совместимости. Новый <code>/api/labels</code> отдаёт label-карту сегментов (u8) с метаданными для браузерного overlay (PR 5).</p>
+<div class="note">gzip отложен: критерий 29.3-a «compressed <em>or</em> 16-bit» выполнен u16 (задокументировано в view-streaming.md «As built»). Реконструкция панели совпадает с доменной формулой (точно для on-grid CT).</div>
+
+<h2>2. Код-карта</h2>
+<p class="sub">Pinned к head SHA <code>2256457</code>.</p>
+<table>
+  <tr><th>Утверждение</th><th>Реализация</th></tr>
+  <tr><td>VolumeStorage (U16 default / F32)</td><td class="mono">crates/ferrum-view/src/session.rs:75</td></tr>
+  <tr><td>volume(storage): u16 LE storage / f32 physical, header storage+range+sha256</td><td class="mono">crates/ferrum-view/src/session.rs:177</td></tr>
+  <tr><td>labels(): u8 grid + metadata, zero-grid без сегментации</td><td class="mono">crates/ferrum-view/src/session.rs:216</td></tr>
+  <tr><td>Route /api/volume ?storage=f32 + /api/labels(.json)</td><td class="mono">crates/ferrum-view/src/server.rs:188,205</td></tr>
+  <tr><td>volume_storage helper (default u16)</td><td class="mono">crates/ferrum-view/src/server.rs:370</td></tr>
+  <tr><td>Панель: реконструкция u16 → Float32Array</td><td class="mono">integrations/dsh/plugin/lib/client.js:238</td></tr>
+  <tr><td>Тесты u16/f32 (ненулевой воксель блока) + labels</td><td class="mono">crates/ferrum-view/tests/view_host.rs:429,475</td></tr>
+</table>
+
+<h2>3. Покрытие критериев</h2>
+<table>
+  <tr><th>Критерий</th><th>Тест</th><th>Статус</th></tr>
+  <tr><td>29.3-a сжатая/16-bit передача тома</td><td class="mono">the_volume_crosses… (u16 default + f32 opt-in, ненулевой воксель блока пинит byte-order/формулу); mutation byte-order → RED</td><td><span class="tag t-fixed">✅</span></td></tr>
+  <tr><td>29.2-a wire для overlay (labels)</td><td class="mono">the_label_map_crosses… (u8 grid, metadata, zero-grid, token)</td><td><span class="tag t-fixed">✅</span></td></tr>
+</table>
+
+<h2>4. Верификация</h2>
+<ul>
+  <li>Полный preflight (WSL Ubuntu-24.04, CI-порядок + GPU parity + analyze.py): <code>all checks passed</code>.</li>
+  <li>view_host 17/17 (включая u16/f32 round trips + labels); panel smoke-load ok.</li>
+  <li>fmt/clippy <code>-D warnings</code> чистые; мутации byte-order (u16) и labels-reverse ловятся тестами.</li>
+</ul>
+
+<h2>5. История ревью</h2>
+<div class="card">
+  <p><strong>Раунд 1</strong> (code + security, агент <code>review-volume</code>, выполнение + мутации): вердикт <em>changes requested</em> — 0 blocking, 1 should-fix, 4 nits. Код и security-модель sound (u16 lossless/точен, token-gate, CORS, нет идентификаторов).</p>
+  <p><span class="tag t-should">should</span> u16-тест проверял только background-воксель (0,0,0)=0 → byte-order мутация выживала. <strong>Исправлено</strong>: ассерт ненулевого воксела блока (4,3,2) для u16 и f32 (пинит byte-order + формулу); mutation byte-order теперь RED. Nits: zero-grid body проверяется (все нули); sha256-match и gzip — noted/отложены.</p>
+</div>
+
+<footer>FERRUM · Stage 29 PR 3 · head SHA <code>225645794a8a4ccd087d2ec7ae25ad160dc4079f</code> · отчёт коммичен в PR и правится по итогам ревью пользователя.</footer>
+</main>
+</body>
+</html>

@@ -1,11 +1,16 @@
 //! DICOM data source.
 
 pub mod assemble;
+pub mod clean_pixel;
+pub mod deid;
+pub mod dimse;
 pub mod export;
 pub mod frames;
 pub mod header;
 pub mod series;
+pub mod stow;
 pub mod volumes;
+pub mod web;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};

@@ -54,6 +54,10 @@ pub mod files {
     pub const SEGMENTS_NIFTI: &str = "segments.nii.gz";
     /// Segment metadata (`ferrum-segments` v1).
     pub const SEGMENTS_JSON: &str = "segments.json";
+    /// View state (`ferrum-view/1`, Stage 28).
+    pub const VIEW_STATE: &str = "view.json";
+    /// View event log (`ferrum-view/1`, Stage 28).
+    pub const VIEW_EVENTS: &str = "view-events.json";
     /// Prompts behind interactive engine segments (`ferrum-engine-inputs` v1).
     pub const ENGINE_INPUTS: &str = "engine_inputs.json";
     /// Directory of rendered images.
@@ -225,6 +229,16 @@ fn remove_if_exists(path: &Path) -> Result<(), IoError> {
     }
 }
 
+/// Refuses a symlink or other non-regular file, as the change watcher does:
+/// a planted link must not drive a read of a target outside the workspace.
+fn refuse_non_regular(path: &Path) -> Result<(), IoError> {
+    let meta = std::fs::symlink_metadata(path).map_err(|e| IoError::os(path, e))?;
+    if !meta.file_type().is_file() {
+        return Err(IoError::invalid(path, "not a regular file"));
+    }
+    Ok(())
+}
+
 impl Workspace {
     /// Creates a workspace in `root` (created if needed) for `series`,
     /// opened from `source`. Hashes every file of the series. Fails if
@@ -258,6 +272,42 @@ impl Workspace {
                 series_id: series.id.clone(),
                 format: series.format.clone(),
                 files,
+                volume: None,
+            },
+            modality: None,
+        };
+        let text =
+            serde_json::to_string_pretty(&manifest.to_json()).map_err(|e| IoError::invalid(root, e.to_string()))?;
+        write_atomic(&manifest_path, text.as_bytes())?;
+        Ok(Self { root: root_abs, manifest })
+    }
+
+    /// Creates a workspace in `root` for a series retrieved from a PACS URL
+    /// (DICOMweb or DIMSE). The source is the URL itself: no local files are
+    /// hashed or written, because retrieved pixel data stays in memory
+    /// (ADR 0021 §2). Each load re-retrieves the series from the archive, so
+    /// the workspace records no content hash — the URL identifies the source.
+    /// Fails if `root` already holds a workspace.
+    pub fn create_remote(
+        root: &Path,
+        source: &Path,
+        series: &SeriesDescriptor,
+        generator: &str,
+    ) -> Result<Self, IoError> {
+        let manifest_path = root.join(files::MANIFEST);
+        if manifest_path.exists() {
+            return Err(IoError::invalid(root, "already a workspace; open it instead"));
+        }
+        let root_abs = std::path::absolute(root).map_err(|e| IoError::os(root, e))?;
+        std::fs::create_dir_all(root_abs.join(files::RENDERS)).map_err(|e| IoError::os(root, e))?;
+        let manifest = WorkspaceManifest {
+            generator: generator.to_owned(),
+            created: Timestamp::now(),
+            source: WorkspaceSource {
+                path: source.to_path_buf(),
+                series_id: series.id.clone(),
+                format: series.format.clone(),
+                files: Vec::new(),
                 volume: None,
             },
             modality: None,
@@ -409,6 +459,93 @@ impl Workspace {
             return Ok(Vec::new());
         }
         read_engine_inputs(&path)
+    }
+
+    /// Saves the view state (`ferrum-view/1`, Stage 28) with its revision and
+    /// the study's source hash, atomically, and notifies the change. The
+    /// state holds numbers and labels only (28.5-a).
+    pub fn save_view_state(
+        &self,
+        state: &ferrum_domain::ViewState,
+        revision: u64,
+        source_hash: &str,
+    ) -> Result<(), IoError> {
+        let path = self.path(files::VIEW_STATE);
+        let doc = serde_json::json!({
+            "format": crate::view_state::VIEW_STATE_FORMAT,
+            "revision": revision,
+            "source_hash": source_hash,
+            "state": crate::view_state::state_to_json(state),
+        });
+        let tmp = partial_path(&path);
+        let bytes = serde_json::to_vec_pretty(&doc).map_err(|e| IoError::invalid(&path, e.to_string()))?;
+        std::fs::write(&tmp, bytes).map_err(|e| IoError::os(&path, e))?;
+        std::fs::rename(&tmp, &path).map_err(|e| IoError::os(&path, e))?;
+        changes::publish(&self.root, changes::Touched::ViewState);
+        Ok(())
+    }
+
+    /// Loads the view state, its revision and source hash, or `None` when no
+    /// state was saved (the client then uses the volume's own default).
+    pub fn load_view_state(&self) -> Result<Option<crate::view_state::SavedViewState>, IoError> {
+        let path = self.path(files::VIEW_STATE);
+        if !path.exists() {
+            return Ok(None);
+        }
+        refuse_non_regular(&path)?;
+        let bytes = std::fs::read(&path).map_err(|e| IoError::os(&path, e))?;
+        let doc: Value = serde_json::from_slice(&bytes).map_err(|e| IoError::parse(&path, e))?;
+        let revision = doc["revision"].as_u64().unwrap_or(0);
+        let source_hash = doc["source_hash"].as_str().unwrap_or_default().to_string();
+        let state = crate::view_state::state_from_json(&doc["state"]).map_err(|e| IoError::invalid(&path, e))?;
+        Ok(Some((state, revision, source_hash)))
+    }
+
+    /// Saves the view event log (`ferrum-view/1`, Stage 28), atomically, and
+    /// notifies the change. The log keeps the last 512 events; `next` is the
+    /// last sequence number and `dropped` counts the evicted ones.
+    pub fn save_view_events(
+        &self,
+        events: &[(u64, ferrum_domain::ViewEvent)],
+        next: u64,
+        dropped: u64,
+    ) -> Result<(), IoError> {
+        let path = self.path(files::VIEW_EVENTS);
+        let list: Vec<Value> = events.iter().map(|(seq, e)| crate::view_state::event_to_json(*seq, e)).collect();
+        let doc = serde_json::json!({
+            "format": crate::view_state::VIEW_STATE_FORMAT,
+            "next": next,
+            "dropped": dropped,
+            "events": list,
+        });
+        let tmp = partial_path(&path);
+        let bytes = serde_json::to_vec_pretty(&doc).map_err(|e| IoError::invalid(&path, e.to_string()))?;
+        std::fs::write(&tmp, bytes).map_err(|e| IoError::os(&path, e))?;
+        std::fs::rename(&tmp, &path).map_err(|e| IoError::os(&path, e))?;
+        changes::publish(&self.root, changes::Touched::ViewEvents);
+        Ok(())
+    }
+
+    /// Loads the view event log (empty when none was saved): the events with
+    /// their sequence numbers, the last sequence number and the dropped count.
+    pub fn load_view_events(&self) -> Result<crate::view_state::SavedViewEvents, IoError> {
+        let path = self.path(files::VIEW_EVENTS);
+        if !path.exists() {
+            return Ok((Vec::new(), 0, 0));
+        }
+        refuse_non_regular(&path)?;
+        let bytes = std::fs::read(&path).map_err(|e| IoError::os(&path, e))?;
+        let doc: Value = serde_json::from_slice(&bytes).map_err(|e| IoError::parse(&path, e))?;
+        let next = doc["next"].as_u64().unwrap_or(0);
+        let dropped = doc["dropped"].as_u64().unwrap_or(0);
+        let mut events = Vec::new();
+        if let Some(list) = doc["events"].as_array() {
+            for item in list {
+                let parsed = crate::view_state::event_from_json(item).map_err(|e| IoError::invalid(&path, e))?;
+                events.push(parsed);
+            }
+        }
+        Ok((events, next, dropped))
     }
 
     /// Appends one entry to the audit log; a `time` field is added if

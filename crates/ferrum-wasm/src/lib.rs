@@ -22,10 +22,14 @@
 
 pub mod layout;
 pub mod mode;
+pub mod tf;
 
 use std::sync::Arc;
 
-use ferrum_domain::{OrbitCamera, RenderMode, RenderSettings, SliceAxis, TransferFunction, Volume, WindowLevel};
+use ferrum_domain::{
+    Dims3, LabelMap, OrbitCamera, RenderMode, RenderSettings, Rgb, SegmentStyle, SegmentationSet, SliceAxis,
+    TransferFunction, Volume, WindowLevel,
+};
 use ferrum_processing::BrickGrid;
 use ferrum_render::frame::brick_classifier;
 use ferrum_render::gpu::{GpuContext, VolumeRenderer, OFFSCREEN_FORMAT};
@@ -64,6 +68,16 @@ pub struct FerrumView {
     slices: [u32; 3],
     mode: FerrumMode,
     size: UVec2,
+    /// The segment overlay: a label map and its coloured segments. The colour
+    /// table is derived from this set (the domain's one `lut`), never copied.
+    segments: SegmentationSet,
+    /// Whether the overlay is drawn (`overlays.segments_shown` of the contract).
+    segments_shown: bool,
+    /// Display fill opacity (`overlays.fill_opacity`), multiplied by each
+    /// segment's own opacity in the shader.
+    fill_opacity: f32,
+    /// How the overlay is drawn (`overlays.style`).
+    segment_style: SegmentStyle,
 }
 
 #[wasm_bindgen]
@@ -123,6 +137,10 @@ impl FerrumView {
             slices: [0; 3],
             mode: FerrumMode::Volume3d,
             size: UVec2::new(width, height),
+            segments: SegmentationSet::new(ferrum_domain::Dims3::new(1, 1, 1)),
+            segments_shown: false,
+            fill_opacity: 0.5,
+            segment_style: SegmentStyle::default(),
         })
     }
 
@@ -145,6 +163,66 @@ impl FerrumView {
         self.volume = Arc::new(volume);
         self.upload_occupancy();
         Ok(())
+    }
+
+    /// Loads the segment label map: `dims` (i, j, k) and one `u8` label per
+    /// voxel, i fastest (the host's `/api/labels`). Every present label gets a
+    /// segment in the palette colour; the panel names and recolours them with
+    /// [`set_segment`](Self::set_segment). Uploads the labels and the colour
+    /// table the existing shaders draw the overlay from.
+    pub fn set_labels(&mut self, dims: Vec<u32>, bytes: Vec<u8>) -> Result<(), JsValue> {
+        if dims.len() != 3 {
+            return Err(JsValue::from_str("dims takes three numbers"));
+        }
+        let labels = LabelMap::from_data(Dims3::new(dims[0], dims[1], dims[2]), bytes)
+            .map_err(|e| JsValue::from_str(&format!("cannot take the labels: {e}")))?;
+        self.segments = SegmentationSet::from_labels(labels, Vec::new());
+        self.upload_segments();
+        Ok(())
+    }
+
+    /// Names, recolours and sets the visibility/opacity of one segment (the
+    /// metadata of `/api/labels.json`), then re-uploads the colour table.
+    pub fn set_segment(
+        &mut self,
+        label: u8,
+        name: String,
+        color: Vec<u8>,
+        visible: bool,
+        opacity: f32,
+    ) -> Result<(), JsValue> {
+        if color.len() != 3 {
+            return Err(JsValue::from_str("color takes three numbers"));
+        }
+        self.segments.rename(label, &name);
+        self.segments
+            .set_color(label, [color[0], color[1], color[2]])
+            .map_err(|e| JsValue::from_str(&format!("cannot recolour: {e}")))?;
+        self.segments
+            .set_visible(label, visible)
+            .map_err(|e| JsValue::from_str(&format!("cannot set visibility: {e}")))?;
+        self.segments
+            .set_opacity(label, opacity)
+            .map_err(|e| JsValue::from_str(&format!("cannot set opacity: {e}")))?;
+        self.upload_segments();
+        Ok(())
+    }
+
+    /// Sets the overlay display: whether it is drawn, the fill opacity and the
+    /// style (`outline`, `fill` or `fill_outline`) — `overlays` of the contract.
+    pub fn set_overlay(&mut self, shown: bool, fill_opacity: f32, style: String) -> Result<(), JsValue> {
+        let style = SegmentStyle::parse(&style).ok_or_else(|| JsValue::from_str("unknown overlay style"))?;
+        self.segments_shown = shown;
+        self.fill_opacity = fill_opacity.clamp(0.0, 1.0);
+        self.segment_style = style;
+        Ok(())
+    }
+
+    /// Uploads the label map and the segment colour table to the renderer. The
+    /// overlay itself is drawn by the existing slice/volume shaders.
+    fn upload_segments(&mut self) {
+        self.renderer.update_labels(&self.ctx.device, &self.ctx.queue, Some(self.segments.labels()), None);
+        self.renderer.set_segment_colors(&self.ctx.queue, &self.segments.lut());
     }
 
     /// Resizes the drawing buffer (device pixels); the panel calls this on a
@@ -328,6 +406,67 @@ impl FerrumView {
         Ok(())
     }
 
+    /// The transfer function's control points as a flat array, five floats
+    /// per point: position, opacity, red, green, blue (all in `[0, 1]`),
+    /// sorted by position. The editor reads this after every edit.
+    pub fn tf_points(&self) -> Vec<f32> {
+        tf::points(&self.transfer_function)
+    }
+
+    /// The volume's storage histogram: 256 bins normalised to `[0, 1]`, the
+    /// background the transfer-function editor draws behind the curve.
+    pub fn tf_histogram(&self) -> Vec<f32> {
+        tf::histogram(&self.volume)
+    }
+
+    /// Moves control point `index` to `(position, opacity)` and re-uploads the
+    /// baked lookup table, so the next frame draws the edited function through
+    /// the existing volume shader. Endpoints keep their position; interior
+    /// points stay between their neighbours (the domain's edit rules).
+    pub fn tf_move_point(&mut self, index: usize, position: f32, opacity: f32) -> Result<(), JsValue> {
+        self.transfer_function
+            .move_point(index, position, opacity)
+            .map_err(|e| JsValue::from_str(&format!("cannot move the point: {e}")))?;
+        self.upload_occupancy();
+        Ok(())
+    }
+
+    /// Inserts a control point at `position` (colour and opacity equal the
+    /// current curve there, so it is unchanged) and re-uploads the baked
+    /// lookup table. Returns the new point's index.
+    pub fn tf_insert_point(&mut self, position: f32) -> usize {
+        let index = self.transfer_function.insert_point(position);
+        self.upload_occupancy();
+        index
+    }
+
+    /// Removes the interior control point `index` and re-uploads the baked
+    /// lookup table. The endpoints cannot be removed; the error names why.
+    pub fn tf_remove_point(&mut self, index: usize) -> Result<(), JsValue> {
+        self.transfer_function
+            .remove_point(index)
+            .map_err(|e| JsValue::from_str(&format!("cannot remove the point: {e}")))?;
+        self.upload_occupancy();
+        Ok(())
+    }
+
+    /// Sets the colour of control point `index` (red, green, blue in `[0, 1]`)
+    /// and re-uploads the baked lookup table.
+    pub fn tf_set_color(&mut self, index: usize, r: f32, g: f32, b: f32) -> Result<(), JsValue> {
+        self.transfer_function
+            .set_color(index, Rgb::new(r, g, b))
+            .map_err(|e| JsValue::from_str(&format!("cannot recolour the point: {e}")))?;
+        self.upload_occupancy();
+        Ok(())
+    }
+
+    /// The index of the control point nearest to `(position, opacity)` within
+    /// `radius` (Euclidean distance in the unit square), or `null` when none
+    /// is that close — the editor's drag hit test, the domain's own.
+    pub fn tf_hit_test(&self, position: f32, opacity: f32, radius: f32) -> Option<usize> {
+        self.transfer_function.hit_test(position, opacity, radius)
+    }
+
     /// The renderer's description, for a status line.
     pub fn adapter_info(&self) -> String {
         let info = self.ctx.adapter.get_info();
@@ -391,9 +530,9 @@ impl FerrumView {
             axis: axis.id(),
             nearest: true,
             background: [0.05, 0.05, 0.06, 1.0],
-            segments: false,
-            segment_style: ferrum_domain::SegmentStyle::default(),
-            fill_opacity: 1.0,
+            segments: self.segments_shown && !self.segments.is_empty(),
+            segment_style: self.segment_style,
+            fill_opacity: self.fill_opacity,
         }
     }
 
@@ -408,7 +547,7 @@ impl FerrumView {
             8,
             None,
         )
-        .with_segments(false)
+        .with_segments(self.segments_shown && !self.segments.is_empty())
     }
 
     /// The four rectangles of the MPR layout: axial, coronal, sagittal and 3D,

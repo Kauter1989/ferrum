@@ -183,10 +183,10 @@ pub fn record(
 /// The workspace's decision lock, unlocked explicitly when dropped: a child
 /// process forked meanwhile by another thread keeps the open file, and with
 /// it the lock, until it execs (lesson L27).
-struct DecisionLock(std::fs::File);
+pub(crate) struct DecisionLock(std::fs::File);
 
 impl DecisionLock {
-    fn take(root: &Path) -> Result<Self, AgentError> {
+    pub(crate) fn take(root: &Path) -> Result<Self, AgentError> {
         let path = root.join(LOCK_FILE);
         let file = std::fs::OpenOptions::new()
             .create(true)

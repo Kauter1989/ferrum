@@ -480,5 +480,74 @@ class Reminders(unittest.TestCase):  # F, G, H, I
             r.close()
 
 
+class PublishBranch(unittest.TestCase):  # J, E — gh-pages (Stage 30)
+    def setUp(self):
+        self.r = Repo()
+
+    def tearDown(self):
+        self.r.close()
+
+    def test_gh_pages_branch_name_passes(self):
+        # covers 30.4-b
+        self.assertIsNone(self.r.bash("git checkout -b gh-pages"))
+        self.assertIsNone(self.r.bash("git branch -m gh-pages"))
+
+    def test_gh_pages_push_skips_the_cargo_gate(self):
+        # covers 30.4-b — CI never runs on gh-pages, so no local gate, no skip token
+        self.assertIsNone(self.r.bash("git push origin HEAD:gh-pages"))
+        self.assertIsNone(self.r.bash("git push -u origin gh-pages"))
+
+    def test_unconventional_names_still_denied(self):
+        # covers 30.4-b
+        self.assertEqual(decision(self.r.bash("git checkout -b claude/x")), "deny")
+        self.assertEqual(decision(self.r.bash("git push origin HEAD:gh-pages-site")), "deny")
+
+
+class DashboardReminders(unittest.TestCase):  # G, H (Stage 30)
+    def test_matrix_reminder_for_the_plan(self):
+        # covers 30.4-c
+        r = Repo()
+        try:
+            p = r.write("dev_plan.md", "# plan\n")
+            payload = {"tool_name": "Edit", "tool_input": {"file_path": p}, "cwd": r.path, "session_id": "s-dash"}
+            out = run_hook("post-edit", payload)
+            self.assertIn("ferrum-dashboard", out["additionalContext"])
+        finally:
+            r.close()
+
+    def _publish(self, r, meta):
+        sh(r.path, "git", "tag", "v0.1.0", "origin/main")
+        sh(r.path, "git", "checkout", "-q", "--orphan", "gh-pages")
+        r.write("data.json", json.dumps({"meta": meta}))
+        sh(r.path, "git", "add", "-A")
+        sh(r.path, "git", "commit", "-q", "-m", "site")
+        sh(r.path, "git", "push", "-q", "origin", "gh-pages")
+        sh(r.path, "git", "checkout", "-q", "feat/x")
+        sh(r.path, "git", "fetch", "-q", "origin")
+
+    def test_session_start_notes_a_stale_dashboard(self):
+        # covers 30.4-c
+        r = Repo()
+        try:
+            self._publish(r, {"target_sha": "oldsha", "release_tag": "v0.0.0"})
+            out = run_hook("session-start", {"cwd": r.path})
+            self.assertIn("republish", out["additionalContext"])
+        finally:
+            r.close()
+
+    def test_session_start_silent_when_fresh(self):
+        # covers 30.4-c
+        r = Repo()
+        try:
+            dev = subprocess.run(
+                ["git", "-C", r.path, "rev-parse", "origin/develop"], check=True, capture_output=True, text=True
+            ).stdout.strip()
+            self._publish(r, {"target_sha": dev, "release_tag": "v0.1.0"})
+            out = run_hook("session-start", {"cwd": r.path})
+            self.assertNotIn("republish", out["additionalContext"])
+        finally:
+            r.close()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

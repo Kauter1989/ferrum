@@ -422,7 +422,7 @@ fn changed_sources_and_bad_calls_are_reported() {
     let env = f.run("study info", json!({}));
     assert_eq!(env["error"]["code"], "source_changed");
     assert!(env["error"]["hint"].as_str().is_some());
-    assert_eq!(Agent::commands().count(), 36);
+    assert_eq!(Agent::commands().count(), 42);
 }
 
 #[test]
@@ -565,6 +565,31 @@ fn export_bundle_in_dicom() {
     let both = f.ok("export bundle", json!({ "formats": ["ferrum", "dicom"] }));
     assert_eq!(both["files"].as_array().unwrap().len(), 6);
     assert_eq!(f.err("export bundle", json!({ "formats": ["dicom", "png"] })), "bad_request");
+}
+
+#[test]
+fn export_bundle_deidentify_basic_profile() {
+    // covers 31.5-a — the deidentify option de-identifies the DICOM objects;
+    // an unknown profile or option is refused (CLI = MCP, same JSON params).
+    let f = fixture(AgentConfig::default());
+    f.open();
+    f.ok("segment threshold", json!({ "seed": { "voxel": [14, 20, 15] }, "min": 50, "max": 150, "name": "Sphere" }));
+    f.ok("annotate add", json!({ "kind": "distance", "plane": "axial", "points": [{ "voxel": [6, 20, 15] }, { "voxel": [22, 20, 15] }] }));
+    f.ok("export bundle", json!({ "formats": ["dicom"], "deidentify": "basic" }));
+    let seg = dicom_object::open_file(Path::new(&f.ws).join("export/segmentation.dcm")).unwrap();
+    let removed = seg.element(dicom_dictionary_std::tags::PATIENT_IDENTITY_REMOVED).unwrap().to_str().unwrap();
+    assert_eq!(removed, "YES", "the SEG is marked de-identified");
+    // the SR ContentSequence (a D-action sequence) survives de-identification
+    let sr = dicom_object::open_file(Path::new(&f.ws).join("export/measurements.dcm")).unwrap();
+    assert!(sr.element(dicom_dictionary_std::tags::CONTENT_SEQUENCE).is_ok(), "SR ContentSequence preserved");
+    // unknown profile and option are refused
+    assert_eq!(f.err("export bundle", json!({ "formats": ["dicom"], "deidentify": "advanced" })), "bad_request");
+    assert_eq!(
+        f.err("export bundle", json!({ "formats": ["dicom"], "deidentify": "basic", "deid_options": ["bogus"] })),
+        "bad_request"
+    );
+    // a valid option is accepted
+    f.ok("export bundle", json!({ "formats": ["dicom"], "deidentify": "basic", "deid_options": ["retain_uids"] }));
 }
 
 #[test]

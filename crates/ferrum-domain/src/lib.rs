@@ -33,6 +33,7 @@ pub mod review;
 pub mod segmentation;
 pub mod slice;
 pub mod transfer;
+pub mod view_state;
 pub mod volume;
 pub mod window;
 
@@ -52,8 +53,8 @@ pub use region::{grow_region_robust, RegionError, RegionParams};
 pub use render_settings::{RenderMode, RenderSettings, TissueThresholds};
 pub use report::{AnnotationRecord, AnnotationReport};
 pub use repository::{
-    parse_modality, CancelFlag, LoadedSeries, NoProgress, ProgressSink, RepositoryError, SeriesDescriptor,
-    SeriesMetadata, StudyInfo, VolumeInfo, VolumeRepository,
+    parse_modality, CancelFlag, LoadedSeries, NoProgress, PatientIdentifiers, ProgressSink, RepositoryError,
+    SeriesDescriptor, SeriesMetadata, StudyInfo, VolumeInfo, VolumeRepository,
 };
 pub use review::{ResultStore, ReviewDecision, ReviewItem};
 pub use segmentation::{
@@ -61,7 +62,8 @@ pub use segmentation::{
 };
 pub use slice::{SliceAxis, SliceImage, SliceView};
 pub use transfer::{ControlPoint, CtPreset, TransferFunction, TransferFunctionError};
-pub use volume::{Geometry, IntensityRange, Volume, VolumeError};
+pub use view_state::{Overlays, RoiItem, ViewComponent, ViewEvent, ViewProbe, ViewState, ViewTool};
+pub use volume::{Geometry, IntensityRange, Volume, VolumeError, MASK_FILL};
 pub use window::{
     histogram_percentile, storage_bin, storage_histogram, WindowLevel, WindowPreset, AUTO_WINDOW_BINS,
     AUTO_WINDOW_HIGH, AUTO_WINDOW_LOW,

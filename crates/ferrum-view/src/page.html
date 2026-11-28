@@ -24,7 +24,7 @@
     font: 13px/1.4 "Segoe UI", system-ui, sans-serif;
     overflow: hidden;
   }
-  header, footer {
+  header, footer, .toolbar {
     display: flex;
     align-items: center;
     gap: 10px;
@@ -32,6 +32,7 @@
     background: var(--panel);
     border-bottom: 1px solid var(--line);
     flex: 0 0 auto;
+    flex-wrap: wrap;
   }
   footer { border-top: 1px solid var(--line); border-bottom: 0; color: var(--dim); }
   .brand { color: var(--accent); font-weight: 600; letter-spacing: .08em; }
@@ -45,8 +46,24 @@
     padding: 3px 8px;
     font: inherit;
   }
+  /* A native popup is painted by the platform, not the page (L35): the list
+     and its options state their own colours. */
+  select option { background: #262933; color: #e6e7ea; }
   button:hover, select:hover { border-color: var(--accent); }
   button.on { border-color: var(--accent); color: var(--accent); }
+  label { display: inline-flex; align-items: center; gap: 5px; }
+  input[type="range"] { width: 90px; accent-color: var(--accent); }
+  #seglist {
+    display: none;
+    gap: 12px;
+    padding: 4px 10px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--line);
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+  }
+  #seglist .seg { display: inline-flex; align-items: center; gap: 6px; }
+  #seglist .swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
   main {
     position: relative;
     flex: 1 1 auto;
@@ -84,6 +101,9 @@
   <span id="where">—</span>
   <span id="win"></span>
   <span class="spacer"></span>
+  <button data-component="slice">2D</button>
+  <button data-component="mpr">MPR</button>
+  <button data-component="volume">3D</button>
   <button data-plane="axial">Axial</button>
   <button data-plane="coronal">Coronal</button>
   <button data-plane="sagittal">Sagittal</button>
@@ -97,14 +117,38 @@
   </select>
   <label><input type="checkbox" id="segments"> Segments</label>
 </header>
+<div class="toolbar">
+  <label>Tool
+    <select id="tool">
+      <option value="pan">Pan / window</option>
+      <option value="window_level">Window</option>
+      <option value="probe">Probe</option>
+      <option value="distance">Distance</option>
+      <option value="rect">Rectangle</option>
+      <option value="angle">Angle</option>
+      <option value="area">Area</option>
+    </select>
+  </label>
+  <label>Overlay
+    <select id="style">
+      <option value="fill_outline">Fill + outline</option>
+      <option value="fill">Fill</option>
+      <option value="outline">Outline</option>
+    </select>
+  </label>
+  <label>Fill <input type="range" id="fill" min="0" max="1" step="0.05"> <span id="fillval"></span></label>
+  <span class="spacer"></span>
+  <span class="hint" id="toollabel"></span>
+</div>
+<div id="seglist"></div>
 <main>
-  <img id="frame" alt="slice" draggable="false">
+  <img id="frame" alt="view" draggable="false">
   <div id="error" hidden></div>
 </main>
 <footer>
   <span id="probe">Click the image to read a value</span>
   <span class="spacer"></span>
-  <span class="hint">Wheel: slice · Drag: window · Click: value</span>
+  <span class="hint" id="hint">Wheel: slice · Drag: window · Click: value</span>
 </footer>
 <script>
 (function () {
@@ -116,19 +160,50 @@
   var elWin = document.getElementById("win");
   var elProbe = document.getElementById("probe");
   var elError = document.getElementById("error");
+  var elHint = document.getElementById("hint");
+  var elToolLabel = document.getElementById("toollabel");
   var preset = document.getElementById("preset");
   var segments = document.getElementById("segments");
+  var toolSelect = document.getElementById("tool");
+  var styleSelect = document.getElementById("style");
+  var fill = document.getElementById("fill");
+  var fillval = document.getElementById("fillval");
+  var seglist = document.getElementById("seglist");
   var state = null;
   var shownRev = -1;
   var busy = false;
   var drag = null;
   var lastSent = 0;
+  var clicks = [];
+  var segRows = {};
+  var segKey = "";
 
   function url(path, extra) {
     var p = new URLSearchParams(extra || {});
     if (token) p.set("token", token);
     var s = p.toString();
     return path + (s ? "?" + s : "");
+  }
+
+  // The host's token is short-lived and rotates (ADR 0019). Refresh it
+  // proactively (~80% of the TTL) so a page open longer than the TTL keeps
+  // working; the boot token only starts the session.
+  var tokenTimer = null;
+  function refreshToken() {
+    if (!token) return;
+    fetch(url("/api/token/refresh"), { method: "POST", credentials: "same-origin" })
+      .then(function (r) {
+        if (!r.ok) throw new Error("token: HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (v) {
+        if (v && v.token) {
+          token = v.token;
+          var ttlMs = (v.expires_in || 900) * 1000;
+          tokenTimer = setTimeout(refreshToken, Math.max(ttlMs * 0.8, 5000));
+        }
+      })
+      .catch(function () { /* expired or host gone: a reload needs a fresh boot token */ });
   }
 
   function fail(message) {
@@ -140,21 +215,108 @@
     elError.hidden = true;
   }
 
+  function is3d() {
+    return state && state.component === "volume";
+  }
+
+  function tool() {
+    return state ? state.tool : "pan";
+  }
+
+  function isMeasure(t) {
+    return t === "distance" || t === "rect" || t === "angle" || t === "area";
+  }
+
   function describe() {
     if (!state) return;
     var count = state.slice_count || 0;
-    elWhere.textContent = state.plane + " " + (state.slice_index + 1) + "/" + count;
+    var where = state.plane + " " + (state.slice_index + 1) + "/" + count;
+    if (state.component === "mpr") where = "MPR · " + where;
+    if (state.component === "volume") where = "3D";
+    elWhere.textContent = where;
     elWin.textContent = "W " + Math.round(state.window.center) + " / " + Math.round(state.window.width);
-    segments.checked = !!(state.segments && state.segments.shown);
-    for (var i = 0; i < document.querySelectorAll("[data-plane]").length; i++) {
-      var b = document.querySelectorAll("[data-plane]")[i];
-      b.classList.toggle("on", b.dataset.plane === state.plane);
+    segments.checked = !!(state.overlays && state.overlays.segments_shown);
+    var comps = document.querySelectorAll("[data-component]");
+    for (var i = 0; i < comps.length; i++) {
+      comps[i].classList.toggle("on", comps[i].dataset.component === state.component);
     }
+    var planes = document.querySelectorAll("[data-plane]");
+    for (var j = 0; j < planes.length; j++) {
+      planes[j].classList.toggle("on", planes[j].dataset.plane === state.plane);
+    }
+    if (toolSelect.value !== state.tool) toolSelect.value = state.tool;
+    if (state.overlays) {
+      styleSelect.value = state.overlays.style;
+      fill.value = state.overlays.fill_opacity;
+      fillval.textContent = Number(state.overlays.fill_opacity).toFixed(2);
+    }
+    describeSegments();
+    describeHint();
     if (state.probe) {
       var p = state.probe;
       elProbe.textContent = "voxel " + p.voxel.join(", ") + " · " + p.value + " " + p.unit +
         " · " + p.patient_mm.map(function (v) { return v.toFixed(1); }).join(", ") + " mm";
     }
+  }
+
+  function describeHint() {
+    var t = tool();
+    var hint;
+    if (is3d()) hint = "Drag: orbit · Wheel: zoom · Click: value";
+    else if (state.component === "mpr") hint = "Wheel: slice (3D quarter: zoom) · Drag on 3D: orbit · Click: value";
+    else if (t === "distance" || t === "rect") hint = "Drag on the slice to measure";
+    else if (t === "angle") hint = "Click three points: start, vertex, end";
+    else if (t === "area") hint = "Click the corners, then click the first point to close";
+    else if (t === "probe") hint = "Click: value · Wheel: slice";
+    else hint = "Wheel: slice · Drag: window · Click: value";
+    elHint.textContent = hint;
+    elToolLabel.textContent = isMeasure(t) && state.component !== "slice" ? "Measure tools draw in 2D" : "";
+  }
+
+  function describeSegments() {
+    var items = (state.segments && state.segments.items) || [];
+    var key = items.map(function (s) { return s.label; }).join(",");
+    if (key !== segKey) {
+      segKey = key;
+      segRows = {};
+      seglist.textContent = "";
+      items.forEach(function (s) {
+        var row = document.createElement("span");
+        row.className = "seg";
+        var swatch = document.createElement("span");
+        swatch.className = "swatch";
+        swatch.style.background = "rgb(" + (s.color ? s.color.join(",") : "120,160,220") + ")";
+        var box = document.createElement("input");
+        box.type = "checkbox";
+        box.addEventListener("change", function () {
+          send({ segment: { label: s.label, visible: box.checked } });
+        });
+        var label = document.createElement("span");
+        label.textContent = s.label + " " + s.name;
+        var op = document.createElement("input");
+        op.type = "range";
+        op.min = "0";
+        op.max = "1";
+        op.step = "0.05";
+        op.title = "opacity";
+        op.addEventListener("change", function () {
+          send({ segment: { label: s.label, opacity: parseFloat(op.value) } });
+        });
+        row.appendChild(swatch);
+        row.appendChild(box);
+        row.appendChild(label);
+        row.appendChild(op);
+        seglist.appendChild(row);
+        segRows[s.label] = { box: box, op: op };
+      });
+    }
+    items.forEach(function (s) {
+      var row = segRows[s.label];
+      if (!row) return;
+      row.box.checked = !!s.visible;
+      if (document.activeElement !== row.op) row.op.value = s.opacity;
+    });
+    seglist.style.display = items.length ? "flex" : "none";
   }
 
   function loadFrame() {
@@ -225,16 +387,51 @@
     };
   }
 
+  // The MPR quarter under a frame pixel, from the sidecar (or the halves).
+  function quarterOf(p) {
+    var w = img.naturalWidth, h = img.naturalHeight;
+    var quarters = state && state.frame && state.frame.mapping && state.frame.mapping.quarters;
+    if (quarters) {
+      for (var i = 0; i < quarters.length; i++) {
+        var r = quarters[i].rect;
+        if (p.x >= r[0] && p.y >= r[1] && p.x < r[2] && p.y < r[3]) return quarters[i];
+      }
+      return null;
+    }
+    var col = p.x < w / 2 ? 0 : 1, row = p.y < h / 2 ? 0 : 1;
+    if (col === 1 && row === 0) return { component: "volume" };
+    return { component: "slice" };
+  }
+
+  function in3d(p) {
+    if (is3d()) return true;
+    if (state && state.component === "mpr") {
+      var q = quarterOf(p);
+      return !!q && q.component === "volume";
+    }
+    return false;
+  }
+
   img.addEventListener("wheel", function (e) {
     e.preventDefault();
     if (!state) return;
-    send({ step: e.deltaY > 0 ? 1 : -1 });
+    if (in3d(pixelOf(e))) {
+      var amount = Math.max(-3, Math.min(3, -e.deltaY * 0.002));
+      send({ camera: { zoom: amount } });
+    } else {
+      send({ step: e.deltaY > 0 ? 1 : -1 });
+    }
   }, { passive: false });
 
   img.addEventListener("pointerdown", function (e) {
     if (!state) return;
     img.setPointerCapture(e.pointerId);
-    drag = { x: e.clientX, y: e.clientY, center: state.window.center, width: state.window.width, moved: false };
+    var p = pixelOf(e);
+    drag = {
+      x: e.clientX, y: e.clientY, lastX: e.clientX, lastY: e.clientY,
+      px: p.x, py: p.y, center: state.window.center, width: state.window.width,
+      orbit: in3d(p), moved: false
+    };
   });
 
   img.addEventListener("pointermove", function (e) {
@@ -244,16 +441,50 @@
     if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
     if (!drag.moved || Date.now() - lastSent < 60) return;
     lastSent = Date.now();
-    var width = Math.max(1, drag.width * (1 + dx / 240));
-    var center = drag.center - dy * (drag.width / 300);
-    send({ window: { center: center, width: width } });
+    if (drag.orbit) {
+      // The desktop's orbit speed: 0.008 radians per point of movement.
+      var ox = (e.clientX - drag.lastX) * 0.008;
+      var oy = (e.clientY - drag.lastY) * 0.008;
+      drag.lastX = e.clientX;
+      drag.lastY = e.clientY;
+      send({ camera: { orbit: [ox, oy] } });
+      return;
+    }
+    if (state.component === "slice" && (tool() === "pan" || tool() === "window_level")) {
+      var width = Math.max(1, drag.width * (1 + dx / 240));
+      var center = drag.center - dy * (drag.width / 300);
+      send({ window: { center: center, width: width } });
+    }
   });
 
   img.addEventListener("pointerup", function (e) {
     if (!state) return;
     var clicked = drag && !drag.moved;
+    var start = drag ? { x: drag.px, y: drag.py } : null;
+    var wasOrbit = drag && drag.orbit;
     drag = null;
-    if (clicked) send({ probe: pixelOf(e) });
+    var p = pixelOf(e);
+    var t = tool();
+    if (clicked) {
+      if (state.component === "slice" && (t === "angle" || t === "area")) {
+        clicks.push([p.x, p.y]);
+        var done = t === "angle" ? clicks.length === 3
+          : clicks.length >= 3 && Math.abs(p.x - clicks[0][0]) + Math.abs(p.y - clicks[0][1]) <= 4;
+        if (done) {
+          send({ draw: { tool: t, points: clicks } });
+          clicks = [];
+        } else {
+          elProbe.textContent = t + ": " + clicks.length + " point(s)" +
+            (t === "area" ? " — click the first point to close" : "");
+        }
+        return;
+      }
+      send({ probe: p });
+      return;
+    }
+    if (!wasOrbit && state.component === "slice" && (t === "distance" || t === "rect") && start) {
+      send({ draw: { tool: t, points: [[start.x, start.y], [p.x, p.y]] } });
+    }
   });
 
   img.addEventListener("pointercancel", function () { drag = null; });
@@ -261,10 +492,20 @@
   document.addEventListener("keydown", function (e) {
     if (e.key === "ArrowUp" || e.key === "PageUp") send({ step: -1 });
     else if (e.key === "ArrowDown" || e.key === "PageDown") send({ step: 1 });
+    else if (e.key === "Escape") clicks = [];
   });
 
-  for (var i = 0; i < document.querySelectorAll("[data-plane]").length; i++) {
-    document.querySelectorAll("[data-plane]")[i].addEventListener("click", function (e) {
+  var comps = document.querySelectorAll("[data-component]");
+  for (var i = 0; i < comps.length; i++) {
+    comps[i].addEventListener("click", function (e) {
+      clicks = [];
+      send({ component: e.currentTarget.dataset.component });
+    });
+  }
+
+  var planes = document.querySelectorAll("[data-plane]");
+  for (var j = 0; j < planes.length; j++) {
+    planes[j].addEventListener("click", function (e) {
       send({ plane: e.currentTarget.dataset.plane });
     });
   }
@@ -275,9 +516,13 @@
   });
 
   segments.addEventListener("change", function () { send({ segments: segments.checked }); });
+  toolSelect.addEventListener("change", function () { clicks = []; send({ tool: toolSelect.value }); });
+  styleSelect.addEventListener("change", function () { send({ overlays: { style: styleSelect.value } }); });
+  fill.addEventListener("change", function () { send({ overlays: { fill_opacity: parseFloat(fill.value) } }); });
 
   refresh();
   setInterval(refresh, 700);
+  tokenTimer = setTimeout(refreshToken, 5000);
 })();
 </script>
 </body>

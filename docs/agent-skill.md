@@ -300,6 +300,7 @@ pseudonymise_uids = true              # stable salted hashes instead of UIDs
 
 [network]
 engines = ["http://127.0.0.1:8765"]   # allow-list; nothing else is contacted
+ocr_bridge = "http://127.0.0.1:8766"  # optional OCR bridge (Clean Pixel Data); absent: the check is skipped and reported
 
 [limits]
 max_render_px = 1024
@@ -312,8 +313,9 @@ allow_harness_confirmation = false
 
 - No outputs contain identifiers unless the operator allows them; this
   covers JSON, image overlays and file names. Burned-in text inside
-  pixel data is a known limit: the skill warns that some series contain
-  it.
+  pixel data is masked by Clean Pixel Data (`view slice --masked`, Stage
+  31): configured regions, the `BurnedInAnnotation` flag's whole-image
+  default, and — with an OCR bridge — detected text regions.
 - Source data is opened read-only. All writes stay in the workspace.
 - The read-root check resolves symlinks before comparing: a link inside a
   root that points outside it is refused (`forbidden`), for sources and

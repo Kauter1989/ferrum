@@ -85,6 +85,32 @@ the nnInteractive bridge with its weights loaded:
 | `segment interactive`, one point (whole volume) | 1.2 s | 2.3 → 7.7 GB | 14.4 M voxels | 30 ml (under-segmented) |
 | `segment shape` / `compare` / `stats` / renders (CPU) | 0.2–0.5 s | no GPU | — | — |
 
+### 2.1 With a resident model (Stage 23 field run, 2026-11-14)
+
+The same card, WSL 2 **Ubuntu 24.04**, with a resident **Qwen2.5-3B-Instruct
+Q4_K_M** under `llama-server` (2325 MiB measured, lease 2816) held through
+`ferrum-cli gpu hold`. Capacity 10094 MiB (12288 − 1938 desktop − 256);
+operator peaks nnInteractive 4352, TotalSegmentator 2816 (measured maxima
++ 256, rounded). **20/20 engine calls succeeded next to the holder, no
+CUDA OOM, no waits**; the combined card peak was 8750 MiB.
+
+| Workload next to the holder | Footprint over the holder's level | Time |
+|---|---|---|
+| nnInteractive, ROI point / refinement | 3586–4068 MiB | 0.7–3.8 s |
+| TotalSegmentator `total`, 2 organs | 1793–2332 MiB | 47–50 s |
+
+Release and unload (23.4-a/b), measured on the card's total (WSL's
+`nvidia-smi` gives per-process memory as `[N/A]`):
+
+- After `DELETE` the card returns to the weights-only level (±14 MiB);
+  the weights (≈ 880 MiB) load at bridge start and stay until unload.
+- A session expired by the TTL sweeper (60 s in the run) frees its image.
+- `engine unload` drops the card to the desktop level (**0 MiB** engine
+  memory); the next call reloads the weights in **24.3 s**.
+- `engine unload` during a job answers `busy`; the job finishes.
+
+The full recipe and the 7B sizing rule: [gpu-sharing.md §5](gpu-sharing.md).
+
 What the measurement shows:
 
 - Both engines fit the 12 GB card with room to spare, but only in turn:

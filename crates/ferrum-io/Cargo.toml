@@ -17,6 +17,13 @@ dicom-object.workspace = true
 dicom-pixeldata.workspace = true
 dicom-dictionary-std.workspace = true
 dicom-core.workspace = true
+dicom-encoding.workspace = true
+dicom-transfer-syntax-registry.workspace = true
+dicom-web.workspace = true
+dicom-ul.workspace = true
+aws-lc-rs.workspace = true
+tokio.workspace = true
+futures-util.workspace = true
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 serde_json.workspace = true
 sha2.workspace = true
@@ -25,6 +32,7 @@ sha2.workspace = true
 tempfile.workspace = true
 criterion.workspace = true
 proptest.workspace = true
+tiny_http.workspace = true
 
 [[bench]]
 name = "dicom_loading"

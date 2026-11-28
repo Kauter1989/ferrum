@@ -102,6 +102,8 @@ fn session(agent: &Agent, ws: &str, src: &Path) -> Vec<Value> {
         ("view montage", json!({ "workspace": ws, "plane": "coronal", "size": 128 })),
         ("view mpr", json!({ "workspace": ws, "at": { "voxel": [8, 8, 3] }, "size": 192 })),
         ("view volume", json!({ "workspace": ws, "mode": "isosurface", "threshold": 200, "size": 64 })),
+        ("view state", json!({ "workspace": ws })),
+        ("view events", json!({ "workspace": ws })),
         ("probe", json!({ "workspace": ws, "point": { "voxel": [8, 8, 3] } })),
         ("stats", json!({ "workspace": ws, "sphere": { "center": { "voxel": [8, 8, 3] }, "radius_mm": 3 } })),
         ("profile", json!({ "workspace": ws, "from": { "voxel": [0, 8, 3] }, "to": { "voxel": [15, 8, 3] } })),
@@ -151,6 +153,18 @@ fn outputs_contain_no_identifiers() {
     }
     // the workspace's own annotation file follows the same rules
     scan_text("annotations.json", &std::fs::read_to_string(ws.join("annotations.json")).unwrap(), &mut found);
+    // view set (Stage 28): the envelope and the artifact carry no identifiers
+    let view_state = envelopes.iter().find(|e| e["provenance"]["command"] == "view state").unwrap();
+    let hash = view_state["data"]["source_hash"].as_str().unwrap();
+    let set = Agent::default().run(
+        "view set",
+        &json!({ "workspace": ws_text, "source_hash": hash, "state": { "plane": "coronal", "slice_index": 3, "window": { "center": 40, "width": 400 }, "overlays": { "segments_shown": true } } }),
+    );
+    assert_eq!(set["ok"], true, "{set:#}");
+    let mut clean = set.clone();
+    clean["provenance"]["params"] = Value::Null;
+    scan_text("envelope of view set", &clean.to_string(), &mut found);
+    scan_text("view.json", &std::fs::read_to_string(ws.join("view.json")).unwrap(), &mut found);
     assert!(found.is_empty(), "identifiers leaked: {found:#?}");
 
     // with the operator's consent, dates and accession numbers may be shared
@@ -214,4 +228,111 @@ fn gunzip(bytes: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     flate2::read::GzDecoder::new(bytes).read_to_end(&mut out).unwrap();
     out
+}
+
+/// A mock DICOMweb PACS serving the [`write_ct`] phantom (QIDO + WADO), so the
+/// privacy scan covers the PACS commands too (Stage 32, PR 3).
+mod pacs_mock {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    pub struct MockPacs {
+        pub root: String,
+        stop: Arc<AtomicBool>,
+        handle: Option<std::thread::JoinHandle<()>>,
+    }
+
+    /// A WADO-RS `multipart/related` body of Part 10 instances.
+    fn multipart(parts: &[Vec<u8>]) -> (Vec<u8>, String) {
+        let boundary = "ferrum-privacy-mock";
+        let mut body = Vec::new();
+        for part in parts {
+            body.extend_from_slice(format!("--{boundary}\r\nContent-Type: application/dicom\r\n\r\n").as_bytes());
+            body.extend_from_slice(part);
+            body.extend_from_slice(b"\r\n");
+        }
+        body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+        (body, format!("multipart/related; type=\"application/dicom\"; boundary={boundary}"))
+    }
+
+    impl MockPacs {
+        pub fn start(parts: Vec<Vec<u8>>, qido: String) -> Self {
+            let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+            let port = match server.server_addr() {
+                tiny_http::ListenAddr::IP(addr) => addr.port(),
+                _ => panic!("expected an IP listen address"),
+            };
+            let stop = Arc::new(AtomicBool::new(false));
+            let stop_t = stop.clone();
+            let handle = std::thread::spawn(move || {
+                while !stop_t.load(Ordering::Relaxed) {
+                    let Ok(Some(req)) = server.recv_timeout(Duration::from_millis(50)) else { continue };
+                    let url = req.url().to_string();
+                    let path = url.split('?').next().unwrap_or(&url);
+                    let response = if path.ends_with("/series") {
+                        tiny_http::Response::from_string(qido.clone())
+                            .with_header("Content-Type: application/dicom+json".parse::<tiny_http::Header>().unwrap())
+                    } else {
+                        let (body, ct) = multipart(&parts);
+                        tiny_http::Response::from_data(body)
+                            .with_header(format!("Content-Type: {ct}").parse::<tiny_http::Header>().unwrap())
+                    };
+                    let _ = req.respond(response);
+                }
+            });
+            Self { root: format!("dicomweb://127.0.0.1:{port}/dicom-web"), stop, handle: Some(handle) }
+        }
+    }
+
+    impl Drop for MockPacs {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::Relaxed);
+            if let Some(h) = self.handle.take() {
+                let _ = h.join();
+            }
+        }
+    }
+}
+
+#[test]
+fn pacs_outputs_contain_no_identifiers() {
+    // covers 32.4-b: a PACS query/retrieve of a series full of patient data
+    // pseudonymises the ids and leaks no name/ID/birth date/accession/UID.
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("incoming/series");
+    write_ct(&src);
+    let mut names: Vec<_> = std::fs::read_dir(&src).unwrap().map(|e| e.unwrap().path()).collect();
+    names.sort();
+    let parts: Vec<Vec<u8>> = names.iter().map(|p| std::fs::read(p).unwrap()).collect();
+    let qido = json!([{
+        "00080060": { "vr": "CS", "Value": ["CT"] },
+        "0008103E": { "vr": "LO", "Value": ["Axial 2.0"] },
+        "0020000D": { "vr": "UI", "Value": [STUDY_UID] },
+        "0020000E": { "vr": "UI", "Value": [SERIES_UID] },
+        "00201209": { "vr": "IS", "Value": ["8"] },
+        "00280010": { "vr": "US", "Value": [16] },
+        "00280011": { "vr": "US", "Value": [16] },
+    }])
+    .to_string();
+    let pacs = pacs_mock::MockPacs::start(parts, qido);
+    let url = format!("{}?StudyInstanceUID={STUDY_UID}", pacs.root);
+    let ws = dir.path().join("ws/pacs").to_string_lossy().into_owned();
+    let agent = Agent::default();
+
+    let query = agent.run("pacs query", &json!({ "url": url }));
+    assert_eq!(query["ok"], true, "{query:#}");
+    assert!(query["data"]["series"][0]["series"].as_str().unwrap().starts_with("anon-"));
+    let retrieve = agent.run("pacs retrieve", &json!({ "workspace": ws, "url": url }));
+    assert_eq!(retrieve["ok"], true, "{retrieve:#}");
+    let info = agent.run("study info", &json!({ "workspace": ws }));
+    assert_eq!(info["ok"], true, "{info:#}");
+
+    let mut found = Vec::new();
+    for env in [&query, &retrieve, &info] {
+        let mut clean = env.clone();
+        clean["provenance"]["params"] = Value::Null; // the harness's own input, echoed
+        scan_text(&format!("envelope of {}", env["provenance"]["command"]), &clean.to_string(), &mut found);
+    }
+    assert!(found.is_empty(), "identifiers leaked through PACS commands: {found:#?}");
 }

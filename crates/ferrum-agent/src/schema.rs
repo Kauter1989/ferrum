@@ -73,7 +73,7 @@ fn ws_only() -> Value {
 
 fn view_slice() -> (&'static str, Value) {
     (
-            "Renders one slice to a PNG with a sidecar mapping pixels to voxels and patient mm. Look with images; take numbers from probe, stats and measure.",
+            "Renders one slice to a PNG with a sidecar mapping pixels to voxels and patient mm. Look with images; take numbers from probe, stats and measure. With masked, burned-in regions are replaced by a solid fill before drawing (Clean Pixel Data); the sidecar's mask block reports what was applied.",
             obj(
                 json!({
                     "workspace": workspace(),
@@ -91,6 +91,9 @@ fn view_slice() -> (&'static str, Value) {
                     "overlays": overlays_param(),
                     "segment_style": segment_style_param(),
                     "segment_opacity": segment_opacity_param(),
+                    "masked": { "type": "boolean", "description": "mask burned-in regions before drawing (Clean Pixel Data): the masks boxes, else the whole volume when the DICOM BurnedInAnnotation flag is YES, else the OCR-detected regions (with ocr), else nothing (reported in the sidecar's mask block)" },
+                    "masks": { "type": "array", "items": corners(), "description": "mask regions as voxel boxes (two inclusive corners, as stats boxes); implies masked" },
+                    "ocr": { "type": "boolean", "description": "run the optional OCR bridge check on the render (Clean Pixel Data); detected regions extend the mask when masked. Without a configured bridge ([network] ocr_bridge) the step is skipped and reported in the sidecar's ocr block, never silently passed" },
                 }),
                 &["workspace", "plane"],
             ),
@@ -353,9 +356,121 @@ fn mask_schema(command: &str) -> Option<(&'static str, Value)> {
     })
 }
 
+/// Schemas of the view-state commands (`view set/state/events`, Stage 28).
+fn view_state_schema(command: &str) -> Option<(&'static str, Value)> {
+    Some(match command {
+        "view set" => (
+            "Sets what the person sees (component, plane, slice, window, overlays, selected segment, tool, camera) by writing the workspace's view-state artifact; the live viewer applies it and the person takes over at any time. source_hash (from view state) is required: a stale one is refused with source_changed. No decision is created.",
+            obj(
+                json!({
+                    "workspace": workspace(),
+                    "source_hash": text("the source_hash read with view state; a stale one refuses the set (fail-closed)"),
+                    "state": view_state_object(),
+                }),
+                &["workspace", "state", "source_hash"],
+            ),
+        ),
+        "view state" => (
+            "The current view state (component, plane, slice, window, overlays, selected segment, tool, camera) with its revision and the source_hash to pass back to view set.",
+            ws_only(),
+        ),
+        "view events" => (
+            "What the person did in the viewer (point_picked, roi_drawn, slice_changed, window_changed, camera_changed, plane_changed, segments_changed), after a sequence number. No event is a decision.",
+            obj(json!({ "workspace": workspace(), "since": integer(0, "only events after this sequence number (default 0)") }), &["workspace"]),
+        ),
+        _ => return None,
+    })
+}
+
+/// The view-state object of `view set` (`ferrum-view/1`, Stage 28).
+fn view_state_object() -> Value {
+    json!({
+        "type": "object",
+        "description": "what the person sees; missing fields keep their default",
+        "additionalProperties": false,
+        "properties": {
+            "component": { "type": "string", "enum": ["slice", "mpr", "volume"], "description": "one slice, the MPR grid, or the 3D view" },
+            "plane": plane(),
+            "slice_index": integer(0, "0-based slice index, clamped to the volume"),
+            "window": obj(json!({ "center": number("window centre"), "width": number("window width (> 0)") }), &["center", "width"]),
+            "overlays": obj(
+                json!({
+                    "segments_shown": { "type": "boolean", "description": "show the segment overlay" },
+                    "fill_opacity": { "type": "number", "minimum": 0, "maximum": 1, "description": "fill opacity" },
+                    "style": { "type": "string", "enum": ["outline", "fill", "fill_outline"], "description": "how segments are drawn" },
+                }),
+                &[],
+            ),
+            "selected_segment": { "type": ["integer", "null"], "minimum": 0, "maximum": 255, "description": "selected segment label, or null" },
+            "tool": { "type": "string", "enum": ["pan", "window_level", "probe", "distance", "angle", "area", "rect", "text", "move", "delete", "ai_point", "ai_box", "ai_scribble", "ai_lasso", "region"], "description": "the active tool" },
+            "camera": obj(
+                json!({
+                    "orientation": numbers(4, "quaternion x, y, z, w (normalized; a zero quaternion is refused)"),
+                    "distance": number("orbit distance (clamped to the camera's 0.2..10 range)"),
+                    "target": numbers(3, "orbit centre in model space"),
+                    "fov_y": number("vertical field of view in radians, within (0, pi)"),
+                }),
+                &["orientation", "distance", "target", "fov_y"],
+            ),
+        },
+    })
+}
+
+/// The `export bundle` schema (Stage 31 de-identification options).
+fn export_schema(command: &str) -> Option<(&'static str, Value)> {
+    match command {
+        "export bundle" => Some((
+            "Writes export/ in the workspace, with SHA-256 of every file: report.json (study, measurements, segments with volumes; unconfirmed items marked) and, by format, annotations.json + segments.nii.gz + segments.json (ferrum) or a DICOM SEG + Comprehensive 3D SR measurement report (dicom). Rejected items are left out of DICOM; proposed ones are marked. With deidentify=basic the DICOM objects are de-identified under the PS3.15 Basic Application Level Confidentiality Profile (the sole privacy gate for them), with the selected deid_options; the File Meta Information is replaced consistently.",
+            obj(
+                json!({
+                    "workspace": workspace(),
+                    "formats": { "type": "array", "items": { "type": "string", "enum": ["ferrum", "dicom"] }, "minItems": 1, "description": "formats besides report.json (default [\"ferrum\"])" },
+                    "deidentify": { "type": "string", "enum": ["basic"], "description": "de-identify the DICOM objects (SEG/SR) under the PS3.15 Basic Profile (Stage 31); applies to the dicom format" },
+                    "deid_options": { "type": "array", "items": { "type": "string", "enum": ["retain_uids", "retain_dates_modified", "clean_descriptors", "retain_device_identity", "retain_institution_identity", "retain_patient_characteristics"] }, "description": "Basic Profile options on top of the default conservative profile; requires deidentify" },
+                }),
+                &["workspace"],
+            ),
+        )),
+        _ => None,
+    }
+}
+
+/// Schemas of the PACS query/retrieve/verify commands (Stage 32, PR 3).
+/// Read-only only: send-off (STOW/C-MOVE/C-STORE) is host-only and has no
+/// command (ADR 0021 §5).
+fn pacs_schema(command: &str) -> Option<(&'static str, Value)> {
+    Some(match command {
+        "pacs query" => (
+            "Queries a PACS for series (read-only): QIDO-RS over DICOMweb (dicomweb://host[:port]/service-root?keyword=value, dicomwebs:// for HTTPS) or C-FIND over DIMSE (dicom://host[:port]/CALLED-AE?keyword=value). Returns pseudonymised series ids, format, modality, dims and a series-level description — no patient name, ID, birth date or accession number. Query keywords: PatientID, PatientName, AccessionNumber, StudyInstanceUID, SeriesInstanceUID, StudyDate, Modality, StudyDescription, SeriesDescription, SeriesNumber; limit and offset paginate. The operator allows the PACS in network.pacs; without a configuration only loopback hosts are allowed.",
+            obj(json!({ "url": text("PACS query URL (dicomweb://, dicomwebs:// or dicom://) with matching keywords") }), &["url"]),
+        ),
+        "pacs retrieve" => (
+            "Retrieves a series from a DICOMweb PACS over WADO-RS into a workspace and describes it (read-only). The pixels stay in memory and are re-retrieved on each call; the workspace records the PACS URL as its source. Give the query URL and, when it returns several series, the series id from pacs query. Retrieval over DIMSE (C-MOVE) is host-only and not an agent command.",
+            obj(
+                json!({
+                    "workspace": workspace(),
+                    "url": text("DICOMweb query URL (dicomweb:// or dicomwebs://)"),
+                    "series": text("series id from pacs query, when the query returns several"),
+                }),
+                &["workspace", "url"],
+            ),
+        ),
+        "pacs echo" => (
+            "Verifies a classic PACS node with C-ECHO (read-only): dicom://host[:port]/CALLED-AE. Returns reachable true when the node answers the verification.",
+            obj(json!({ "url": text("DIMSE node URL (dicom://host[:port]/CALLED-AE)") }), &["url"]),
+        ),
+        _ => return None,
+    })
+}
+
 /// Description and parameter schema of `command`, or `None` if unknown.
 pub fn command_schema(command: &str) -> Option<(&'static str, Value)> {
-    if let Some(s) = engine_schema(command).or_else(|| mask_schema(command)) {
+    if let Some(s) = engine_schema(command)
+        .or_else(|| mask_schema(command))
+        .or_else(|| view_state_schema(command))
+        .or_else(|| export_schema(command))
+        .or_else(|| pacs_schema(command))
+    {
         return Some(s);
     }
     let measure = |n: usize, what: &'static str| {
@@ -388,16 +503,6 @@ pub fn command_schema(command: &str) -> Option<(&'static str, Value)> {
                     "samples": { "type": "integer", "minimum": 2, "maximum": 2000, "description": "number of samples (default: one per smallest voxel spacing)" },
                 }),
                 &["workspace", "from", "to"],
-            ),
-        ),
-        "export bundle" => (
-            "Writes export/ in the workspace, with SHA-256 of every file: report.json (study, measurements, segments with volumes; unconfirmed items marked) and, by format, annotations.json + segments.nii.gz + segments.json (ferrum) or a DICOM SEG + Comprehensive 3D SR measurement report (dicom). Rejected items are left out of DICOM; proposed ones are marked.",
-            obj(
-                json!({
-                    "workspace": workspace(),
-                    "formats": { "type": "array", "items": { "type": "string", "enum": ["ferrum", "dicom"] }, "minItems": 1, "description": "formats besides report.json (default [\"ferrum\"])" },
-                }),
-                &["workspace"],
             ),
         ),
         "probe" => (

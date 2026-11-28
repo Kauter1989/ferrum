@@ -2,7 +2,10 @@
 //!
 //! Data layer of the viewer. Implements the domain port
 //! [`ferrum_domain::VolumeRepository`] for DICOM (via `dicom-rs`, all common
-//! transfer syntaxes including JPEG, JPEG 2000 and RLE) and NIfTI-1.
+//! transfer syntaxes including JPEG, JPEG 2000 and RLE), NIfTI-1,
+//! DICOMweb (QIDO-RS/WADO-RS via `dicom-web`, [design](../../docs/dicomweb.md))
+//! and classic DIMSE (C-FIND/C-MOVE/C-ECHO via `dicom-ul`,
+//! [design](../../docs/dicomdimse.md)).
 //!
 //! Loading is parallel end to end: headers are parsed concurrently (stopping
 //! before pixel data), slices are grouped into series and ordered by their
@@ -14,9 +17,11 @@ pub mod dicom;
 pub mod engine_inputs;
 pub mod error;
 pub mod files;
+pub mod identifiers;
 pub mod nifti;
 pub mod provenance;
 pub mod segments;
+pub mod view_state;
 pub mod workspace;
 
 use std::path::PathBuf;
@@ -24,11 +29,18 @@ use std::path::PathBuf;
 use ferrum_domain::{LoadedSeries, ProgressSink, RepositoryError, SeriesDescriptor, VolumeRepository};
 
 pub use annotations::{annotation_report_json, annotations_from_json, read_annotations, write_annotation_report};
+pub use dicom::dimse::{DicomDimseRepository, ScpHandle, StoreScp};
+pub use dicom::stow::{DicomWebStow, StowInstance, StowReport, StowStatus};
+pub use dicom::web::DicomWebRepository;
 pub use dicom::DicomRepository;
 pub use engine_inputs::EngineInput;
 pub use error::IoError;
+pub use identifiers::{read_patient_identifiers, read_patient_identifiers_of_files};
 pub use nifti::{read_label_nifti, read_nifti, write_label_nifti, write_nifti, NiftiRepository};
 pub use segments::{read_segments, segments_from_json, segments_json, write_segments};
+pub use view_state::{
+    event_from_json, event_to_json, state_from_json, state_to_json, SavedViewEvents, SavedViewState, VIEW_STATE_FORMAT,
+};
 pub use workspace::{sha256_file, SourceFile, Workspace, WorkspaceManifest, WorkspaceSource, WorkspaceStore};
 
 /// Repository that dispatches to every supported format.
@@ -38,7 +50,14 @@ pub struct CompositeRepository {
 
 impl Default for CompositeRepository {
     fn default() -> Self {
-        Self { repositories: vec![Box::new(DicomRepository), Box::new(NiftiRepository)] }
+        Self {
+            repositories: vec![
+                Box::new(DicomRepository),
+                Box::new(NiftiRepository),
+                Box::new(DicomWebRepository::new()),
+                Box::new(DicomDimseRepository::new()),
+            ],
+        }
     }
 }
 

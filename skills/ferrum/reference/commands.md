@@ -17,10 +17,17 @@ underscores) and a `ferrum-cli` sub-command. The parameters are listed in
 ## Looking
 | Command | Key parameters | Returns |
 |---|---|---|
-| `view slice` | `plane`, `slice_number` or `at`, `window?` (default: the series' own, else 0.5–99.5 % of the values), `size?`, `overlays?` (`segments`), `segment_style?` (`outline`, `fill`, `fill_outline`), `segment_opacity?` | PNG + sidecar with `pixel_to_voxel`, `pixel_to_patient_mm` |
+| `view slice` | `plane`, `slice_number` or `at`, `window?` (default: the series' own, else 0.5–99.5 % of the values), `size?`, `overlays?` (`segments`), `segment_style?` (`outline`, `fill`, `fill_outline`), `segment_opacity?`, `masked?`, `masks?` (voxel boxes), `ocr?` (Clean Pixel Data) | PNG + sidecar with `pixel_to_voxel`, `pixel_to_patient_mm`; with `masked`, a `mask` block; with `ocr`, an `ocr` block (skipped/detected/failed — never silently passed) |
 | `view montage` | `plane`, `from?`, `to?`, `step?`, `columns?`, `window?` | grid of labelled slices, one mapping per tile |
 | `view mpr` | `at`, `window?` | axial, coronal and sagittal through a point, crosshair |
 | `view volume` | `mode` (`mip`, `isosurface` + `threshold`, `transfer_function` + `preset`), `view` | 3D render; no pixel mapping |
+
+## Driving the view
+| Command | Key parameters | Returns |
+|---|---|---|
+| `view state` | `workspace` | the current view state (`component`, `plane`, `slice_index`, `window`, `overlays`, `selected_segment`, `tool`, `camera`), its `revision` and `source_hash` |
+| `view set` | `workspace`, `state` (the fields above), `source_hash?` (stale → `source_changed`) | the stored state, `revision`, `source_hash`; the live viewer applies it, the person takes over at any time; no decision |
+| `view events` | `workspace`, `since?` | the person's events (`point_picked`, `roi_drawn`, `slice_changed`, `window_changed`, `camera_changed`, `plane_changed`, `segments_changed`) after a sequence number, with `next`/`dropped`; no event is a decision |
 
 ## Measuring
 | Command | Key parameters | Returns |
@@ -68,11 +75,27 @@ use only" when the engine is marked so. Workflows: `segmentation.md`.
 |---|---|---|
 | `review list` | — | proposed annotations and segments |
 | `review confirm`, `review reject` | `annotation` or `segment`, `by` | only if the operator allows harness review |
-| `export bundle` | `formats`: `ferrum` (default), `dicom` | `export/`: report.json; annotations.json, segments.nii.gz + .json (ferrum); segmentation.dcm + measurements.dcm (dicom); SHA-256 each |
+| `export bundle` | `formats`: `ferrum` (default), `dicom`; `deidentify`: `basic` (PS3.15 Basic Profile, DICOM objects); `deid_options`: `retain_uids`, `retain_dates_modified`, `clean_descriptors`, `retain_device_identity`, `retain_institution_identity`, `retain_patient_characteristics` | `export/`: report.json; annotations.json, segments.nii.gz + .json (ferrum); segmentation.dcm + measurements.dcm (dicom); SHA-256 each; with `deidentify` the DICOM objects are de-identified (File Meta replaced) |
+
+## PACS (read-only)
+| Command | Key parameters | Returns |
+|---|---|---|
+| `pacs query` | `url` (`dicomweb://host[:port]/root?Keyword=value`, `dicomwebs://` HTTPS, or `dicom://host[:port]/CALLED-AE?Keyword=value`) | series: pseudonymised id, format, modality, dims, series-level description (QIDO-RS or C-FIND). No patient name/ID/birth date/accession. Keywords: PatientID, PatientName, AccessionNumber, StudyInstanceUID, SeriesInstanceUID, StudyDate, Modality, StudyDescription, SeriesDescription, SeriesNumber; limit/offset |
+| `pacs retrieve` | `workspace`, `url` (dicomweb:// or dicomwebs://), `series?` (id from pacs query when several) | opens the series into the workspace over WADO-RS and describes it (dims, spacing, unit, …). Pixels stay in memory; the workspace records the URL, no local patient files. DIMSE retrieval (C-MOVE) is host-only |
+| `pacs echo` | `url` (`dicom://host[:port]/CALLED-AE`) | `reachable: true` when the node answers C-ECHO |
+
+The operator allows PACS in `network.pacs`; without a configuration only
+loopback hosts are allowed, and link-local/metadata addresses
+(169.254.169.254, …) are always refused (SSRF). **Send-off (STOW/C-MOVE/
+C-STORE) is host-only and is not a command** — a person hands results back
+from the host. See `docs/agent-cli.md` §PACS.
 
 ## Examples
 ```bash
 ferrum-cli study open -w ct1 /data/incoming/lung_053.nii.gz
+ferrum-cli pacs query "dicomweb://127.0.0.1:8042/dicom-web?PatientID=123&Modality=CT"
+ferrum-cli pacs retrieve -w ct1 "dicomweb://127.0.0.1:8042/dicom-web?StudyInstanceUID=1.2.3"
+ferrum-cli pacs echo "dicom://127.0.0.1:104/PACS"
 ferrum-cli view montage -w ct1 --plane axial --window lung
 ferrum-cli view slice -w ct1 --plane axial --slice-number 120 --window lung
 ferrum-cli probe -w ct1 r-0002:412,318

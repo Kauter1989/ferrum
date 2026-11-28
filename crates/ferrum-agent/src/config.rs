@@ -17,6 +17,8 @@
 //!
 //! [network]
 //! engines = ["http://127.0.0.1:8765"]   # segmentation engines the agent may use
+//! pacs = ["dicomweb://127.0.0.1:8042/dicom-web"]  # PACS the agent may query/retrieve (read-only)
+//! ocr_bridge = "http://127.0.0.1:8766"  # optional OCR bridge (Clean Pixel Data); absent: skipped + reported
 //! gpu_groups = { card = ["http://127.0.0.1:8765"] }   # engines sharing a GPU
 //! gpu_capacity_mib = { card = 11264 }   # leases of a group must fit
 //! gpu_peaks_mib = { "http://127.0.0.1:8765" = 6000 }  # GPU memory of one call
@@ -65,6 +67,15 @@ pub struct AgentConfig {
     /// contact. Without a configuration file only loopback URLs are
     /// allowed.
     pub engines: Vec<String>,
+    /// PACS nodes (`dicomweb://`, `dicomwebs://`, `dicom://` URLs) the agent
+    /// may query/retrieve/verify (Stage 32, PR 3). Without a configuration
+    /// file only loopback hosts are allowed; link-local and cloud metadata
+    /// addresses are always refused (SSRF boundary, `docs/agent-cli.md`).
+    pub pacs: Vec<String>,
+    /// The optional OCR bridge (`ferrum-engine/1` with the `ocr`
+    /// capability) for the Clean Pixel Data check. `None`: the check is
+    /// skipped and reported, never silently passed.
+    pub ocr_bridge: Option<String>,
     /// Longest wait for an automatic segmentation job, in seconds.
     pub engine_job_timeout_s: u64,
     /// Engines that share a GPU: groups, capacities, expected peaks and the
@@ -95,6 +106,8 @@ impl Default for AgentConfig {
             max_voxels: 600_000_000,
             allow_harness_confirmation: false,
             engines: Vec::new(),
+            pacs: Vec::new(),
+            ocr_bridge: None,
             engine_job_timeout_s: 900,
             gpu: GpuSettings::default(),
             max_prompts_per_object: 8,
@@ -155,6 +168,14 @@ impl AgentConfig {
             ("limits", "max_voxels") => self.max_voxels = positive()?.unsigned_abs(),
             ("review", "allow_harness_confirmation") => self.allow_harness_confirmation = boolean()?,
             ("network", "engines") => self.engines = urls(v, &what)?,
+            ("network", "pacs") => self.pacs = urls(v, &what)?,
+            ("network", "ocr_bridge") => {
+                let url = v
+                    .as_str()
+                    .filter(|s| !s.trim().is_empty())
+                    .ok_or_else(|| invalid(format!("{what} must be a URL")))?;
+                self.ocr_bridge = Some(url.trim().trim_end_matches('/').to_owned());
+            }
             ("network", k) if self.gpu.set(k, v).map_err(invalid)? => {}
             ("limits", "max_prompts_per_object") => self.max_prompts_per_object = positive()?.unsigned_abs(),
             ("limits", "roi_margin_mm") => {

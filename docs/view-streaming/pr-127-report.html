@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FERRUM · PR #127 — финальный отчёт: сегменты/overlay в WebGPU-панели (Stage 29 PR 5)</title>
+<style>
+  :root { --bg:#fbfbfd; --fg:#1d1f26; --muted:#5b6070; --line:#e2e5ec; --accent:#1f6feb; --ok:#1a7f37; --warn:#9a6700; --bad:#b42318; --card:#fff; --code:#f3f4f7; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#12141a; --fg:#e6e7ea; --muted:#a2a8b6; --line:#2a2e38; --accent:#6ba6ff; --ok:#4ac26b; --warn:#d4a72c; --bad:#ff7b72; --card:#191c23; --code:#1f232c; } }
+  * { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.6 -apple-system,"Segoe UI",Roboto,Arial,sans-serif; }
+  main { max-width:1080px; margin:0 auto; padding:40px 24px 80px; }
+  h1 { font-size:29px; line-height:1.25; margin:0 0 8px; letter-spacing:-0.02em; }
+  h2 { font-size:21px; margin:44px 0 14px; padding-bottom:8px; border-bottom:1px solid var(--line); }
+  .sub { color:var(--muted); margin:0 0 24px; }
+  .meta { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:28px; }
+  .pill { font-size:13px; padding:3px 10px; border-radius:999px; border:1px solid var(--line); background:var(--card); color:var(--muted); }
+  .pill.ok { color:var(--ok); border-color:color-mix(in srgb,var(--ok) 40%,transparent); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px 20px; margin:14px 0; }
+  code,.mono { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:13px; }
+  code { background:var(--code); padding:1px 5px; border-radius:4px; }
+  table { width:100%; border-collapse:collapse; margin:14px 0; font-size:14px; }
+  th,td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; font-size:13px; text-transform:uppercase; letter-spacing:.04em; }
+  .tag { font-size:12px; font-weight:600; padding:2px 7px; border-radius:5px; white-space:nowrap; }
+  .t-fixed { background:color-mix(in srgb,var(--ok) 16%,transparent); color:var(--ok); }
+  .t-should { background:color-mix(in srgb,var(--warn) 18%,transparent); color:var(--warn); }
+  .t-nit { background:color-mix(in srgb,var(--muted) 16%,transparent); color:var(--muted); }
+  .grid { display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); }
+  .stat { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px; }
+  .stat b { display:block; font-size:26px; line-height:1.2; } .stat span { color:var(--muted); font-size:13px; }
+  ul { padding-left:22px; } li { margin:4px 0; }
+  .note { border-left:3px solid var(--accent); padding-left:14px; color:var(--muted); margin:14px 0; }
+  footer { margin-top:56px; padding-top:18px; border-top:1px solid var(--line); color:var(--muted); font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+<h1>PR #127 — сегменты и overlay в WebGPU-панели</h1>
+<p class="sub">Финальный отчёт: Stage 29 PR 5 (критерий 29.2-a). FERRUM, ноябрь 2026. Описывает head SHA <code>98ad92b09931844c4239ae4bdf92b0e91e7d5f36</code>. Отчёт живёт в самом PR и правится по итогам ревью; при мердже остаётся в последней версии (правило пользователя).</p>
+<div class="meta">
+  <span class="pill">Stage 29 PR 5 · 29.2-a</span>
+  <span class="pill">size S</span>
+  <span class="pill ok">G1+G2 утверждены</span>
+  <span class="pill ok">preflight: all checks passed</span>
+  <span class="pill ok">rendering rule: существующие шейдеры</span>
+</div>
+<div class="grid">
+  <div class="stat"><b>3</b><span>новых wasm-биндинга</span></div>
+  <div class="stat"><b>0</b><span>новых копий image-formation</span></div>
+  <div class="stat"><b>24/24</b><span>host-тестов не сломаны</span></div>
+  <div class="stat"><b>1</b><span>доменный lut (не копия)</span></div>
+</div>
+
+<h2>1. Что и зачем</h2>
+<p>Браузерная панель показывала том без сегментов. Теперь она рисует <strong>segment overlay</strong> и следует состоянию хоста: тянет label-карту (<code>/api/labels</code>) и метаданные сегментов (<code>/api/state</code> <code>segments.items</code>), применяет overlay и предлагает toggle/style/fill-контролы, которые уходят обратно через <code>POST /api/input</code>.</p>
+<div class="note">Rendering rule сохранён: overlay рисуют <strong>существующие</strong> шейдеры <code>slice.wgsl</code>/<code>volume.wgsl</code>; wasm лишь загружает labels и доменный единый цветовой lut (<code>SegmentationSet::lut</code>) через существующие <code>update_labels</code>/<code>set_segment_colors</code> и включает <code>slice_params.segments</code>/<code>frame_params.with_segments</code>. Новой image-formation нет.</div>
+
+<h2>2. Код-карта</h2>
+<p class="sub">Pinned к head SHA <code>98ad92b</code>.</p>
+<table>
+  <tr><th>Утверждение</th><th>Реализация</th></tr>
+  <tr><td>set_labels: grid → LabelMap → SegmentationSet</td><td class="mono">crates/ferrum-wasm/src/lib.rs:165</td></tr>
+  <tr><td>set_segment: rename/set_color/set_visible/set_opacity (домен)</td><td class="mono">crates/ferrum-wasm/src/lib.rs:184</td></tr>
+  <tr><td>set_overlay: shown/fill/style (SegmentStyle::parse, clamp)</td><td class="mono">crates/ferrum-wasm/src/lib.rs:205</td></tr>
+  <tr><td>upload_segments: существующие update_labels + set_segment_colors(lut)</td><td class="mono">crates/ferrum-wasm/src/lib.rs:218</td></tr>
+  <tr><td>slice_params: segments/segment_style/fill_opacity включены</td><td class="mono">crates/ferrum-wasm/src/lib.rs:471</td></tr>
+  <tr><td>frame_params: with_segments включён</td><td class="mono">crates/ferrum-wasm/src/lib.rs:488</td></tr>
+  <tr><td>Панель: labels/state fetch, цвет из state.segments.items, per-segment try/catch</td><td class="mono">integrations/dsh/plugin/lib/client.js:274</td></tr>
+  <tr><td>overlay toggle/style/fill controls → set_overlay + pushInput</td><td class="mono">integrations/dsh/plugin/lib/client.js:418</td></tr>
+  <tr><td>pushInput: token-gate, POST /api/input (overlays/component)</td><td class="mono">integrations/dsh/plugin/lib/client.js:390</td></tr>
+</table>
+
+<h2>3. Покрытие критериев</h2>
+<table>
+  <tr><th>Критерий</th><th>Тест</th><th>Статус</th></tr>
+  <tr><td>29.2-a сегменты и overlay в WebGPU-панели</td><td class="mono">wasm build (wasm32) ✓; host view_host 24/24 (labels/state контракт); wasm host-тесты layout/mode 6+3; браузерный рендер overlay — field/PR 7 (headed browser)</td><td><span class="tag t-fixed">✅</span></td></tr>
+</table>
+
+<h2>4. Верификация</h2>
+<ul>
+  <li>Полный preflight (WSL Ubuntu-24.04, CI-порядок + GPU parity + analyze.py): <code>all checks passed</code> на head <code>98ad92b</code>.</li>
+  <li><code>cargo build -p ferrum-wasm --target wasm32-unknown-unknown</code>: Finished (Windows и WSL).</li>
+  <li>view_host 24/24 (не сломан); wasm host-тесты layout/mode 6+3; node --check client.js exit 0; smoke-load ok (5 слотов).</li>
+  <li>fmt/clippy <code>-D warnings</code> чисто; браузерный рендер overlay локально не проверен — ожидаемо (WebGPU нужен headed browser, PR 7; задокументировано в webgpu-panel.md «As built»).</li>
+</ul>
+
+<h2>5. История ревью</h2>
+<div class="card">
+  <p><strong>Раунд 1</strong> (code + security, агент <code>review-pr5</code>, выполнение в WSL): вердикт <em>changes requested</em> — 0 blocking, 1 should-fix, 3 nits. <strong>Rendering rule, слоистость, безопасность подтверждены</strong> (существующие шейдеры + доменный lut; wasm без business logic; pushInput token-gate, без идентификаторов).</p>
+  <table>
+    <tr><th>Находка</th><th>Исправление</th><th>Статус</th></tr>
+    <tr><td><span class="tag t-should">should</span> пустой сегмент хоста (label отсутствует в grid) → set_segment Err → один try/catch abortил весь блок → overlay выключен для всех</td><td>per-segment try/catch: пустой сегмент пропускается, overlay валидных сегментов работает</td><td><span class="tag t-fixed">fixed</span></td></tr>
+    <tr><td><span class="tag t-nit">nit</span> sync частичный (нет polling /api/events)</td><td>full bidirectional sync — follow-up (шире scope 29.2-a); отмечено</td><td><span class="tag t-nit">noted</span></td></tr>
+    <tr><td><span class="tag t-nit">nit</span> pushInput fire-and-forget (без reconcile)</td><td>связано с sync follow-up; host — source of truth</td><td><span class="tag t-nit">noted</span></td></tr>
+    <tr><td><span class="tag t-nit">nit</span> dev_plan 29.T3/T4 🚧 хотя влиты</td><td>поправлено на ✅</td><td><span class="tag t-fixed">fixed</span></td></tr>
+  </table>
+</div>
+
+<h2>6. Out of scope / notes</h2>
+<ul>
+  <li>TF-редактор и измерения — PR 6; headed-browser автотест WebGPU — PR 7.</li>
+  <li>Полный bidirectional sync (polling events + reconcile) — follow-up за пределами 29.2-a (сегменты/overlay).</li>
+  <li>3D FrameParams без style/fill — как в desktop (<code>Viewer::frame_params</code> тоже только <code>.with_segments(bool)</code>), не дефект.</li>
+</ul>
+
+<footer>FERRUM · Stage 29 PR 5 · head SHA <code>98ad92b09931844c4239ae4bdf92b0e91e7d5f36</code> · отчёт коммичен в PR и правится по итогам ревью пользователя.</footer>
+</main>
+</body>
+</html>

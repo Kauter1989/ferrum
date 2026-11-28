@@ -2,16 +2,19 @@
 //!
 //! A harness shows FERRUM next to its conversation without linking Rust into
 //! its GUI. This crate keeps a [`Viewer`](ferrum_app::Viewer) alive for one
-//! workspace, draws its slices on the local GPU (or with the CPU reference
+//! workspace, draws its views on the local GPU (or with the CPU reference
 //! renderer when there is no adapter) and serves them over loopback together
 //! with a small self-contained page:
 //!
 //! ```text
 //! GET  /                the page (HTML, inline CSS and JS, no other origin)
-//! GET  /api/state       ferrum-view/1 state: plane, slice, window, segments, probe
-//! GET  /api/frame.png   the slice at the volume's native resolution, one pixel per voxel
+//! GET  /api/state       ferrum-view/1 state: component, plane, slice, window, camera,
+//!                       overlays, selected segment, tool, segments, probe
+//! GET  /api/frame.png   the component's frame: the slice at native resolution,
+//!                       the 3D view or the MPR grid at a fixed size
 //! GET  /api/events      what the person did, with sequence numbers
-//! POST /api/input       slice, step, plane, window, preset, segments or probe
+//! POST /api/input       slice, step, plane, window, preset, segments, probe, component,
+//!                       camera, overlays, selected_segment, tool, segment or draw
 //! ```
 //!
 //! The host binds `127.0.0.1` only, and every request needs its token — the
@@ -41,10 +44,13 @@ mod page;
 mod server;
 mod session;
 mod state;
+mod token;
+
+pub use token::TOKEN_TTL;
 
 pub use cpu::CpuFrameSource;
 pub use frame::{Backend, BackendPreference, FrameSource, RawFrame};
 pub use gpu::GpuFrameSource;
 pub use server::{ServeOptions, ViewServer, COOKIE, MAX_BODY};
-pub use session::{Frame, Session, ViewError};
-pub use state::{plane_name, Input, Probe, ViewState, FORMAT};
+pub use session::{Frame, Session, ViewError, VolumeStorage};
+pub use state::{plane_name, CameraOp, Input, OverlayChange, ViewState, FORMAT};

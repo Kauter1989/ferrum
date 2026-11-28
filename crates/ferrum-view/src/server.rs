@@ -9,11 +9,14 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
+use ferrum_domain::VoxelBox;
+use glam::UVec3;
 use serde_json::{json, Value};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
 use crate::page::PAGE;
-use crate::session::{Session, ViewError};
+use crate::session::{Session, ViewError, VolumeStorage};
+use crate::token::{RotatingToken, TOKEN_GRACE, TOKEN_TTL};
 
 /// The name of the cookie that carries the token after the page loads.
 pub const COOKIE: &str = "ferrum-view";
@@ -21,11 +24,21 @@ pub const COOKIE: &str = "ferrum-view";
 /// Largest body accepted on `POST /api/input`.
 pub const MAX_BODY: usize = 64 * 1024;
 
-/// How the host starts: the port the page is served on.
-#[derive(Debug, Clone, Copy, Default)]
+/// How the host starts: the port the page is served on, and the token lifetime.
+#[derive(Debug, Clone, Copy)]
 pub struct ServeOptions {
     /// Port on `127.0.0.1`; `0` lets the operating system choose one.
     pub port: u16,
+    /// How long a token is valid before it must be refreshed (ADR 0019).
+    pub token_ttl: std::time::Duration,
+    /// How long the previous token stays valid after a rotation.
+    pub token_grace: std::time::Duration,
+}
+
+impl Default for ServeOptions {
+    fn default() -> Self {
+        Self { port: 0, token_ttl: TOKEN_TTL, token_grace: TOKEN_GRACE }
+    }
 }
 
 /// A running view host (stopped when dropped).
@@ -41,24 +54,24 @@ pub struct ViewServer {
 impl ViewServer {
     /// Starts serving `session` on loopback.
     pub fn start(session: Session, options: ServeOptions) -> Result<Self, ViewError> {
-        let token = new_token()?;
+        let token = RotatingToken::new(options.token_ttl, options.token_grace)?;
+        let initial = token.current().to_owned();
         let backend = session.backend().as_str();
         let workspace = session.workspace().to_string_lossy().into_owned();
         let server = Server::http(("127.0.0.1", options.port)).map_err(|e| ViewError::Internal(e.to_string()))?;
         let addr = server.server_addr().to_ip().ok_or_else(|| ViewError::Internal("not an IP listener".into()))?;
         let server = Arc::new(server);
         let worker = server.clone();
-        let token_for_thread = token.clone();
         let thread = std::thread::Builder::new()
             .name("ferrum-view".into())
             .spawn(move || {
-                let mut host = Host { session, token: token_for_thread };
+                let mut host = Host { session, token };
                 for request in worker.incoming_requests() {
                     host.serve(request);
                 }
             })
             .map_err(|e| ViewError::Internal(e.to_string()))?;
-        Ok(Self { addr, token, backend, workspace, server, thread: Some(thread) })
+        Ok(Self { addr, token: initial, backend, workspace, server, thread: Some(thread) })
     }
 
     /// The base URL, e.g. `http://127.0.0.1:41234`.
@@ -66,7 +79,9 @@ impl ViewServer {
         format!("http://{}", self.addr)
     }
 
-    /// The token every request needs.
+    /// The boot token printed at start. It rotates afterwards (ADR 0019): a
+    /// client keeps it alive with `POST /api/token/refresh`, so this snapshot is
+    /// for starting the session, not for long-lived use.
     pub fn token(&self) -> &str {
         &self.token
     }
@@ -98,17 +113,10 @@ impl Drop for ViewServer {
     }
 }
 
-/// A 32-hex-digit token from the operating system's random source.
-fn new_token() -> Result<String, ViewError> {
-    let mut bytes = [0u8; 16];
-    getrandom::fill(&mut bytes).map_err(|e| ViewError::Internal(format!("cannot read random bytes: {e}")))?;
-    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
-}
-
 /// Everything one thread needs to answer requests.
 struct Host {
     session: Session,
-    token: String,
+    token: RotatingToken,
 }
 
 impl Host {
@@ -155,7 +163,7 @@ impl Host {
             .iter()
             .find(|h| h.field.equiv("Cookie"))
             .and_then(|h| cookie_value(h.value.as_str(), COOKIE));
-        [from_query, from_header, from_cookie].into_iter().flatten().any(|t| constant_time_eq(&t, &self.token))
+        [from_query, from_header, from_cookie].into_iter().flatten().any(|t| self.token.accepts(&t))
     }
 
     fn route(&mut self, method: &Method, url: &str, body: &[u8]) -> Reply {
@@ -163,7 +171,7 @@ impl Host {
         let get = *method == Method::Get;
         let post = *method == Method::Post;
         match path {
-            "/" | "/index.html" if get => Reply::page(self.token.clone()),
+            "/" | "/index.html" if get => Reply::page(self.token.current().to_owned()),
             "/api/state" if get => {
                 self.session.refresh();
                 match self.session.state_json() {
@@ -175,37 +183,82 @@ impl Host {
                 let since = query_value(url, "since").and_then(|v| v.parse::<u64>().ok());
                 Reply::json(StatusCode(200), self.session.events_json(since))
             }
-            // A client that draws the study itself takes the voxels once.
-            "/api/volume" if get => match self.session.volume() {
+            // The measurements the tool machine committed, for a panel that
+            // displays their values (29.2-c). Refresh first so annotations an
+            // agent wrote into the workspace are adopted, as /api/state does.
+            "/api/annotations" if get => {
+                self.session.refresh();
+                Reply::json(StatusCode(200), self.session.annotations_json())
+            }
+            // A client that draws the study itself takes the voxels once. The
+            // default u16 form halves the wire; ?storage=f32 keeps the old form.
+            "/api/volume" if get => {
+                let storage = volume_storage(url);
+                match self.session.volume(storage) {
+                    Ok((header, values)) => Reply {
+                        status: StatusCode(200),
+                        content_type: "application/octet-stream",
+                        headers: vec![("X-Ferrum-Volume".into(), header.to_string())],
+                        body: values,
+                    },
+                    Err(e) => internal(e),
+                }
+            }
+            // The header alone, so a client can size the download and check a
+            // cached copy without fetching the voxels again.
+            "/api/volume.json" if get => match self.session.volume(volume_storage(url)) {
+                Ok((header, _)) => Reply::json(StatusCode(200), header),
+                Err(e) => internal(e),
+            },
+            // The segment label map for a client that draws the overlay itself.
+            "/api/labels" if get => match self.session.labels() {
                 Ok((header, values)) => Reply {
                     status: StatusCode(200),
                     content_type: "application/octet-stream",
-                    headers: vec![("X-Ferrum-Volume".into(), header.to_string())],
+                    headers: vec![("X-Ferrum-Labels".into(), header.to_string())],
                     body: values,
                 },
                 Err(e) => internal(e),
             },
-            // The header alone, so a client can size the download and check a
-            // cached copy without fetching the voxels again.
-            "/api/volume.json" if get => match self.session.volume() {
+            "/api/labels.json" if get => match self.session.labels() {
                 Ok((header, _)) => Reply::json(StatusCode(200), header),
                 Err(e) => internal(e),
             },
-            "/api/frame.png" if get => match self.session.frame() {
-                Ok(frame) => Reply {
-                    status: StatusCode(200),
-                    content_type: "image/png",
-                    headers: vec![("X-Ferrum-Rev".into(), frame.rev.to_string())],
-                    body: frame.png.clone(),
-                },
-                Err(e) => internal(e),
-            },
+            "/api/frame.png" if get => {
+                if query_value(url, "masked").as_deref() == Some("1") {
+                    self.masked_frame(url)
+                } else {
+                    match self.session.frame() {
+                        Ok(frame) => Reply {
+                            status: StatusCode(200),
+                            content_type: "image/png",
+                            headers: vec![("X-Ferrum-Rev".into(), frame.rev.to_string())],
+                            body: frame.png.clone(),
+                        },
+                        Err(e) => internal(e),
+                    }
+                }
+            }
             "/api/input" if post => match self.session.input(body) {
                 Ok(()) => match self.session.state_json() {
                     Ok(state) => Reply::json(StatusCode(200), state),
                     Err(e) => internal(e),
                 },
                 Err(e @ ViewError::BadRequest(_)) => Reply::json(StatusCode(400), json!({ "error": e.to_string() })),
+                Err(e) => internal(e),
+            },
+            // A live token rotates to a fresh one (ADR 0019); the previous token
+            // stays valid for the grace window. The cookie is re-set.
+            "/api/token/refresh" if post => match self.token.rotate() {
+                Ok(token) => Reply {
+                    status: StatusCode(200),
+                    content_type: "application/json",
+                    headers: vec![(
+                        "Set-Cookie".into(),
+                        format!("{COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict"),
+                    )],
+                    body: json!({ "token": token, "expires_in": self.token.expires_in() }).to_string().into_bytes(),
+                },
                 Err(e) => internal(e),
             },
             // The browser panel: the built wasm module and its JS glue, taken
@@ -227,9 +280,42 @@ impl Host {
                 },
                 None => Reply::json(StatusCode(404), json!({ "error": "no such panel file" })),
             },
-            "/api/state" | "/api/events" | "/api/frame.png" | "/api/volume" | "/api/volume.json" | "/api/input"
-            | "/" | "/index.html" => Reply::json(StatusCode(405), json!({"error": "wrong method"})),
+            "/api/state" | "/api/events" | "/api/annotations" | "/api/frame.png" | "/api/volume"
+            | "/api/volume.json" | "/api/labels" | "/api/labels.json" | "/api/input" | "/api/token/refresh" | "/"
+            | "/index.html" => Reply::json(StatusCode(405), json!({"error": "wrong method"})),
             _ => Reply::json(StatusCode(404), json!({"error": "no such route"})),
+        }
+    }
+
+    /// A masked frame (`/api/frame.png?masked=1`, Clean Pixel Data, Stage
+    /// 31): the `box` query regions (repeatable, inclusive voxel corners
+    /// `i0,j0,k0,i1,j1,k1`), else the flag's whole-volume default. The
+    /// `X-Ferrum-Mask` header reports what was applied — never silently
+    /// passed.
+    fn masked_frame(&mut self, url: &str) -> Reply {
+        let explicit = match query_boxes(url) {
+            Ok(boxes) => boxes,
+            Err(e) => return Reply::json(StatusCode(400), json!({ "error": e })),
+        };
+        let (boxes, source) = match explicit {
+            Some(boxes) => (boxes, "regions"),
+            None => match self.session.default_mask_boxes() {
+                Ok(boxes) if boxes.is_empty() => (boxes, "none"),
+                Ok(boxes) => (boxes, "burned_in"),
+                Err(e) => return internal(e),
+            },
+        };
+        match self.session.frame_masked(boxes) {
+            Ok((frame, effective)) => Reply {
+                status: StatusCode(200),
+                content_type: "image/png",
+                headers: vec![
+                    ("X-Ferrum-Rev".into(), frame.rev.to_string()),
+                    ("X-Ferrum-Mask".into(), mask_report(&effective, source).to_string()),
+                ],
+                body: frame.png.clone(),
+            },
+            Err(e) => internal(e),
         }
     }
 
@@ -325,23 +411,69 @@ fn query_value(url: &str, name: &str) -> Option<String> {
     })
 }
 
+/// Every value of `name` in a query string (a repeatable parameter).
+fn query_values(url: &str, name: &str) -> Vec<String> {
+    let Some(query) = url.split_once('?').map(|(_, q)| q) else { return Vec::new() };
+    query
+        .split('&')
+        .filter_map(|pair| {
+            let (key, value) = pair.split_once('=')?;
+            (key == name).then(|| value.to_owned())
+        })
+        .collect()
+}
+
+/// The `box` regions of a masked frame request: two corner points
+/// `i0,j0,k0,i1,j1,k1` (inclusive, in any order — the agent's box
+/// convention) as half-open boxes. `None` when the request names no region;
+/// a malformed box is an error.
+fn query_boxes(url: &str) -> Result<Option<Vec<VoxelBox>>, String> {
+    let values = query_values(url, "box");
+    if values.is_empty() {
+        return Ok(None);
+    }
+    let mut boxes = Vec::with_capacity(values.len());
+    for v in values {
+        let nums: Vec<u32> = v
+            .split(',')
+            .map(|x| {
+                x.trim().parse::<u32>().map_err(|_| format!("box {v:?}: expected i0,j0,k0,i1,j1,k1 voxel indices"))
+            })
+            .collect::<Result<_, _>>()?;
+        if nums.len() != 6 {
+            return Err(format!("box {v:?}: expected i0,j0,k0,i1,j1,k1 voxel indices"));
+        }
+        let (a, b) = (UVec3::new(nums[0], nums[1], nums[2]), UVec3::new(nums[3], nums[4], nums[5]));
+        // saturating: a crafted corner at u32::MAX must not overflow (+1);
+        // frame_masked clips the box to the grid anyway.
+        boxes.push(VoxelBox::new(a.min(b), a.max(b).saturating_add(UVec3::ONE)));
+    }
+    Ok(Some(boxes))
+}
+
+/// The `X-Ferrum-Mask` report: what a masked frame request applied.
+fn mask_report(boxes: &[VoxelBox], source: &str) -> Value {
+    json!({
+        "applied": !boxes.is_empty(),
+        "source": source,
+        "boxes": boxes.iter().map(|b| json!({ "min": b.min.to_array(), "max": b.max.to_array() })).collect::<Vec<_>>(),
+    })
+}
+
+/// The volume storage form a request asks for: `?storage=f32` keeps the original
+/// physical form; anything else (the default) is the half-size `u16` form.
+fn volume_storage(url: &str) -> VolumeStorage {
+    if query_value(url, "storage").as_deref() == Some("f32") {
+        VolumeStorage::F32
+    } else {
+        VolumeStorage::U16
+    }
+}
+
 /// The value of cookie `name` in a `Cookie` header.
 fn cookie_value(header: &str, name: &str) -> Option<String> {
     header.split(';').find_map(|part| {
         let (key, value) = part.trim().split_once('=')?;
         (key == name).then(|| value.to_owned())
     })
-}
-
-/// Compares two strings without stopping at the first differing byte.
-fn constant_time_eq(a: &str, b: &str) -> bool {
-    let (a, b) = (a.as_bytes(), b.as_bytes());
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b) {
-        diff |= x ^ y;
-    }
-    diff == 0
 }

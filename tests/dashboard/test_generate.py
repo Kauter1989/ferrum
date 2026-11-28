@@ -1,0 +1,512 @@
+"""Generator tests: plan parsing, lifecycle, coverage, crates, output.
+
+Every test cites the Stage 30 criterion it verifies (ferrum-analyze reads
+these comments). Fixtures live in conftest.py; the git fixture is a real
+repository, so ancestry and grep run against real git.
+"""
+
+import json
+import re
+
+import crate_graph
+import generate
+
+# covers 30.1-a
+
+
+def test_plan_parses_to_the_exact_fixture():
+    parsed = generate.parse_plan(generate_target_plan())
+    stages = parsed["stages"]
+    assert [s["id"] for s in stages] == ["1", "2", "3", "4", "5", "6", "7", "8", "10", "F1"]
+    assert [s["heading_status"] for s in stages] == [
+        "done",
+        "progress",
+        "planned",
+        "unknown",
+        "progress",
+        "progress",
+        "progress",
+        "done",
+        "progress",
+        "done",
+    ]
+    assert stages[1]["title"].startswith("Mixed")
+    story = stages[1]["stories"][0]
+    assert story["id"] == "2.1"
+    assert story["text"] == "As a **user**, I want mixing."
+    criteria = story["criteria"]
+    assert [c["id"] for c in criteria] == ["2.1-a", "2.1-b"]
+    assert criteria[0]["done_marker"] is True
+    assert criteria[0]["prs"] == [5]
+    assert criteria[0]["text"] == "First done. ✅ (PR 5)"
+    assert criteria[1]["done_marker"] is True
+    assert criteria[1]["prs"] == []
+    assert stages[1]["stories"][1]["criteria"][0]["prs"] == [6]
+
+
+def generate_target_plan():
+    from conftest import PLAN_TARGET
+
+    return PLAN_TARGET
+
+
+# covers 30.1-a
+
+
+def test_implementation_tables_are_not_stories():
+    """Stage 26's task 26.4 is an Implementation row, not a story (real-plan bug)."""
+    parsed = generate.parse_plan(generate_target_plan())
+    stage6 = next(s for s in parsed["stages"] if s["id"] == "6")
+    assert [st["id"] for st in stage6["stories"]] == ["6.1"]
+    assert len(stage6["stories"][0]["criteria"]) == 1
+    assert not any("Stage 6" in w for w in parsed["warnings"])
+
+
+# covers 30.1-a
+
+
+def test_bullet_criteria_parse():
+    """Stages 26/F1/F2 write criteria as bullets, not a story table."""
+    parsed = generate.parse_plan(generate_target_plan())
+    stage8 = next(s for s in parsed["stages"] if s["id"] == "8")
+    assert [st["id"] for st in stage8["stories"]] == ["8.1"]
+    criteria = stage8["stories"][0]["criteria"]
+    assert [c["id"] for c in criteria] == ["8.1-a", "8.1-b"]
+    assert criteria[0]["text"] == "First bullet criterion with a continuation line. ✅"
+    assert criteria[0]["done_marker"] is True
+    assert criteria[1]["done_marker"] is True  # via the Verification table
+
+
+# covers 30.1-a
+
+
+def test_struck_criteria_are_excluded():
+    parsed = generate.parse_plan(generate_target_plan())
+    ids = [c["id"] for s in parsed["stages"] for st in s["stories"] for c in st["criteria"]]
+    assert "2.1-c" not in ids
+
+
+# covers 30.1-a
+
+
+def test_letter_and_draft_stages_parse():
+    parsed = generate.parse_plan(generate_target_plan())
+    f1 = next(s for s in parsed["stages"] if s["id"] == "F1")
+    assert f1["stories"][0]["criteria"][0]["id"] == "F1.1-a"
+    drafts = parsed["roadmap"]["drafts"]
+    assert [d["id"] for d in drafts] == ["9"]
+    assert drafts[0]["heading_status"] == "planned"
+    assert drafts[0]["stories"][0]["id"] == "9.1"
+    assert parsed["roadmap"]["next"] == [{"n": "1", "what": "Release things", "kind": "release", "why": "soon"}]
+    assert parsed["roadmap"]["backlog"] == ["A backlog item."]
+
+
+# covers 30.1-a
+
+
+def test_idless_stages_parse_as_story_units():
+    parsed = generate.parse_plan(generate_target_plan())
+    story = parsed["stages"][0]["stories"][0]
+    assert len(story["criteria"]) == 1
+    unit = story["criteria"][0]
+    assert unit["kind"] == "story"
+    assert unit["id"] == "1.1"
+    assert unit["text"] == "Dependencies point inward."
+    assert unit["done_marker"] is False
+
+
+# covers 30.1-b
+
+
+def test_lifecycle_buckets_on_a_fixture_repository(repo_data):
+    assert repo_data["meta"]["release_tag"] == "v0.1.0"
+    expected = {
+        "1": ("released", {"released": 1}),
+        "2": ("develop", {"released": 1, "develop": 2}),
+        "3": ("planned", {"planned": 1}),
+        "4": ("unknown", {"unknown": 1}),
+        "5": ("unknown", {"unknown": 1}),
+        "6": ("progress", {"progress": 1}),
+        "7": ("released", {"released": 1}),
+        "8": ("released", {"released": 2}),
+        "10": ("released", {"released": 1}),
+        "F1": ("develop", {"develop": 1}),
+    }
+    for stage in repo_data["stages"]:
+        bucket, counts = expected[stage["id"]]
+        assert stage["bucket"] == bucket, stage["id"]
+        for key, value in counts.items():
+            assert stage["counts"][key] == value, (stage["id"], key)
+        assert sum(stage["counts"].values()) == len(generate.stage_units(stage))
+    criteria = {c["id"]: c for s in repo_data["stages"] for c in generate.stage_units(s)}
+    assert criteria["2.1-a"]["bucket"] == "released"
+    assert criteria["2.1-b"]["bucket"] == "develop"
+    assert criteria["2.2-a"]["bucket"] == "develop"
+    assert criteria["3.1-a"]["bucket"] == "planned"
+    assert criteria["6.1-a"]["bucket"] == "progress"
+
+
+# covers 30.1-b
+
+
+def test_lagging_heading_criterion_is_develop(repo_data):
+    stage2 = next(s for s in repo_data["stages"] if s["id"] == "2")
+    assert stage2["heading_status"] == "progress"
+    assert all(u["done"] for u in generate.stage_units(stage2))
+    assert stage2["bucket"] == "develop"
+    assert any("Stage 2" in w and "lags" in w for w in repo_data["meta"]["warnings"])
+
+
+# covers 30.1-b
+
+
+def test_stage_bucket_priority_and_counts():
+    assert generate.stage_aggregate(["released", "develop"])[0] == "develop"
+    assert generate.stage_aggregate(["released", "progress"])[0] == "progress"
+    assert generate.stage_aggregate(["develop", "progress"])[0] == "progress"
+    assert generate.stage_aggregate(["unknown", "progress"])[0] == "unknown"
+    assert generate.stage_aggregate([])[0] == "unknown"
+    assert generate.stage_aggregate(["planned", "unknown"])[0] == "unknown"
+    assert generate.stage_aggregate(["released", "released"])[0] == "released"
+    assert generate.stage_aggregate(["planned"])[0] == "planned"
+    bucket, counts = generate.stage_aggregate(["released", "develop", "develop"])
+    assert bucket == "develop"
+    assert counts == {"released": 1, "develop": 2, "progress": 0, "planned": 0, "unknown": 0}
+
+
+# covers 30.1-b
+
+
+def test_no_release_tag_makes_done_items_develop(plan_repo):
+    root_sha = generate.Git(plan_repo).run("rev-list", "--max-parents=0", "develop").strip()
+    data = generate.build_data(plan_repo, ref="develop", release_ref=root_sha)
+    assert data["meta"]["release_tag"] is None
+    stage1 = next(s for s in data["stages"] if s["id"] == "1")
+    assert stage1["bucket"] == "develop"
+    assert any("no release tag" in w for w in data["meta"]["warnings"])
+
+
+# covers 30.1-b
+
+
+def test_issue_body_mentions_are_not_merges(plan_repo):
+    """A commit body mentioning (#99) is not PR #99's merge (review finding)."""
+    git = generate.Git(plan_repo)
+    tag_sha = git.run("rev-parse", "v0.1.0^{commit}").strip()
+    ancestry = generate.pr_ancestry(git, "develop", tag_sha, [99, 6])
+    assert ancestry[99] == {"target": False, "tag": False}
+    assert ancestry[6] == {"target": True, "tag": False}
+
+
+# covers 30.1-b
+
+
+def test_release_only_merge_counts_for_the_tag(repo_data):
+    """PR #7 merged into main before the tag; develop never received it."""
+    criteria = {c["id"]: c for s in repo_data["stages"] for c in generate.stage_units(s)}
+    assert criteria["7.1-a"]["bucket"] == "released"
+    assert criteria["7.1-a"]["done"] is False
+
+
+# covers 30.1-c
+
+
+def test_coverage_follows_the_analyze_convention(repo_data):
+    criteria = {c["id"]: c for s in repo_data["stages"] for c in generate.stage_units(s)}
+    assert criteria["2.1-a"]["tests"] == ["crates/x/tests/t.rs"]
+    assert criteria["2.1-b"]["levels"] == ["visual"]
+    assert criteria["3.1-a"]["tests"] == []
+    assert criteria["3.1-a"]["levels"] == []
+
+
+# covers 30.1-d
+
+
+def test_crate_graph_and_layering_violations(repo_data):
+    crates = {c["name"]: c for c in repo_data["crates"]}
+    assert set(crates) == {"ferrum-domain", "ferrum-io", "ferrum-app", "ferrum-agent"}
+    assert crates["ferrum-domain"]["description"] == "Domain."
+    assert crates["ferrum-io"]["deps"] == ["ferrum-domain"]
+    assert crates["ferrum-domain"]["violations"] == ["ferrum-domain → ferrum-io (layering: dependencies point inward)"]
+    assert crates["ferrum-app"]["violations"] == ["ferrum-app → wgpu (ferrum-app must compile without wgpu/egui)"]
+    assert crates["ferrum-io"]["violations"] == []
+    agent_rule = "ferrum-agent depends only on domain/io/engines/radiomics/render, without wgpu/egui"
+    assert crates["ferrum-agent"]["violations"] == [
+        f"ferrum-agent → egui ({agent_rule})",
+        f"ferrum-agent → ferrum-app ({agent_rule})",
+    ]
+    rules = {(v["from"], v["to"]) for v in repo_data["layering_violations"]}
+    assert rules == {
+        ("ferrum-domain", "ferrum-io"),
+        ("ferrum-app", "wgpu"),
+        ("ferrum-agent", "egui"),
+        ("ferrum-agent", "ferrum-app"),
+    }
+
+
+# covers 30.1-d
+
+
+def test_fallback_parses_the_workspace_toml(plan_repo):
+    crates = {c["name"]: c for c in crate_graph.crates_from_toml(plan_repo)}
+    assert set(crates) == {"ferrum-domain", "ferrum-io", "ferrum-app", "ferrum-agent"}
+    assert crates["ferrum-app"]["deps"] == ["ferrum-domain", "wgpu"]
+    assert crates["ferrum-agent"]["deps"] == ["egui", "ferrum-app"]
+    assert crates["ferrum-domain"]["description"] == "Domain."
+
+
+# covers 30.1-d
+
+
+def test_changed_crates_are_marked(repo_data):
+    crates = {c["name"]: c for c in repo_data["crates"]}
+    assert crates["ferrum-io"]["changed_since_release"] is True
+    assert crates["ferrum-domain"]["changed_since_release"] is False
+    assert crates["ferrum-app"]["changed_since_release"] is False
+    assert crates["ferrum-agent"]["changed_since_release"] is False
+
+
+# covers 30.1-e
+
+
+def test_output_is_byte_identical_across_runs(plan_repo):
+    first = generate.build_data(plan_repo, ref="develop", release_ref="main")
+    second = generate.build_data(plan_repo, ref="develop", release_ref="main")
+    dump = lambda d: json.dumps(d, sort_keys=True, ensure_ascii=False)  # noqa: E731
+    assert dump(first) == dump(second)
+    assert first["meta"]["generated_at"] == second["meta"]["generated_at"]
+
+
+# covers 30.1-e
+
+
+def test_output_holds_no_machine_paths(repo_data):
+    text = json.dumps(repo_data, ensure_ascii=False)
+    assert not re.search(r"[A-Za-z]:\\[A-Za-z0-9_]|/home/[A-Za-z0-9_]|/Users/[A-Za-z0-9_]|/mnt/[A-Za-z0-9_]", text)
+    assert repo_data["meta"]["repo_url"] == "https://github.com/test/repo"
+
+
+# covers 30.1-f
+
+
+def test_unknown_marker_warns_and_marks_unknown():
+    parsed = generate.parse_plan(generate_target_plan())
+    stage4 = next(s for s in parsed["stages"] if s["id"] == "4")
+    assert stage4["heading_status"] == "unknown"
+    assert any("Stage 4" in w for w in parsed["warnings"])
+
+
+# covers 30.1-f
+
+
+def test_empty_criteria_cell_warns(repo_data):
+    stage5 = next(s for s in repo_data["stages"] if s["id"] == "5")
+    assert stage5["bucket"] == "unknown"
+    assert any("Stage 5" in w and "empty" in w for w in repo_data["meta"]["warnings"])
+
+
+# covers 30.1-g
+
+
+def test_ci_runs_the_dashboard_tests():
+    """The python-lint job must install pytest and run tests/dashboard."""
+    from pathlib import Path
+
+    ci = (Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert "pipx install pytest" in ci
+    assert "pytest tests/dashboard" in ci
+
+
+# covers 30.1-b
+
+
+def test_done_at_rules():
+    unit = {"kind": "criterion", "id": "1.1-a", "text": "", "done_marker": False, "prs": [7]}
+    assert generate.done_at(unit, "done", {}) is True
+    assert generate.done_at(unit, "progress", {}) is False
+    assert generate.done_at(unit, "progress", {7: True}) is True
+    assert generate.done_at(unit, "progress", {7: False}) is False
+    marked = {**unit, "done_marker": True}
+    assert generate.done_at(marked, "planned", {}) is True
+
+
+# covers 30.1-b
+
+
+def test_item_bucket_rules():
+    assert generate.item_bucket(True, True, "done") == "released"
+    assert generate.item_bucket(False, True, "progress") == "develop"
+    assert generate.item_bucket(False, False, "progress") == "progress"
+    assert generate.item_bucket(False, False, "planned") == "planned"
+    assert generate.item_bucket(False, False, "unknown") == "unknown"
+
+
+# covers 30.1-b
+
+
+def test_tag_only_pr_citation_counts_for_the_tag(repo_data):
+    """A PR cited only at the tag (edited away at target) still marks done@tag.
+
+    Stage 10's criterion cites PR 8 at the tag (merged before it) and loses
+    the citation at target; the ancestry universe must union both plans.
+    """
+    stage10 = next(s for s in repo_data["stages"] if s["id"] == "10")
+    unit = generate.stage_units(stage10)[0]
+    assert unit["id"] == "10.1-a"
+    assert unit["bucket"] == "released"
+    assert unit["done"] is False  # not done at target: citation removed, no marker
+
+
+# covers 30.1-d
+
+
+def test_same_tier_pair_allowed_and_other_same_tier_flagged():
+    crates = [
+        {"name": "ferrum-render", "description": "", "deps": ["ferrum-processing"]},
+        {"name": "ferrum-processing", "description": "", "deps": []},
+        {"name": "ferrum-io", "description": "", "deps": ["ferrum-render"]},
+    ]
+    pairs = {(v["from"], v["to"]) for v in crate_graph.check_layering(crates)}
+    assert ("ferrum-render", "ferrum-processing") not in pairs  # the documented same-tier pair
+    assert ("ferrum-io", "ferrum-render") in pairs  # same tier, not allowed → inward rule
+
+
+# covers 30.1-a
+
+
+def test_cells_keep_last_cell_without_trailing_pipe():
+    assert generate._cells("| 1.1 | story | criteria") == ["1.1", "story", "criteria"]
+    assert generate._cells("| 1.1 | story | criteria |") == ["1.1", "story", "criteria"]
+    assert generate._cells("| a | b\\|") == ["a", "b|"]  # escaped content pipe, no delimiter
+
+
+# covers 30.1-a
+
+
+def test_bullet_criteria_strip_struck_spans():
+    """A struck ✅ or (PR n) inside a bullet body must not count (table path parity)."""
+    body = "**Criteria**\n\n- [8.1-a] shipped ~~✅~~ (reopened) ~~(PR 6)~~.\n"
+    unit = generate._parse_bullet_criteria("8", body)[0]["criteria"][0]
+    assert unit["done_marker"] is False
+    assert unit["prs"] == []
+    assert "✅" not in unit["text"] and "PR 6" not in unit["text"]
+
+
+# covers 30.1-e
+
+
+def test_repo_url_rejects_credential_and_local_remotes(tmp_path):
+    import subprocess
+
+    def run(*args, check=True):
+        subprocess.run(["git", "-C", str(tmp_path), *args], check=check, capture_output=True)  # noqa: S603, S607 - git on PATH, no shell
+
+    run("init", "-q")
+    git = generate.Git(tmp_path)
+    for bad in (
+        "https://user:token@github.com/x/y.git",
+        "/mnt/e/projects/ferrum",
+        "https://gitlab.com/x/y.git",
+        "git@github.com:tok:sec@host/x",
+        "git@github.com:x/y/z.git",
+    ):
+        run("remote", "remove", "origin", check=False)
+        run("remote", "add", "origin", bad)
+        warnings = []
+        assert generate._repo_url(git, warnings) is None
+        assert warnings and "repo_url omitted" in warnings[0]
+        assert "token" not in warnings[0] and "/mnt/" not in warnings[0] and "sec" not in warnings[0]
+    run("remote", "remove", "origin")
+    run("remote", "add", "origin", "git@github.com:x/y.git")
+    assert generate._repo_url(git, []) == "https://github.com/x/y"
+    run("remote", "remove", "origin")
+    run("remote", "add", "origin", "ssh://git@github.com/x/y.git")
+    assert generate._repo_url(git, []) == "https://github.com/x/y"
+    run("remote", "remove", "origin")
+    assert generate._repo_url(git, []) is None  # no origin → None
+
+
+# covers 30.1-b
+
+
+def test_squash_merge_subject_counts_for_ancestry(tmp_path):
+    """The `(#N)$` subject arm (squash merges) must count, not only merge commits."""
+    import subprocess
+
+    def run(*args):
+        subprocess.run(["git", "-C", str(tmp_path), *args], check=True, capture_output=True)  # noqa: S603, S607 - git on PATH, no shell
+
+    run("init", "-q", "-b", "main")
+    run("config", "user.email", "t@example.com")
+    run("config", "user.name", "t")
+    run("config", "commit.gpgsign", "false")
+    run("commit", "--allow-empty", "-m", "init")
+    run("commit", "--allow-empty", "-m", "fix: squash merge (#9)")
+    git = generate.Git(tmp_path)
+    head = git.run("rev-parse", "HEAD").strip()
+    ancestry = generate.pr_ancestry(git, head, head, [9])
+    assert ancestry[9]["target"] is True
+    assert ancestry[9]["tag"] is True
+
+
+# covers 30.1-e
+
+
+def test_output_byte_identical_across_hash_seeds(plan_repo, tmp_path):
+    """main()'s written data.json is byte-identical across PYTHONHASHSEED values."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    script = Path(__file__).resolve().parents[2] / "scripts" / "dashboard" / "generate.py"
+    payloads = []
+    for seed in ("0", "12345"):
+        out = tmp_path / f"site{seed}"
+        env = {**os.environ, "PYTHONHASHSEED": seed}
+        subprocess.run(  # noqa: S603 - python on PATH, no shell
+            [
+                sys.executable,
+                str(script),
+                "--root",
+                str(plan_repo),
+                "--ref",
+                "develop",
+                "--release-ref",
+                "main",
+                "--out",
+                str(out),
+            ],
+            check=True,
+            capture_output=True,
+            env=env,
+        )
+        payloads.append((out / "data.json").read_bytes())
+    assert payloads[0] == payloads[1]
+
+
+# covers 30.1-f
+
+
+def test_prose_only_stage_warns(tmp_path):
+    """A stage that parses to zero units warns instead of silently defaulting (L37)."""
+    import subprocess
+
+    def run(*args):
+        subprocess.run(["git", "-C", str(tmp_path), *args], check=True, capture_output=True)  # noqa: S603, S607 - git on PATH, no shell
+
+    run("init", "-q", "-b", "main")
+    run("config", "user.email", "t@example.com")
+    run("config", "user.name", "t")
+    run("config", "commit.gpgsign", "false")
+    (tmp_path / "dev_plan.md").write_text(
+        "# Plan\n\n## Stage 99 — Prose ✅\n\nNo table here.\n", encoding="utf-8", newline="\n"
+    )
+    (tmp_path / "Cargo.toml").write_text("[workspace]\nmembers = []\n", encoding="utf-8", newline="\n")
+    run("add", "-A")
+    run("commit", "-m", "init")
+    run("tag", "v0.1.0")
+    data = generate.build_data(tmp_path, ref="main", release_ref="main")
+    assert any("Stage 99" in w and "no parseable" in w for w in data["meta"]["warnings"])
+    stage99 = next(s for s in data["stages"] if s["id"] == "99")
+    assert stage99["bucket"] == "unknown"

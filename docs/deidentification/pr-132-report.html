@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FERRUM · PR #132 — финальный отчёт: DICOM de-identification Basic Profile (Stage 31 PR 1, #75)</title>
+<style>
+  :root { --bg:#fbfbfd; --fg:#1d1f26; --muted:#5b6070; --line:#e2e5ec; --accent:#1f6feb; --ok:#1a7f37; --warn:#9a6700; --bad:#b42318; --card:#fff; --code:#f3f4f7; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#12141a; --fg:#e6e7ea; --muted:#a2a8b6; --line:#2a2e38; --accent:#6ba6ff; --ok:#4ac26b; --warn:#d4a72c; --bad:#ff7b72; --card:#191c23; --code:#1f232c; } }
+  * { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.6 -apple-system,"Segoe UI",Roboto,Arial,sans-serif; }
+  main { max-width:1080px; margin:0 auto; padding:40px 24px 80px; }
+  h1 { font-size:29px; line-height:1.25; margin:0 0 8px; letter-spacing:-0.02em; }
+  h2 { font-size:21px; margin:44px 0 14px; padding-bottom:8px; border-bottom:1px solid var(--line); }
+  .sub { color:var(--muted); margin:0 0 24px; }
+  .meta { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:28px; }
+  .pill { font-size:13px; padding:3px 10px; border-radius:999px; border:1px solid var(--line); background:var(--card); color:var(--muted); }
+  .pill.ok { color:var(--ok); border-color:color-mix(in srgb,var(--ok) 40%,transparent); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px 20px; margin:14px 0; }
+  code,.mono { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:13px; }
+  code { background:var(--code); padding:1px 5px; border-radius:4px; }
+  table { width:100%; border-collapse:collapse; margin:14px 0; font-size:14px; }
+  th,td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; font-size:13px; text-transform:uppercase; letter-spacing:.04em; }
+  .tag { font-size:12px; font-weight:600; padding:2px 7px; border-radius:5px; white-space:nowrap; }
+  .t-fixed { background:color-mix(in srgb,var(--ok) 16%,transparent); color:var(--ok); }
+  .t-should { background:color-mix(in srgb,var(--warn) 18%,transparent); color:var(--warn); }
+  .t-nit { background:color-mix(in srgb,var(--muted) 16%,transparent); color:var(--muted); }
+  .grid { display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); }
+  .stat { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px; }
+  .stat b { display:block; font-size:26px; line-height:1.2; } .stat span { color:var(--muted); font-size:13px; }
+  ul { padding-left:22px; } li { margin:4px 0; }
+  .note { border-left:3px solid var(--accent); padding-left:14px; color:var(--muted); margin:14px 0; }
+  footer { margin-top:56px; padding-top:18px; border-top:1px solid var(--line); color:var(--muted); font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+<h1>PR #132 — DICOM de-identification: PS3.15 Basic Profile</h1>
+<p class="sub">Финальный отчёт: Stage 31 PR 1 (issue #75 P2, критерий 31.1–31.2). FERRUM, ноябрь 2026. Описывает head SHA <code>1afd41cd0fdad0c0734dce50e0d341a90976e45a</code>. Отчёт живёт в самом PR и правится по итогам ревью; при мердже остаётся в последней версии (правило пользователя).</p>
+<div class="meta">
+  <span class="pill">Stage 31 PR 1 · #75 · 31.1–31.2</span>
+  <span class="pill">size L (данные-транспозиция)</span>
+  <span class="pill ok">G1+G2 утверждены</span>
+  <span class="pill ok">preflight: all checks passed</span>
+  <span class="pill ok">privacy: mutation-proven</span>
+</div>
+<div class="grid">
+  <div class="stat"><b>653</b><span>атрибута Table E.1-1 (официальный стандарт)</span></div>
+  <div class="stat"><b>6</b><span>опций профиля</span></div>
+  <div class="stat"><b>13/13</b><span>deid тестов + fixture 1115</span></div>
+  <div class="stat"><b>0</b><span>утечек идентификаторов</span></div>
+</div>
+
+<h2>1. Что и зачем</h2>
+<p>FERRUM получает стандартную де-идентификацию DICOM: <strong>PS3.15 Annex E Basic Application Level Confidentiality Profile</strong>. Таблица E.1-1 — <strong>данные, не код</strong>: 653 атрибута + 4 group-range строки, транскрибированы из официального стандарта (PS3.15 <strong>2026d</strong>, chapter_E.html), сверены с <code>dicom_dictionary_std</code>. Движок применяет действия стандарта (D/Z/X/U/C/K + compound-коды), рекурсивно в SQ, удаляет private/curve/overlay groups, записывает <code>PatientIdentityRemoved=YES</code> + профиль/опции (CID 7050). 6 опций; default — консервативный Basic Profile.</p>
+<div class="note">Privacy-critical: идентификаторы удаляются (mutation-proven — отключение PatientName dummy / odd-group removal / descriptor cleaning / удаление строки таблицы каждое краснит тест). Pixel data kept (Clean Pixel Data — PR 2). UID reuse export::uid_from (один derivation).</div>
+
+<h2>2. Код-карта</h2>
+<p class="sub">Pinned к head SHA <code>1afd41c</code>.</p>
+<table>
+  <tr><th>Утверждение</th><th>Реализация</th></tr>
+  <tr><td>Table E.1-1 data (653 атрибута + 4 wildcard, официальный стандарт)</td><td class="mono">crates/ferrum-io/src/dicom/deid_table.csv</td></tr>
+  <tr><td>Action / Opt коды (E.1-1a + 6 опций, CID 7050)</td><td class="mono">crates/ferrum-io/src/dicom/deid.rs:71,147</td></tr>
+  <tr><td>ProfileOptions (6 флагов, default none) + enable (unknown refuse)</td><td class="mono">crates/ferrum-io/src/dicom/deid.rs:207,226</td></tr>
+  <tr><td>rules() / parse_table (include_str! + OnceLock)</td><td class="mono">crates/ferrum-io/src/dicom/deid.rs:290,297</td></tr>
+  <tr><td>UidMap / uid (reuse export::uid_from)</td><td class="mono">crates/ferrum-io/src/dicom/deid.rs:334,353</td></tr>
+  <tr><td>date_offset (per-patient, sha2) + resolve (option overrides)</td><td class="mono">crates/ferrum-io/src/dicom/deid.rs:375,401</td></tr>
+  <tr><td>deidentify + apply_to_element/sequence (рекурсия, depth-cap)</td><td class="mono">crates/ferrum-io/src/dicom/deid.rs:448,465,490</td></tr>
+  <tr><td>removed_by_group_rule (private/curve/overlay/0004)</td><td class="mono">crates/ferrum-io/src/dicom/deid.rs:531</td></tr>
+  <tr><td>clean_or_shift / shift_da / clean_text</td><td class="mono">crates/ferrum-io/src/dicom/deid.rs:592,615,668</td></tr>
+  <tr><td>add_method_attributes (YES + CID7050 + MODIFIED)</td><td class="mono">crates/ferrum-io/src/dicom/deid.rs:763</td></tr>
+  <tr><td>Тесты 31.1-a…d / 31.2-a…b (13) + pinned fixture (1115)</td><td class="mono">crates/ferrum-io/tests/deid.rs; tests/deid/fixture.rs</td></tr>
+</table>
+
+<h2>3. Покрытие критериев</h2>
+<table>
+  <tr><th>Критерий</th><th>Тест</th><th>Статус</th></tr>
+  <tr><td>31.1-a правила из committed Table E.1-1, generator/table agreement</td><td class="mono">table_generator_and_fixture_agree (generated==CSV==fixture, keywords==dictionary, 653)</td><td><span class="tag t-fixed">✅</span></td></tr>
+  <tr><td>31.1-b output matches action каждой строки</td><td class="mono">every_row_matches_its_action (D/Z/X/U по всем); private/curve/overlay removed; nested protected</td><td><span class="tag t-fixed">✅</span></td></tr>
+  <tr><td>31.1-c UID consistent within run, reuse export derivation</td><td class="mono">uids_are_consistent_within_a_run; retain_uids_keeps</td><td><span class="tag t-fixed">✅</span></td></tr>
+  <tr><td>31.1-d kept attributes + pixels read back</td><td class="mono">kept_attributes_and_pixels_read_back (через DicomRepository)</td><td><span class="tag t-fixed">✅</span></td></tr>
+  <tr><td>31.2-a опции меняют свои строки; dates modified</td><td class="mono">each_option_changes_exactly_its_rows (6); retain_dates_modified (DA/DT shift, TM kept)</td><td><span class="tag t-fixed">✅</span></td></tr>
+  <tr><td>31.2-b unknown option refused, default conservative</td><td class="mono">unknown_option_is_refused_and_default_is_conservative; method_attributes</td><td><span class="tag t-fixed">✅</span></td></tr>
+</table>
+
+<h2>4. Верификация</h2>
+<ul>
+  <li>Полный preflight (WSL Ubuntu-24.04, CI-порядок + GPU parity + analyze.py): <code>all checks passed</code> на head <code>83ee862</code> (код), docs-фикс <code>1afd41c</code>.</li>
+  <li>ferrum-io: deid 13/13, lib 85/85, dicom_export 4, dicom_integration 23, view_state 4. Регрессий нет.</li>
+  <li>fmt/clippy <code>--workspace -D warnings</code> чисто; тесты генерируют DICOM в run time, данные не коммитятся.</li>
+  <li><strong>Mutation-proven privacy</strong>: M1 PatientName dummy→DOE^JOHN, M2 odd-group removal off, M3 clean_text no-op, M4 удаление строки AccessionNumber — все RED, restore→green.</li>
+  <li>Table accuracy: spot-check ~20 строк против официального PS3.15 2026d (web_fetch) — совпадают; keywords всех 653 тегов == dictionary.</li>
+</ul>
+
+<h2>5. История ревью</h2>
+<div class="card">
+  <p><strong>Раунд 1</strong> (code + security, агент <code>review-deid1</code>, выполнение + мутации): вердикт <span class="tag t-fixed">approve</span> — 0 blocking, 1 should-fix (docs), 4 nits + size process-note. <strong>Privacy correctness подтверждена</strong> (утечек нет), таблица точна, тесты meaningful.</p>
+  <table>
+    <tr><th>Находка</th><th>Исправление</th><th>Статус</th></tr>
+    <tr><td><span class="tag t-should">should</span> спек-пример 31.1-d «age/sex kept under Basic Profile» неверен (стандарт age=X, sex=Z; kept под Retain Patient Characteristics)</td><td>текст критерия исправлен; код уже следовал стандарту</td><td><span class="tag t-fixed">fixed</span></td></tr>
+    <tr><td><span class="tag t-nit">nit</span> PatientName Z vs стандарт D (outcome идентичен)</td><td>валидация оракулом PR 3</td><td><span class="tag t-nit">PR 3</span></td></tr>
+    <tr><td><span class="tag t-nit">nit</span> clean_descriptors conservative (dashed-даты, identifiers вне 12 source-тегов)</td><td>документированное ограничение; оракул PR 3 оценит</td><td><span class="tag t-nit">PR 3</span></td></tr>
+    <tr><td><span class="tag t-nit">nit</span> combined-options precedence (C&gt;K) не тестирован per-option</td><td>консервативен (clean вместо keep), утечки нет; оракул PR 3</td><td><span class="tag t-nit">PR 3</span></td></tr>
+    <tr><td><span class="tag t-nit">process</span> branch 3929 &gt; L(3500) — hook E4 size gate</td><td>2237 строк — транспозиция стандарта (CSV+fixture), weighed code ~1423 (L); FERRUM_SKIP_PREPUSH с reason после manual preflight</td><td><span class="tag t-fixed">justified</span></td></tr>
+  </table>
+</div>
+
+<h2>6. Out of scope / notes</h2>
+<ul>
+  <li>PR 2: Clean Pixel Data masking + masked renders (+ OCR bridge).</li>
+  <li>PR 3: pydicom/deid + RSNA/CTP oracle diff (финальная валидация действий); export/agent integration; File Meta replacement.</li>
+  <li>4 стандартных опции (Safe Private, Full Dates, Clean Structured Content, Clean Graphics) вне scope PR 1 (по спеку 31.2-a — 6 опций).</li>
+</ul>
+
+<footer>FERRUM · Stage 31 PR 1 · #75 · head SHA <code>1afd41cd0fdad0c0734dce50e0d341a90976e45a</code> · отчёт коммичен в PR и правится по итогам ревью пользователя.</footer>
+</main>
+</body>
+</html>

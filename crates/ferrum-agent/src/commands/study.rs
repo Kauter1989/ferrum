@@ -36,8 +36,8 @@ pub fn scan(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     Ok(Output::new(json!({ "series": series })))
 }
 
-/// One entry of `study scan`: a series, or a volume of one.
-fn scan_entry(config: &AgentConfig, s: &SeriesDescriptor) -> Value {
+/// One entry of `study scan` (and `pacs query`): a series, or a volume of one.
+pub(super) fn scan_entry(config: &AgentConfig, s: &SeriesDescriptor) -> Value {
     let mut entry = json!({
         "series": series_key(config, &s.id),
         "format": s.format,

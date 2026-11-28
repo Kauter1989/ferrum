@@ -856,6 +856,331 @@ that says so instead of editing the old one.
 - **Rule:** Read the annotation of a cancelled job before calling it
   transient; a label that worked last release may be retired today.
 
+### L45 — The preflight distro's lavapipe crashed at thread exit (2026-11, Stage 23 field)
+
+- **Symptom:** `every_view_mode_renders_the_volume` passed all six scenes,
+  then SIGSEGV in `__nptl_deallocate_tsd` as the test thread exited; the
+  suite was red on a machine where CI is green.
+- **Root cause:** WSL Ubuntu 22.04 ships mesa 23.2.1, whose lavapipe crashes
+  in TLS teardown; the kisak PPA dropped jammy and noble's mesa needs
+  GLIBC_2.38. The crash was environmental, not FERRUM's.
+- **Fix:** imported an Ubuntu 24.04 WSL distro (root, no sudo password;
+  static `/etc/resolv.conf` because WSL DNS was flaky) — mesa 25.2.8 matches
+  CI's ubuntu-latest; preflight green there. It is now the preflight/field
+  platform.
+- **Guard:** run preflight in a distro that matches CI, not the oldest WSL
+  on the machine; a crash in libc/mesa teardown after all assertions passed
+  is the environment until proven otherwise.
+- **Rule:** `wsl.exe` mangles inner quotes and pipes — write bash to a
+  script file (LF) and run `wsl -d <distro> -u root -e bash <file>`.
+
+### L46 — WSL reports per-process VRAM as [N/A] (2026-11, Stage 23 field)
+
+- **Symptom:** every per-process GPU reading in the field run was 0 MiB
+  while the card clearly held the engines; the release/unload measurements
+  were meaningless.
+- **Root cause:** WSL's `nvidia-smi --query-compute-apps` lists the PIDs
+  but `used_memory` is `[N/A]`; the bridge's `resident_mib` (same source)
+  reports null too.
+- **Fix:** measure the card's total (`memory.used`) and take deltas: one
+  engine active at a time in phase A, holder level as the base in phase B.
+  The numbers came out clean (nnInteractive 3.6–4.1 GB, TS 1.8–2.3 GB next
+  to the holder).
+- **Guard:** a footprint of 0 for a running engine is a measurement bug,
+  not a result; assert the holder's card delta > 0 before trusting phase B.
+
+### L47 — llama.cpp's CUDA runtime is a separate release asset (2026-11, Stage 23 field)
+
+- **Symptom:** the "resident holder" measured 0 MiB on the card; phase B
+  ran, but nothing was shared — `llama-server` had fallen back to CPU.
+- **Root cause:** the ubuntu-cuda tarball ships `libggml-cuda.so` but not
+  `libcudart`/`libcublas`; those live in the `cudart-llama-…` asset of the
+  same build. Without them the backend fails to load **silently**. Also:
+  the "latest" release is a placeholder (`nightly-tag.txt` only) — walk the
+  recent builds, and the naming changed from zip to tar.gz.
+- **Fix:** download both assets, flatten the libraries next to the binary,
+  and `ldd libggml-cuda.so | grep "not found"` before starting; the card
+  delta then showed 2325 MiB.
+- **Guard:** a GPU server that allocates no VRAM is on the CPU — check the
+  card delta and the backend's dependencies, not the health endpoint.
+
+### L48 — A failure counter whose glob matched nothing (2026-11, Stage 23 field)
+
+- **Symptom:** the field script printed "20/20 ok, 0 failures" for a phase
+  that had a failed call (`engine_unavailable` timeout).
+- **Root cause:** result files are `NN-<step>.json`, but the failure glob
+  was `a-c[0-9][0-9]-*.json` — no file ever matched, so the counter was
+  vacuous (the L22 family: a check that cannot fail).
+- **Fix:** glob `*-"${PFX}"c[0-9][0-9]-*.json`; the phase's failures are
+  also read by eye from the step log before the summary is trusted.
+- **Guard:** every aggregate check in a throw-away script gets one
+  deliberate failure in rehearsal, or its glob is matched against a real
+  filename first.
+
+### L49 — The checked path was not the opened path (2026-11, Stage F2 / #82)
+
+- **Symptom:** The read-root fix passed its own tests, yet review found
+  two escapes of one class. (1) `check_source` canonicalised the OS-order
+  resolution of the raw argument but returned the lexical spelling: a
+  link pointing *deeper* than its spelling plus a `..` behind it passed
+  the check while the reader opened a path outside the root. (2) The
+  manifest re-check called `check_source` but discarded its return value:
+  `verify_sources`, the cache stamps and the DICOM export opened the raw
+  manifest spelling, where the OS resolves `..` in filesystem order — a
+  crafted `workspace.json` with `link/../secret.nii` read outside the
+  root (size oracle, and identifiers into an exported SEG/SR when the
+  hashes matched).
+- **Root cause:** A boundary check that transforms the path creates two
+  spellings — the checked one and the one downstream opens. Every
+  consumer that opens a different spelling reopens the boundary. Lexical
+  `..` resolution and OS-order resolution diverge exactly at symlinks,
+  which is the thing the check exists for.
+- **Why it mattered:** The read roots are the operator's boundary for
+  patient data. Both escapes were introduced *by the security fix
+  itself* — a fix that silently reopens its own hole is worse than no
+  fix, because it is trusted. Neither was caught by the fix's own tests;
+  both were caught by the review agents before the push.
+- **Fix:** `check_source` / `resolve_workspace` canonicalise exactly the
+  spelling they return; `Study::load` scans the checked path, re-checks
+  every manifest file path, and refuses any `..` component (legitimate
+  manifests never hold one — `create()` stores clean relatives and
+  absolutes — and without `..` the raw and lexical spellings resolve
+  identically).
+- **Guard:** regression tests for both escapes
+  (`a_depth_changing_link_cannot_split_the_check_from_the_read`,
+  `a_crafted_manifest_with_parent_components_is_refused`), each
+  mutation-checked red on the draft that introduced it. The review
+  agents (`security-reviewer`, `code-reviewer`) run before every push of
+  a reader/agent change (`ferrum-change` §6) — they are what caught both.
+- **Rule:** A path check must judge exactly the spelling that will be
+  opened. If a consumer opens a stored or raw path, either hand it the
+  checked path or refuse spellings whose resolution can diverge (`..`
+  behind a link). "Checked" is a property of a spelling, not of an
+  intention. (Renumbered from the draft's L39 on merge: the 0.4.0 retro
+  had already taken L39–L44.)
+
+### L50 — The coverage job's instrumented UI test segfaults at teardown (2026-11, Stage 30)
+
+- **Symptom:** On PRs #118 and #120 (which change no Rust) the `coverage`
+  CI job failed: every `ferrum --test ui` test printed `ok`, then the
+  binary died with `signal: 11, SIGSEGV` as the process exited, under
+  `cargo llvm-cov`. The `check` job ran the same UI tests green.
+- **Root cause:** the llvm-cov-instrumented binary crashes in lavapipe
+  teardown at exit (the same family as L45's TLS-teardown crash, here on
+  CI's own mesa under instrumentation). Environmental, not FERRUM's; a
+  flake, not a regression — the assertions all passed before the crash.
+- **Fix:** re-ran the failed job (`gh run rerun <run-id> --failed`); it
+  passed. **Permanent fix (2026-11-22):** `make coverage-ci` now runs
+  `cargo llvm-cov --workspace --exclude ferrum` — the ferrum crate's only test
+  is the GPU UI suite, so excluding it keeps the instrumented run from crashing
+  in lavapipe teardown. The uninstrumented `check` job still runs the UI tests
+  (authoritative), and the library coverage they exercise is also covered by the
+  gpu_parity, view_host and unit suites: the line floor stays green (90.4 % ≥
+  87 %). No more admin-merge needed for this flake.
+- **Guard:** when `coverage` fails with a SIGSEGV in `ferrum --test ui`
+  *after* all tests printed ok, the `check` job is green, and the PR
+  touches no Rust, treat it as the instrumented-teardown flake: confirm
+  the log shows the segfault at exit (not a failed assertion or a floor
+  breach), then re-run `--failed` once. A failed assertion or a coverage
+  floor breach is a real defect (L33), not this flake.
+- **Rule:** a crash in libc/mesa teardown after every assertion passed is
+  the environment until proven otherwise (L45); the uninstrumented
+  `check` job is authoritative for whether the UI tests pass.
+
+### L51 — The `check` job also hits the UI-teardown SIGSEGV; admin-merge with the user's word (2026-11, Stage 29 PR 1)
+
+- **Symptom:** On PR #123 the `check` job (not only `coverage`, cf. L50) failed:
+  all 19 `ferrum --test ui` tests printed `ok`, then the binary died with
+  `signal: 11, SIGSEGV` at process exit. Three `gh run rerun --failed` attempts
+  reproduced it on the same head.
+- **Root cause:** the same lavapipe/mesa teardown crash (L45/L50 family), now on
+  the CI runner image used by `check`. Environmental: the *identical* UI-test
+  binary (same build hash) had passed full CI on the previous head, the local
+  preflight was green, and the only delta to the failing head was an HTML report
+  (no Rust). No assertion failed.
+- **Fix:** confirmed the log shows the segfault at exit after every assertion
+  passed (not a failed assertion), then merged with `gh pr merge --admin` **with
+  the user's explicit word**, and documented the environmental block in a PR
+  comment. Re-runs alone did not clear it.
+- **Guard:** when `check` (or `coverage`) fails with a SIGSEGV in `ferrum --test
+  ui` *after* all tests printed ok, and the PR's Rust is verified green (a prior
+  head passed CI / local preflight green), treat it as the teardown flake. Do not
+  change code to chase it (L50). If re-runs keep failing, surface it to the user
+  and admin-merge only on their word, noting the environmental block in the PR.
+  A failed assertion remains a real defect (L33), not this flake.
+
+### L52 — WSL idle-shutdown killed three preflight runs; a reused target dir ICE'd (2026-11, Stage 32 PR 1)
+
+- **Symptom:** The full preflight in the WSL worktree died mid-build three
+  times: a background `wsl … | Tee` job stopped after ~11 min, a
+  `setsid nohup … &` child died instantly, and a `systemd-run` transient unit
+  was "Stopping … Deactivated successfully" 18 s after it started. Each time
+  `uptime` showed the distro freshly booted. Separately, reusing another
+  branch's `CARGO_TARGET_DIR` produced `internal compiler error: encountered
+  incremental compilation error with type_of(gpu_parity…)` on ferrum-render.
+- **Root cause:** (1) WSL2 idle-shuts-down the VM ~15 s after the **last
+  `wsl.exe` session ends**, and on this machine that stops even running
+  systemd units and detached children — a background build is only safe
+  while a Windows-side `wsl` session stays open. (2) Incremental artifacts
+  are keyed to the compiling crate's source path/branch; a target dir built
+  for another worktree can carry stale incremental state that panics rustc.
+- **Fix:** ran the preflight as `wsl -e bash <script>` inside a held-open
+  background job (the session keeps the VM alive); cleared
+  `target/debug/incremental` before reusing a foreign target dir. Both are
+  environmental, not FERRUM defects.
+- **Guard:** a long WSL build runs in a foreground-of-a-background-job `wsl`
+  session, never detached/systemd-only; when reusing a target dir across
+  branches, delete `debug/incremental` first. A build that dies with the
+  distro freshly booted (`uptime` ≈ 0) is the idle-shutdown, not the code.
+- **Rule:** Keep a WSL session open for the whole build; the VM does not
+  survive the last session closing, whatever the process tree looks like.
+
+### L53 — A full WSL VHDX drive masquerades as a broken WSL (2026-11, Stage 32 PR 4)
+
+- **Symptom:** WSL2 fell into a persistent `Wsl/Service/CreateInstance/E_FAIL`:
+  the VM was created but the guest shut down on boot (Hyper-V-Worker event
+  18508). Ubuntu-24.04 would not boot at all; Ubuntu-22.04 booted but a heavy
+  cargo build died with rustc `SIGBUS` (signal 7) and the filesystem went
+  **read-only** (`touch: Read-only file system`, `/usr/bin/dmesg: Input/output
+  error`). Hours were spent restarting LxssManager/hns/vmcompute, resetting HNS
+  networks, `wsl --update`, rebooting, and disabling the ASUS AsIO drivers — all
+  red herrings.
+- **Root cause:** the drive holding the WSL virtual disks (`E:\WSL\*\ext4.vhdx`)
+  was **100 % full (0 bytes free)**. A dynamically-expanding VHDX cannot grow on
+  a full volume, so the guest ext4 hits I/O errors, remounts read-only, and the
+  VM fails to start. The disks were SMART-healthy — not hardware, just full.
+  `target/` (73 GB) + `target-wsl/` (36 GB) of regenerable cargo artifacts had
+  filled the 1.9 TB volume.
+- **Fix:** freed ~100 GB by deleting the cargo `target` and `target-wsl`
+  directories; `wsl --shutdown` then boot — Ubuntu-24.04 restored, preflight
+  `all checks passed`, real-Orthanc integration 3/3.
+- **Guard:** before any WSL build, check free space on the **VHDX drive** (not
+  just the repo drive) and log it; refuse below a floor (~10 GB). Build into a
+  per-branch+date `CARGO_TARGET_DIR` and delete it when the branch merges, so
+  artifacts never accumulate (see `ferrum-build.sh` / `ferrum-clean-builds.sh`).
+  This supersedes the weighable advice of L15 with a mechanical gate (L38).
+- **Rule:** `E_FAIL` / SIGBUS / read-only fs in WSL → **check the VHDX drive
+  free space first**, before services, drivers, or reboot.
+
+### L54 — A mock that mirrors the code's assumption is not independent validation (2026-11, Stage 32 PR 3→4)
+
+- **Symptom:** the STOW-RS response parser read the success count from tag
+  `(0008,1190)` RetrieveURL. PR 3's review "verified the tag against pydicom +
+  PS3.18", and the unit tests + the mock PACS built the response with the same
+  `(0008,1190)` assumption — so everything passed. Against a **real Orthanc**
+  the success count was 0: `(0008,1190)` is a single Retrieve URL string, and the
+  stored instances are in the **Referenced SOP Sequence `(0008,1199)`** (PS3.18
+  Annex I). The mock and the code were wrong together.
+- **Root cause:** a mock constructed from the same misunderstanding as the code
+  is self-consistent, not independent. It cannot catch a wrong wire-format
+  assumption; only a real peer (or a fixture captured from one) can.
+- **Fix:** read success/warning from `(0008,1199)` (an item with a non-zero
+  Warning Reason is a warning), failure from `(0008,1198)`; corrected the unit
+  tests, the mock, and the Python check; validated 3/3 against a real Orthanc.
+- **Guard:** wire-format / protocol parsing must be validated against a **real
+  peer** (CI service container or local Docker) before G3; a local graceful-skip
+  is not validation. The G3 report must show the real-service result. Extends L5:
+  a test must check ground truth, not the code's own assumption.
+- **Rule:** for any code that parses another implementation's output, capture a
+  real response as the fixture; a hand-built mock that agrees with the code
+  proves nothing.
+
+### L55 — A reset in a shared worktree moved the branch under the working tree (2026-11, Stage 32 PR 4)
+
+- **Symptom:** a verification script ran `git -C <worktree> reset --hard
+  refs/tmp/…` in a stale worktree that shared the **same branch** as the Windows
+  working tree. The reset moved the branch ref, silently dropping the fix
+  commits from the working tree (recovered only via reflog). A later `checkout
+  -B` in the same setup also failed to move HEAD as expected.
+- **Root cause:** a worktree and the main working tree share branch refs; a
+  `reset --hard` / `checkout -B` on a branch checked out elsewhere moves it under
+  the other tree. Stale worktree entries (`git worktree list … prunable`) make
+  this easy to trigger by accident.
+- **Fix:** recovered the commits from reflog; switched verification to a
+  **detached HEAD worktree of an independent clone** (`git worktree add
+  --detach <path> <ref>`), which never moves a branch.
+- **Guard (dangerous-operation protocol):** before any `reset --hard`, branch
+  delete, or bulk file delete: (1) gather the full picture — `git status`,
+  `git reflog`, `git worktree list`, which commits would be lost and whether they
+  are merged/approved, whether the branch is checked out elsewhere; (2) if the
+  operation could lose **new, approved** code, STOP and propose an alternative
+  (detached worktree, a `backup-<name>` branch first, cherry-pick, stash);
+  (3) delete only confirmed regenerable artifacts, never patient data or
+  approved code, and show what will be removed first.
+- **Rule:** verification worktrees are detached HEAD of an independent clone;
+  never reset a branch that is checked out in another worktree. Assess
+  consequences before any destructive git/file operation.
+
+### L56 — WSL E_FAIL: a diagnostic order, not a chase (2026-11, Stage 32 PR 4)
+
+- **Symptom:** the generic `Wsl/Service/CreateInstance/E_FAIL` sent the session
+  through service restarts, HNS/WinNAT resets, `wsl --update`, a reboot, and an
+  ASUS AsIO driver disable — none fixed it; the real cause (L53, full disk) was
+  found last.
+- **Root cause:** no ordered diagnostic; the cheapest, most likely cause (disk
+  space) was checked after the expensive ones.
+- **Guard:** on WSL `E_FAIL` / boot failure, check in this order: **(1) free
+  space on the VHDX drive** (`Get-Volume`, the drive of `ext4.vhdx`) and cargo
+  target size; **(2)** LxssManager/hns/vmcompute service state + HNS networks;
+  **(3)** `wsl --shutdown` + reboot; **(4)** drivers / conflicting software
+  (AsIO, Nahimic) only if the above are clean. Read the Hyper-V-Worker /
+  Hyper-V-Compute admin logs (elevated) for the actual VM failure reason.
+- **Rule:** cheapest-likely-first; a full disk is the first suspect for WSL I/O
+  errors, not a driver.
+
+### L57 — A new native crypto dep broke the Windows build (2026-11, Stage 32 PR 1)
+
+- **Symptom:** adding `dicom-web` pulled reqwest → rustls-with-**aws-lc-rs** →
+  `aws-lc-sys`, which compiles AWS-LC from C. On the dev Windows machine that C
+  build fails under cargo with MSVC `D8050` ("cannot execute c1.dll: failed to
+  get command line into debug records"); the *identical* `cl.exe` command
+  succeeds from a `cmd` prompt — Kaspersky interfering with cargo's child
+  processes (the L39 family). Since `ferrum-io` is a core crate, the whole
+  Windows workspace build/check stopped working.
+- **Root cause:** a new dependency added a native C build that the Windows
+  antivirus/toolchain environment could not compile; Linux/WSL/CI build cleanly.
+- **Fix (accepted):** build/test in WSL (documented in `docs/dicomweb.md` §6).
+  Updating MSVC was tried and **did not help**: VS 2022 17.3/MSVC 14.33 →
+  17.14/MSVC 14.44 still fails `D8050` on `aws-lc-sys` — confirming the cause is
+  Kaspersky interfering with cargo's child `cl.exe` (the `/Z7` debug-records
+  command line), not the toolchain version. Excluding the repo folder from
+  Kaspersky file scanning also did not help (it is process protection, not file
+  scanning); a `--release` build avoids `D8050` (no `/Z7`) but then fails the
+  `stdalign` compiler-feature probe. The Windows desktop build needs Kaspersky
+  to **trust the compiler processes** (`cl.exe`/`c1.dll`/`cargo.exe` in
+  Application Activity Control) or disable its process-injection protection; a
+  ring-based transport (the workspace already uses ureq+ring) would remove the
+  native AWS-LC build entirely — a backlog follow-up.
+- **Guard:** before merging a dependency that adds a native build (aws-lc-sys,
+  ring, openssl-sys, …), check the Windows build under the dev antivirus and
+  document the constraint; security-review asks "does this dep add a native
+  build, and what is its Windows/Kaspersky impact?".
+- **Rule:** a dependency is not licence-clean only; it must also build on every
+  supported host. Native-build deps get an explicit Windows build check.
+
+### L58 — A prompt point from a NIfTI label landed in the wrong frame (2026-11, 0.5.0 field test)
+
+- **Symptom:** nnInteractive on the GPU segmented 4 voxels (Dice 0.0002) of the
+  MSD spleen instead of the organ; the point came from the ground-truth label's
+  centroid.
+- **Root cause:** two frame mismatches. (1) The MSD NIfTI is stored RAS, but
+  FERRUM reorients volumes to canonical **LPS** (flip x, y); a voxel index read
+  from the raw label array points to a different physical location in FERRUM's
+  frame (`[130,229,31]` RAS = `[381,282,31]` LPS). (2) The spleen is crescent-shaped,
+  so its centroid can lie outside the mask — use the mask voxel nearest the
+  centroid (medoid). The Dice comparison also needs both masks reoriented to a
+  common canonical frame (`nib.as_closest_canonical`).
+- **Why it was missed:** the image and label affines are identical, which hides
+  that FERRUM's *internal* frame differs from the stored one.
+- **Fix:** compute the prompt in LPS (flip x, y of the RAS label), pick the medoid,
+  and compare Dice after canonical reorientation — Dice 0.9039, 247.4 ml vs
+  253.1 ml ground truth, one point, 0.65 s, peak 7879 MiB on the RTX 3080.
+- **Guard:** ferrum-field-test §2 rule 6: a prompt point derived from a NIfTI
+  label must be transformed into FERRUM's LPS frame, and mask comparisons
+  reoriented to a common canonical frame.
+- **Rule:** FERRUM's voxel indices are LPS, not the file's stored orientation;
+  transform external labels before deriving points or scoring.
+
 ## What worked
 
 ### W1 — Field test on the user's GPU with a throw-away script (2026-10, Stage 17)

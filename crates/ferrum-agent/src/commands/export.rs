@@ -91,12 +91,35 @@ fn formats<'a>(p: &Params<'a>) -> Result<Vec<&'a str>, AgentError> {
         .collect()
 }
 
+/// The de-identification profile for `export bundle --deidentify basic`
+/// (Stage 31, criterion 31.5-a): `None` when not requested. `deid_options`
+/// selects the Basic Profile options; an unknown profile or option is refused.
+/// The profile applies to the DICOM objects (SEG/SR); the native ferrum files
+/// are pseudonymised by the export's own flags.
+fn deid_profile(p: &Params, salt: &str) -> Result<Option<ferrum_io::dicom::deid::ProfileOptions>, AgentError> {
+    let Some(profile) = p.str("deidentify")? else { return Ok(None) };
+    if profile != "basic" {
+        return Err(AgentError::bad_request(format!(
+            "deidentify: only the \"basic\" profile is supported, got {profile:?}"
+        )));
+    }
+    let mut options = ferrum_io::dicom::deid::ProfileOptions { uid_salt: salt.to_owned(), ..Default::default() };
+    if let Some(list) = p.list("deid_options")? {
+        for v in list {
+            let name = v.as_str().ok_or_else(|| AgentError::bad_request("deid_options: a list of option names"))?;
+            options.enable(name).map_err(|e| AgentError::bad_request(e.to_string()))?;
+        }
+    }
+    Ok(Some(options))
+}
+
 /// DICOM SEG and SR (TID 1500) of the study, with what the operator allows
 /// to leave FERRUM; returns the files written and warnings.
 fn dicom(
     study: &Study,
     config: &crate::config::AgentConfig,
     dir: &Path,
+    deid: Option<ferrum_io::dicom::deid::ProfileOptions>,
 ) -> Result<(Vec<Value>, Vec<String>), AgentError> {
     use ferrum_io::dicom::export::{read_source, DicomExportOptions, DicomExporter};
     let manifest = study.workspace.manifest();
@@ -108,6 +131,13 @@ fn dicom(
                 .to_owned(),
         );
     }
+    if deid.is_some() && source.is_none() {
+        warnings.push(
+            "deidentify: the source is not DICOM, so the objects carry no source identifiers to remove; \
+             the profile still pseudonymises the new UIDs and marks the objects de-identified"
+                .to_owned(),
+        );
+    }
     let opts = DicomExportOptions {
         copy_identifiers: config.expose_identifiers,
         copy_dates: config.expose_dates,
@@ -115,6 +145,7 @@ fn dicom(
         uid_salt: config.salt.clone(),
         software_version: env!("CARGO_PKG_VERSION").to_owned(),
         series_id: manifest.source.series_id.clone(),
+        deid,
     };
     let exporter = DicomExporter::new(source.as_ref(), &opts);
     let report =
@@ -166,7 +197,8 @@ pub fn bundle(ctx: &mut Ctx, p: &Params) -> Result<Output, AgentError> {
     }
     let mut dicom_warnings = Vec::new();
     if formats.contains(&"dicom") {
-        let (written, warnings) = dicom(study, config, &dir)?;
+        let deid = deid_profile(p, &config.salt)?;
+        let (written, warnings) = dicom(study, config, &dir, deid)?;
         files.extend(written);
         dicom_warnings = warnings;
     }

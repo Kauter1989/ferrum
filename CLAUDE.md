@@ -27,7 +27,7 @@ segmentation engines, and an agent skill (planned). Read
 ferrum (desktop shell) → ferrum-ui (views, panels) → ferrum-app (application) → ferrum-domain ← ferrum-io (data)
                                        ↘ ferrum-processing, ferrum-render (infrastructure)
                                        ↘ ferrum-radiomics → ferrum-domain (segment metrics)
-ferrum-cli → ferrum-view (local view host) → ferrum-app, ferrum-render (gpu), ferrum-io
+ferrum-cli → ferrum-view (local view host) → ferrum-app, ferrum-render (gpu), ferrum-processing, ferrum-io
 ferrum-wasm (browser) → ferrum-render (gpu), ferrum-app, ferrum-processing — builds for wasm32 only
 ```
 
@@ -63,12 +63,16 @@ ferrum-wasm (browser) → ferrum-render (gpu), ferrum-app, ferrum-processing —
 - No business logic in `ferrum` or `ferrum-ui` widgets — add a use case to
   `Viewer`. `ferrum-ui` opens no windows or file dialogs (no `eframe`, no
   `rfd`); hosts embed it ([ADR 0016](docs/decisions/0016-ferrum-ui-crate.md)).
+  `ViewerWidget::show` returns the frame's events (a pick, a drawn ROI,
+  slice/window/camera changes), derived from `Viewer` state; no event is a
+  decision, and engine proposals are not events.
 - `ferrum-view` implements the local view host `ferrum-view/1`
   ([design](docs/view-host.md), [ADR 0017](docs/decisions/0017-view-host-crate.md)):
-  one workspace kept open, slice frames on the GPU or the CPU reference,
-  loopback HTTP with a token. Only `ferrum-cli` depends on it (`view serve`,
-  a CLI-only command). It adds no image-formation code and no business
-  logic; protocol changes update `docs/view-host.md` and its tests.
+  one workspace kept open, the full ViewState and slice/MPR/3D frames on the
+  GPU or the CPU reference, loopback HTTP with a token. Only `ferrum-cli`
+  depends on it (`view serve`, a CLI-only command). It adds no
+  image-formation code and no business logic; protocol changes update
+  `docs/view-host.md` and its tests.
 - `ferrum-wasm` is the same renderer in a browser
   ([design](docs/webgpu-panel.md)): it binds `ferrum-render` to a `<canvas>`
   through WebGPU and adds only the MPR layout and the CT presets. It builds
@@ -84,7 +88,10 @@ ferrum-wasm (browser) → ferrum-render (gpu), ferrum-app, ferrum-processing —
 
 `crates/ferrum-render/src/shaders/volume.wgsl` and
 `crates/ferrum-render/src/cpu/raycast.rs` implement the same image-formation
-model. Any change to one must be mirrored in the other and covered by
+model; the slice segment overlay is one rule,
+`crates/ferrum-render/src/shaders/slice.wgsl` ↔
+`crates/ferrum-render/src/cpu/slice.rs` (used by the view host's CPU backend).
+Any change to one must be mirrored in the other and covered by
 `crates/ferrum-render/tests/gpu_parity.rs`.
 
 ## Commands
@@ -133,6 +140,13 @@ Before **every** push:
    ```bash
    .claude/skills/ferrum-change/preflight.sh            # or --quick, --coverage
    ```
+
+   `preflight.sh` first **assesses free space on the build drive and logs it**
+   (`.claude/state/build-space.log`), refusing below ~10 GB — a full WSL VHDX
+   drive causes I/O errors / read-only fs / `E_FAIL` (L53). Prefer
+   `ferrum-build.sh`, which builds into a unique per-branch+date
+   `CARGO_TARGET_DIR=.builds/<branch>-<date>` so artifacts never accumulate;
+   clean the branch's dir after the merge (`ferrum-clean-builds.sh`, L53).
 
 2. **On Windows, in WSL** — the same Linux CI uses, which is where the
    Linux-only cases and the hooks actually run:
@@ -203,6 +217,7 @@ wasted rounds, each with the guard that now catches it. The skills in
 | `ferrum-field-test` | scripts for the user's GPU machine and their results |
 | `ferrum-release` | version bump, `develop` → `main`, `release.yml` |
 | `ferrum-report` | the HTML report: before a merge (G3, with a code map) and after it (phase 11) |
+| `ferrum-dashboard` | the development dashboard: generate, verify, publish to gh-pages (no CI minutes) |
 | `ferrum-lessons` | failures and successes, each with a guard; retro |
 
 `develop` and `main` change only through merged PRs. Pushing a feature
@@ -214,8 +229,11 @@ final one (`ferrum-report` §0), with a **code map**: every architectural
 claim linked to the `file:lines` that implement it, pinned to the PR head
 SHA and stating that SHA. The person merges after reading the code, not on
 trust; a PR without its report is not ready for G3, however green its CI.
-The report is posted to the PR, not committed — after the merge, phase 11
-writes the final one from the merged tree into `docs/<feature>/`.
+The G3 report is posted to the PR as a comment (the gate input). The
+**final** report is committed to the feature PR itself
+(`docs/<feature>/<pr>-report.html`): it is revised during the user's review
+and, if the PR is merged, lands in history in its last version. A report
+on an already-merged feature goes through a small `docs/` PR instead.
 
 ### Hooks
 

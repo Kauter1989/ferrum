@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FERRUM · PR #130 — финальный отчёт: headed-browser WebGPU автотест (Stage 29 PR 7)</title>
+<style>
+  :root { --bg:#fbfbfd; --fg:#1d1f26; --muted:#5b6070; --line:#e2e5ec; --accent:#1f6feb; --ok:#1a7f37; --warn:#9a6700; --bad:#b42318; --card:#fff; --code:#f3f4f7; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#12141a; --fg:#e6e7ea; --muted:#a2a8b6; --line:#2a2e38; --accent:#6ba6ff; --ok:#4ac26b; --warn:#d4a72c; --bad:#ff7b72; --card:#191c23; --code:#1f232c; } }
+  * { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.6 -apple-system,"Segoe UI",Roboto,Arial,sans-serif; }
+  main { max-width:1080px; margin:0 auto; padding:40px 24px 80px; }
+  h1 { font-size:29px; line-height:1.25; margin:0 0 8px; letter-spacing:-0.02em; }
+  h2 { font-size:21px; margin:44px 0 14px; padding-bottom:8px; border-bottom:1px solid var(--line); }
+  .sub { color:var(--muted); margin:0 0 24px; }
+  .meta { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:28px; }
+  .pill { font-size:13px; padding:3px 10px; border-radius:999px; border:1px solid var(--line); background:var(--card); color:var(--muted); }
+  .pill.ok { color:var(--ok); border-color:color-mix(in srgb,var(--ok) 40%,transparent); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px 20px; margin:14px 0; }
+  code,.mono { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:13px; }
+  code { background:var(--code); padding:1px 5px; border-radius:4px; }
+  table { width:100%; border-collapse:collapse; margin:14px 0; font-size:14px; }
+  th,td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; font-size:13px; text-transform:uppercase; letter-spacing:.04em; }
+  .tag { font-size:12px; font-weight:600; padding:2px 7px; border-radius:5px; white-space:nowrap; }
+  .t-fixed { background:color-mix(in srgb,var(--ok) 16%,transparent); color:var(--ok); }
+  .grid { display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); }
+  .stat { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px; }
+  .stat b { display:block; font-size:26px; line-height:1.2; } .stat span { color:var(--muted); font-size:13px; }
+  ul { padding-left:22px; } li { margin:4px 0; }
+  .note { border-left:3px solid var(--accent); padding-left:14px; color:var(--muted); margin:14px 0; }
+  footer { margin-top:56px; padding-top:18px; border-top:1px solid var(--line); color:var(--muted); font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+<h1>PR #130 — headed-browser WebGPU автотест</h1>
+<p class="sub">Финальный отчёт: Stage 29 PR 7 (критерий 29.5-b) — закрывает Stage 29. FERRUM, ноябрь 2026. Описывает head SHA <code>8d752ef90d15897fafa50796b6984d9e95420a61</code>. Отчёт живёт в самом PR и правится по итогам ревью; при мердже остаётся в последней версии (правило пользователя).</p>
+<div class="meta">
+  <span class="pill">Stage 29 PR 7 · 29.5-b</span>
+  <span class="pill">size S</span>
+  <span class="pill ok">G1+G2 утверждены</span>
+  <span class="pill ok">preflight: all checks passed</span>
+  <span class="pill ok">verified: headed Edge WebGPU</span>
+</div>
+<div class="grid">
+  <div class="stat"><b>8</b><span>файлов (+327/−4)</span></div>
+  <div class="stat"><b>~128</b><span>fps BrowserWebGpu (headed Edge)</span></div>
+  <div class="stat"><b>7</b><span>modes×techniques проверены</span></div>
+  <div class="stat"><b>0</b><span>падений CI (graceful skip)</span></div>
+</div>
+
+<h2>1. Что и зачем</h2>
+<p>WebGPU-путь панели не имел автоматического теста (headless Chromium не даёт WebGPU-адаптер на этой машине, L30). PR 7 добавляет <strong>committed headed-browser тест</strong>: Playwright запускает <strong>headed Edge</strong> (<code>--enable-unsafe-webgpu</code>), грузит <code>stand.html</code>, проверяет adapter и <strong>non-black pixels</strong> скриншота canvas во всех modes (3D/slice/MPR) и techniques (tissue/isosurface/MIP/transfer_function). Скриншот (pngjs), а не drawImage — WebGPU canvas не <code>preserveDrawingBuffer</code>.</p>
+<div class="note">Тест скипается gracefully (exit 0 SKIPPED) без браузера/адаптера/playwright — CI не падает (паттерн test_panel.py). Rendering rule: тест проверяет существующий рендерер (stand.html + ferrum_wasm.js), image-formation не добавляет.</div>
+
+<h2>2. Код-карта</h2>
+<p class="sub">Pinned к head SHA <code>8d752ef</code>.</p>
+<table>
+  <tr><th>Утверждение</th><th>Реализация</th></tr>
+  <tr><td>Playwright headed Edge тест: static server, adapter, canvas pixel-check, modes/techniques, скриншот</td><td class="mono">integrations/dsh/tests/webgpu.mjs</td></tr>
+  <tr><td>Static server path traversal boundary (panelDir + sep)</td><td class="mono">integrations/dsh/tests/webgpu.mjs (commit 8d752ef)</td></tr>
+  <tr><td>pytest обёртка: skip без Node≥18/playwright, returncode 0 + ok/SKIPPED</td><td class="mono">integrations/dsh/tests/test_webgpu.py</td></tr>
+  <tr><td>devDeps playwright-core + pngjs (system Edge, без Chromium download)</td><td class="mono">integrations/dsh/tests/package.json + package-lock.json</td></tr>
+  <tr><td>node_modules gitignored</td><td class="mono">integrations/dsh/tests/.gitignore</td></tr>
+  <tr><td>docs: As built PR 7, how-to-run + field recipe</td><td class="mono">docs/webgpu-panel.md; integrations/dsh/README.md; dev_plan.md 29.T7</td></tr>
+</table>
+
+<h2>3. Покрытие критериев</h2>
+<table>
+  <tr><th>Критерий</th><th>Тест</th><th>Статус</th></tr>
+  <tr><td>29.5-b автоматический тест WebGPU-пути (headed browser)</td><td class="mono">webgpu.mjs: headed Edge BrowserWebGpu ~128fps; non-black pixels 3D≈106k/slice 165k/MPR 293k/techniques≈104–108k; скриншот viewed (L1); skip проверен; pytest 8 passed</td><td><span class="tag t-fixed">✅</span></td></tr>
+</table>
+
+<h2>4. Верификация</h2>
+<ul>
+  <li><strong>Верифицирован ЗДЕСЬ (headed Edge)</strong>: WebGPU adapter BrowserWebGpu ~128 fps; фантом рендерится во всех modes/techniques (non-black pixels); скриншот webgpu-volume.png просмотрен (chest-фантом 3D tissue корректен). Ранний «no adapter» был из-за --use-angle=vulkan; plain --enable-unsafe-webgpu работает.</li>
+  <li>Skip проверен: без adapter/браузера → exit 0 SKIPPED; pytest без Node≥18 → skip.</li>
+  <li>node --check exit 0; ruff 0.16.9 check+format OK; pytest integrations/dsh/tests 8 passed.</li>
+  <li>Полный preflight (WSL Ubuntu-24.04, CI-порядок + GPU parity + analyze.py): <code>all checks passed</code> на head <code>8d752ef</code> (Rust не менялся).</li>
+</ul>
+
+<h2>5. История ревью</h2>
+<div class="card">
+  <p><strong>Раунд 1</strong> (code + security, агент <code>review-pr7</code>, выполнение + мутации в headed Edge): вердикт <em>changes requested</em> — 0 blocking, 1 should-fix, 4 nits. Static server безопасен (crafted ../, %2e%2e, absolute, null byte → 404; loopback), graceful skip проверен, rendering rule сохранён, preflight зелёный.</p>
+  <table>
+    <tr><th>Находка</th><th>Исправление</th><th>Статус</th></tr>
+    <tr><td><span class="tag t-fixed">should</span> pixel-check порог v&gt;30 считал фон страницы #0d0e11 (RGB sum 44) как non-black → нерендерящий canvas давал 100% «non-black» → тест зелёный без рендера (L5)</td><td>brightness cutoff поднят до v&gt;60 (выше фона 44); mutation (убран view.render()) → FAIL (900/595800, mean 44.1), нормальный рендер → PASS (104275/595800, mean 85.3)</td><td><span class="tag t-fixed">fixed</span></td></tr>
+    <tr><td><span class="tag t-fixed">nit</span> dev_plan 29.T5/T6 🚧 хотя влиты</td><td>поправлено на ✅</td><td><span class="tag t-fixed">fixed</span></td></tr>
+    <tr><td><span class="tag t-fixed">nit</span> adapter-check regex слаб (всегда матчит fps)</td><td>реальный guard — pixel-check (после fix); оставлено</td><td><span class="tag t-fixed">noted</span></td></tr>
+    <tr><td><span class="tag t-fixed">nit</span> тест требует собранного panel-модуля (gitignored)</td><td>README документирует build.cmd сначала; допустимо (field step)</td><td><span class="tag t-fixed">noted</span></td></tr>
+  </table>
+  <p><strong>Раунд 2</strong> (lead, выполнение): fix верифицирован в headed Edge — нормальный рендер PASS (все modes/techniques), mutation render-removed FAIL; node --check + ruff чисто.</p>
+</div>
+
+<h2>6. Out of scope / notes</h2>
+<ul>
+  <li>Интерактивный рендер TF-редактора/инструментов в живой панели — field-test на машине пользователя (stand.html тест покрывает WebGPU-путь рендера; panel-модуль собирается panel/build.cmd).</li>
+  <li>CI: pytest скипается без headed GPU browser (graceful), как задумано.</li>
+  <li>Stage 29 закрыт этим PR (PR 1–7): overlay rule, полный ViewState + MPR/3D, 16-bit wire + labels, rotating token, сегменты/overlay, TF/измерения, WebGPU автотест.</li>
+</ul>
+
+<footer>FERRUM · Stage 29 PR 7 · head SHA <code>8d752ef90d15897fafa50796b6984d9e95420a61</code> · отчёт коммичен в PR и правится по итогам ревью пользователя.</footer>
+</main>
+</body>
+</html>

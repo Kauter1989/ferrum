@@ -35,7 +35,13 @@ coverage:   ## test coverage, HTML report in target/llvm-cov/html (needs cargo-l
 
 coverage-ci: ## coverage for CI: lcov + HTML + summary, fails below COVERAGE_FLOOR
 	cargo llvm-cov clean --workspace
-	cargo llvm-cov --workspace --no-report
+	# The ferrum crate's only test is the GPU UI suite (tests/ui.rs). Under
+	# llvm-cov instrumentation its lavapipe teardown segfaults at process exit
+	# after every assertion passed (L50/L51) — an environmental flake. Exclude
+	# it from the instrumented run; the uninstrumented `check` job is
+	# authoritative for the UI tests, and the library coverage they exercise is
+	# also covered by the gpu_parity, view_host and unit suites.
+	cargo llvm-cov --workspace --exclude ferrum --no-report
 	cargo llvm-cov report --ignore-filename-regex '$(COVERAGE_IGNORE)' --lcov --output-path lcov.info
 	cargo llvm-cov report --ignore-filename-regex '$(COVERAGE_IGNORE)' --html
 	cargo llvm-cov report --ignore-filename-regex '$(COVERAGE_IGNORE)' --summary-only --fail-under-lines $(COVERAGE_FLOOR)

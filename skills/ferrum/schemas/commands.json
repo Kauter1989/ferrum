@@ -65,7 +65,7 @@
     }
   },
   "view slice": {
-    "description": "Renders one slice to a PNG with a sidecar mapping pixels to voxels and patient mm. Look with images; take numbers from probe, stats and measure.",
+    "description": "Renders one slice to a PNG with a sidecar mapping pixels to voxels and patient mm. Look with images; take numbers from probe, stats and measure. With masked, burned-in regions are replaced by a solid fill before drawing (Clean Pixel Data); the sidecar's mask block reports what was applied.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -214,6 +214,158 @@
           "minimum": 0,
           "maximum": 1,
           "description": "fill opacity for every segment (default: each segment's own opacity)"
+        },
+        "masked": {
+          "type": "boolean",
+          "description": "mask burned-in regions before drawing (Clean Pixel Data): the masks boxes, else the whole volume when the DICOM BurnedInAnnotation flag is YES, else the OCR-detected regions (with ocr), else nothing (reported in the sidecar's mask block)"
+        },
+        "masks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "min": {
+                "description": "one corner",
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "voxel": {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        },
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "description": "0-based voxel (i, j, k) of the canonical LPS grid; integers are voxel centres"
+                      }
+                    },
+                    "required": [
+                      "voxel"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "patient_mm": {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        },
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "description": "LPS patient millimetres"
+                      }
+                    },
+                    "required": [
+                      "patient_mm"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "render": {
+                        "type": "string",
+                        "pattern": "^r-[0-9]+$",
+                        "description": "id of an earlier render"
+                      },
+                      "pixel": {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        },
+                        "minItems": 2,
+                        "maxItems": 2,
+                        "description": "pixel (x, y) of that render; pixel centres lie at +0.5"
+                      }
+                    },
+                    "required": [
+                      "render",
+                      "pixel"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "max": {
+                "description": "the opposite corner",
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "voxel": {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        },
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "description": "0-based voxel (i, j, k) of the canonical LPS grid; integers are voxel centres"
+                      }
+                    },
+                    "required": [
+                      "voxel"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "patient_mm": {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        },
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "description": "LPS patient millimetres"
+                      }
+                    },
+                    "required": [
+                      "patient_mm"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "render": {
+                        "type": "string",
+                        "pattern": "^r-[0-9]+$",
+                        "description": "id of an earlier render"
+                      },
+                      "pixel": {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        },
+                        "minItems": 2,
+                        "maxItems": 2,
+                        "description": "pixel (x, y) of that render; pixel centres lie at +0.5"
+                      }
+                    },
+                    "required": [
+                      "render",
+                      "pixel"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            },
+            "required": [
+              "min",
+              "max"
+            ],
+            "additionalProperties": false
+          },
+          "description": "mask regions as voxel boxes (two inclusive corners, as stats boxes); implies masked"
+        },
+        "ocr": {
+          "type": "boolean",
+          "description": "run the optional OCR bridge check on the render (Clean Pixel Data); detected regions extend the mask when masked. Without a configured bridge ([network] ocr_bridge) the step is skipped and reported in the sidecar's ocr block, never silently passed"
         }
       },
       "required": [
@@ -534,6 +686,207 @@
             ]
           },
           "description": "drawn on top: segments (see segment_style)"
+        }
+      },
+      "required": [
+        "workspace"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "view set": {
+    "description": "Sets what the person sees (component, plane, slice, window, overlays, selected segment, tool, camera) by writing the workspace's view-state artifact; the live viewer applies it and the person takes over at any time. source_hash (from view state) is required: a stale one is refused with source_changed. No decision is created.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "source_hash": {
+          "type": "string",
+          "description": "the source_hash read with view state; a stale one refuses the set (fail-closed)"
+        },
+        "state": {
+          "type": "object",
+          "description": "what the person sees; missing fields keep their default",
+          "additionalProperties": false,
+          "properties": {
+            "component": {
+              "type": "string",
+              "enum": [
+                "slice",
+                "mpr",
+                "volume"
+              ],
+              "description": "one slice, the MPR grid, or the 3D view"
+            },
+            "plane": {
+              "type": "string",
+              "enum": [
+                "axial",
+                "coronal",
+                "sagittal"
+              ],
+              "description": "slice orientation"
+            },
+            "slice_index": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "0-based slice index, clamped to the volume"
+            },
+            "window": {
+              "type": "object",
+              "properties": {
+                "center": {
+                  "type": "number",
+                  "description": "window centre"
+                },
+                "width": {
+                  "type": "number",
+                  "description": "window width (> 0)"
+                }
+              },
+              "required": [
+                "center",
+                "width"
+              ],
+              "additionalProperties": false
+            },
+            "overlays": {
+              "type": "object",
+              "properties": {
+                "segments_shown": {
+                  "type": "boolean",
+                  "description": "show the segment overlay"
+                },
+                "fill_opacity": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1,
+                  "description": "fill opacity"
+                },
+                "style": {
+                  "type": "string",
+                  "enum": [
+                    "outline",
+                    "fill",
+                    "fill_outline"
+                  ],
+                  "description": "how segments are drawn"
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            },
+            "selected_segment": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 255,
+              "description": "selected segment label, or null"
+            },
+            "tool": {
+              "type": "string",
+              "enum": [
+                "pan",
+                "window_level",
+                "probe",
+                "distance",
+                "angle",
+                "area",
+                "rect",
+                "text",
+                "move",
+                "delete",
+                "ai_point",
+                "ai_box",
+                "ai_scribble",
+                "ai_lasso",
+                "region"
+              ],
+              "description": "the active tool"
+            },
+            "camera": {
+              "type": "object",
+              "properties": {
+                "orientation": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 4,
+                  "maxItems": 4,
+                  "description": "quaternion x, y, z, w (normalized; a zero quaternion is refused)"
+                },
+                "distance": {
+                  "type": "number",
+                  "description": "orbit distance (clamped to the camera's 0.2..10 range)"
+                },
+                "target": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "description": "orbit centre in model space"
+                },
+                "fov_y": {
+                  "type": "number",
+                  "description": "vertical field of view in radians, within (0, pi)"
+                }
+              },
+              "required": [
+                "orientation",
+                "distance",
+                "target",
+                "fov_y"
+              ],
+              "additionalProperties": false
+            }
+          }
+        }
+      },
+      "required": [
+        "workspace",
+        "state",
+        "source_hash"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "view state": {
+    "description": "The current view state (component, plane, slice, window, overlays, selected segment, tool, camera) with its revision and the source_hash to pass back to view set.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        }
+      },
+      "required": [
+        "workspace"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "view events": {
+    "description": "What the person did in the viewer (point_picked, roi_drawn, slice_changed, window_changed, camera_changed, plane_changed, segments_changed), after a sequence number. No event is a decision.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "since": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "only events after this sequence number (default 0)"
         }
       },
       "required": [
@@ -2683,7 +3036,7 @@
     }
   },
   "export bundle": {
-    "description": "Writes export/ in the workspace, with SHA-256 of every file: report.json (study, measurements, segments with volumes; unconfirmed items marked) and, by format, annotations.json + segments.nii.gz + segments.json (ferrum) or a DICOM SEG + Comprehensive 3D SR measurement report (dicom). Rejected items are left out of DICOM; proposed ones are marked.",
+    "description": "Writes export/ in the workspace, with SHA-256 of every file: report.json (study, measurements, segments with volumes; unconfirmed items marked) and, by format, annotations.json + segments.nii.gz + segments.json (ferrum) or a DICOM SEG + Comprehensive 3D SR measurement report (dicom). Rejected items are left out of DICOM; proposed ones are marked. With deidentify=basic the DICOM objects are de-identified under the PS3.15 Basic Application Level Confidentiality Profile (the sole privacy gate for them), with the selected deid_options; the File Meta Information is replaced consistently.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -2702,10 +3055,89 @@
           },
           "minItems": 1,
           "description": "formats besides report.json (default [\"ferrum\"])"
+        },
+        "deidentify": {
+          "type": "string",
+          "enum": [
+            "basic"
+          ],
+          "description": "de-identify the DICOM objects (SEG/SR) under the PS3.15 Basic Profile (Stage 31); applies to the dicom format"
+        },
+        "deid_options": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "retain_uids",
+              "retain_dates_modified",
+              "clean_descriptors",
+              "retain_device_identity",
+              "retain_institution_identity",
+              "retain_patient_characteristics"
+            ]
+          },
+          "description": "Basic Profile options on top of the default conservative profile; requires deidentify"
         }
       },
       "required": [
         "workspace"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "pacs query": {
+    "description": "Queries a PACS for series (read-only): QIDO-RS over DICOMweb (dicomweb://host[:port]/service-root?keyword=value, dicomwebs:// for HTTPS) or C-FIND over DIMSE (dicom://host[:port]/CALLED-AE?keyword=value). Returns pseudonymised series ids, format, modality, dims and a series-level description — no patient name, ID, birth date or accession number. Query keywords: PatientID, PatientName, AccessionNumber, StudyInstanceUID, SeriesInstanceUID, StudyDate, Modality, StudyDescription, SeriesDescription, SeriesNumber; limit and offset paginate. The operator allows the PACS in network.pacs; without a configuration only loopback hosts are allowed.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "PACS query URL (dicomweb://, dicomwebs:// or dicom://) with matching keywords"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "pacs retrieve": {
+    "description": "Retrieves a series from a DICOMweb PACS over WADO-RS into a workspace and describes it (read-only). The pixels stay in memory and are re-retrieved on each call; the workspace records the PACS URL as its source. Give the query URL and, when it returns several series, the series id from pacs query. Retrieval over DIMSE (C-MOVE) is host-only and not an agent command.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "workspace directory; relative paths go below the operator's workspace root"
+        },
+        "url": {
+          "type": "string",
+          "description": "DICOMweb query URL (dicomweb:// or dicomwebs://)"
+        },
+        "series": {
+          "type": "string",
+          "description": "series id from pacs query, when the query returns several"
+        }
+      },
+      "required": [
+        "workspace",
+        "url"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "pacs echo": {
+    "description": "Verifies a classic PACS node with C-ECHO (read-only): dicom://host[:port]/CALLED-AE. Returns reachable true when the node answers the verification.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "DIMSE node URL (dicom://host[:port]/CALLED-AE)"
+        }
+      },
+      "required": [
+        "url"
       ],
       "additionalProperties": false
     }

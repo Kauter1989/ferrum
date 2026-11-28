@@ -30,6 +30,7 @@ tempfile.workspace = true
 dicom-object.workspace = true
 dicom-core.workspace = true
 dicom-dictionary-std.workspace = true
+tiny_http.workspace = true
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 
 [lints]

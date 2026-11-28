@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FERRUM · PR #134 — финальный отчёт: deid export/agent integration + oracle (Stage 31 PR 3, #75)</title>
+<style>
+  :root { --bg:#fbfbfd; --fg:#1d1f26; --muted:#5b6070; --line:#e2e5ec; --accent:#1f6feb; --ok:#1a7f37; --warn:#9a6700; --bad:#b42318; --card:#fff; --code:#f3f4f7; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#12141a; --fg:#e6e7ea; --muted:#a2a8b6; --line:#2a2e38; --accent:#6ba6ff; --ok:#4ac26b; --warn:#d4a72c; --bad:#ff7b72; --card:#191c23; --code:#1f232c; } }
+  * { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.6 -apple-system,"Segoe UI",Roboto,Arial,sans-serif; }
+  main { max-width:1080px; margin:0 auto; padding:40px 24px 80px; }
+  h1 { font-size:29px; line-height:1.25; margin:0 0 8px; letter-spacing:-0.02em; }
+  h2 { font-size:21px; margin:44px 0 14px; padding-bottom:8px; border-bottom:1px solid var(--line); }
+  .sub { color:var(--muted); margin:0 0 24px; }
+  .meta { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:28px; }
+  .pill { font-size:13px; padding:3px 10px; border-radius:999px; border:1px solid var(--line); background:var(--card); color:var(--muted); }
+  .pill.ok { color:var(--ok); border-color:color-mix(in srgb,var(--ok) 40%,transparent); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px 20px; margin:14px 0; }
+  code,.mono { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:13px; }
+  code { background:var(--code); padding:1px 5px; border-radius:4px; }
+  table { width:100%; border-collapse:collapse; margin:14px 0; font-size:14px; }
+  th,td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; font-size:13px; text-transform:uppercase; letter-spacing:.04em; }
+  .tag { font-size:12px; font-weight:600; padding:2px 7px; border-radius:5px; white-space:nowrap; }
+  .t-fixed { background:color-mix(in srgb,var(--ok) 16%,transparent); color:var(--ok); }
+  .grid { display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); }
+  .stat { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px; }
+  .stat b { display:block; font-size:26px; line-height:1.2; } .stat span { color:var(--muted); font-size:13px; }
+  ul { padding-left:22px; } li { margin:4px 0; }
+  .note { border-left:3px solid var(--accent); padding-left:14px; color:var(--muted); margin:14px 0; }
+  footer { margin-top:56px; padding-top:18px; border-top:1px solid var(--line); color:var(--muted); font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+<h1>PR #134 — deid export/agent integration + oracle diff</h1>
+<p class="sub">Финальный отчёт: Stage 31 PR 3 (issue #75 P2, критерий 31.4–31.5) — закрывает Stage 31. FERRUM, ноябрь 2026. Описывает head SHA <code>92212df5cbcf3f3df1d86b9b9a9ac5c8b543f686</code>. Отчёт живёт в самом PR и правится по итогам ревью; при мердже остаётся в последней версии (правило пользователя).</p>
+<div class="meta">
+  <span class="pill">Stage 31 PR 3 · #75 · 31.4–31.5</span>
+  <span class="pill ok">G1+G2 утверждены</span>
+  <span class="pill ok">oracle: 2/2 (WSL)</span>
+  <span class="pill ok">CLI=MCP</span>
+</div>
+<div class="grid">
+  <div class="stat"><b>A</b><span>вариант: оркестрация в io</span></div>
+  <div class="stat"><b>2/2</b><span>deid oracle (FERRUM vs deid)</span></div>
+  <div class="stat"><b>6</b><span>export-deid Rust тестов</span></div>
+  <div class="stat"><b>1</b><span>D-on-SQ фикс (SR preserved)</span></div>
+</div>
+
+<h2>1. Что и зачем</h2>
+<p>Де-идентификация становится usable: <code>export bundle --deidentify basic [--deid-option …]</code> де-идентифицирует DICOM SEG/SR под PS3.15 Basic Profile. <strong>Вариант A</strong> (ADR 0018: agent не линкует app; Exporter port planned, сегодня прямой вызов — существующий паттерн): оркестрация в <code>ferrum-io</code> рядом с export use case (<code>DicomExportOptions.deid</code>), agent/CLI thin. Плюс <strong>D-on-SQ фикс</strong> (engine рекурсирует для D sequences, сохраняя SR ContentSequence) и <strong>oracle diff</strong> против pydicom/deid.</p>
+<div class="note">Профиль — единственный privacy gate для DICOM объектов: объекты строятся с исходными identifiers/dates/UIDs (copy flags overridden), затем де-идентифицируются перед записью (<code>write_object → deidentify_file</code>); File Meta Information заменяется консистентно (E.1.1 item 7).</div>
+
+<h2>2. Код-карта</h2>
+<p class="sub">Pinned к head SHA <code>92212df</code>.</p>
+<table>
+  <tr><th>Утверждение</th><th>Реализация</th></tr>
+  <tr><td>D-on-sequence рекурсия (PS3.15 Note 2.1, SR ContentSequence preserved)</td><td class="mono">crates/ferrum-io/src/dicom/deid.rs (apply_sequence)</td></tr>
+  <tr><td>deidentify_file: File Meta replacement (E.1.1 item 7)</td><td class="mono">crates/ferrum-io/src/dicom/deid.rs (deidentify_file)</td></tr>
+  <tr><td>DicomExportOptions.deid + DicomExporter (copy flags overridden) + write_object</td><td class="mono">crates/ferrum-io/src/dicom/export.rs</td></tr>
+  <tr><td>Agent deid_profile (basic + deid_options, unknown refused)</td><td class="mono">crates/ferrum-agent/src/commands/export.rs</td></tr>
+  <tr><td>CLI --deidentify/--deid-option thin args → JSON params</td><td class="mono">crates/ferrum-cli/src/cli.rs (Export::Bundle)</td></tr>
+  <tr><td>Schema deidentify/deid_options + commands.json regen</td><td class="mono">crates/ferrum-agent/src/schema.rs; skills/ferrum/schemas/commands.json</td></tr>
+  <tr><td>Oracle diff FERRUM vs pydicom/deid (core agreement + named difference)</td><td class="mono">scripts/test_deid_oracle.py</td></tr>
+  <tr><td>Contract tests CLI=MCP + export-deid Rust tests</td><td class="mono">crates/ferrum-agent/tests/commands.rs; crates/ferrum-cli/src/cli.rs; crates/ferrum-io/tests/dicom_export.rs</td></tr>
+</table>
+
+<h2>3. Покрытие критериев</h2>
+<table>
+  <tr><th>Критерий</th><th>Тест</th><th>Статус</th></tr>
+  <tr><td>31.4-a oracle diff (FERRUM vs pydicom/deid)</td><td class="mono">test_deid_oracle: core identifiers agreement (PatientName anonymised, PatientID/BirthDate/Accession/Institution/Referring removed); 2/2 PASSED (WSL)</td><td><span class="tag t-fixed">✅</span></td></tr>
+  <tr><td>31.4-b named differences</td><td class="mono">test_ferrum_stricter_than_deid: FERRUM default zeroes StudyDate, removes PatientAge; deid keeps unless told — documented</td><td><span class="tag t-fixed">✅</span></td></tr>
+  <tr><td>31.5-a export/agent integration (CLI=MCP, schema, privacy)</td><td class="mono">export_deidentify_basic_profile (SEG de-identified, SR preserved); contract CLI=MCP; unknown profile/option refused; schema regen</td><td><span class="tag t-fixed">✅</span></td></tr>
+  <tr><td>31.5-b use case в io (вариант A), File Meta replacement</td><td class="mono">file_meta_is_replaced_and_device_identity_removed (SOP UIDs follow dataset, implementation FERRUM, AE/private removed, retain keeps; mutation-proven); export_deidentify_basic_profile; retain_uids; D-on-SQ regression</td><td><span class="tag t-fixed">✅</span></td></tr>
+</table>
+
+<h2>4. Верификация</h2>
+<ul>
+  <li>Oracle diff: <strong>2/2 PASSED в WSL</strong> (Linux ferrum-cli; Windows binary блокируется Касперским — оракул скипается без deid/cli). deid 0.4.13 (MIT).</li>
+  <li>Rust: deid 14/14 (incl D-on-SQ regression), dicom_export 6/6 (export-deid + retain_uids), agent/cli contract tests.</li>
+  <li>Полный preflight (WSL Ubuntu-24.04, CI-порядок + GPU parity + analyze.py): <code>all checks passed</code> @ <code>92212df</code> (WSL Ubuntu-24.04).</li>
+  <li>ruff 0.16.9 check + format чисто; schema freshness; CLI=MCP.</li>
+</ul>
+
+<h2>5. История ревью</h2>
+<div class="card">
+  <p><strong>Раунд 1</strong> (code + security, агент <code>review-deid3</code>, выполнение + мутации): вердикт <em>changes requested</em> — 0 blocking, 1 should-fix, 2 nits. <strong>Privacy gate + D-on-SQ SOUND и mutation-proven</strong>: M1 (skip deidentify_file в write_object) → export тест FAILED + oracle byte-scan ловит identifiers в SEG; M2 (collapse D-on-SQ) → regression FAILED. Все write-пути через write_object (SEG/SR), утечки нет. Слоистость вариант A, CLI=MCP, oracle meaningful — подтверждены.</p>
+  <table>
+    <tr><th>Находка</th><th>Исправление</th><th>Статус</th></tr>
+    <tr><td><span class="tag t-fixed">should</span> File Meta replacement не покрыт выделенным тестом (privacy-релевантный transform не mutation-proven; код верен)</td><td>выделенный тест file_meta_is_replaced_and_device_identity_removed (SOP UIDs follow dataset, implementation FERRUM, AE titles/private removed; retain_device_identity keeps); mutation skip AE-removal → RED</td><td><span class="tag t-fixed">fixed</span></td></tr>
+    <tr><td><span class="tag t-fixed">nit</span> Mutex&lt;UidMap&gt; для single-threaded export</td><td>poison recovery ок, не дефект; оставлено</td><td><span class="tag t-fixed">noted</span></td></tr>
+    <tr><td><span class="tag t-fixed">nit</span> oracle deid.__version__ отсутствует</td><td>косметика, тесты проходят</td><td><span class="tag t-fixed">noted</span></td></tr>
+  </table>
+  <p><strong>Раунд 2</strong> (lead, выполнение): File Meta тест верифицирован (green + mutation RED; AE-title even-length padding учтён); full preflight зелёный.</p>
+</div>
+
+<h2>6. Out of scope / notes</h2>
+<ul>
+  <li>RSNA/CTP anonymizer (Java) — best-effort follow-up; deid oracle покрывает core.</li>
+  <li>Production OCR bridge — follow-up (PR 2 delivers интерфейс + skip/report).</li>
+  <li>export.rs нормализован CRLF→LF (substantive change — deid интеграция; git diff -w).</li>
+  <li>Stage 31 закрыт этим PR (PR 1–3): Basic Profile engine + Table E.1-1, Clean Pixel Data, export/agent integration + oracle.</li>
+</ul>
+
+<footer>FERRUM · Stage 31 PR 3 · #75 · head SHA <code>92212df5cbcf3f3df1d86b9b9a9ac5c8b543f686</code> · отчёт коммичен в PR и правится по итогам ревью пользователя.</footer>
+</main>
+</body>
+</html>

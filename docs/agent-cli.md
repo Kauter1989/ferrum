@@ -25,7 +25,7 @@ Every command prints one JSON envelope on stdout:
 
 ```json
 { "api": "ferrum-agent/1", "ok": true, "data": { … }, "warnings": [ … ],
-  "provenance": { "ferrum": "FERRUM 0.4.0", "command": "probe", "params": { … },
+  "provenance": { "ferrum": "FERRUM 0.5.0", "command": "probe", "params": { … },
                   "source_sha256": "…", "renderer": "cpu", "time": "2026-10-01T12:00:00Z" } }
 ```
 
@@ -67,7 +67,7 @@ workspace paths are placed under the operator's `data.workspace_root`.
 | `study scan <paths…>` | Lists series: pseudonymised id, format, modality, dims, description. A series of several volumes (echoes, b-values, phases, PET frames; [design](multi-volume.md)) gives one entry per volume: its own `series` id, `group` (the pseudonymised id of the series) and `volume` (`number` from 1, `count`, `label` such as `b = 1000` or `echo 2, TE = 40 ms`, `complete`, and `b_value`, `echo_time_ms`, `echo_number`, `temporal_position`, `frame_time_s` when known) |
 | `study open -w W <path> [--series S] [--modality M]` | Creates or reuses the workspace W for a series (SHA-256 of every source file) and describes it. `--series` takes a series or a volume id from `study scan`; a series of several volumes, named or the only one in the source, opens volume 1 and warns how to choose. A workspace belongs to the series: opening another volume of it in W switches the volume and keeps segments and annotations (an incomplete volume needs a workspace of its own); another series is refused; `--modality` declares the modality of a source that carries none (NIfTI), e.g. `CT` for values in HU, and is kept in the workspace. What the reader could not show as stored is in `warnings` (several images per slice position: one volume shown; a 4D NIfTI: volume 1 shown; irregular gaps, spacing taken from the header, no pixel spacing) |
 | `study info -w W` | Dims, spacing, LPS origin and direction, value unit, `value_range` (the range the voxels are stored over: for whole-unit CT data up to twice as wide as the data, [ADR 0012](decisions/0012-lossless-grid-storage.md); values are read back exactly), slice counts, window presets, annotation and segment counts; for a series of several volumes, `volume` (the open one) and `volumes` (`series`, `number`, `label`, `complete` of each) |
-| `view slice -w W --plane P (--slice-number N \| --at POINT) [--window lung\|C,W] [--size PX] [--overlay segments [--segment-style outline\|fill\|fill_outline] [--segment-opacity A]]` | Renders a slice to `renders/r-NNNN.png` with a sidecar JSON. Without `--window`, the window stored in the series is used, else 0.5–99.5 % of the voxel values (as in the desktop app; MR and PET store none) |
+| `view slice -w W --plane P (--slice-number N \| --at POINT) [--window lung\|C,W] [--size PX] [--overlay segments [--segment-style outline\|fill\|fill_outline] [--segment-opacity A]] [--masked] [--mask MIN MAX]… [--ocr]` | Renders a slice to `renders/r-NNNN.png` with a sidecar JSON. Without `--window`, the window stored in the series is used, else 0.5–99.5 % of the voxel values (as in the desktop app; MR and PET store none). `--masked` replaces burned-in regions by a solid fill before drawing (Clean Pixel Data); `--ocr` runs the optional OCR bridge check |
 | `view montage -w W --plane P [--from N] [--to N] [--step N] [--columns N] [--window …] [--size PX]` | Several slices of one plane as a grid; every tile labelled with its slice number (default: at most 16 tiles) |
 | `view mpr -w W POINT [--window …] [--size PX]` | Axial, coronal and sagittal slices through a point, with a crosshair |
 | `view volume -w W [--mode mip\|isosurface\|transfer_function] [--threshold V] [--preset soft_tissue_bone\|lung_vessels\|bone] [--view anterior\|…\|inferior] [--size PX]` | 3D render on the CPU from a standard viewpoint |
@@ -92,7 +92,10 @@ workspace paths are placed under the operator's `data.workspace_root`.
 | `segment interactive -w W [--engine URL] [--name N] [--agent ID] [--segment L [--append \| --undo]] [--from-segment L] [--roi A B \| --whole-volume] [--min-ml ML] [--max-ml ML] [--modality M] PROMPT…` | Prompts an interactive engine ([below](#segmentation-engines)): `+POINT` / `-POINT`, `±box:POINT:POINT`, `±lasso:P1;P2;P3`, `±scribble:P1;P2`. A new object becomes a segment proposed by the engine; `--segment` refines one made earlier |
 | `segment auto -w W [--engine URL] [--label NAME]… [--name-prefix P] [--modality M] [--agent ID]` | Runs an automatic engine (e.g. TotalSegmentator); every structure found becomes a segment proposed by the engine, with checks; existing segments keep their voxels |
 | `review list -w W` | Proposed annotations and segments |
-| `export bundle -w W [--format ferrum\|dicom]…` | `export/` in the workspace, each file with SHA-256: `report.json` and, by format, `annotations.json` + `segments.nii.gz` + `segments.json` (`ferrum`, default) or `segmentation.dcm` (DICOM SEG) + `measurements.dcm` (SR, TID 1500) (`dicom`); unconfirmed items are marked in every file, rejected ones left out of DICOM ([format](workspace-format.md#5-dicom-export)) |
+| `export bundle -w W [--format ferrum\|dicom]… [--deidentify basic] [--deid-option OPT]…` | `export/` in the workspace, each file with SHA-256: `report.json` and, by format, `annotations.json` + `segments.nii.gz` + `segments.json` (`ferrum`, default) or `segmentation.dcm` (DICOM SEG) + `measurements.dcm` (SR, TID 1500) (`dicom`); unconfirmed items are marked in every file, rejected ones left out of DICOM ([format](workspace-format.md#5-dicom-export)). `--deidentify basic` de-identifies the DICOM objects under the PS3.15 Basic Application Level Confidentiality Profile (Stage 31, [design](deidentification.md)) — the sole privacy gate for them, File Meta Information replaced; `--deid-option` (repeatable, requires `--deidentify`) selects `retain_uids`, `retain_dates_modified`, `clean_descriptors`, `retain_device_identity`, `retain_institution_identity`, `retain_patient_characteristics` |
+| `pacs query URL` | Queries a PACS for series (read-only): QIDO-RS over DICOMweb (`dicomweb://host[:port]/service-root?keyword=value`, `dicomwebs://` for HTTPS) or C-FIND over DIMSE (`dicom://host[:port]/CALLED-AE?keyword=value`). Returns pseudonymised series ids, format, modality, dims and a series-level description — no patient name, ID, birth date or accession number. Keywords: `PatientID`, `PatientName`, `AccessionNumber`, `StudyInstanceUID`, `SeriesInstanceUID`, `StudyDate`, `Modality`, `StudyDescription`, `SeriesDescription`, `SeriesNumber`; `limit`/`offset` paginate ([below](#pacs-queryretrieve-and-the-ssrf-boundary)) |
+| `pacs retrieve -w W URL [--series S]` | Retrieves a series from a DICOMweb PACS over WADO-RS into the workspace W and describes it (read-only). The pixels stay in memory and are re-retrieved on each call; the workspace records the PACS URL as its source (no local patient files). `--series` takes a series id from `pacs query` when the query returns several. Retrieval over DIMSE (C-MOVE) is host-only, not an agent command |
+| `pacs echo URL` | Verifies a classic PACS node with C-ECHO (read-only): `dicom://host[:port]/CALLED-AE`. Returns `reachable: true` when the node answers |
 | `review confirm\|reject -w W (--annotation ID \| --segment L) --by NAME` | Only if the operator allows harness review |
 | `run "<command>" --params '<json>'` | Any command with JSON parameters: the same call the MCP server makes |
 | `commands` | The command names |
@@ -137,6 +140,36 @@ point`.
   `fill_outline` (both);
 - `segment_opacity` (0–1): the fill opacity for every segment; default
   each segment's own opacity.
+
+**Masking (Clean Pixel Data, Stage 31).** `--masked` replaces burned-in
+regions by a solid fill before drawing — a pixel transform on the data,
+not a change to the rendering:
+- `--mask MIN MAX` (repeatable) names a region as two corner points, as
+  `stats --box` (`v:i,j,k` or `mm:x,y,z`; inclusive corners). A `--mask`
+  implies `--masked`.
+- With no `--mask`, a DICOM series whose `BurnedInAnnotation` flag is
+  `YES` masks the whole volume (the text's location is unknown — the
+  conservative default); an unflagged series has nothing to mask.
+- The sidecar's `mask` block reports what happened, never silently
+  passed: `{ "requested": true, "applied": true|false, "source":
+  "regions"|"burned_in"|"ocr"|"none", "fill": 0, "boxes": [{"min": [i,j,k],
+  "max": [i,j,k]}] }` (half-open voxel boxes of the canonical grid).
+
+**OCR check (Clean Pixel Data, Stage 31).** `--ocr` runs the optional OCR
+bridge check on the unmasked render (`ferrum-engine/1` with the `ocr`
+capability, [engine-protocol.md](engine-protocol.md) §7):
+- The bridge is configured by the operator (`[network] ocr_bridge`); no
+  OCR runs in Rust and no weights are bundled.
+- Without a bridge the step is **skipped and reported**; a bridge that
+  cannot be reached or answers wrongly is **failed and reported** — never
+  silently passed.
+- The sidecar's `ocr` block: `{ "status": "skipped", "reason": … }`,
+  `{ "status": "detected", "regions": [{"x","y","w","h"}] }` (image pixel
+  coordinates) or `{ "status": "failed", "error": … }`.
+- With `--masked`, detected regions extend the mask (each region's
+  bounding box, mapped through the render's pixel-to-voxel affine and
+  rounded outwards — conservative); the mask's `source` is then `ocr`
+  when no other region applied.
 
 `view montage` and `view mpr` take the same options; the sidecar records
 them.
@@ -200,6 +233,44 @@ name, and must never expose `record` as a model tool.
   not load the study for each. The encoding of the revision is in
   [workspace-format.md](workspace-format.md).
 
+## Identifier spans for a host privacy layer
+
+A host that de-identifies free text before it reaches a model, a log or a
+report (Medical Harness ADR 0010) uses the library API
+`ferrum_agent::identifiers`. Like `decisions`, it is **not** an agent
+command: a model must not be able to test guessed names against the
+patient's identifiers, so no agent reaches it through FERRUM (a test
+checks the command list, the MCP tools and `commands.json`).
+
+- `scan_identifiers(config, workspace, text)` returns
+  `Vec<Span{start, end, kind}>` — byte offsets into `text` and the kind
+  (`PatientName`, `PatientId`, `BirthDate`, `AccessionNumber`), **never the
+  values**. The host masks the spans itself. The workspace's source is
+  checked against the operator's read roots like every agent read; a
+  missing workspace is `no_study`, a source outside the roots `forbidden`.
+- Matching is tolerant, biased toward recall (over-masking is safe for a
+  privacy layer): case-insensitive; Cyrillic and Latin transliterated into
+  one canonical form (Latin diacritics and the common extended letters —
+  Turkish, Polish, Czech, Hungarian, Baltic — fold to the base letter, `ё`
+  and `е` one letter); name components in either order; initials
+  («Иванов И.И.»); inflected forms (a stem plus up to three letters); the
+  common formats of a DICOM `YYYYMMDD` birth date, padded and unpadded,
+  with English and Russian month names. Overlapping spans are merged into
+  one, so no part of an identifier stays unmasked between two detections.
+  A value at its VR maximum may have been truncated by the reader and then
+  matches as a prefix. A NIfTI study carries no identifiers, so the result
+  is empty.
+- The identifiers are read from the source's DICOM headers by `ferrum-io`
+  (`read_patient_identifiers`); they never leave FERRUM in any output.
+  The scan reads the workspace's recorded, hash-verified series files with
+  the same per-file read-root checks as `study open` — a planted file or
+  symlink in the source folder does not drive the masking. Values are
+  capped at the DICOM VR maxima (PN 64 per component, LO 64, SH 16, DA 8),
+  so a crafted huge value cannot exhaust the host's per-text scan. Each
+  call hash-verifies the whole recorded series (the `study open` posture);
+  a host masking many text chunks should cache the spans per dataset
+  revision — the caching follow-up covers the hashing too.
+
 ## Workspace and audit
 
 **Workspace:**
@@ -233,6 +304,7 @@ salt = "site-secret"
 
 [network]
 engines = ["http://127.0.0.1:8765", "http://127.0.0.1:8766"]   # segmentation engines the agent may use
+pacs = ["dicomweb://pacs.example:8042/dicom-web", "dicom://10.0.0.5:104/PACS"]   # PACS the agent may query/retrieve/verify (read-only)
 gpu_groups = { gpu0 = ["http://127.0.0.1:8765", "http://127.0.0.1:8766"] }  # engines sharing a GPU: one call at a time
 gpu_capacity_mib = { gpu0 = 11264 }   # optional: leases of the group must fit (a model server can stay)
 gpu_peaks_mib = { "http://127.0.0.1:8765" = 6000 }   # optional: GPU memory of one call (whole engine process)
@@ -304,6 +376,56 @@ configuration sets none.
 
 **Equivalence:** a test runs the same session through the command line
 and through MCP and checks that both give identical JSON.
+
+## PACS query/retrieve and the SSRF boundary
+
+`pacs query`, `pacs retrieve` and `pacs echo` open a study the site keeps in
+its PACS (Stage 32, [ADR 0021](decisions/0021-pacs-client.md),
+[dicomweb.md](dicomweb.md), [dicomdimse.md](dicomdimse.md)). They are
+**read-only**: query (QIDO-RS / C-FIND), retrieve (WADO-RS) and verify
+(C-ECHO). **Send-off is host-only and has no agent command** — STOW-RS,
+C-MOVE and the C-STORE SCP move data off the workstation, so a person's
+explicit action in a host calls them (`ferrum_io::DicomWebStow`,
+`DicomDimseRepository::load`); the agent command set contains none of them
+(a test checks the command list, the MCP tools and `commands.json`).
+`pacs retrieve` therefore uses WADO-RS only; a `dicom://` URL is refused
+with a hint that DIMSE retrieval is a host operation.
+
+**Privacy.** A query returns pseudonymised series ids (`anon-…`, the same
+salted hashes as `study scan`) and series-level text only — no patient name,
+ID, birth date or accession number. A retrieved study's identifiers stay
+inside FERRUM exactly as for files: `study info` pseudonymises the UIDs and
+withholds dates/accession unless the operator allows them, and the privacy
+scan (`tests/privacy.rs`, `tests/pacs.rs`) reads every envelope. The
+workspace records the PACS URL as its source and keeps **no local patient
+files**: retrieved pixels stay in memory and each call re-retrieves them
+(ADR 0021 §2). Query *inputs* may carry identifiers (a `PatientID` filter is
+how a study is found); they are the harness's own input, echoed in
+`provenance.params` like every command's parameters, and never appear in
+error messages (the URL is stripped to scheme + host).
+
+**SSRF boundary.** An agent-supplied URL is a network destination the
+operator must allow, so every `pacs` command checks it **before any
+request**:
+
+- The operator lists allowed PACS in `[network] pacs` (full
+  `dicomweb://`/`dicomwebs://`/`dicom://` URLs). The check matches the
+  scheme and authority (`host[:port]`) of the command URL against an entry.
+- Without a configuration file, only loopback hosts (`127.0.0.0/8`,
+  `localhost`, `::1`) are allowed — the same posture as engines.
+- Link-local and cloud-metadata addresses are **always refused, even when
+  allow-listed**: `169.254.0.0/16` (including the `169.254.169.254` metadata
+  endpoint), IPv6 `fe80::/10`, unspecified (`0.0.0.0`, `::`), broadcast,
+  IPv4-mapped forms of these, and `metadata.google.internal`. These are
+  never a legitimate PACS and are the classic SSRF targets.
+- Private/on-prem ranges (`10/8`, `192.168/16`, …) are **not** blocked by
+  the host rule — a site PACS lives there; the operator allowlist is the
+  boundary for them. Blocking all internal addresses would refuse the very
+  servers a hospital runs.
+
+The repository API (`DicomWebRepository`, `DicomDimseRepository`) is
+operator-configured and composes freely in a host; the restriction lives at
+the agent command layer, where untrusted URLs arrive.
 
 ## Segmentation engines
 

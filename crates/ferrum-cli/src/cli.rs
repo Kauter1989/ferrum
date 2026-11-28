@@ -110,6 +110,9 @@ pub enum Command {
     /// Report, annotations and segments for hand-off.
     #[command(subcommand)]
     Export(Export),
+    /// PACS query/retrieve/verify (read-only; send-off is host-only).
+    #[command(subcommand)]
+    Pacs(Pacs),
     /// Named annotations.
     #[command(subcommand)]
     Annotate(Annotate),
@@ -309,6 +312,15 @@ pub enum View {
         /// Overlays (segments).
         #[arg(long = "overlay")]
         overlays: Vec<String>,
+        /// Mask burned-in regions before drawing (Clean Pixel Data).
+        #[arg(long)]
+        masked: bool,
+        /// Mask region: two corner points (as --box); repeatable; implies --masked.
+        #[arg(long = "mask", num_args = 2, value_names = ["MIN", "MAX"])]
+        masks: Vec<String>,
+        /// Run the optional OCR bridge check on the render (Clean Pixel Data).
+        #[arg(long)]
+        ocr: bool,
         #[command(flatten)]
         display: SegmentDisplay,
     },
@@ -373,6 +385,44 @@ pub enum Export {
         /// `dicom` (SEG + SR); repeat for several.
         #[arg(long = "format", value_parser = ["ferrum", "dicom"])]
         formats: Vec<String>,
+        /// De-identify the DICOM objects (SEG/SR) under the PS3.15 Basic
+        /// Application Level Confidentiality Profile (Stage 31). The profile
+        /// is the sole privacy gate for the DICOM objects.
+        #[arg(long = "deidentify", value_parser = ["basic"])]
+        deidentify: Option<String>,
+        /// A Basic Profile option (repeatable): `retain_uids`,
+        /// `retain_dates_modified`, `clean_descriptors`,
+        /// `retain_device_identity`, `retain_institution_identity`,
+        /// `retain_patient_characteristics`. Requires `--deidentify`.
+        #[arg(long = "deid-option", requires = "deidentify")]
+        deid_options: Vec<String>,
+    },
+}
+
+/// `pacs …` — read-only query/retrieve/verify (Stage 32, PR 3). Send-off
+/// (STOW/C-MOVE/C-STORE) is host-only and has no command (ADR 0021 §5).
+#[derive(Debug, Subcommand)]
+pub enum Pacs {
+    /// Queries a PACS for series (QIDO-RS or C-FIND); pseudonymised output.
+    Query {
+        /// PACS query URL: dicomweb://host[:port]/root?Keyword=value,
+        /// dicomwebs:// (HTTPS) or dicom://host[:port]/CALLED-AE?Keyword=value.
+        url: String,
+    },
+    /// Retrieves a series from a DICOMweb PACS (WADO-RS) into a workspace.
+    Retrieve {
+        #[command(flatten)]
+        ws: Ws,
+        /// DICOMweb query URL (dicomweb:// or dicomwebs://).
+        url: String,
+        /// Series id (from pacs query) when the query returns several.
+        #[arg(long)]
+        series: Option<String>,
+    },
+    /// Verifies a classic PACS node with C-ECHO (dicom://host[:port]/AE).
+    Echo {
+        /// DIMSE node URL (dicom://host[:port]/CALLED-AE).
+        url: String,
     },
 }
 
@@ -768,9 +818,22 @@ impl Command {
                     ("samples", some(*samples)),
                 ],
             ),
-            Command::Export(Export::Bundle { ws: w, formats }) => {
-                call("export bundle", vec![ws(w), ("formats", (!formats.is_empty()).then(|| json!(formats)))])
-            }
+            Command::Export(Export::Bundle { ws: w, formats, deidentify, deid_options }) => call(
+                "export bundle",
+                vec![
+                    ws(w),
+                    ("formats", (!formats.is_empty()).then(|| json!(formats))),
+                    ("deidentify", deidentify.as_ref().map(|d| json!(d))),
+                    ("deid_options", (!deid_options.is_empty()).then(|| json!(deid_options))),
+                ],
+            ),
+            Command::Pacs(p) => match p {
+                Pacs::Query { url } => call("pacs query", vec![("url", Some(json!(url)))]),
+                Pacs::Retrieve { ws: w, url, series } => {
+                    call("pacs retrieve", vec![ws(w), ("url", Some(json!(url))), ("series", some(series.clone()))])
+                }
+                Pacs::Echo { url } => call("pacs echo", vec![("url", Some(json!(url)))]),
+            },
             Command::Engine(EngineCmd::Info { engine }) => call("engine info", vec![("engine", some(engine.clone()))]),
             Command::Engine(EngineCmd::List) => call("engine list", vec![]),
             Command::Engine(EngineCmd::Unload { engine, group }) => {
@@ -844,21 +907,35 @@ fn view_call(v: &View) -> Result<(String, Value), String> {
     let call = |name: &str, fields: Vec<(&str, Option<Value>)>| (name.to_owned(), object(fields));
     Ok(match v {
         View::Serve { .. } => return Err("view serve is run by main, not by the agent".into()),
-        View::Slice { ws: w, plane, slice_number, at, window, size, overlays, display } => call(
-            "view slice",
-            [
-                ws(w),
-                ("plane", Some(json!(plane))),
-                ("slice_number", some(*slice_number)),
-                ("at", at.as_deref().map(parse_point).transpose()?),
-                ("window", window.as_deref().map(parse_window).transpose()?),
-                ("size", some(*size)),
-                ("overlays", (!overlays.is_empty()).then(|| json!(overlays))),
-            ]
-            .into_iter()
-            .chain(display.fields())
-            .collect(),
-        ),
+        View::Slice { ws: w, plane, slice_number, at, window, size, overlays, display, masked, masks, ocr } => {
+            // num_args = 2: every --mask occurrence contributes one pair.
+            let boxes = masks
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|pair| -> Result<Value, String> {
+                    Ok(json!({ "min": parse_point(&pair[0])?, "max": parse_point(&pair[1])? }))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            call(
+                "view slice",
+                [
+                    ws(w),
+                    ("plane", Some(json!(plane))),
+                    ("slice_number", some(*slice_number)),
+                    ("at", at.as_deref().map(parse_point).transpose()?),
+                    ("window", window.as_deref().map(parse_window).transpose()?),
+                    ("size", some(*size)),
+                    ("overlays", (!overlays.is_empty()).then(|| json!(overlays))),
+                    ("masked", (*masked || !boxes.is_empty()).then(|| json!(true))),
+                    ("masks", (!boxes.is_empty()).then(|| json!(boxes))),
+                    ("ocr", ocr.then(|| json!(true))),
+                ]
+                .into_iter()
+                .chain(display.fields())
+                .collect(),
+            )
+        }
         View::Montage { ws: w, plane, from, to, step, columns, window, size, overlays, display } => call(
             "view montage",
             [
@@ -1104,6 +1181,62 @@ mod tests {
         assert!(parse_window("a,b").is_err());
     }
 
+    // covers 31.5-a — CLI = MCP: the deidentify flags become the same JSON params
+    #[test]
+    fn export_deidentify_flags_become_parameters() {
+        let call = |args: &[&str]| Cli::try_parse_from(args).unwrap().command.to_call().unwrap();
+        let (name, params) = call(&[
+            "ferrum-cli",
+            "export",
+            "bundle",
+            "-w",
+            "ws",
+            "--format",
+            "dicom",
+            "--deidentify",
+            "basic",
+            "--deid-option",
+            "retain_uids",
+            "--deid-option",
+            "clean_descriptors",
+        ]);
+        assert_eq!(name, "export bundle");
+        assert_eq!(params["deidentify"].as_str(), Some("basic"));
+        assert_eq!(params["deid_options"], json!(["retain_uids", "clean_descriptors"]));
+        let (_, plain) = call(&["ferrum-cli", "export", "bundle", "-w", "ws", "--format", "dicom"]);
+        assert!(plain.get("deidentify").is_none(), "no deid unless asked");
+        assert!(plain.get("deid_options").is_none());
+        assert!(
+            Cli::try_parse_from(["ferrum-cli", "export", "bundle", "-w", "ws", "--deidentify", "advanced"]).is_err(),
+            "an unknown profile is refused"
+        );
+        assert!(
+            Cli::try_parse_from(["ferrum-cli", "export", "bundle", "-w", "ws", "--deid-option", "retain_uids"])
+                .is_err(),
+            "--deid-option requires --deidentify"
+        );
+    }
+
+    // covers 32.4-a — CLI = MCP: the pacs subcommands become the same JSON params
+    #[test]
+    fn pacs_subcommands_become_parameters() {
+        let call = |args: &[&str]| Cli::try_parse_from(args).unwrap().command.to_call().unwrap();
+        let (name, params) = call(&["ferrum-cli", "pacs", "query", "dicomweb://127.0.0.1:8042/dicom-web?PatientID=1"]);
+        assert_eq!(name, "pacs query");
+        assert_eq!(params["url"], "dicomweb://127.0.0.1:8042/dicom-web?PatientID=1");
+        let (name, params) =
+            call(&["ferrum-cli", "pacs", "retrieve", "-w", "ws", "dicomweb://h/r", "--series", "anon-1"]);
+        assert_eq!(name, "pacs retrieve");
+        assert_eq!((params["workspace"].as_str(), params["series"].as_str()), (Some("ws"), Some("anon-1")));
+        let (_, plain) = call(&["ferrum-cli", "pacs", "retrieve", "-w", "ws", "dicomweb://h/r"]);
+        assert!(plain.get("series").is_none(), "no series unless asked");
+        let (name, params) = call(&["ferrum-cli", "pacs", "echo", "dicom://127.0.0.1:104/PACS"]);
+        assert_eq!(name, "pacs echo");
+        assert_eq!(params["url"], "dicom://127.0.0.1:104/PACS");
+        assert!(Cli::try_parse_from(["ferrum-cli", "pacs", "query"]).is_err(), "the url is required");
+        assert!(Cli::try_parse_from(["ferrum-cli", "pacs", "stow"]).is_err(), "send-off is not a command");
+    }
+
     // covers 18.4-b, 18.12-b
     #[test]
     fn segment_metrics_flags_become_parameters() {
@@ -1159,6 +1292,35 @@ mod tests {
         assert_eq!(p["solid_min"], -300.0);
         let (name, p) = call(&["ferrum-cli", "segment", "distance", "-w", "ws", "3", "--to", "5"]);
         assert_eq!((name.as_str(), p["segment"].as_u64(), p["to"].as_u64()), ("segment distance", Some(3), Some(5)));
+    }
+
+    #[test]
+    // covers 31.3-c
+    fn view_slice_masked_flags_become_calls() {
+        let call = |args: &[&str]| Cli::try_parse_from(args).unwrap().command.to_call().unwrap();
+        let base = ["ferrum-cli", "view", "slice", "-w", "ws", "--plane", "axial", "--slice-number", "3"];
+        let (name, p) = call(&[base.as_slice(), &["--masked"]].concat());
+        assert_eq!(name, "view slice");
+        assert_eq!(p["masked"], json!(true));
+        assert!(p.get("masks").is_none());
+        // --mask implies --masked; the corners become the box JSON
+        let (_, p) =
+            call(&[base.as_slice(), &["--mask", "v:5,3,0", "v:16,8,0", "--mask", "mm:0,0,0", "mm:10,10,0"]].concat());
+        assert_eq!(p["masked"], json!(true));
+        assert_eq!(p["masks"][0], json!({ "min": { "voxel": [5.0, 3.0, 0.0] }, "max": { "voxel": [16.0, 8.0, 0.0] } }));
+        assert_eq!(p["masks"][1]["min"], json!({ "patient_mm": [0.0, 0.0, 0.0] }));
+        // no flags: neither parameter is present
+        let (_, p) = call(&base);
+        assert!(p.get("masked").is_none());
+        assert!(p.get("masks").is_none());
+        assert!(p.get("ocr").is_none());
+        // --ocr is its own flag (does not imply masking)
+        let (_, p) = call(&[base.as_slice(), &["--ocr"]].concat());
+        assert_eq!(p["ocr"], json!(true));
+        assert!(p.get("masked").is_none());
+        // a malformed corner point is refused
+        let bad = Cli::try_parse_from([base.as_slice(), &["--mask", "v:5,3", "v:16,8,0"]].concat()).unwrap();
+        assert!(bad.command.to_call().is_err());
     }
 
     #[test]

@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FERRUM · PR #110 — финальный отчёт: identifier spans для privacy-слоя хоста</title>
+<style>
+  :root {
+    --bg: #fbfbfd; --fg: #1d1f26; --muted: #5b6070; --line: #e2e5ec;
+    --accent: #1f6feb; --ok: #1a7f37; --warn: #9a6700; --bad: #b42318;
+    --card: #ffffff; --code: #f3f4f7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12141a; --fg: #e6e7ea; --muted: #a2a8b6; --line: #2a2e38;
+      --accent: #6ba6ff; --ok: #4ac26b; --warn: #d4a72c; --bad: #ff7b72;
+      --card: #191c23; --code: #1f232c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.6 -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  main { max-width: 1080px; margin: 0 auto; padding: 40px 24px 80px; }
+  h1 { font-size: 30px; line-height: 1.25; margin: 0 0 8px; letter-spacing: -0.02em; }
+  h2 { font-size: 21px; margin: 44px 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 16px; margin: 26px 0 8px; }
+  p, li { color: var(--fg); }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 28px; }
+  .pill {
+    font-size: 13px; padding: 3px 10px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--card); color: var(--muted);
+  }
+  .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px 20px; margin: 14px 0;
+  }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 13px; }
+  code { background: var(--code); padding: 1px 5px; border-radius: 4px; }
+  pre { background: var(--code); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; overflow-x: auto; }
+  pre code { background: none; padding: 0; }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 14px; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .tag { font-size: 12px; font-weight: 600; padding: 2px 7px; border-radius: 5px; white-space: nowrap; }
+  .t-block { background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--bad); }
+  .t-should { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+  .t-nit { background: color-mix(in srgb, var(--muted) 16%, transparent); color: var(--muted); }
+  .t-fixed { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+  .stat { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+  .stat b { display: block; font-size: 26px; line-height: 1.2; }
+  .stat span { color: var(--muted); font-size: 13px; }
+  ul { padding-left: 22px; }
+  li { margin: 4px 0; }
+  .note { border-left: 3px solid var(--accent); padding-left: 14px; color: var(--muted); margin: 14px 0; }
+  footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>PR #110 — identifier spans для privacy-слоя хоста</h1>
+<p class="sub">Финальный отчёт: архитектура, анализ кода, история ревью. FERRUM, ноябрь 2026. Описывает head SHA <code>e19a4722d3d0da485c3a536f6ed80dbeea5e0fd0</code>. Отчёт живёт в самом PR и правится по итогам ревью; при мердже остаётся в последней версии (правило пользователя).</p>
+
+<div class="meta">
+  <span class="pill">Ветка <code>feat/74-identifier-spans</code> → <code>develop</code></span>
+  <span class="pill ok">preflight: all checks passed</span>
+  <span class="pill">7 коммитов</span>
+  <span class="pill ok">30 тестов (14 + 13 + 3)</span>
+  <span class="pill ok">ревью: 2 агента, 2 раунда, все находки закрыты</span>
+</div>
+
+<div class="grid">
+  <div class="stat"><b>4</b><span>вида идентификаторов</span></div>
+  <div class="stat"><b>0</b><span>значений в выходе — только позиции</span></div>
+  <div class="stat"><b>0</b><span>новых команд агента</span></div>
+  <div class="stat"><b>2</b><span>HIGH security-находки закрыты</span></div>
+</div>
+
+<h2>1. Архитектурные изменения</h2>
+
+<p>
+  Задача — #74 (P1, Demo 3 харнесса): Medical Harness обезличивает свободный
+  текст перед моделью/логом/отчётом. FERRUM знает настоящие идентификаторы
+  исследования и говорит, <b>где</b> они в тексте, — позиции и виды, никогда
+  значения. Библиотечный API, <b>не команда агента</b>: модель не должна
+  иметь возможности проверять угаданные имена против идентификаторов
+  пациента.
+</p>
+
+<h3>Добавленные модули</h3>
+
+<table>
+  <thead><tr><th>Модуль</th><th>Роль</th><th>Ключевое</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>ferrum-agent/src/identifiers.rs</code></td>
+      <td>Матчер и публичный API: <code>scan_identifiers</code>, <code>Span</code>, <code>IdentifierKind</code>; свёртка текста в каноническую форму, имена/инициалы/склонения, даты; слияние пересечений.</td>
+      <td>Значения не покидают модуль в выходе; байтовые офсеты через карту свёртки; вход ограничен VR-максимумами DICOM.</td>
+    </tr>
+    <tr>
+      <td><code>ferrum-io/src/identifiers.rs</code></td>
+      <td>Чтение идентификаторов: DICOM-файл/папка (пропуск симлинков), NIfTI — пусто; <code>read_patient_identifiers_of_files</code> для записанных файлов серии (fail closed).</td>
+      <td>Только I/O-слой разбирает файлы; капы PN 64/компонент, LO 64, SH 16, DA 8 в ридере заголовков.</td>
+    </tr>
+    <tr>
+      <td><code>ferrum-agent/tests/identifier_spans.rs</code></td>
+      <td>14 интеграционных тестов: точные спаны EN/RU, транслитерация в обе стороны, диакритика/ё, 15 форматов даты, отсутствие значений, не-команда, ошибки, NIfTI, planted-файл, swapped-файл, длинный ID, пустой манифест, симлинк вне корней.</td>
+      <td>DICOM с синтетическими данными генерируется в рантайме (ISO_IR 192 для кириллицы).</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Изменённые модули</h3>
+
+<table>
+  <thead><tr><th>Модуль</th><th>Что изменилось</th></tr></thead>
+  <tbody>
+    <tr><td><code>ferrum-domain/src/repository.rs</code></td><td>Аддитивный <code>PatientIdentifiers</code> — чистый тип, без I/O.</td></tr>
+    <tr><td><code>ferrum-io/src/dicom/header.rs</code></td><td><code>patient_identifiers(obj)</code> с капами по VR-максимумам; теги только через <code>dicom_dictionary_std::tags</code>.</td></tr>
+    <tr><td><code>ferrum-agent/src/study.rs</code></td><td><code>refuse_parent_components</code> стал <code>pub(crate)</code> — скан переиспользует проверку #82.</td></tr>
+    <tr><td>docs / CHANGELOG / dev_plan</td><td>Секция библиотечного API в agent-cli.md, строка architecture.md, Stage 27 с критериями 27.1-a/b/c и заполненными колонками PR/State.</td></tr>
+  </tbody>
+</table>
+
+<h3>Слоистость и контракт</h3>
+<ul>
+  <li>Домен без I/O; файлы разбираются только в <code>ferrum-io</code>; матчер — в <code>ferrum-agent</code>, как <code>decisions</code> (16.7).</li>
+  <li><b>Источник привязан к workspace:</b> скан читает записанные в манифесте файлы серии с <code>refuse_parent_components</code> + per-file <code>check_source</code> + <code>verify_sources</code> — тот же паттерн, что <code>Study::load</code>. Свежий обход папки не делается: planted-файл или симлинк не управляют маскированием.</li>
+  <li>Проводной контракт не расширен: набор команд, MCP-инструменты и <code>commands.json</code> не изменились — проверяется тестом (27.1-c).</li>
+  <li>Формирование изображения, протокол движков, формат workspace не тронуты.</li>
+</ul>
+
+<h2>2. Анализ кода и паттерны</h2>
+
+<h3>Одна каноническая форма вместо двух алфавитов</h3>
+<p>
+  Текст и компоненты имени сворачиваются в один канонический нижний регистр:
+  кириллица транслитерируется в латиницу с диграфами (х→kh, ж→zh, щ→shch,
+  ю→yu, я→ya, ь/ъ→∅), латинская диакритика снимается до базовой буквы
+  (MÜLLER→muller), комбинирующие знаки отбрасываются (İ→i), диграф yo
+  канонизируется в e — поэтому «Пётр», «Петр», "Petr" и "Pyotr" встречаются
+  в одной форме. Каждый свёрнутый символ несёт байтовый диапазон оригинала,
+  поэтому спаны — точные байтовые офсеты исходного текста.
+</p>
+<pre><code>struct Folded { ch: char, start: usize, end: usize }  // identifiers.rs:88
+fn fold(text: &str) -> Vec&lt;Folded&gt;                    // :96 (yo→e проход)
+fn fold_char(c: char) -> Vec&lt;char&gt;                    // :125 (диакритика)</code></pre>
+
+<h3>Толерантность с перекосом в recall</h3>
+<p>
+  Компонент матчится как слово или как основа (минус до двух последних букв,
+  минимум три) плюс до трёх букв — склонения «Иванова/Иванову/Ивановым»;
+  короткие компоненты (≤4) работают как префиксы («Li» маскирует и «Liu» —
+  закреплено unit-тестом). Пары/тройки компонентов в любом порядке
+  (инъективное назначение с бэктрекингом — «Ivanovich Ivan Ivanov» даёт один
+  спан), инициалы до и после фамилии, точки инициалов входят в спан.
+  Пересечения <b>сливаются</b> в один спан: «Ivanov I. Ivan» не оставляет
+  given name незамаскированным, дата поверх инициалов не оставляет год.
+</p>
+
+<h3>Даты из DICOM YYYYMMDD</h3>
+<p>
+  8 числовых форматов в паддированном и непэддированном виде («1.1.1970» —
+  самое частое русское написание) плюс «D месяц YYYY», «месяц D YYYY» и
+  варианты с запятой, с паддированным и непэддированным днём — английские и
+  русские названия месяцев (именительный и родительный). Поиск с границами
+  слов.
+</p>
+
+<h3>Границы и стоимость</h3>
+<ul>
+  <li>Значения каппятся на VR-максимумах DICOM в ридере (PN 64/компонент, LO 64, SH 16, DA 8): крафченный multi-MB patient_id больше не превращает per-text скан в минуты CPU (проверено ревьюером: 40k символов → 49 с до фикса).</li>
+  <li>Значение длиннее текста — ранний выход; пустые идентификаторы (NIfTI) — пустой результат; ошибки не эхо-ят значения.</li>
+  <li>Записанные файлы не читаются → fail closed: ни один файл не прочитан → ошибка, не пустые идентификаторы.</li>
+</ul>
+
+<h3>Тесты, которые могут упасть</h3>
+<table>
+  <thead><tr><th>Проверка</th><th>Чем падает</th></tr></thead>
+  <tbody>
+    <tr><td>Точные спаны EN/RU</td><td>Вектор спанов целиком, байт-в-байт через <code>text.find</code>; контроль чистого текста обязан дать пусто.</td></tr>
+    <tr><td>Слияние пересечений</td><td>«Ivanov I. Ivan», «Ivanov Ivan I.», «Иванов И. Иванович», «Ivanov 1.1.1970» с PN IVANOV^1X^1Y — один спан на всё.</td></tr>
+    <tr><td>Привязка к workspace</td><td>Planted junk + чужой DICOM не меняют спаны; swapped файл → <code>source_changed</code>; пустой манифест → <code>source_changed</code>; симлинк вне корней (unix) не читается ни io-обходом, ни сканом.</td></tr>
+    <tr><td>Капы</td><td>5000-символьные значения → 64/16/64; студия с 5000-символьным ID сканирует 64-символьный префикс.</td></tr>
+    <tr><td>Не-команда</td><td>Скан списка команд, MCP-инструментов и commands.json; «study scan» не задевается (префикс, не подстрока).</td></tr>
+    <tr><td>Отсутствие значений</td><td>Debug и JSON всех спанов сканируются на значения studie.</td></tr>
+  </tbody>
+</table>
+
+<h2>3. Этапы ревью</h2>
+
+<p>
+  Полное ревью двумя агентами (<code>code-reviewer</code>,
+  <code>security-reviewer</code>) по правилу пользователя; находки
+  подтверждались агентами <b>исполнением</b> кода ветки (scratch-клоны с
+  SHA-гардом), не чтением. Первый раунд: 9 находок (1 blocking, 2 high,
+  1 medium, 3 should-fix, 1 low, 3 nit — часть пересекается). Все исправлены
+  в коммитах <code>d352244</code> и <code>e19a472</code>; агенты запущены на
+  перепроверку нового head. Квота-смертей в этом раунде не было (батч-отправка
+  по L42 страховала бы потерю).
+</p>
+
+<table>
+  <thead><tr><th>Уровень</th><th>Замечание</th><th>Решение</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><span class="tag t-block">blocking</span></td>
+      <td><code>resolve_overlaps</code> отбрасывал пересечения: «Ivanov I. Ivan» оставлял given name незамаскированным (code-reviewer, проверено исполнением)</td>
+      <td><b>Fixed.</b> Слияние пересечений (union); регрессии EN/RU + случай даты поверх инициалов.</td>
+    </tr>
+    <tr>
+      <td><span class="tag t-block">high</span></td>
+      <td>Симлинк в папке источника уводил ридер за read-root (класс #82); маскирование управлялось чужим пациентом (security-reviewer, проверенная атака)</td>
+      <td><b>Fixed.</b> Скан читает записанные hash-verified файлы серии с per-file check_source (паттерн Study::load); io-обход пропускает симлинки; регрессии unix + planted + swapped.</td>
+    </tr>
+    <tr>
+      <td><span class="tag t-block">high</span></td>
+      <td>Источник не привязан к серии: planted DICOM с пустыми тегами / две серии в папке → 0 спанов → fail-open маскирования (security-reviewer, проверенная атака)</td>
+      <td><b>Fixed.</b> Тем же фиксом: только файлы манифеста, verify_sources; атаки закрыты по построению.</td>
+    </tr>
+    <tr>
+      <td><span class="tag t-should">medium</span></td>
+      <td>Квадратичная стоимость скана без капа длины значения: 1 MiB patient_id → минуты на текст (security-reviewer, замерено)</td>
+      <td><b>Fixed.</b> Капы на VR-максимумах в ридере; регрессии капа и длинного ID.</td>
+    </tr>
+    <tr>
+      <td><span class="tag t-should">should-fix</span></td>
+      <td>ё→yo vs е→e разъезжались: ПЁТР/Петр не матчились (code-reviewer)</td>
+      <td><b>Fixed.</b> Канонизация yo→e; Пётр/Петр/Petr/Pyotr в одной форме; unit + integration.</td>
+    </tr>
+    <tr>
+      <td><span class="tag t-should">should-fix</span></td>
+      <td>Не-ASCII латиница (ü, ö, İ) не матчилась никогда: MÜLLER утекал целиком (code-reviewer)</td>
+      <td><b>Fixed.</b> Диакритика → базовая буква, комбинирующие знаки отбрасываются; MÜLLER/Muller/MULLER.</td>
+    </tr>
+    <tr>
+      <td><span class="tag t-should">should-fix</span></td>
+      <td>Непэддированные числовые даты («1.1.1970») не находились (code-reviewer)</td>
+      <td><b>Fixed.</b> Паддированные и непэддированные варианты; 4 новых формата в integration.</td>
+    </tr>
+    <tr>
+      <td><span class="tag t-should">low</span></td>
+      <td>Хвост даты поверх спана инициалов оставался незамаскированным (security-reviewer, «Ivanov 1.1.1970»)</td>
+      <td><b>Fixed.</b> Слияние пересечений; регрессия точным случаем ревьюера.</td>
+    </tr>
+    <tr>
+      <td><span class="tag t-nit">nit</span></td>
+      <td>Greedy assigns порядко-зависим; пустые колонки PR/State в dev_plan; unit/io тесты без covers-цитат; таблица диакритики не покрывала турецкий/польский/чешский (Yılmaz, Kowałski); каппированное значение теряло recall на хвосте; per-call хеширование серии</td>
+      <td><b>Fixed.</b> Бэктрекинг; колонки заполнены; цитаты добавлены; таблица расширена (тесты Yılmaz/Kowałski); значение на VR-максимуме матчится как префикс (тест); стоимость хеширования записана в caching follow-up.</td>
+    </tr>
+    <tr>
+      <td><span class="tag t-should">low</span></td>
+      <td>Крафченный манифест с <code>source.files:[]</code> проходил проверки вакуумно → 0 спанов (fail-open); нужен доступ записи к корню workspace (класс остатка #82)</td>
+      <td><b>Fixed.</b> Пустой список записанных файлов → <code>source_changed</code> (fail closed без исключений); регрессия крафтит манифест.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  <b>Финальные вердикты:</b> code-reviewer — <i>approve with nits</i>
+  (ниты закрыты в <code>ce2f79e</code>); security-reviewer — <i>no security
+  findings</i>: все четыре находки перепроверены исполнением исходных
+  атак-проб на фикс-голове (квадратичный случай 48.7 s → 0.47 s, масштабирование
+  линейное). Пустой манифест закрыт в <code>e19a472</code>.
+</p>
+
+<div class="card">
+  <b>Что проверено как чистое (обоими агентами)</b>
+  <ul>
+    <li>Байтовые офсеты — валидные границы символов оригинала: кириллица, emoji-ZWJ, комбинирующие знаки, диграфы, турецкий İ — срезы не паникуют.</li>
+    <li>Крафченные заголовки: non-UTF8 под ISO_IR 192 (октал-эскейпы dicom-rs), разделители/контрольные символы, 60k и 1 MiB значения — без паник.</li>
+    <li>Не-команда: COMMANDS, mcp::tools(), commands.json (36 ключей), schema.rs, ferrum-cli не тронуты.</li>
+    <li>Нет новых зависимостей, unsafe, subprocess, сети, секретов; ошибки несут пути, не значения идентификаторов.</li>
+    <li>Слоистость, матрица, CHANGELOG под [Unreleased] (L43), размер M.</li>
+  </ul>
+</div>
+
+<h3>Остаточные риски (названы)</h3>
+<ul>
+  <li>TOCTOU подмена ссылки между проверкой и чтением и hard links — документированный остаток #82 (нужен доступ записи к корню данных).</li>
+  <li>Матчер best-effort/recall-biased: необычные склонения, письменности и форматы остаются незамаскированными; чистый скан — не гарантия де-идентификации.</li>
+  <li>Транскрипция («Джейн»↔"Jane") вне scope — только транслитерация; over-masking коротких компонентов — безопасное направление.</li>
+  <li>verify_sources хеширует серию на каждый скан — стоимость названа; кэш спанов/идентификаторов — follow-up для харнесса.</li>
+</ul>
+
+<h3>Оценка качества</h3>
+<table>
+  <thead><tr><th>Аспект</th><th class="num">Оценка</th><th>Обоснование</th></tr></thead>
+  <tbody>
+    <tr><td>Архитектура</td><td class="num">сильная</td><td>Чтение в io, матчер в agent, тип в domain; привязка к verified-файлам workspace как в Study::load; контракт не расширен.</td></tr>
+    <tr><td>Тесты</td><td class="num">сильная</td><td>30 тестов, точные спаны, контроли, атаки ревьюеров как регрессии.</td></tr>
+    <tr><td>Безопасность</td><td class="num">сильная</td><td>Обе HIGH закрыты проверенными атаками-регрессиями; капы входа; fail closed; значения не выходят структурно.</td></tr>
+    <tr><td>Процесс</td><td class="num">сильная</td><td>Полное агентское ревью с исполнением кода до мерджа, два раунда; все находки исправлены и перепроверены (approve with nits / no security findings); первый драфт имел утечки — ревью их поймало.</td></tr>
+    <tr><td>Документация</td><td class="num">сильная</td><td>agent-cli, architecture, CHANGELOG, Stage 27 с критериями и колонками.</td></tr>
+  </tbody>
+</table>
+
+<h2>4. Где это лежит (code map, SHA <code>e19a472</code>)</h2>
+
+<table>
+  <thead><tr><th>Что</th><th>file:lines</th><th>Символ</th></tr></thead>
+  <tbody>
+    <tr><td>Публичный API; привязка к verified-файлам; fail closed</td><td><a href="https://github.com/Kauter1989/ferrum/blob/e19a4722d3d0da485c3a536f6ed80dbeea5e0fd0/crates/ferrum-agent/src/identifiers.rs#L52-L85">identifiers.rs:52-85</a></td><td><code>scan_identifiers</code></td></tr>
+    <tr><td>Типы выхода</td><td><a href="https://github.com/Kauter1989/ferrum/blob/e19a4722d3d0da485c3a536f6ed80dbeea5e0fd0/crates/ferrum-agent/src/identifiers.rs#L29-L50">identifiers.rs:29-50</a></td><td><code>IdentifierKind</code>, <code>Span</code></td></tr>
+    <tr><td>Свёртка с байтовой картой; yo→e</td><td><a href="https://github.com/Kauter1989/ferrum/blob/e19a4722d3d0da485c3a536f6ed80dbeea5e0fd0/crates/ferrum-agent/src/identifiers.rs#L88-L123">identifiers.rs:88-123</a></td><td><code>Folded</code>, <code>fold</code></td></tr>
+    <tr><td>Транслитерация и диакритика</td><td><a href="https://github.com/Kauter1989/ferrum/blob/e19a4722d3d0da485c3a536f6ed80dbeea5e0fd0/crates/ferrum-agent/src/identifiers.rs#L125-L205">identifiers.rs:125-205</a></td><td><code>fold_char</code></td></tr>
+    <tr><td>Склонения и префиксы</td><td><a href="https://github.com/Kauter1989/ferrum/blob/e19a4722d3d0da485c3a536f6ed80dbeea5e0fd0/crates/ferrum-agent/src/identifiers.rs#L230-L242">identifiers.rs:230-242</a></td><td><code>word_matches</code></td></tr>
+    <tr><td>Имена: одиночные, пары, тройки, инициалы</td><td><a href="https://github.com/Kauter1989/ferrum/blob/e19a4722d3d0da485c3a536f6ed80dbeea5e0fd0/crates/ferrum-agent/src/identifiers.rs#L264-L314">identifiers.rs:264-314</a></td><td><code>name_spans</code>, <code>group_span</code></td></tr>
+    <tr><td>Инъективное назначение с бэктрекингом</td><td><a href="https://github.com/Kauter1989/ferrum/blob/e19a4722d3d0da485c3a536f6ed80dbeea5e0fd0/crates/ferrum-agent/src/identifiers.rs#L316-L335">identifiers.rs:316-335</a></td><td><code>assigns</code></td></tr>
+    <tr><td>Инициалы до/после фамилии</td><td><a href="https://github.com/Kauter1989/ferrum/blob/e19a4722d3d0da485c3a536f6ed80dbeea5e0fd0/crates/ferrum-agent/src/identifiers.rs#L337-L406">identifiers.rs:337-406</a></td><td><code>initials_after</code>, <code>initials_before</code></td></tr>
+    <tr><td>ID/accession с границами; префикс на VR-максимуме</td><td><a href="https://github.com/Kauter1989/ferrum/blob/e19a4722d3d0da485c3a536f6ed80dbeea5e0fd0/crates/ferrum-agent/src/identifiers.rs#L408-L424">identifiers.rs:408-424</a></td><td><code>value_spans</code></td></tr>
+    <tr><td>Даты: паддированные и непэддированные</td><td><a href="https://github.com/Kauter1989/ferrum/blob/e19a4722d3d0da485c3a536f6ed80dbeea5e0fd0/crates/ferrum-agent/src/identifiers.rs#L426-L462">identifiers.rs:426-462</a></td><td><code>date_spans</code></td></tr>
+    <tr><td>Слияние пересечений</td><td><a href="https://github.com/Kauter1989/ferrum/blob/e19a4722d3d0da485c3a536f6ed80dbeea5e0fd0/crates/ferrum-agent/src/identifiers.rs#L501-L514">identifiers.rs:501-514</a></td><td><code>resolve_overlaps</code></td></tr>
+    <tr><td>Чтение источника; пропуск симлинков</td><td><a href="https://github.com/Kauter1989/ferrum/blob/e19a4722d3d0da485c3a536f6ed80dbeea5e0fd0/crates/ferrum-io/src/identifiers.rs#L16-L44">io/identifiers.rs:16-44</a></td><td><code>read_patient_identifiers</code></td></tr>
+    <tr><td>Записанные файлы серии, fail closed</td><td><a href="https://github.com/Kauter1989/ferrum/blob/e19a4722d3d0da485c3a536f6ed80dbeea5e0fd0/crates/ferrum-io/src/identifiers.rs#L46-L62">io/identifiers.rs:46-62</a></td><td><code>read_patient_identifiers_of_files</code></td></tr>
+    <tr><td>Капы на VR-максимумах</td><td><a href="https://github.com/Kauter1989/ferrum/blob/e19a4722d3d0da485c3a536f6ed80dbeea5e0fd0/crates/ferrum-io/src/dicom/header.rs#L249-L272">header.rs:249-272</a></td><td><code>patient_identifiers</code></td></tr>
+    <tr><td>Тип домена</td><td><a href="https://github.com/Kauter1989/ferrum/blob/e19a4722d3d0da485c3a536f6ed80dbeea5e0fd0/crates/ferrum-domain/src/repository.rs#L149-L166">repository.rs:149-166</a></td><td><code>PatientIdentifiers</code></td></tr>
+    <tr><td>Точные спаны EN</td><td><a href="https://github.com/Kauter1989/ferrum/blob/e19a4722d3d0da485c3a536f6ed80dbeea5e0fd0/crates/ferrum-agent/tests/identifier_spans.rs#L94-L110">identifier_spans.rs:94-110</a></td><td><code>english_text_gives_exact_spans_for_every_kind</code></td></tr>
+    <tr><td>Инициалы/склонения RU + слияние</td><td><a href="https://github.com/Kauter1989/ferrum/blob/e19a4722d3d0da485c3a536f6ed80dbeea5e0fd0/crates/ferrum-agent/tests/identifier_spans.rs#L112-L133">identifier_spans.rs:112-133</a></td><td><code>russian_initials_and_inflections_are_found</code></td></tr>
+    <tr><td>Диакритика и ё</td><td><a href="https://github.com/Kauter1989/ferrum/blob/e19a4722d3d0da485c3a536f6ed80dbeea5e0fd0/crates/ferrum-agent/tests/identifier_spans.rs#L135-L149">identifier_spans.rs:135-149</a></td><td><code>diacritics_and_yo_match_the_header</code></td></tr>
+    <tr><td>15 форматов даты</td><td><a href="https://github.com/Kauter1989/ferrum/blob/e19a4722d3d0da485c3a536f6ed80dbeea5e0fd0/crates/ferrum-agent/tests/identifier_spans.rs#L168-L194">identifier_spans.rs:168-194</a></td><td><code>the_birth_date_matches_the_common_formats</code></td></tr>
+    <tr><td>Значений в выходе нет</td><td><a href="https://github.com/Kauter1989/ferrum/blob/e19a4722d3d0da485c3a536f6ed80dbeea5e0fd0/crates/ferrum-agent/tests/identifier_spans.rs#L196-L214">identifier_spans.rs:196-214</a></td><td><code>the_output_carries_positions_and_kinds_only</code></td></tr>
+    <tr><td>Не команда агента</td><td><a href="https://github.com/Kauter1989/ferrum/blob/e19a4722d3d0da485c3a536f6ed80dbeea5e0fd0/crates/ferrum-agent/tests/identifier_spans.rs#L216-L235">identifier_spans.rs:216-235</a></td><td><code>the_scan_is_not_an_agent_command</code></td></tr>
+    <tr><td>Planted-файл не управляет маскированием</td><td><a href="https://github.com/Kauter1989/ferrum/blob/e19a4722d3d0da485c3a536f6ed80dbeea5e0fd0/crates/ferrum-agent/tests/identifier_spans.rs#L278-L293">identifier_spans.rs:278-293</a></td><td><code>a_planted_file_does_not_drive_the_masking</code></td></tr>
+    <tr><td>Swapped-файл → source_changed</td><td><a href="https://github.com/Kauter1989/ferrum/blob/e19a4722d3d0da485c3a536f6ed80dbeea5e0fd0/crates/ferrum-agent/tests/identifier_spans.rs#L295-L304">identifier_spans.rs:295-304</a></td><td><code>a_swapped_source_file_is_refused</code></td></tr>
+    <tr><td>Длинный ID каппится и сканируется</td><td><a href="https://github.com/Kauter1989/ferrum/blob/e19a4722d3d0da485c3a536f6ed80dbeea5e0fd0/crates/ferrum-agent/tests/identifier_spans.rs#L306-L316">identifier_spans.rs:306-316</a></td><td><code>a_crafted_long_identifier_is_capped_and_scans</code></td></tr>
+    <tr><td>Пустой манифест → source_changed</td><td><a href="https://github.com/Kauter1989/ferrum/blob/e19a4722d3d0da485c3a536f6ed80dbeea5e0fd0/crates/ferrum-agent/tests/identifier_spans.rs#L318-L331">identifier_spans.rs:318-331</a></td><td><code>a_manifest_without_recorded_files_is_refused</code></td></tr>
+    <tr><td>Симлинк вне корней не читается</td><td><a href="https://github.com/Kauter1989/ferrum/blob/e19a4722d3d0da485c3a536f6ed80dbeea5e0fd0/crates/ferrum-agent/tests/identifier_spans.rs#L333-L351">identifier_spans.rs:333-351</a></td><td><code>a_symlink_out_of_the_roots_is_not_read</code></td></tr>
+  </tbody>
+</table>
+
+<footer>
+  Источник данных: git-история ветки (7 коммитов: c7555da, 6064ae0, d6934a7, d352244, a982915, ce2f79e, e19a472),
+  отчёты code-reviewer (approve with nits, ниты закрыты) и security-reviewer (no security findings;
+  находки подтверждены и перепроверены исполнением кода и исходных атак-проб),
+  preflight в WSL Ubuntu 24.04 на head e19a472 — «all checks passed»; тесты 14 + 13 + 3 зелёные.
+  Номера строк код-карты получены из дерева e19a472 (git show + grep). Все числа — из git и прогонов, не по памяти.
+</footer>
+
+</main>
+</body>
+</html>
