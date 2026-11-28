@@ -34,6 +34,9 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   TAG: ${{ inputs.tag || github.ref_name }}
+  # The packaging steps below read target/…; the project's .cargo/config.toml
+  # sets target-dir = .builds (L53), so pin the release build back to target/.
+  CARGO_TARGET_DIR: target
 
 jobs:
   build:
